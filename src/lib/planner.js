@@ -11,6 +11,8 @@
 //                   There is nothing sacred about 6x6: the target cell is a
 //                   preference, and every chunk sizes its cells to suit its
 //                   own width and height.
+//   3b. classify   — a cell that cannot hold a small light near its own centre
+//                   is "awkward", and the matching bids to cover it instead
 //   4. matching   — pairs of adjacent cells (within a chunk) get a LARGE light
 //                   on their shared edge; leftovers get a SMALL light at their
 //                   centre. Zone edges count as walls for the wall-distance rule.
@@ -35,9 +37,24 @@ export const DEFAULTS = {
                           //      its working tolerance.
   minSharedEdge: 3.0,     // ft — cells must share at least this much wall to pair up
   cellEdgePad: 0.10,      // fraction of the cell a nudged light keeps clear of its own edge
+  centreBand: 0.20,       // a small light must sit within this fraction of the cell
+                          //   from its centre. A cell that cannot take one is
+                          //   "awkward": the matching bids to cover it with a
+                          //   large light instead.
+  sizeWeight: 4.0,        // how hard the grid is held to targetCell
+  awkwardGridPenalty: 0.25, // a mild tiebreak against grids that park a fan on a
+                          //   cell centre — not enough to distort the grid, since
+                          //   such a cell is ceded gracefully anyway
+  omitAwkwardCells: true, // a cell that can take neither a centred small light
+                          //   nor a shared large one gets NO light of its own —
+                          //   the fan is the ceiling feature there. Set false to
+                          //   place an off-centre light anyway.
+  awkwardPriority: 2.0,   // how much a large light covering an awkward cell is
+                          //   worth, in units of "one ordinary cell covered".
+                          //   0 turns the whole preference off.
   alignTol: 1.25,         // ft — lights within this get snapped into a row/column
   fanClearance: 2.0,      // ft — keep lights this far outside the fan's blade circle
-  fanAnchorWeight: 1.0,   // how hard each chunk's grid tries to line up with the fan
+  fanAnchorWeight: 0.6,   // how hard each chunk's grid tries to line up with the fans
   preferLongAxis: true,
   uniformOrientation: true, // pair every cell the same way when it costs nothing
 };
@@ -158,20 +175,36 @@ function scoreSplit(lo, hi, n, softAnchors, opt) {
   if (size < opt.minCell) penalty += 3 * (opt.minCell - size);
   if (size > opt.maxCell) penalty += 3 * (size - opt.maxCell);
 
-  // reward: a cut line or a cell centre landing on a soft anchor (the fan)
+  // Reward a CUT LINE landing on a soft anchor — never a cell centre.
+  //
+  // This matters more than it looks. A fan parked on a cell centre is the worst
+  // case there is: that cell can never hold a small light near its middle, and
+  // every grid intersection around it is inside the fan's clearance circle too,
+  // so no large light can rescue it either. Put the fan on a grid intersection
+  // instead and it becomes a shared corner of four cells, each of whose centres
+  // is half a diagonal away — comfortably clear.
   let bonus = 0;
   for (const a of softAnchors) {
     if (a < lo - 1e-6 || a > hi + 1e-6) continue;
     let best = Infinity;
     for (let k = 0; k <= n; k++) best = Math.min(best, Math.abs(lo + k * size - a));
-    for (let k = 0; k < n; k++) best = Math.min(best, Math.abs(lo + (k + 0.5) * size - a));
     bonus += opt.fanAnchorWeight * Math.max(0, 1 - best / (opt.targetCell * 0.5));
   }
   return bonus - penalty;
 }
 
 export function partitionAxis(hardAnchors, softAnchors, opt) {
-  // dedupe + sort the hard anchors, dissolving anything narrower than minBand
+  const bands = dissolveBands(hardAnchors, opt);
+  const lines = [bands[0]];
+  for (let i = 0; i < bands.length - 1; i++) {
+    const cands = bandCandidates(bands[i], bands[i + 1], softAnchors, opt);
+    const best = cands.reduce((a, b) => (b.score > a.score ? b : a));
+    lines.push(...best.lines.slice(1));
+  }
+  return [...new Set(lines.map((v) => Math.round(v * 1e6) / 1e6))].sort((a, b) => a - b);
+}
+
+function dissolveBands(hardAnchors, opt) {
   const uniq = [...new Set(hardAnchors.map((v) => Math.round(v * 1000) / 1000))].sort((a, b) => a - b);
   const kept = [uniq[0]];
   for (let i = 1; i < uniq.length; i++) {
@@ -179,20 +212,99 @@ export function partitionAxis(hardAnchors, softAnchors, opt) {
     else if (i === uniq.length - 1) kept[kept.length - 1] = uniq[i]; // never lose the far wall
   }
   if (kept.length < 2) kept.push(uniq[uniq.length - 1]);
+  return kept;
+}
 
-  const lines = [kept[0]];
-  for (let i = 0; i < kept.length - 1; i++) {
-    const lo = kept[i], hi = kept[i + 1], W = hi - lo;
-    const base = Math.max(1, Math.round(W / opt.targetCell));
-    let bestN = base, bestScore = -Infinity;
-    for (const n of new Set([base - 1, base, base + 1].filter((n) => n >= 1))) {
-      const s = scoreSplit(lo, hi, n, softAnchors, opt);
-      if (s > bestScore) { bestScore = s; bestN = n; }
+/**
+ * The two or three ways a single band could reasonably be divided, each with
+ * its own quality score. The caller picks — and for a chunk it picks the x and
+ * y candidates TOGETHER, because whether a fan lands on a cell centre is a
+ * two-dimensional question that neither axis can answer alone.
+ */
+export function bandCandidates(lo, hi, softAnchors, opt) {
+  const W = hi - lo;
+  const base = Math.max(1, Math.round(W / opt.targetCell));
+  const out = [];
+  for (const n of [...new Set([base - 1, base, base + 1])].filter((v) => v >= 1)) {
+    const size = W / n;
+    // Cell size is the brief ("squarish, about 6 by 6"), so it is priced
+    // properly rather than as a rounding error. Charging both axes for their
+    // own deviation also charges an oblong grid twice, which is why no separate
+    // squareness term is needed.
+    let penalty = opt.sizeWeight * Math.abs(size - opt.targetCell) / opt.targetCell;
+    if (size < opt.minCell) penalty += 3 * (opt.minCell - size);
+    if (size > opt.maxCell) penalty += 3 * (size - opt.maxCell);
+    // Reward a CUT LINE landing on a soft anchor — never a cell centre. A fan
+    // on a grid line becomes a shared corner of the cells around it; a fan on
+    // a cell centre ruins that cell (see chooseChunkGrid).
+    // Average, not sum: two fans on the same line are satisfied by ONE line, so
+    // summing would double the reward and let fan alignment swamp cell size.
+    let bonus = 0, seen = 0;
+    for (const a of softAnchors) {
+      if (a < lo - 1e-6 || a > hi + 1e-6) continue;
+      let best = Infinity;
+      for (let k = 0; k <= n; k++) best = Math.min(best, Math.abs(lo + k * size - a));
+      bonus += Math.max(0, 1 - best / (opt.targetCell * 0.5));
+      seen++;
     }
-    const size = W / bestN;
-    for (let k = 1; k <= bestN; k++) lines.push(lo + k * size);
+    if (seen) bonus = opt.fanAnchorWeight * (bonus / seen);
+    const lines = [];
+    for (let k = 0; k <= n; k++) lines.push(lo + k * size);
+    out.push({ n, size, lines, score: bonus - penalty });
   }
-  return [...new Set(lines.map((v) => Math.round(v * 1e6) / 1e6))].sort((a, b) => a - b);
+  return out;
+}
+
+/**
+ * Pick a chunk's x and y divisions jointly.
+ *
+ * Scoring each axis on its own is what let a fan end up sitting on a cell
+ * centre: each axis looked reasonable, and only the combination was bad. A
+ * chunk is a rectangle, so each axis has exactly one band and at most three
+ * candidates — nine combinations, cheap to evaluate properly. Each is charged
+ * for the cells it would leave unable to hold a centred light.
+ */
+function chooseChunkGrid(ch, softX, softY, fans, opt) {
+  const xs = bandCandidates(ch.x0, ch.x1, softX, opt);
+  const ys = bandCandidates(ch.y0, ch.y1, softY, opt);
+  let best = null;
+  for (const cx of xs) {
+    for (const cy of ys) {
+      let awk = 0;
+      for (let i = 0; i < cx.n; i++) {
+        for (let j = 0; j < cy.n; j++) {
+          const cell = {
+            x0: cx.lines[i], x1: cx.lines[i + 1], y0: cy.lines[j], y1: cy.lines[j + 1],
+            cx: (cx.lines[i] + cx.lines[i + 1]) / 2, cy: (cy.lines[j] + cy.lines[j + 1]) / 2,
+            w: cx.size, h: cy.size,
+          };
+          if (cellIsAwkward(cell, fans, opt)) awk++;
+        }
+      }
+      const score = cx.score + cy.score - opt.awkwardGridPenalty * awk;
+      if (!best || score > best.score) best = { score, xLines: cx.lines, yLines: cy.lines, awkward: awk };
+    }
+  }
+  return best;
+}
+
+/**
+ * Can this cell hold a small light inside its centre band, clear of the fans?
+ * Cells never overlap a no-light zone, so only the fans can spoil a centre.
+ */
+function cellIsAwkward(cell, fans, opt) {
+  if (!fans.length) return false;
+  const clear = (qx, qy) => !fans.some((f) =>
+    Math.hypot(qx - f.x, qy - f.y) < (f.r || 0) + opt.fanClearance);
+  if (clear(cell.cx, cell.cy)) return false;
+  const dx = cell.w * opt.centreBand, dy = cell.h * opt.centreBand;
+  const N = 13;
+  for (let k = 0; k < N; k++) {
+    const t = (k / (N - 1)) * 2 - 1;
+    if (clear(cell.cx + t * dx, cell.cy)) return false;
+    if (clear(cell.cx, cell.cy + t * dy)) return false;
+  }
+  return true;
 }
 
 // --- main -------------------------------------------------------------------
@@ -236,8 +348,9 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   const cells = [];
   chunks.forEach((ch, ci) => {
     ch.id = ci;
-    ch.xLines = partitionAxis([ch.x0, ch.x1], softX, opt);
-    ch.yLines = partitionAxis([ch.y0, ch.y1], softY, opt);
+    const grid = chooseChunkGrid(ch, softX, softY, fans, opt);
+    ch.xLines = grid.xLines;
+    ch.yLines = grid.yLines;
     ch.cellAt = new Map(); // "i,j" -> cell, local to this chunk
     for (let i = 0; i < ch.xLines.length - 1; i++) {
       for (let j = 0; j < ch.yLines.length - 1; j++) {
@@ -252,6 +365,19 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
       }
     }
   });
+
+  // 3b. Which cells can actually take a small light near their own centre?
+  // A cell that cannot is "awkward": a small light there would sit visibly off
+  // centre, so it is better served by a large light shared with a neighbour.
+  // The matching below bids for these rather than patching them afterwards.
+  const wideFrac = Math.max(0, 0.5 - opt.cellEdgePad);
+  const centred = new Map();  // cell id -> spot within the centre band, or null
+  const awkward = new Set();
+  for (const c of cells) {
+    const spot = findSmallSpot(c, polygon, fans, zones, opt, opt.centreBand);
+    if (spot.ok) centred.set(c.id, spot);
+    else awkward.add(c.id);
+  }
 
   // 4. candidate large-light positions on shared grid lines, within a chunk
   const candidates = [];
@@ -305,14 +431,24 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     const m = (c.i + c.j) % 2 === 0 ? Lidx : Ridx;
     if (!m.has(c.id)) m.set(c.id, m.size);
   }
+  // Price a pair by what covering those two cells is WORTH, not just by how
+  // pretty it is. An ordinary cell is worth 1 (it would be fine with a small
+  // light); an awkward one is worth 1 + awkwardPriority. The aesthetic score is
+  // scaled right down so it can only ever break ties between equally valuable
+  // matchings — never buy a worse-covering layout.
+  const AESTHETIC_SCALE = 1 / 10;
+  const cellValue = (c) => 1 + (awkward.has(c.id) ? opt.awkwardPriority : 0);
   const solve = (subset) => {
     const mEdges = [];
     for (const cand of subset) {
       const [lc, rc] = (cand.a.i + cand.a.j) % 2 === 0 ? [cand.a, cand.b] : [cand.b, cand.a];
       if (!Lidx.has(lc.id) || !Ridx.has(rc.id)) continue;
-      mEdges.push({ l: Lidx.get(lc.id), r: Ridx.get(rc.id), w: cand.w, id: cand });
+      const w = cellValue(cand.a) + cellValue(cand.b) + cand.w * AESTHETIC_SCALE;
+      mEdges.push({ l: Lidx.get(lc.id), r: Ridx.get(rc.id), w, id: cand });
     }
-    return maxWeightMatching(Lidx.size, Ridx.size, mEdges);
+    // Weights now price the trade-off directly, so no cardinality bias: two
+    // ordinary pairs and one pair that rescues an awkward cell compete fairly.
+    return maxWeightMatching(Lidx.size, Ridx.size, mEdges, { maximizeCardinality: false });
   };
 
   // A mixed tiling and a uniform one often cover the same number of cells, but
@@ -325,15 +461,19 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
       const ys = new Set(m.map((e) => e.id.p.y.toFixed(2)));
       return xs.size + ys.size; // fewer distinct rows/columns == tidier
     };
+    const rescues = (m) => m.reduce((n, e) =>
+      n + (awkward.has(e.id.a.id) ? 1 : 0) + (awkward.has(e.id.b.id) ? 1 : 0), 0);
     for (const subset of [candidates.filter((c) => c.vertical), candidates.filter((c) => !c.vertical)]) {
       if (!subset.length) continue;
       const alt = solve(subset);
-      if (alt.length === matched.length && tidiness(alt) < tidiness(matched)) matched = alt;
+      if (alt.length === matched.length && rescues(alt) >= rescues(matched)
+          && tidiness(alt) < tidiness(matched)) matched = alt;
     }
   }
 
   const used = new Set();
   const lights = [];
+  const ceded = [];   // cells deliberately left to a fan
   for (const e of matched) {
     const c = e.id;
     used.add(c.a.id); used.add(c.b.id);
@@ -350,10 +490,21 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     // Every remaining cell MUST get a light. If the centre falls inside the
     // fan's exclusion circle we move the fitting within the cell — deleting it
     // would leave the cell dark, which is never the right answer.
-    const { p, clash, slid } = placeSmall(c, polygon, fans, zones, opt);
+    // Inside the centre band: the ordinary case.
+    let spot = centred.get(c.id);
+    if (!spot) {
+      // Awkward, and the matching could not rescue it with a large light.
+      // A light shoved to the edge of its own box looks like a mistake, so by
+      // default we place none: a fan occupies that ceiling anyway. The cell is
+      // recorded as ceded, not lost.
+      if (opt.omitAwkwardCells) { ceded.push(c); continue; }
+      spot = findSmallSpot(c, polygon, fans, zones, opt, wideFrac);
+    }
+    const { p, ok, axis } = spot;
     lights.push({ id: `S${lights.length}`, kind: 'small', x: p.x, y: p.y,
                   cells: [c.id], cell: c, locked: false,
-                  nudged: p.x !== c.cx || p.y !== c.cy, slid, clash });
+                  nudged: p.x !== c.cx || p.y !== c.cy, slid: axis,
+                  outsideBand: !centred.has(c.id), clash: !ok });
   }
 
   // 6. alignment pass — cluster into rows and columns, across chunks too
@@ -373,8 +524,13 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     omittedChunks: omitted.length,
     cells: cells.length,
     served: served.size,
-    unserved: cells.length - served.size,
+    // a ceded cell is a decision, not a hole; `unserved` must stay at zero
+    unserved: cells.length - served.size - ceded.length,
     nudged: lights.filter((l) => l.nudged).length,
+    awkward: awkward.size,
+    rescued: [...awkward].filter((id) => used.has(id)).length,
+    outsideBand: lights.filter((l) => l.outsideBand).length,
+    ceded: ceded.length,
     offAxis: lights.filter((l) => {
       if (l.kind !== 'small' || !l.cell) return false;
       return Math.abs(l.x - l.cell.cx) > 0.05 && Math.abs(l.y - l.cell.cy) > 0.05;
@@ -386,21 +542,21 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     avgCell: cells.reduce((s, c) => s + (c.w + c.h) / 2, 0) / cells.length,
     areaSqft: Math.abs(polygonArea(polygon)),
   };
-  return { ok: true, chunks, omittedChunks: omitted, zones, cells, lights, stats, opt };
+  return { ok: true, chunks, omittedChunks: omitted, zones, cells, lights, cededCells: ceded, stats, opt };
 }
 
 /**
- * Where to put a small light inside its cell.
+ * Find the best spot for a small light inside its cell, searching only the two
+ * centre lines and only out to `maxFrac` of the cell's size from the centre.
  *
- * Normally dead centre. When the centre is fouled — by a fan's clearance
- * circle, or a zone — the fitting slides along ONE of the cell's two centre
- * lines, never diagonally. A light on a centre line still reads as belonging
- * to its box and stays in line with the row or column it shares; a light
- * pushed into a corner just looks like a mistake.
+ * Returns { p, ok, axis, dist, violation }. `ok` means a fully clear position
+ * was found inside that band; otherwise `p` is the least-bad point on an axis.
  *
- * Ties go to the cell's longer axis, which has more room to give.
+ * A light on a centre line still reads as belonging to its box and stays in
+ * line with the row or column it shares; one pushed into a corner just looks
+ * like a mistake. Ties go to the cell's longer axis, which has more room.
  */
-function placeSmall(cell, polygon, fans, zones, opt) {
+function findSmallSpot(cell, polygon, fans, zones, opt, maxFrac) {
   const base = { x: cell.cx, y: cell.cy };
   // How badly a point violates the constraints — 0 means fully clear. Summing
   // over the fans matters when a cell is squeezed between two of them: the
@@ -412,39 +568,36 @@ function placeSmall(cell, polygon, fans, zones, opt) {
     }
     return v;
   };
-  if (violation(base) === 0) return { p: base, clash: false, slid: null };
+  if (violation(base) === 0) return { p: base, ok: true, axis: null, dist: 0, violation: 0 };
 
-  // candidates: the horizontal centre line and the vertical centre line
-  const pad = Math.min(cell.w, cell.h) * (opt.cellEdgePad ?? 0.10);
+  const dxMax = cell.w * maxFrac, dyMax = cell.h * maxFrac;
   const longAxis = cell.w >= cell.h ? 'h' : 'v';
   const N = 41;
-  const cands = [];
-  for (let k = 0; k < N; k++) {
-    const t = N === 1 ? 0.5 : k / (N - 1);
-    const spanX = cell.w - 2 * pad, spanY = cell.h - 2 * pad;
-    if (spanX > 0) cands.push({ p: { x: cell.x0 + pad + t * spanX, y: cell.cy }, axis: 'h' });
-    if (spanY > 0) cands.push({ p: { x: cell.cx, y: cell.y0 + pad + t * spanY }, axis: 'v' });
-  }
-
   let best = null, bestD = Infinity, bestAxis = null;
   let fb = null, fbV = Infinity, fbD = Infinity, fbAxis = null;
-  for (const c of cands) {
-    if (!pointInPolygon(c.p, polygon)) continue;
-    const v = violation(c.p);
-    const d = Math.hypot(c.p.x - base.x, c.p.y - base.y);
-    if (v === 0) {
-      const better = d < bestD - 1e-9 ||
-        (Math.abs(d - bestD) <= 1e-9 && c.axis === longAxis && bestAxis !== longAxis);
-      if (best === null || better) { best = c.p; bestD = d; bestAxis = c.axis; }
+  for (let k = 0; k < N; k++) {
+    const t = (k / (N - 1)) * 2 - 1; // -1 .. 1
+    const cands = [
+      { axis: 'h', p: { x: cell.cx + t * dxMax, y: cell.cy } },
+      { axis: 'v', p: { x: cell.cx, y: cell.cy + t * dyMax } },
+    ];
+    for (const c of cands) {
+      if (!pointInPolygon(c.p, polygon)) continue;
+      const v = violation(c.p);
+      const d = Math.hypot(c.p.x - base.x, c.p.y - base.y);
+      if (v === 0) {
+        const better = d < bestD - 1e-9 ||
+          (Math.abs(d - bestD) <= 1e-9 && c.axis === longAxis && bestAxis !== longAxis);
+        if (best === null || better) { best = c.p; bestD = d; bestAxis = c.axis; }
+      }
+      const fbBetter = v < fbV - 1e-9 ||
+        (Math.abs(v - fbV) <= 1e-9 && (d < fbD - 1e-9 ||
+          (Math.abs(d - fbD) <= 1e-9 && c.axis === longAxis && fbAxis !== longAxis)));
+      if (fb === null || fbBetter) { fb = c.p; fbV = v; fbD = d; fbAxis = c.axis; }
     }
-    // fallback: least violation, then least displacement, then the long axis
-    const fbBetter = v < fbV - 1e-9 ||
-      (Math.abs(v - fbV) <= 1e-9 && (d < fbD - 1e-9 ||
-        (Math.abs(d - fbD) <= 1e-9 && c.axis === longAxis && fbAxis !== longAxis)));
-    if (fb === null || fbBetter) { fb = c.p; fbV = v; fbD = d; fbAxis = c.axis; }
   }
-  if (best) return { p: best, clash: false, slid: bestAxis };
-  return { p: fb || base, clash: true, slid: fbAxis };
+  if (best) return { p: best, ok: true, axis: bestAxis, dist: bestD, violation: 0 };
+  return { p: fb || base, ok: false, axis: fbAxis, dist: fbD, violation: fbV };
 }
 
 /**
@@ -519,7 +672,7 @@ function alignAxis(lights, axis, polygon, opt, fans = [], zones = [], wallDist =
       target = vals[Math.floor(vals.length / 2)];
     }
     for (const g of group) {
-      const limit = slideLimit(g, axis);
+      const limit = slideLimit(g, axis, opt);
       const next = Math.max(limit.lo, Math.min(limit.hi, target));
       const trial = { ...g, [axis]: next };
       if (!pointInPolygon(trial, polygon)) continue;
@@ -536,11 +689,16 @@ function alignAxis(lights, axis, polygon, opt, fans = [], zones = [], wallDist =
   flush();
 }
 
-function slideLimit(light, axis) {
+function slideLimit(light, axis, opt) {
   if (light.kind === 'small' && light.cell) {
+    // The alignment pass may not push a light out of its centre band — that is
+    // the whole guarantee, and it has to hold after aligning too, not just when
+    // the light is first placed.
     const c = light.cell;
-    const pad = Math.min(c.w, c.h) * 0.22;
-    return axis === 'x' ? { lo: c.x0 + pad, hi: c.x1 - pad } : { lo: c.y0 + pad, hi: c.y1 - pad };
+    const band = opt.centreBand;
+    return axis === 'x'
+      ? { lo: c.cx - band * c.w, hi: c.cx + band * c.w }
+      : { lo: c.cy - band * c.h, hi: c.cy + band * c.h };
   }
   if (light.kind === 'large' && light.span) {
     const s = light.span;

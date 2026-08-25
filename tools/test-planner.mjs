@@ -59,11 +59,11 @@ function zoneCase(name, poly, zones, fixtures = [], opts = {}) {
   const lightsIn = r.lights.filter((l) => zones.some((z) => inRect(l, z)));
   const cellsIn  = r.cells.filter((c) => zones.some((z) => overlaps(c, z)));
   const chunksIn = r.chunks.filter((ch) => zones.some((z) => overlaps(ch, z)));
-  const served = r.stats.served === r.stats.cells;
+  const served = r.stats.served + r.stats.ceded === r.stats.cells;
   console.log(`${name}`);
   console.log(`  ${r.stats.chunks} chunks (+${r.stats.omittedChunks} omitted), ${r.stats.cells} cells, ${r.stats.large}L/${r.stats.small}S, ${r.stats.clashes} clashes`);
   console.log(`  chunks overlapping a zone: ${chunksIn.length} | cells overlapping: ${cellsIn.length} | lights inside: ${lightsIn.length} (all must be 0)`);
-  console.log(`  served ${r.stats.served}/${r.stats.cells}`);
+  console.log(`  served ${r.stats.served}+${r.stats.ceded}/${r.stats.cells}`);
   const pass = !lightsIn.length && !cellsIn.length && !chunksIn.length && served;
   console.log(`  VERDICT: ${pass ? 'PASS' : 'FAIL'}`);
   zoneVerdicts.push(pass);
@@ -106,7 +106,7 @@ console.log('\n=== regression: a fan must never leave a cell dark ===\n');
   const r=planLights(room,[{type:'fan',...F}]);
   const need=F.r+2.0;
   const inZone=r.lights.filter(l=>Math.hypot(l.x-F.x,l.y-F.y)<need-1e-6);
-  console.log(`23.9x12.9 + fan near a cell centre: ${r.stats.served}/${r.stats.cells} cells served (must be all)`);
+  console.log(`23.9x12.9 + fan near a cell centre: ${r.stats.served}+${r.stats.ceded}/${r.stats.cells} cells served (must be all)`);
   console.log(`  ${r.stats.large}L/${r.stats.small}S, ${r.stats.nudged} nudged, ${r.stats.clashes} unavoidable clashes`);
   console.log(`  lights inside the fan zone: ${inZone.length} (must be 0)`);
   console.log(`  VERDICT: ${r.stats.served===r.stats.cells && inZone.length===0 ? 'PASS' : 'FAIL'}`);
@@ -135,9 +135,9 @@ console.log('\n=== multiple ceiling fans ===\n');
     const fouling = r.lights.filter((l) =>
       fans.some((f) => Math.hypot(l.x - f.x, l.y - f.y) < f.r + r.opt.fanClearance - 1e-6));
     const allFlagged = fouling.every((l) => l.clash);
-    const ok = r.stats.served === r.stats.cells && allFlagged && r.stats.fans === fans.length;
+    const ok = r.stats.served + r.stats.ceded === r.stats.cells && allFlagged && r.stats.fans === fans.length;
     if (ok) pass++;
-    console.log(`  ${name.padEnd(24)} ${r.stats.fans} fans, ${r.stats.served}/${r.stats.cells} lit, ` +
+    console.log(`  ${name.padEnd(24)} ${r.stats.fans} fans, ${r.stats.served}+${r.stats.ceded}/${r.stats.cells} lit, ` +
                 `${r.stats.large}L/${r.stats.small}S, ${fouling.length} fouling (${r.stats.clashes} flagged)  ${ok ? 'PASS' : '*** FAIL ***'}`);
   }
   console.log(`\nMULTI-FAN OVERALL: ${pass === cases.length ? 'PASS' : `${cases.length - pass} FAILED`}`);
@@ -166,11 +166,109 @@ console.log('\n=== small lights stay on a cell centre line ===\n');
       Math.abs(l.x - l.cell.cx) > 0.05 && Math.abs(l.y - l.cell.cy) > 0.05);
     const inside = r.lights.filter((l) => l.kind === 'small' && l.cell &&
       (l.x < l.cell.x0 - 1e-6 || l.x > l.cell.x1 + 1e-6 || l.y < l.cell.y0 - 1e-6 || l.y > l.cell.y1 + 1e-6));
-    const ok = diag.length === 0 && inside.length === 0 && r.stats.served === r.stats.cells;
+    const ok = diag.length === 0 && inside.length === 0 && r.stats.served + r.stats.ceded === r.stats.cells;
     if (ok) pass++;
-    console.log(`  ${name.padEnd(30)} ${r.stats.served}/${r.stats.cells} lit, ${r.stats.nudged} nudged, ` +
+    console.log(`  ${name.padEnd(30)} ${r.stats.served}+${r.stats.ceded}/${r.stats.cells} lit, ${r.stats.nudged} nudged, ` +
                 `${diag.length} diagonal, ${inside.length} outside its cell  ${ok ? 'PASS' : '*** FAIL ***'}`);
     diag.forEach((l) => console.log(`      ${l.id} off by (${(l.x-l.cell.cx).toFixed(2)}, ${(l.y-l.cell.cy).toFixed(2)})`));
   }
   console.log(`\nCELL-AXIS OVERALL: ${pass === cases.length ? 'PASS' : `${cases.length - pass} FAILED`}`);
+}
+
+console.log('\n=== awkward cells prefer a large light ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r = 1.97) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+
+  // 1. the rule demonstrably changes the outcome, and never for the worse
+  const rooms = [['30x30',R(30,30)],['36x24',R(36,24)],['30x18',R(30,18)],['24x24',R(24,24)],['L30',L]];
+  let changed = 0, free = 0, paid = 0, worse = 0, unlit = 0, offAxis = 0;
+  for (const [, poly] of rooms) {
+    for (const cl of [0.25, 0.5, 1.0, 1.5, 2.0]) {
+      for (let fx = 3; fx <= 33; fx += 1.5) for (let fy = 3; fy <= 30; fy += 1.5) {
+        const fans = [F(fx, fy)];
+        const on = planLights(poly, fans, { fanClearance: cl });
+        const off = planLights(poly, fans, { fanClearance: cl, awkwardPriority: 0 });
+        if (!on.ok || !off.ok) continue;
+        if (on.stats.served + on.stats.ceded !== on.stats.cells) unlit++;
+        offAxis += on.stats.offAxis;
+        if (on.stats.rescued === off.stats.rescued && on.stats.large === off.stats.large) continue;
+        changed++;
+        const dL = on.stats.large - off.stats.large;
+        const gained = (off.stats.outsideBand + off.stats.ceded) - (on.stats.outsideBand + on.stats.ceded);
+        if (gained > 0 && dL >= 0) free++;
+        else if (gained > 0) paid++;
+        else worse++;
+      }
+    }
+  }
+  console.log(`  swept ${rooms.length} rooms x 5 clearances x fan positions`);
+  console.log(`    outcome changed by the rule : ${changed}`);
+  console.log(`    rescued with no large lights lost : ${free}`);
+  console.log(`    rescued by trading a large light  : ${paid}`);
+  console.log(`    made worse                        : ${worse}   (must be 0)`);
+  console.log(`    cells left unlit                  : ${unlit}   (must be 0)`);
+  console.log(`    lights diagonal to their cell     : ${offAxis}   (must be 0)`);
+  const sweepOK = worse === 0 && unlit === 0 && offAxis === 0 && changed > 0 && free > 0;
+  console.log(`  SWEEP: ${sweepOK ? 'PASS' : '*** FAIL ***'}`);
+
+  // 2. a light that stays a small light is always inside the centre band
+  let bandOK = true;
+  for (const [name, poly] of rooms) {
+    for (const fans of [[F(15,15)], [F(9,9), F(21,21)], []]) {
+      const r = planLights(poly, fans, {});
+      if (!r.ok) continue;
+      for (const l of r.lights) {
+        if (l.kind !== 'small' || !l.cell || l.outsideBand) continue;
+        const fx = Math.abs(l.x - l.cell.cx) / l.cell.w, fy = Math.abs(l.y - l.cell.cy) / l.cell.h;
+        if (fx > r.opt.centreBand + 1e-6 || fy > r.opt.centreBand + 1e-6) {
+          bandOK = false;
+          console.log(`    ${name} ${l.id}: ${(Math.max(fx,fy)*100).toFixed(0)}% off centre, band is ${r.opt.centreBand*100}%`);
+        }
+      }
+    }
+  }
+  console.log(`  CENTRE BAND respected by every un-flagged small light: ${bandOK ? 'PASS' : '*** FAIL ***'}`);
+  console.log(`\nAWKWARD-CELL OVERALL: ${sweepOK && bandOK ? 'PASS' : 'FAILED'}`);
+}
+
+console.log('\n=== hard guarantee: no small light outside the centre band ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+  const shapes = [['24.2x19',R(24.2,19)],['36x24',R(36,24)],['30x30',R(30,30)],['20x14',R(20,14)],
+                  ['13x21',R(13,21)],['L30',L],['30x8',R(30,8)]];
+  let worst = 0, worstAt = '', checked = 0, bad = 0, holes = 0, cededTotal = 0;
+  for (const [name, poly] of shapes) {
+    for (const r0 of [1.5, 1.97, 2.5]) {
+      for (const cl of [0.5, 1.0, 2.0, 3.0]) {
+        for (let fx = 2; fx <= 30; fx += 2.3) {
+          for (let fy = 2; fy <= 28; fy += 2.9) {
+            const fans = [F(fx, fy, r0), F(fx + 8.4, fy, r0)];
+            const r = planLights(poly, fans, { fanClearance: cl });
+            if (!r.ok) continue;
+            checked++;
+            if (r.stats.served + r.stats.ceded !== r.stats.cells) holes++;
+            cededTotal += r.stats.ceded;
+            for (const l of r.lights) {
+              if (l.kind !== 'small' || !l.cell) continue;
+              const off = Math.max(Math.abs(l.x - l.cell.cx) / l.cell.w,
+                                   Math.abs(l.y - l.cell.cy) / l.cell.h);
+              if (off > worst) { worst = off; worstAt = `${name} r${r0} cl${cl} fan(${fx.toFixed(1)},${fy.toFixed(1)})`; }
+              if (off > r.opt.centreBand + 1e-6) bad++;
+            }
+          }
+        }
+      }
+    }
+  }
+  console.log(`  ${checked} layouts checked across ${shapes.length} shapes x 3 fan sizes x 4 clearances`);
+  console.log(`  worst small light offset: ${(worst * 100).toFixed(1)}% of its cell (band is 20%)`);
+  console.log(`    at ${worstAt}`);
+  console.log(`  lights outside the band : ${bad}   (must be 0)`);
+  console.log(`  unexplained dark cells  : ${holes}   (must be 0)`);
+  console.log(`  cells ceded to a fan    : ${cededTotal}`);
+  console.log(`\nBAND GUARANTEE: ${bad === 0 && holes === 0 ? 'PASS' : '*** FAIL ***'}`);
 }

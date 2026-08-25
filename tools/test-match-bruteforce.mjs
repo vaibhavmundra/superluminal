@@ -1,11 +1,15 @@
 import { maxWeightMatching } from '../src/lib/matching.js';
 
-function brute(nL, nR, edges) {
-  let best = null, bestKey = [-1, -Infinity];
+function brute(nL, nR, edges, cardinalityFirst = true) {
+  let best = null, bestKey = cardinalityFirst ? [-1, -Infinity] : [0, 0];
   const rec = (i, usedL, usedR, chosen, wsum) => {
     if (i === edges.length) {
-      const key = [chosen.length, wsum];
-      if (key[0] > bestKey[0] || (key[0] === bestKey[0] && key[1] > bestKey[1] + 1e-9)) { bestKey = key; best = [...chosen]; }
+      if (cardinalityFirst) {
+        const key = [chosen.length, wsum];
+        if (key[0] > bestKey[0] || (key[0] === bestKey[0] && key[1] > bestKey[1] + 1e-9)) { bestKey = key; best = [...chosen]; }
+      } else if (wsum > bestKey[1] + 1e-9) {
+        bestKey = [chosen.length, wsum]; best = [...chosen];
+      }
       return;
     }
     rec(i + 1, usedL, usedR, chosen, wsum);
@@ -42,3 +46,26 @@ for (let trial = 0; trial < 400; trial++) {
   }
 }
 console.log(fails === 0 ? 'matching: 400/400 random cases match brute force ✓' : `matching: ${fails} FAILURES`);
+
+
+// --- pure max-weight mode (no cardinality bias) ------------------------------
+let f2 = 0;
+seed = 987654;
+for (let trial = 0; trial < 400; trial++) {
+  const nL = 1 + Math.floor(rnd() * 5), nR = 1 + Math.floor(rnd() * 5);
+  const edges = [];
+  for (let l = 0; l < nL; l++) for (let r = 0; r < nR; r++)
+    // weights straddle zero so that "fewer, better pairs" is sometimes optimal
+    if (rnd() < 0.55) edges.push({ l, r, w: Math.round((rnd() * 20 - 8) * 10) / 10, id: `${l}-${r}` });
+  if (!edges.length) continue;
+  const got = maxWeightMatching(nL, nR, edges, { maximizeCardinality: false });
+  const gotW = got.reduce((s, e) => s + e.w, 0);
+  const want = brute(nL, nR, edges, false);
+  const ls = new Set(got.map(e => e.l)), rs = new Set(got.map(e => e.r));
+  const valid = ls.size === got.length && rs.size === got.length;
+  if (!valid || gotW < want[1] - 1e-6) {
+    f2++;
+    if (f2 <= 3) console.log('WEIGHT MISMATCH', { edges: edges.map(e => `${e.l}-${e.r}:${e.w}`).join(','), gotW, want, valid });
+  }
+}
+console.log(f2 === 0 ? 'pure max-weight: 400/400 random cases match brute force \u2713' : `pure max-weight: ${f2} FAILURES`);

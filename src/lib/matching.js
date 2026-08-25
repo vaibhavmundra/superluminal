@@ -9,15 +9,22 @@
  * @param {number} nL           number of left vertices
  * @param {number} nR           number of right vertices
  * @param {{l:number,r:number,w:number,id:any}[]} edges
+ * @param {{maximizeCardinality?:boolean}} opts
+ *        maximizeCardinality (default true) biases the weights so that adding
+ *        one more pair always beats rearranging — cardinality first, weight
+ *        second. Set it false when the weights already price what each pair is
+ *        worth and you want an honest trade-off between "more pairs" and
+ *        "better pairs". Augmenting along maximum-gain paths gives the optimal
+ *        matching at every cardinality, so stopping once the best gain turns
+ *        non-positive lands on the global optimum either way.
  * @returns {{l:number,r:number,w:number,id:any}[]} the chosen edges
  */
-export function maxWeightMatching(nL, nR, edges) {
+export function maxWeightMatching(nL, nR, edges, opts = {}) {
   if (!edges.length) return [];
+  const { maximizeCardinality = true } = opts;
 
-  // Bias every weight upward so that adding one more pair always beats any
-  // weight gain from rearranging. => maximum cardinality first, weight second.
   const maxW = Math.max(...edges.map((e) => Math.abs(e.w)));
-  const BIAS = maxW * 4 * (nL + nR) + 1;
+  const BIAS = maximizeCardinality ? maxW * 4 * (nL + nR) + 1 : 0;
 
   const adjL = Array.from({ length: nL }, () => []);
   edges.forEach((e, i) => adjL[e.l].push(i));

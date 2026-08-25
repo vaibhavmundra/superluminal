@@ -95,7 +95,12 @@ rectify → carve zones → chunk → per-chunk grid → matching → align → 
    vary to suit the walls" comes from.
 4. **Cells.** Cross the two partitions inside each chunk. Cells are always
    fully inside the room and fully outside every zone, by construction.
-5. **Matching.** A large light consumes two adjacent cells (within the same
+5. **Classify.** Before matching, ask of every cell: can a small light sit
+   within the **centre band** (default ±20% of the cell's size) and still clear
+   the fans? A cell that cannot is *awkward* — a small light there would sit
+   visibly off centre. Rather than patch it afterwards, the cell is offered to
+   the matching.
+6. **Matching.** A large light consumes two adjacent cells (within the same
    chunk); a small light consumes one. So the layout is a **maximum-weight
    maximum-cardinality matching** on the cell-adjacency graph, restricted to
    pairs whose shared edge satisfies the wall-distance rule — with zone edges
@@ -104,11 +109,11 @@ rectify → carve zones → chunk → per-chunk grid → matching → align → 
    grid line; unmatched cells get a small light at their centre. Preferences —
    depth into the room, the long axis, alignment with the fan, cell squareness
    — are edge weights, not special cases.
-6. **Align.** Light coordinates are clustered into rows and columns and
+7. **Align.** Light coordinates are clustered into rows and columns and
    snapped — across chunk boundaries too — preferring the fan's coordinate.
    A large light on a vertical grid line has its x fixed by the grid, so only
    its y can slide, and only along the shared edge.
-7. **Fixtures.** Every fan is both an obstacle and a soft grid anchor, and all
+8. **Fixtures.** Every fan is both an obstacle and a soft grid anchor, and all
    of them apply at once — a position must clear *every* fan. A large light
    stays on its grid intersection, so if a fan
    fouls that point the pair is simply unavailable and both cells fall through
@@ -161,8 +166,15 @@ The slider ranges 2–9 ft if you want to see the rule bite differently.
 - Walls are assumed rectilinear. Diagonals become staircases.
 - Beams, diffusers and sprinklers aren't read from the plan automatically; only
   the fan is. Mark them by hand as no-light zones.
-- A fan sitting near a cell centre pushes that light off-centre. Lower **Fan
-  clearance** if you'd rather it stayed put.
+- A fan sitting near a cell centre is handled in three stages: the grid tries
+  to avoid creating such a cell at all, then the matching tries to cover it with
+  a large light, then — failing both — the cell is ceded. When the fan sits
+  *inside* the cell, the first two usually fail: every candidate grid
+  intersection for that cell is inside the fan's clearance circle too. Lower
+  **Fan clearance** if you'd rather have a light there.
+- **Hold to target** (default 4) is what keeps cells near 6 ft; **Fan pull**
+  (default 0.6) is what bends the grid to line up with fixtures. Raising Fan
+  pull much above 1 lets it distort cell sizes noticeably.
 - Many fans in a small room can leave a cell with nowhere clear to go. The
   light stays put and is reported as a clash rather than being dropped.
 - A fan sitting near its own cell's centre is the common clash: no point on

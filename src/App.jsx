@@ -372,6 +372,8 @@ export default function App() {
             <Slider label="Target cell" v={opt.targetCell} min={3} max={12} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, targetCell: v }))} fmt={(v) => `${v} ft`} />
             <Slider label="Min cell" v={opt.minCell} min={2} max={8} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, minCell: v }))} fmt={(v) => `${v} ft`} />
             <Slider label="Max cell" v={opt.maxCell} min={5} max={14} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, maxCell: v }))} fmt={(v) => `${v} ft`} />
+            <Slider label="Hold to target" v={opt.sizeWeight} min={0} max={10} step={0.25}
+              onChange={(v) => setOpt((o) => ({ ...o, sizeWeight: v }))} fmt={(v) => v.toFixed(2)} />
             <Slider label="Fan pull" v={opt.fanAnchorWeight} min={0} max={3} step={0.1} onChange={(v) => setOpt((o) => ({ ...o, fanAnchorWeight: v }))} fmt={(v) => v.toFixed(1)} />
             <Slider label="Skip chunks under" v={opt.minChunk} min={0} max={4} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, minChunk: v }))} fmt={(v) => `${v} ft`} />
             <p className="note">The space (minus no-light zones) is chopped into rectangular chunks,
@@ -385,6 +387,18 @@ export default function App() {
               onChange={(v) => setOpt((o) => ({ ...o, minWallDistance: v }))} fmt={(v) => `${v} ft`} />
             <p className="note">A large light needs this much clear to the nearest wall in
               every direction. Anything closer becomes a small light at the cell centre.</p>
+            <Slider label="Centre band" v={opt.centreBand} min={0.05} max={0.45} step={0.01}
+              onChange={(v) => setOpt((o) => ({ ...o, centreBand: v }))} fmt={(v) => `±${Math.round(v * 100)}%`} />
+            <label className="check">
+              <input type="checkbox" checked={opt.omitAwkwardCells}
+                onChange={(e) => setOpt((o) => ({ ...o, omitAwkwardCells: e.target.checked }))} />
+              Leave a cell to the fan rather than place an off-centre light
+            </label>
+            <Slider label="Awkward-cell priority" v={opt.awkwardPriority} min={0} max={5} step={0.25}
+              onChange={(v) => setOpt((o) => ({ ...o, awkwardPriority: v }))} fmt={(v) => v.toFixed(2)} />
+            <p className="note">A small light must sit within the centre band of its cell. A cell
+              that can't take one is offered to the matching instead, so a large light shared with a
+              neighbour covers it. Set the priority to 0 to switch that off.</p>
             <Slider label="Align tolerance" v={opt.alignTol} min={0} max={3} step={0.05} onChange={(v) => setOpt((o) => ({ ...o, alignTol: v }))} fmt={(v) => `${v} ft`} />
             <Slider label="Fan clearance" v={opt.fanClearance} min={0} max={6} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, fanClearance: v }))} fmt={(v) => `${v} ft`} />
             <label className="check">
@@ -420,7 +434,10 @@ export default function App() {
               <div style={{ marginTop: 10 }}>
                 <div className="kv"><span>Cells lit</span>
                   <b style={{ color: plan.stats.unserved ? 'var(--danger)' : 'var(--success)' }}>
-                    {plan.stats.served} / {plan.stats.cells}</b></div>
+                    {plan.stats.served} / {plan.stats.cells - plan.stats.ceded}</b></div>
+                {plan.stats.ceded > 0 && (
+                  <div className="kv"><span>Cells left to a fan</span><b>{plan.stats.ceded}</b></div>
+                )}
                 <div className="kv"><span>Chunks</span>
                   <b>{plan.stats.chunks}{plan.stats.omittedChunks > 0 ? ` (+${plan.stats.omittedChunks} slivers skipped)` : ''}</b></div>
                 <div className="kv"><span>Average cell side</span><b>{plan.stats.avgCell.toFixed(2)} ft</b></div>
@@ -433,10 +450,26 @@ export default function App() {
                 {plan.stats.nudged > 0 && (
                   <div className="kv"><span>Moved clear of the fan</span><b>{plan.stats.nudged}</b></div>
                 )}
+                {plan.stats.awkward > 0 && (
+                  <div className="kv"><span>Off-centre cells rescued</span>
+                    <b style={{ color: plan.stats.rescued === plan.stats.awkward ? 'var(--success)' : undefined }}>
+                      {plan.stats.rescued} / {plan.stats.awkward}</b></div>
+                )}
               </div>
               {plan.stats.unserved > 0 && (
                 <p className="note warn">{plan.stats.unserved} cell{plan.stats.unserved > 1 ? 's have' : ' has'} no
                   light. That should never happen — please send me the plan.</p>
+              )}
+              {plan.stats.ceded > 0 && (
+                <p className="note">{plan.stats.ceded} cell{plan.stats.ceded > 1 ? 's have' : ' has'} no light
+                  of {plan.stats.ceded > 1 ? 'their' : 'its'} own — a fan sits too close to the centre for a
+                  small light, and no large light can reach {plan.stats.ceded > 1 ? 'them' : 'it'} either. The fan
+                  is the ceiling feature there. Lower the fan clearance if you want a light anyway.</p>
+              )}
+              {plan.stats.outsideBand > 0 && (
+                <p className="note warn">{plan.stats.outsideBand} small
+                  light{plan.stats.outsideBand > 1 ? 's sit' : ' sits'} outside the centre band. Switch on
+                  "leave a cell to the fan" to drop {plan.stats.outsideBand > 1 ? 'them' : 'it'} instead.</p>
               )}
               {plan.stats.clashes > 0 && (
                 <p className="note warn">{plan.stats.clashes} light{plan.stats.clashes > 1 ? 's sit' : ' sits'} inside
