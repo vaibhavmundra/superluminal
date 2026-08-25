@@ -165,6 +165,10 @@ The slider ranges 2–9 ft if you want to see the rule bite differently.
   clearance** if you'd rather it stayed put.
 - Many fans in a small room can leave a cell with nowhere clear to go. The
   light stays put and is reported as a clash rather than being dropped.
+- A fan sitting near its own cell's centre is the common clash: no point on
+  either centre line can be `fan radius + clearance` away when that distance
+  exceeds half the cell. The light goes to the least-bad point on an axis and
+  is flagged. Lower **Fan clearance** to resolve it.
 - Fans pull the grid towards themselves, so several fans can change the cell
   count as the partition bends to line up with all of them. Turn **Fan pull**
   down to 0 to size the grid purely on the room.

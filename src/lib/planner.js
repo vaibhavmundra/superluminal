@@ -15,7 +15,8 @@
 //                   on their shared edge; leftovers get a SMALL light at their
 //                   centre. Zone edges count as walls for the wall-distance rule.
 //   5. align      — snap light coordinates into shared rows/columns, across
-//                   chunk boundaries too
+//                   chunk boundaries too, then re-seat any light that ended up
+//                   diagonal to its own cell back onto a centre line
 //   6. fixtures   — clear anything fouling any of the ceiling fans
 // ---------------------------------------------------------------------------
 
@@ -33,6 +34,7 @@ export const DEFAULTS = {
                           //      The design rule is 6 ft; 5 ft is that rule with
                           //      its working tolerance.
   minSharedEdge: 3.0,     // ft — cells must share at least this much wall to pair up
+  cellEdgePad: 0.10,      // fraction of the cell a nudged light keeps clear of its own edge
   alignTol: 1.25,         // ft — lights within this get snapped into a row/column
   fanClearance: 2.0,      // ft — keep lights this far outside the fan's blade circle
   fanAnchorWeight: 1.0,   // how hard each chunk's grid tries to line up with the fan
@@ -348,14 +350,21 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     // Every remaining cell MUST get a light. If the centre falls inside the
     // fan's exclusion circle we move the fitting within the cell — deleting it
     // would leave the cell dark, which is never the right answer.
-    const { p, clash } = placeSmall(c, polygon, fans, zones, opt);
+    const { p, clash, slid } = placeSmall(c, polygon, fans, zones, opt);
     lights.push({ id: `S${lights.length}`, kind: 'small', x: p.x, y: p.y,
-                  cells: [c.id], cell: c, locked: false, nudged: p.x !== c.cx || p.y !== c.cy, clash });
+                  cells: [c.id], cell: c, locked: false,
+                  nudged: p.x !== c.cx || p.y !== c.cy, slid, clash });
   }
 
   // 6. alignment pass — cluster into rows and columns, across chunks too
   alignAxis(lights, 'x', polygon, opt, fans, zones, wallDist);
   alignAxis(lights, 'y', polygon, opt, fans, zones, wallDist);
+
+  // 7. re-seat: the alignment pass works one axis at a time, so a light that
+  // was nudged along one axis can drift on the other and end up diagonal to
+  // its own cell again. Pull the smaller of the two offsets back to zero
+  // wherever that is still a legal position.
+  reseatOnCellAxis(lights, polygon, fans, zones, opt);
 
   const served = new Set();
   for (const l of lights) for (const cid of l.cells) served.add(cid);
@@ -366,6 +375,10 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     served: served.size,
     unserved: cells.length - served.size,
     nudged: lights.filter((l) => l.nudged).length,
+    offAxis: lights.filter((l) => {
+      if (l.kind !== 'small' || !l.cell) return false;
+      return Math.abs(l.x - l.cell.cx) > 0.05 && Math.abs(l.y - l.cell.cy) > 0.05;
+    }).length,
     clashes: lights.filter((l) => l.clash).length,
     large: lights.filter((l) => l.kind === 'large').length,
     small: lights.filter((l) => l.kind === 'small').length,
@@ -377,11 +390,15 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
 }
 
 /**
- * Where to put a small light inside its cell. Normally dead centre; if that
- * sits inside the fan's exclusion circle (zones can't happen — cells live
- * entirely outside them), take the nearest point in the cell that clears
- * everything. Only if nothing clears do we settle for the least-bad point
- * and flag a clash.
+ * Where to put a small light inside its cell.
+ *
+ * Normally dead centre. When the centre is fouled — by a fan's clearance
+ * circle, or a zone — the fitting slides along ONE of the cell's two centre
+ * lines, never diagonally. A light on a centre line still reads as belonging
+ * to its box and stays in line with the row or column it shares; a light
+ * pushed into a corner just looks like a mistake.
+ *
+ * Ties go to the cell's longer axis, which has more room to give.
  */
 function placeSmall(cell, polygon, fans, zones, opt) {
   const base = { x: cell.cx, y: cell.cy };
@@ -395,29 +412,69 @@ function placeSmall(cell, polygon, fans, zones, opt) {
     }
     return v;
   };
-  if (violation(base) === 0) return { p: base, clash: false };
+  if (violation(base) === 0) return { p: base, clash: false, slid: null };
 
-  const ix = cell.w * 0.16, iy = cell.h * 0.16;
-  const x0 = cell.x0 + ix, x1 = cell.x1 - ix;
-  const y0 = cell.y0 + iy, y1 = cell.y1 - iy;
-  const N = 11;
-  let best = null, bestD = Infinity, fallback = null, fallbackV = Infinity;
-  for (let i = 0; i < N; i++) {
-    for (let j = 0; j < N; j++) {
-      const q = {
-        x: x1 > x0 ? x0 + (i / (N - 1)) * (x1 - x0) : cell.cx,
-        y: y1 > y0 ? y0 + (j / (N - 1)) * (y1 - y0) : cell.cy,
-      };
-      if (!pointInPolygon(q, polygon)) continue;
-      const v = violation(q);
-      if (v < fallbackV) { fallbackV = v; fallback = q; }
-      if (v > 0) continue;
-      const dCentre = Math.hypot(q.x - base.x, q.y - base.y);
-      if (dCentre < bestD) { bestD = dCentre; best = q; }
+  // candidates: the horizontal centre line and the vertical centre line
+  const pad = Math.min(cell.w, cell.h) * (opt.cellEdgePad ?? 0.10);
+  const longAxis = cell.w >= cell.h ? 'h' : 'v';
+  const N = 41;
+  const cands = [];
+  for (let k = 0; k < N; k++) {
+    const t = N === 1 ? 0.5 : k / (N - 1);
+    const spanX = cell.w - 2 * pad, spanY = cell.h - 2 * pad;
+    if (spanX > 0) cands.push({ p: { x: cell.x0 + pad + t * spanX, y: cell.cy }, axis: 'h' });
+    if (spanY > 0) cands.push({ p: { x: cell.cx, y: cell.y0 + pad + t * spanY }, axis: 'v' });
+  }
+
+  let best = null, bestD = Infinity, bestAxis = null;
+  let fb = null, fbV = Infinity, fbD = Infinity, fbAxis = null;
+  for (const c of cands) {
+    if (!pointInPolygon(c.p, polygon)) continue;
+    const v = violation(c.p);
+    const d = Math.hypot(c.p.x - base.x, c.p.y - base.y);
+    if (v === 0) {
+      const better = d < bestD - 1e-9 ||
+        (Math.abs(d - bestD) <= 1e-9 && c.axis === longAxis && bestAxis !== longAxis);
+      if (best === null || better) { best = c.p; bestD = d; bestAxis = c.axis; }
+    }
+    // fallback: least violation, then least displacement, then the long axis
+    const fbBetter = v < fbV - 1e-9 ||
+      (Math.abs(v - fbV) <= 1e-9 && (d < fbD - 1e-9 ||
+        (Math.abs(d - fbD) <= 1e-9 && c.axis === longAxis && fbAxis !== longAxis)));
+    if (fb === null || fbBetter) { fb = c.p; fbV = v; fbD = d; fbAxis = c.axis; }
+  }
+  if (best) return { p: best, clash: false, slid: bestAxis };
+  return { p: fb || base, clash: true, slid: fbAxis };
+}
+
+/**
+ * Guarantee the post-condition: every small light shares either its cell's
+ * centre x or its centre y. Off-axis by a hair is fine (the alignment pass
+ * earns that), off-axis in both directions is not.
+ */
+function reseatOnCellAxis(lights, polygon, fans, zones, opt) {
+  const tol = 0.05; // ft — below this, treat it as on the line
+  const legal = (q) => {
+    if (!pointInPolygon(q, polygon)) return false;
+    if (inAnyZone(q, zones)) return false;
+    return !fans.some((f) => Math.hypot(q.x - f.x, q.y - f.y) < (f.r || 0) + opt.fanClearance);
+  };
+  for (const l of lights) {
+    if (l.kind !== 'small' || !l.cell) continue;
+    const c = l.cell;
+    const dx = l.x - c.cx, dy = l.y - c.cy;
+    if (Math.abs(dx) <= tol || Math.abs(dy) <= tol) continue; // already on a line
+    // zero the smaller offset first — it is the cheaper correction
+    const tries = Math.abs(dx) <= Math.abs(dy)
+      ? [{ x: c.cx, y: l.y }, { x: l.x, y: c.cy }]
+      : [{ x: l.x, y: c.cy }, { x: c.cx, y: l.y }];
+    for (const t of tries) {
+      if (!legal(t)) continue;
+      l.x = t.x; l.y = t.y;
+      l.reseated = true;
+      break;
     }
   }
-  if (best) return { p: best, clash: false };
-  return { p: fallback || base, clash: true };
 }
 
 function polygonArea(pts) {

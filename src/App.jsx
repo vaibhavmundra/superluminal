@@ -125,7 +125,8 @@ export default function App() {
         yLines: ch.yLines.map((y) => y * pxPerFt + origin.y),
       })),
       cellsPx: res.cells.map(rectToPx),
-      lightsPx: res.lights.map((l) => ({ ...l, ...toPx(l) })),
+      lightsPx: res.lights.map((l) => ({ ...l, ...toPx(l),
+        centrePx: l.cell ? toPx({ x: l.cell.cx, y: l.cell.cy }) : null })),
       fansFt: fixtures,
     };
   }, [region, pxPerFt, opt, fans, useBoundingRect, zones]);

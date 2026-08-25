@@ -120,6 +120,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 x2={l.axis === 'v' ? l.x : l.x + R * 1.7} y2={l.axis === 'v' ? l.y + R * 1.7 : l.y}
                 stroke={col} strokeWidth={lw * 1.1} opacity="0.5" />
             )}
+            {layers.labels && l.nudged && l.centrePx && (
+              <g opacity="0.5">
+                <line x1={l.centrePx.x} y1={l.centrePx.y} x2={l.x} y2={l.y}
+                  stroke={col} strokeWidth={lw} strokeDasharray={`${lw * 2} ${lw * 2}`} />
+                <circle cx={l.centrePx.x} cy={l.centrePx.y} r={lw * 1.5} fill="none"
+                  stroke={col} strokeWidth={lw} />
+              </g>
+            )}
             {layers.labels && (
               <text x={l.x + R * 1.6} y={l.y - R * 1.2} fontSize={s * 0.5}
                 fontFamily="JetBrains Mono, monospace" fill={col} opacity="0.75">{l.id}</text>

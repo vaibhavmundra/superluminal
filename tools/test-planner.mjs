@@ -142,3 +142,35 @@ console.log('\n=== multiple ceiling fans ===\n');
   }
   console.log(`\nMULTI-FAN OVERALL: ${pass === cases.length ? 'PASS' : `${cases.length - pass} FAILED`}`);
 }
+
+
+console.log('\n=== small lights stay on a cell centre line ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r = 2.0) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+  const cases = [
+    ['living area from screenshot', R(25.1,19.5), [F(9.30,9.84,1.97), F(18.13,9.84,1.97)], [{x0:1.05,y0:2.86,x1:4.60,y1:16.6}]],
+    ['36x24, three fans',           R(36,24),     [F(9,12), F(18,12), F(27,12)],            []],
+    ['36x24, four fans + zone',     R(36,24),     [F(12,8), F(24,8), F(12,16), F(24,16)],   [{x0:0,y0:0,x1:7,y1:10}]],
+    ['24x13, two close fans',       R(23.9,12.9), [F(6.5,6.8,2.02), F(16,6.8,2.02)],        []],
+    ['L-shape, two fans + zone',    L,            [F(20,6), F(6,20)],  [{x0:14,y0:2,x1:22,y1:9}]],
+    ['14x14, four huge fans',       R(14,14),     [F(4,4,3),F(10,4,3),F(4,10,3),F(10,10,3)],[]],
+    ['30x30, fan on a cell centre', R(30,30),     [F(15,15,2.2)],                           []],
+  ];
+  let pass = 0;
+  for (const [name, poly, fans, zones] of cases) {
+    const r = planLights(poly, fans, {}, zones);
+    if (!r.ok) { console.log(`  ${name}: not ok — ${r.reason}`); continue; }
+    const diag = r.lights.filter((l) => l.kind === 'small' && l.cell &&
+      Math.abs(l.x - l.cell.cx) > 0.05 && Math.abs(l.y - l.cell.cy) > 0.05);
+    const inside = r.lights.filter((l) => l.kind === 'small' && l.cell &&
+      (l.x < l.cell.x0 - 1e-6 || l.x > l.cell.x1 + 1e-6 || l.y < l.cell.y0 - 1e-6 || l.y > l.cell.y1 + 1e-6));
+    const ok = diag.length === 0 && inside.length === 0 && r.stats.served === r.stats.cells;
+    if (ok) pass++;
+    console.log(`  ${name.padEnd(30)} ${r.stats.served}/${r.stats.cells} lit, ${r.stats.nudged} nudged, ` +
+                `${diag.length} diagonal, ${inside.length} outside its cell  ${ok ? 'PASS' : '*** FAIL ***'}`);
+    diag.forEach((l) => console.log(`      ${l.id} off by (${(l.x-l.cell.cx).toFixed(2)}, ${(l.y-l.cell.cy).toFixed(2)})`));
+  }
+  console.log(`\nCELL-AXIS OVERALL: ${pass === cases.length ? 'PASS' : `${cases.length - pass} FAILED`}`);
+}
