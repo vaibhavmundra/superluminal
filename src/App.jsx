@@ -421,6 +421,15 @@ export default function App() {
                 onChange={(e) => setOpt((o) => ({ ...o, allowChunkAxis: e.target.checked }))} />
               ...preferring the chunk's centre axis
             </label>
+            <label className="check">
+              <input type="checkbox" checked={opt.allowRoaming}
+                onChange={(e) => setOpt((o) => ({ ...o, allowRoaming: e.target.checked }))} />
+              ...or leave the grid line entirely, as a last resort
+            </label>
+            <Slider label="Alignment strictness" v={opt.misalignPenalty} min={0} max={5} step={0.25}
+              onChange={(v) => setOpt((o) => ({ ...o, misalignPenalty: v }))} fmt={(v) => v.toFixed(2)} />
+            <Slider label="Cost of roaming" v={opt.roamPenalty} min={0} max={5} step={0.25}
+              onChange={(v) => setOpt((o) => ({ ...o, roamPenalty: v }))} fmt={(v) => v.toFixed(2)} />
             <Slider label="Vertex dead band" v={opt.vertexBand} min={0} max={2} step={0.05}
               onChange={(v) => setOpt((o) => ({ ...o, vertexBand: v }))} fmt={(v) => `${v.toFixed(2)} ft`} />
             <label className="check">
@@ -428,10 +437,11 @@ export default function App() {
                 onChange={(e) => setOpt((o) => ({ ...o, allowGridEdgePositions: e.target.checked }))} />
               ...or to a grid crossing at the end of its line
             </label>
-            <p className="note">A large light always sits on a grid line. Along that line it prefers
-              the midpoint or the chunk's centre axis, but it may slide anywhere else if that is what
-              clears a fan. The dead band beside each vertex keeps it honest: a light is either on the
-              vertex, lighting four boxes, or clearly away from it, lighting two.</p>
+            <p className="note">A large light prefers the midpoint of the line it shares, then a chunk
+              centre axis or a vertex, then anywhere else along that line — and only as a last resort
+              does it leave the line, sliding along the row or column joining the two boxes instead.
+              Alignment strictness is what buys a tidy position at the price of a box or two; cost of
+              roaming is what keeps it on the grid until it really cannot be.</p>
             <label className="check">
               <input type="checkbox" checked={opt.omitAwkwardCells}
                 onChange={(e) => setOpt((o) => ({ ...o, omitAwkwardCells: e.target.checked }))} />
@@ -491,6 +501,10 @@ export default function App() {
                 )}
                 {plan.stats.nudged > 0 && (
                   <div className="kv"><span>Moved clear of the fan</span><b>{plan.stats.nudged}</b></div>
+                )}
+                {plan.lights.filter((l) => l.roaming).length > 0 && (
+                  <div className="kv"><span>Large lights off the grid line</span>
+                    <b>{plan.lights.filter((l) => l.roaming).length}</b></div>
                 )}
                 {plan.lights.filter((l) => l.kind === 'large' && l.cells.length === 4).length > 0 && (
                   <div className="kv"><span>Lights covering 4 boxes</span>

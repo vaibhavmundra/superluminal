@@ -47,6 +47,16 @@ export const DEFAULTS = {
                           //   either ON the vertex (lighting four boxes) or
                           //   clearly away from it (lighting two)
   chunkAxisBonus: 1.5,    // what landing on the midpoint or a chunk axis is worth
+  alignSnap: 0.15,        // ft — how close counts as "lined up with"
+  misalignPenalty: 1.5,   // what a large light lining up with nothing costs,
+                          //   priced in boxes so it can actually compete
+  allowRoaming: true,     // last resort: a large light may leave its grid line
+  roamSpan: 0.35,         // how far off the shared edge it may roam, as a
+                          //   fraction of half the pair's width
+  roamPenalty: 0.75,      // what leaving the grid line costs. Below the price of
+                          //   two healthy boxes, so a roaming light that keeps
+                          //   every small light beats a vertex that eats two —
+                          //   above zero, so an on-line spot always wins first.
   minLightSpacing: 3.9,   // ft — no two lights closer than this. Midpoints are
                           //   naturally spread; the off-midpoint spots are not,
                           //   so without this two large lights can end up a
@@ -430,6 +440,11 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   const pairSpots = new Map();   // every valid position for a given pair
   for (const ch of chunks) {
     const longAxis = ch.w >= ch.h ? 'x' : 'y';
+    // the coordinates the rest of the layout actually uses: the row and column
+    // centres the small lights sit on, and the grid lines themselves
+    const rowC = [], colC = [];
+    for (let j = 0; j < ch.yLines.length - 1; j++) rowC.push((ch.yLines[j] + ch.yLines[j + 1]) / 2);
+    for (let i = 0; i < ch.xLines.length - 1; i++) colC.push((ch.xLines[i] + ch.xLines[i + 1]) / 2);
     const chunkAxis = { x: (ch.x0 + ch.x1) / 2, y: (ch.y0 + ch.y1) / 2 };
     for (const c of ch.cellAt.values()) {
       for (const [di, dj] of [[1, 0], [0, 1]]) {
@@ -476,9 +491,39 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
           for (const v of [lo, hi]) spots.push({ v, kind: 'grid-corner' });
         }
 
+        // LAST RESORT — roaming. When nothing on the grid line is any good, the
+        // light may leave the line altogether and slide along the line joining
+        // the two box centres instead: still serving both, still on the row or
+        // column the small lights use, just no longer over the boundary between
+        // them. It is priced below every on-line option so it is only reached
+        // when those are worse.
+        const centreLine = vertical ? c.cy : c.cx;      // both boxes share it
+        const acrossLo = vertical ? c.x0 : c.y0;
+        const acrossHi = vertical ? n.x1 : n.y1;
+        const acrossMid = fixed;                        // the shared edge
+        const reach = (acrossHi - acrossLo) / 2 * opt.roamSpan;
+        const roamSpots = [];
+        if (opt.allowRoaming) {
+          const M = 41;
+          for (let k = 0; k <= M; k++) {
+            const v = acrossMid - reach + (k / M) * 2 * reach;
+            if (v < acrossLo + 1e-9 || v > acrossHi - 1e-9) continue;
+            if (Math.abs(v - acrossMid) < 1e-6) continue;   // that is the on-line case
+            roamSpots.push({ v, kind: 'roam' });
+          }
+        }
+
         const span = { len, lo, hi, mid, fixed, axisV: axis, dir: vertical ? 'v' : 'h' };
-        for (const spot of spots) {
-          const p = vertical ? { x: fixed, y: spot.v } : { x: spot.v, y: fixed };
+        const roamSpan = { len: 2 * reach, lo: Math.max(acrossLo, acrossMid - reach),
+                           hi: Math.min(acrossHi, acrossMid + reach), mid: acrossMid,
+                           fixed: centreLine, axisV: vertical ? chunkAxis.x : chunkAxis.y,
+                           dir: vertical ? 'h' : 'v' };
+
+        for (const spot of [...spots, ...roamSpots]) {
+          const roaming = spot.kind === 'roam';
+          const p = roaming
+            ? (vertical ? { x: spot.v, y: centreLine } : { x: centreLine, y: spot.v })
+            : (vertical ? { x: fixed, y: spot.v } : { x: spot.v, y: fixed });
           const wall = wallDist(p);
           if (wall + 1e-9 < opt.minWallDistance) continue;
           if (fanBlocked(p)) continue;
@@ -493,19 +538,48 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
           const ar = Math.min(c.w, c.h) / Math.max(c.w, c.h);
           w += 0.75 * ar;
           w += 0.5 * Math.min(len / opt.targetCell, 1);
+          // breathing room past the fan clearance: two otherwise equal spots
+          // are not equal if one of them only just scrapes past a blade circle
+          const gap = fans.length
+            ? Math.min(...fans.map((f) => Math.hypot(p.x - f.x, p.y - f.y) - (f.r || 0) - opt.fanClearance))
+            : 3;
+          w += 0.6 * Math.min(Math.max(gap, 0), 3) / 3;
           // the midpoint stays the default; a slide has to earn its keep, and
           // landing on a chunk axis is exactly what earns it
           // stay near an anchor: the midpoint, or the chunk's centre axis
-          const offMid = Math.abs(spot.v - mid) / (len / 2);
-          const offAxis = opt.allowChunkAxis ? Math.abs(spot.v - axis) / (len / 2) : Infinity;
+          const offMid = roaming
+            ? Math.abs(spot.v - acrossMid) / Math.max(reach, 1e-9)
+            : Math.abs(spot.v - mid) / (len / 2);
+          const offAxis = (!roaming && opt.allowChunkAxis)
+            ? Math.abs(spot.v - axis) / (len / 2) : Infinity;
           w -= opt.offCentrePenalty * Math.min(offMid, offAxis);
           if (spot.kind === 'chunk-axis' || spot.kind === 'midpoint') w += opt.chunkAxisBonus;
 
-          const cover = cellsAt(p);
+          // A roaming light serves the pair it was made for. It sits inside one
+          // of the two boxes rather than over their boundary, so its coverage
+          // is by assignment, not by which box happens to contain the point.
+          const cover = roaming ? [c.id, n.id] : cellsAt(p);
           if (!cover.includes(c.id) || !cover.includes(n.id)) continue;
+          // Does this position line up with anything else in the drawing? A
+          // light on a row/column the small lights already use, on a grid line,
+          // or on the chunk's centre axis reads as deliberate. One parked
+          // between all of them reads as a mistake, however legal it is.
+          // a roaming light sits on the pair's own centre line, which IS the
+          // row or column the small lights use, so it is aligned by construction
+          const centres = roaming ? (vertical ? colC : rowC) : (vertical ? rowC : colC);
+          const lines = roaming ? (vertical ? ch.xLines : ch.yLines) : (vertical ? ch.yLines : ch.xLines);
+          const aligned = roaming
+            ? true
+            : centres.some((v) => Math.abs(v - spot.v) < opt.alignSnap)
+              || lines.some((v) => Math.abs(v - spot.v) < opt.alignSnap)
+              || (opt.allowChunkAxis && Math.abs(axis - spot.v) < opt.alignSnap);
           const key = `${Math.min(c.id, n.id)}-${Math.max(c.id, n.id)}-${cover.length}`;
           if (!pairSpots.has(key)) pairSpots.set(key, []);
-          const cand = { a: c, b: n, p, vertical, w, span, spot: spot.kind, cover, key };
+          const cand = { a: c, b: n, p, vertical, w, spot: spot.kind, cover, key, aligned, roaming,
+                         span: roaming ? roamSpan : span,
+                         // a roaming light slides ACROSS the boundary, so it
+                         // moves on the other axis from an on-line one
+                         moveAxis: roaming ? (vertical ? 'h' : 'v') : (vertical ? 'v' : 'h') };
           pairSpots.get(key).push(cand);
           candidates.push(cand);
         }
@@ -544,6 +618,12 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     const cellValue = valueOf(priority);
     let v = 0;
     for (const id of cand.cover) v += cellValue(byId.get(id));
+    // A position that lines up with nothing is charged for it, in the same
+    // currency as the boxes — otherwise a scaled-down aesthetic score could
+    // never outweigh the cost of one extra box and the layout would always
+    // take the tidier-on-paper, worse-looking option.
+    if (!cand.aligned) v -= opt.misalignPenalty;
+    if (cand.roaming) v -= opt.roamPenalty;
     return v + cand.w * AESTHETIC_SCALE;
   };
 
@@ -595,7 +675,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
    * is not separable — a priority that helps one cell can strand another. Both
    * settings are therefore built in full and the better result is kept.
    */
-  const place = (priority) => {
+  const place = (priority, vertexFirst) => {
     let matched = solve(primary, priority);
     if (opt.uniformOrientation) {
       const tidiness = (m) => {
@@ -621,43 +701,50 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
       lights.push({
         id: `L${lights.length}`, kind: 'large',
         x: cand.p.x, y: cand.p.y,
-        axis: cand.vertical ? 'v' : 'h',
+        axis: cand.moveAxis,
         cells: [...cand.cover],
         span: cand.span, spot: cand.spot, locked: false,
         lightsBoxes: cand.cover.length,
+        aligned: cand.aligned,
+        roaming: cand.roaming,
+        value: candValue(cand, priority),
         options: (pairSpots.get(cand.key) || [cand]).filter((o) =>
           o.cover.length === cand.cover.length && o.cover.every((id) => cand.cover.includes(id))),
         // it may only shift to a spot that lights exactly the same boxes,
         // otherwise the alignment pass would silently change what is covered
-        allowed: [...new Set([
-          cand.vertical ? cand.p.y : cand.p.x,
-          ...allowedSpots(cand.span, opt).filter((v) => {
-            const q = cand.vertical ? { x: cand.span.fixed, y: v } : { x: v, y: cand.span.fixed };
-            const cv = cellsAt(q);
-            return cv.length === cand.cover.length && cv.every((id) => cand.cover.includes(id));
-          }),
-        ].map((v) => Math.round(v * 1e6) / 1e6))].sort((a, b) => a - b),
+        // every legal position on this line that lights the same boxes, so the
+        // alignment pass has somewhere to go
+        allowed: [...new Set(
+          (pairSpots.get(cand.key) || [cand])
+            .filter((o) => o.cover.length === cand.cover.length
+                        && o.cover.every((id) => cand.cover.includes(id)))
+            .map((o) => Math.round((cand.vertical ? o.p.y : o.p.x) * 1e6) / 1e6)
+        )].sort((a, b) => a - b),
       });
     };
-    for (const e of matched) addLarge(e.id);
-
-    // Second pass — the exception. Pairs the midpoint could not serve, because
-    // it was too near a wall or inside a fan's clearance, may still work from
-    // the chunk's centre axis or from a grid intersection at the end of their
-    // shared line. Greedy by value, and every placement must keep its distance
-    // from the lights already down: midpoints space themselves, these do not,
-    // and without the check two large lights land a foot apart.
-    if (alternateBest.length) {
-      const farEnough = (p) =>
-        lights.every((l) => Math.hypot(l.x - p.x, l.y - p.y) >= opt.minLightSpacing - 1e-9);
+    // Four-box pieces are packed greedily. Whether that happens BEFORE or AFTER
+    // the two-box matching changes the answer — a matching that has already
+    // claimed a box blocks any four-box piece touching it, and vice versa — so
+    // both orders are built and the better one is kept.
+    const packFourBox = () => {
+      if (!alternateBest.length) return;
       const byValue = [...alternateBest].sort((x, y) => candValue(y, priority) - candValue(x, priority));
       for (const cand of byValue) {
         if (cand.cover.some((id) => used.has(id))) continue;   // no box lit twice
         if (candValue(cand, priority) <= 0) continue;          // must earn its place
-        if (!farEnough(cand.p)) continue;
+        if (!farEnoughOf(cand.p)) continue;
         addLarge(cand);
       }
+    };
+    const farEnoughOf = (p) =>
+      lights.every((l) => Math.hypot(l.x - p.x, l.y - p.y) >= opt.minLightSpacing - 1e-9);
+
+    if (vertexFirst) packFourBox();
+    for (const e of matched) {
+      if (e.id.cover.some((id) => used.has(id))) continue;
+      addLarge(e.id);
     }
+    if (!vertexFirst) packFourBox();
 
     for (const c of cells) {
       if (used.has(c.id)) continue;
@@ -678,60 +765,76 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
                     outsideBand: !centred.has(c.id), clash: !ok });
     }
     // A matching cannot express "keep your distance", so crowding is repaired
-    // here. A slid large light is moved to the best other position on its own
-    // line that clears everything; if none does, it is given up and its boxes
-    // fall back to small lights (or are ceded).
-    const spacingOK = (p, self) =>
-      lights.every((l) => l === self || l.kind !== 'large' && self.kind !== 'large'
-        || Math.hypot(l.x - p.x, l.y - p.y) >= opt.minLightSpacing - 1e-9);
-    for (let pass = 0; pass < 8; pass++) {
-      let clash = null;
-      for (let i = 0; i < lights.length && !clash; i++) {
-        for (let j = i + 1; j < lights.length; j++) {
-          const a = lights[i], b = lights[j];
-          if (a.kind !== 'large' && b.kind !== 'large') continue;  // the grid spaces small lights
-          if (Math.hypot(a.x - b.x, a.y - b.y) >= opt.minLightSpacing - 1e-9) continue;
-          clash = a.kind === 'large' ? [a, b] : [b, a];
-          break;
-        }
-      }
-      if (!clash) break;
-      const [mover] = clash;
-      const alt = (mover.options || []).filter((o) =>
-        Math.hypot(o.p.x - mover.x, o.p.y - mover.y) > 1e-9 && spacingOK(o.p, mover))
+    // here. Either light of a clashing pair may be the one that moves — trying
+    // only the first would give up while the second had somewhere to go — and a
+    // light with nowhere to go is dropped, its boxes falling back to small
+    // lights. Dropping strictly reduces the number of large lights, so the loop
+    // always terminates.
+    const spacingOK = (p, self) => lights.every((l) =>
+      l === self
+      || (l.kind !== 'large' && self.kind !== 'large')   // the grid spaces small lights
+      || Math.hypot(l.x - p.x, l.y - p.y) >= opt.minLightSpacing - 1e-9);
+
+    const relocate = (l) => {
+      if (l.kind !== 'large') return false;
+      const alt = (l.options || [])
+        .filter((o) => Math.hypot(o.p.x - l.x, o.p.y - l.y) > 1e-9 && spacingOK(o.p, l))
         .sort((x, y) => y.w - x.w)[0];
-      if (alt) {
-        mover.x = alt.p.x; mover.y = alt.p.y; mover.spot = alt.spot;
-        const along = mover.axis === 'v' ? mover.y : mover.x;
-        if (!mover.allowed.some((v) => Math.abs(v - along) < 1e-6)) {
-          mover.allowed = [...mover.allowed, Math.round(along * 1e6) / 1e6].sort((a, b) => a - b);
-        }
-        continue;
+      if (!alt) return false;
+      l.x = alt.p.x; l.y = alt.p.y; l.spot = alt.spot; l.roaming = alt.roaming;
+      const along = l.axis === 'v' ? l.y : l.x;
+      if (!l.allowed.some((v) => Math.abs(v - along) < 1e-6)) {
+        l.allowed = [...l.allowed, Math.round(along * 1e6) / 1e6].sort((a, b) => a - b);
       }
-      // nowhere to go: drop it and let its boxes take small lights instead
-      lights.splice(lights.indexOf(mover), 1);
-      for (const id of mover.cells) {
+      return true;
+    };
+
+    const drop = (l) => {
+      lights.splice(lights.indexOf(l), 1);
+      for (const id of l.cells) {
         used.delete(id);
-        const c = byId.get(id);
+        const cell = byId.get(id);
         const sp = centred.get(id);
-        if (!sp) { if (opt.omitAwkwardCells) { ceded.push(c); continue; }
-                   ceded.push(c); continue; }
+        if (!sp) { ceded.push(cell); continue; }
         lights.push({ id: `S${lights.length}`, kind: 'small', x: sp.p.x, y: sp.p.y,
-                      cells: [id], cell: c, locked: false,
-                      nudged: sp.p.x !== c.cx || sp.p.y !== c.cy, slid: sp.axis,
+                      cells: [id], cell, locked: false,
+                      nudged: sp.p.x !== cell.cx || sp.p.y !== cell.cy, slid: sp.axis,
                       outsideBand: false, clash: false });
         used.add(id);
       }
+    };
+
+    for (let pass = 0; pass < 200; pass++) {
+      let clash = null;
+      outer:
+      for (let i = 0; i < lights.length; i++) {
+        for (let j = i + 1; j < lights.length; j++) {
+          const a = lights[i], b = lights[j];
+          if (a.kind !== 'large' && b.kind !== 'large') continue;
+          if (Math.hypot(a.x - b.x, a.y - b.y) >= opt.minLightSpacing - 1e-9) continue;
+          clash = [a, b]; break outer;
+        }
+      }
+      if (!clash) break;
+      // move whichever can; failing that, drop the one worth less
+      const [a, b] = clash;
+      const order = (a.value || 0) <= (b.value || 0) ? [a, b] : [b, a];
+      if (relocate(order[0]) || relocate(order[1])) continue;
+      drop(order[0].kind === 'large' ? order[0] : order[1]);
     }
 
-    return { lights, used, ceded };
+    const score = lights.filter((l) => l.kind === 'large')
+      .reduce((t, l) => t + (l.value || 0), 0);
+    return { lights, used, ceded, score };
   };
 
   // Fewest compromised cells wins; then most large lights; then the tidier one.
+  // The value function already prices everything that matters — rescues,
+  // healthy boxes given up, and positions that line up with nothing — so the
+  // placement worth the most wins. Coverage and tidiness only break ties.
   const rank = (r) => [
+    Math.round(r.score * 1e6) / 1e6,
     -(r.ceded.length + r.lights.filter((l) => l.outsideBand).length),
-    // small-first: a large light costs a healthy cell its own light, so fewer
-    // is better once coverage is equal. large-first: more is the whole point.
     (opt.smallFirst ? -1 : 1) * r.lights.filter((l) => l.kind === 'large').length,
     -(new Set(r.lights.map((l) => l.x.toFixed(2))).size + new Set(r.lights.map((l) => l.y.toFixed(2))).size),
   ];
@@ -740,8 +843,13 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return ra[i] > rb[i] ? a : b;
     return a;
   };
-  let result = place(opt.awkwardPriority);
-  if (!opt.smallFirst && opt.awkwardPriority > 0) result = better(result, place(0));
+  const priorities = opt.smallFirst || opt.awkwardPriority === 0
+    ? [opt.awkwardPriority] : [opt.awkwardPriority, 0];
+  let result = null;
+  for (const pr of priorities) for (const vf of [false, true]) {
+    const r2 = place(pr, vf);
+    result = result ? better(result, r2) : r2;
+  }
   const { lights, used, ceded } = result;
 
   // 6. alignment pass — cluster into rows and columns, across chunks too
@@ -938,6 +1046,11 @@ function alignAxis(lights, axis, polygon, opt, fans = [], zones = [], wallDist =
       if (g.kind === 'large' && dist(trial) + 1e-9 < opt.minWallDistance) continue;
       if (fans.some((f) => Math.hypot(trial.x - f.x, trial.y - f.y) < (f.r || 0) + opt.fanClearance)) continue;
       if (inAnyZone(trial, zones)) continue;
+      // aligning must not undo the spacing repair that ran before it
+      const crowds = lights.some((l) => l !== g
+        && (l.kind === 'large' || g.kind === 'large')
+        && Math.hypot(l.x - trial.x, l.y - trial.y) < opt.minLightSpacing - 1e-9);
+      if (crowds) continue;
       g[axis] = next;
     }
   };

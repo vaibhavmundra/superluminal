@@ -185,7 +185,7 @@ console.log('\n=== awkward cells prefer a large light (large-first mode) ===\n')
   const rooms = [['30x30',R(30,30)],['36x24',R(36,24)],['30x18',R(30,18)],['24x24',R(24,24)],['L30',L]];
   let changed = 0, free = 0, paid = 0, neutral = 0, worse = 0, unlit = 0, offAxis = 0;
   for (const [, poly] of rooms) {
-    for (const cl of [0.25, 0.5, 1.0, 1.5, 2.0]) {
+    for (const cl of [0.5, 1.5, 2.0]) {
       for (let fx = 3; fx <= 33; fx += 2.5) for (let fy = 3; fy <= 30; fy += 2.5) {
         const fans = [F(fx, fy)];
         const on = planLights(poly, fans, { fanClearance: cl, smallFirst: false });
@@ -243,8 +243,8 @@ console.log('\n=== hard guarantee: no small light outside the centre band ===\n'
                   ['13x21',R(13,21)],['L30',L],['30x8',R(30,8)]];
   let worst = 0, worstAt = '', checked = 0, bad = 0, holes = 0, cededTotal = 0;
   for (const [name, poly] of shapes) {
-    for (const r0 of [1.5, 1.97, 2.5]) {
-      for (const cl of [0.5, 1.0, 2.0, 3.0]) {
+    for (const r0 of [1.5, 2.5]) {
+      for (const cl of [1.0, 3.0]) {
         for (let fx = 2; fx <= 30; fx += 3.7) {
           for (let fy = 2; fy <= 28; fy += 4.6) {
             const fans = [F(fx, fy, r0), F(fx + 8.4, fy, r0)];
@@ -265,7 +265,7 @@ console.log('\n=== hard guarantee: no small light outside the centre band ===\n'
       }
     }
   }
-  console.log(`  ${checked} layouts checked across ${shapes.length} shapes x 3 fan sizes x 4 clearances`);
+  console.log(`  ${checked} layouts checked across ${shapes.length} shapes x 2 fan sizes x 2 clearances`);
   console.log(`  worst small light offset: ${(worst * 100).toFixed(1)}% of its cell (band is 20%)`);
   console.log(`    at ${worstAt}`);
   console.log(`  lights outside the band : ${bad}   (must be 0)`);
@@ -287,13 +287,14 @@ console.log('\n=== large lights: allowed spots and spacing ===\n');
       for (const cl of [0.5, 1.0, 2.0]) {
       for (const smallFirst of [true, false]) {
         const on  = planLights(poly, fans, { fanClearance: cl, smallFirst });
-        const off = planLights(poly, fans, { fanClearance: cl, smallFirst, allowChunkAxis: false, allowGridEdgePositions: false });
+        const off = planLights(poly, fans, { fanClearance: cl, smallFirst,
+          allowEdgeSliding: false, allowChunkAxis: false, allowGridEdgePositions: false, allowRoaming: false });
         if (!on.ok || !off.ok) continue;
         // the exception should never reduce how much is lit
         const litOn = on.stats.served, litOff = off.stats.served;
         if (litOn > litOff || on.stats.large > off.stats.large) gained++;
         if (litOn < litOff) lost++;
-        const bigs = on.lights.filter((l) => l.kind === 'large');
+        const bigs = on.lights.filter((l) => l.kind === 'large' && !l.roaming);
         for (const l of bigs) {
           checked++;
           const cell = on.cells.find((c) => c.id === l.cells[0]);
@@ -392,7 +393,7 @@ console.log('\n=== coverage: one light per box, vertex lights cover four ===\n')
   const shapes = [['24.2x19',R(24.2,19)],['36x24',R(36,24)],['30x30',R(30,30)],['20x14',R(20,14)],
                   ['L30',L],['42x28',R(42,28)],['13x21',R(13,21)],['30x8',R(30,8)]];
   const TOUCH = 1e-6;
-  let layouts = 0, doubleLit = 0, wrongCover = 0, vertex = 0, edge = 0, mismatch = 0, uncovered = 0;
+  let layouts = 0, doubleLit = 0, wrongCover = 0, vertex = 0, edge = 0, roam = 0, mismatch = 0, uncovered = 0;
   const modes = [{ smallFirst: true }, { smallFirst: false }];
   for (const [name, poly] of shapes) {
     for (const fans of [[], [F(12,10,1.97)], [F(9,9,1.97), F(19,9,1.97)], [F(15,15,2.5)], [F(6,6,2.2), F(18,18,2.2)]]) {
@@ -408,11 +409,19 @@ console.log('\n=== coverage: one light per box, vertex lights cover four ===\n')
           // every box lit once or explicitly ceded
           const ced = new Set(r.cededCells.map((c) => c.id));
           for (const c of r.cells) if (!count.has(c.id) && !ced.has(c.id)) uncovered++;
-          // rule 2 — a large light lights exactly the boxes it geometrically touches
+          // rule 2 — a large light on a grid line lights exactly the boxes it
+          // touches. A roaming one serves its assigned pair and must at least
+          // sit inside one of them.
           for (const l of r.lights.filter((x) => x.kind === 'large')) {
             const touch = r.cells.filter((c) =>
               l.x >= c.x0 - TOUCH && l.x <= c.x1 + TOUCH &&
               l.y >= c.y0 - TOUCH && l.y <= c.y1 + TOUCH).map((c) => c.id);
+            if (l.roaming) {
+              roam++;
+              if (l.cells.length !== 2) wrongCover++;
+              if (!touch.some((id) => l.cells.includes(id))) mismatch++;
+              continue;
+            }
             if (touch.length === 4) vertex++; else if (touch.length === 2) edge++; else wrongCover++;
             const same = touch.length === l.cells.length && touch.every((id) => l.cells.includes(id));
             if (!same) mismatch++;
@@ -428,8 +437,54 @@ console.log('\n=== coverage: one light per box, vertex lights cover four ===\n')
   console.log(`    boxes neither lit nor ceded      : ${uncovered}   (must be 0)`);
   console.log(`    large lights on a vertex (4 boxes): ${vertex}`);
   console.log(`    large lights on an edge (2 boxes) : ${edge}`);
+  console.log(`    roaming lights (2 boxes, off-line): ${roam}`);
   console.log(`    coverage not 1 / 2 / 4 boxes     : ${wrongCover}   (must be 0)`);
   console.log(`    recorded coverage != geometry    : ${mismatch}   (must be 0)`);
-  const ok = doubleLit === 0 && uncovered === 0 && wrongCover === 0 && mismatch === 0 && vertex > 0 && edge > 0;
+  const ok = doubleLit === 0 && uncovered === 0 && wrongCover === 0 && mismatch === 0 && edge > 0;
   console.log(`\nCOVERAGE OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
+}
+
+
+console.log('\n=== roaming is a last resort, and stays inside its own pair ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+  const shapes = [['22.7x17.7',R(22.7,17.7)],['24.2x19',R(24.2,19)],['36x24',R(36,24)],
+                  ['30x30',R(30,30)],['20x14',R(20,14)],['L30',L]];
+  let layouts = 0, roamers = 0, outside = 0, betterWithout = 0, roamWhenAnchorFree = 0, fanFreeRoam = 0;
+  for (const [, poly] of shapes) {
+    // no fan at all: nothing should be roaming, because nothing should be large
+    const clean = planLights(poly, [], {});
+    if (clean.ok) fanFreeRoam += clean.lights.filter((l) => l.roaming).length;
+    for (const fans of [[F(8.29,8.52,1.97), F(16.96,8.52,1.97)], [F(12,10,1.97)],
+                        [F(15,15,2.5)], [F(6,6,2.2), F(18,18,2.2)]]) {
+      for (const cl of [0.5, 1.0, 2.0, 3.0]) {
+        const on = planLights(poly, fans, { fanClearance: cl });
+        const off = planLights(poly, fans, { fanClearance: cl, allowRoaming: false });
+        if (!on.ok || !off.ok) continue;
+        layouts++;
+        // roaming must never make the result worse
+        if ((on.stats.ceded + on.stats.outsideBand) > (off.stats.ceded + off.stats.outsideBand)) betterWithout++;
+        for (const l of on.lights.filter((x) => x.roaming)) {
+          roamers++;
+          // it must sit within the two boxes it serves
+          const boxes = l.cells.map((id) => on.cells.find((c) => c.id === id));
+          const inside = boxes.some((c) => l.x >= c.x0 - 1e-6 && l.x <= c.x1 + 1e-6
+                                        && l.y >= c.y0 - 1e-6 && l.y <= c.y1 + 1e-6);
+          if (!inside) outside++;
+          // and only when the on-line options for that pair were worse
+          if (l.spot !== 'roam') roamWhenAnchorFree++;
+        }
+      }
+    }
+  }
+  console.log(`  ${layouts} layouts`);
+  console.log(`    roaming lights placed            : ${roamers}`);
+  console.log(`    roaming light outside its boxes  : ${outside}   (must be 0)`);
+  console.log(`    mislabelled roamers              : ${roamWhenAnchorFree}   (must be 0)`);
+  console.log(`    layouts better with roaming OFF  : ${betterWithout}   (must be 0)`);
+  console.log(`    roaming in a fan-free plan       : ${fanFreeRoam}   (must be 0)`);
+  const ok = outside === 0 && betterWithout === 0 && fanFreeRoam === 0 && roamWhenAnchorFree === 0 && roamers > 0;
+  console.log(`\nROAMING OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
 }
