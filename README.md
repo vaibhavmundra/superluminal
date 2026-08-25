@@ -100,15 +100,58 @@ rectify → carve zones → chunk → per-chunk grid → matching → align → 
    the fans? A cell that cannot is *awkward* — a small light there would sit
    visibly off centre. Rather than patch it afterwards, the cell is offered to
    the matching.
-6. **Matching.** A large light consumes two adjacent cells (within the same
-   chunk); a small light consumes one. So the layout is a **maximum-weight
-   maximum-cardinality matching** on the cell-adjacency graph, restricted to
-   pairs whose shared edge satisfies the wall-distance rule — with zone edges
-   counting as walls. Cell graphs are bipartite (checkerboard parity), so no
-   Blossom algorithm is needed. Matched pairs get a large light on the shared
-   grid line; unmatched cells get a small light at their centre. Preferences —
-   depth into the room, the long axis, alignment with the fan, cell squareness
-   — are edge weights, not special cases.
+6. **Lights — small first.** A small light at the centre of each cell is the
+   default. A large light is only used where a small one is **impossible**: a
+   fan's clearance circle covering the cell's centre band. That cell is then
+   paired with a neighbour and both are served by one large light on their
+   shared grid line.
+
+   **What a light illuminates is geometry, not bookkeeping.** A small light
+   lights its own box. A large light on the interior of a grid edge lights the
+   **two** boxes either side of it. A large light sitting on a **vertex** lights
+   all **four** boxes that meet there. Coverage is computed by asking which
+   boxes contain the point, so chunk boundaries are crossed where they should be.
+
+   **No box may be lit twice.** Every light claims the boxes it illuminates, and
+   nothing else may claim them — which makes this a set-packing problem, not a
+   plain matching. **Every** two-box piece is a valid matching edge, wherever it
+   sits on its line, so all of them go into one maximum-weight solve (a matching
+   over dominoes *is* a disjoint packing, and cell graphs are bipartite by
+   checkerboard parity, so no Blossom algorithm is needed). Only four-box
+   pieces, which no matching edge can express, are packed afterwards with an
+   explicit overlap check.
+
+   Splitting the two-box pieces into "midpoints first, slid ones later" was a
+   real bug: the first solve would spend a box on a mediocre pairing and block a
+   far better slid one that only the later pass could see. That is exactly what
+   produced two large lights where one would do.
+
+   The strategy is entirely in the pricing. Lighting a box that cannot take a
+   small light is worth `rescueValue` (default 10); pulling a **healthy** box
+   into a large light's coverage costs `pairCostNormal` (default 0.5), because
+   that box gives up its own centred light. Pieces that rescue nobody are
+   dropped outright. The gap between the two numbers is deliberate: if a large
+   light can reach a blocked box we always want it, so only the choice *between*
+   rescues is a trade-off — a two-box piece is preferred over a four-box one
+   because it costs fewer healthy boxes. Raise `pairCostNormal` above
+   `rescueValue` to prefer ceding a box instead.
+
+   Because a light's coverage depends on where it sits, the alignment pass may
+   only shift a large light to a position that lights **exactly the same boxes**
+   — otherwise aligning it would silently change what is covered.
+
+   The aesthetic score — depth into the room, the long axis, alignment with a
+   fan, cell squareness — is scaled to a tenth, so it can only break ties.
+
+   **With no fan on the plan there are no large lights at all** — every cell
+   takes a centred small light, which is the whole point of the rule.
+
+   Untick **"small lights first"** for the earlier behaviour, where every covered
+   cell was worth +1 and large lights spread across the whole plan. There
+   `awkwardPriority` (default 2) is what biases the matching towards awkward
+   cells, and because the second pass depends on what the first leaves behind,
+   the planner builds the layout both ways and keeps the better result.
+
 7. **Align.** Light coordinates are clustered into rows and columns and
    snapped — across chunk boundaries too — preferring the fan's coordinate.
    A large light on a vertical grid line has its x fixed by the grid, so only
@@ -116,8 +159,7 @@ rectify → carve zones → chunk → per-chunk grid → matching → align → 
 8. **Fixtures.** Every fan is both an obstacle and a soft grid anchor, and all
    of them apply at once — a position must clear *every* fan. A large light
    stays on its grid intersection, so if a fan
-   fouls that point the pair is simply unavailable and both cells fall through
-   to small lights. A small light, by contrast, is **moved within its cell** to
+   A small light, by contrast, is **moved within its cell** to
    the nearest point that clears the fan — never deleted, because a deleted
    light leaves the cell dark. If a cell has nowhere to go at all, the light
    stays and the app flags a clash rather than silently dropping it.
@@ -172,6 +214,11 @@ The slider ranges 2–9 ft if you want to see the rule bite differently.
   *inside* the cell, the first two usually fail: every candidate grid
   intersection for that cell is inside the fan's clearance circle too. Lower
   **Fan clearance** if you'd rather have a light there.
+- Because the second pass depends on what the first pass leaves behind, the
+  awkward-cell priority is no longer separable from it — a priority that rescues
+  one cell can strand another. The planner therefore builds the layout **both**
+  ways (priority on and off) and keeps whichever ends with fewer compromised
+  cells, then more large lights, then fewer distinct light positions.
 - **Hold to target** (default 4) is what keeps cells near 6 ft; **Fan pull**
   (default 0.6) is what bends the grid to line up with fixtures. Raising Fan
   pull much above 1 lets it distort cell sizes noticeably.

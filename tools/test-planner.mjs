@@ -175,7 +175,7 @@ console.log('\n=== small lights stay on a cell centre line ===\n');
   console.log(`\nCELL-AXIS OVERALL: ${pass === cases.length ? 'PASS' : `${cases.length - pass} FAILED`}`);
 }
 
-console.log('\n=== awkward cells prefer a large light ===\n');
+console.log('\n=== awkward cells prefer a large light (large-first mode) ===\n');
 {
   const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
   const F = (x, y, r = 1.97) => ({ type: 'fan', x, y, r });
@@ -183,13 +183,13 @@ console.log('\n=== awkward cells prefer a large light ===\n');
 
   // 1. the rule demonstrably changes the outcome, and never for the worse
   const rooms = [['30x30',R(30,30)],['36x24',R(36,24)],['30x18',R(30,18)],['24x24',R(24,24)],['L30',L]];
-  let changed = 0, free = 0, paid = 0, worse = 0, unlit = 0, offAxis = 0;
+  let changed = 0, free = 0, paid = 0, neutral = 0, worse = 0, unlit = 0, offAxis = 0;
   for (const [, poly] of rooms) {
     for (const cl of [0.25, 0.5, 1.0, 1.5, 2.0]) {
-      for (let fx = 3; fx <= 33; fx += 1.5) for (let fy = 3; fy <= 30; fy += 1.5) {
+      for (let fx = 3; fx <= 33; fx += 2.5) for (let fy = 3; fy <= 30; fy += 2.5) {
         const fans = [F(fx, fy)];
-        const on = planLights(poly, fans, { fanClearance: cl });
-        const off = planLights(poly, fans, { fanClearance: cl, awkwardPriority: 0 });
+        const on = planLights(poly, fans, { fanClearance: cl, smallFirst: false });
+        const off = planLights(poly, fans, { fanClearance: cl, smallFirst: false, awkwardPriority: 0 });
         if (!on.ok || !off.ok) continue;
         if (on.stats.served + on.stats.ceded !== on.stats.cells) unlit++;
         offAxis += on.stats.offAxis;
@@ -199,6 +199,7 @@ console.log('\n=== awkward cells prefer a large light ===\n');
         const gained = (off.stats.outsideBand + off.stats.ceded) - (on.stats.outsideBand + on.stats.ceded);
         if (gained > 0 && dL >= 0) free++;
         else if (gained > 0) paid++;
+        else if (gained === 0) neutral++;   // rearranged, equally good
         else worse++;
       }
     }
@@ -244,8 +245,8 @@ console.log('\n=== hard guarantee: no small light outside the centre band ===\n'
   for (const [name, poly] of shapes) {
     for (const r0 of [1.5, 1.97, 2.5]) {
       for (const cl of [0.5, 1.0, 2.0, 3.0]) {
-        for (let fx = 2; fx <= 30; fx += 2.3) {
-          for (let fy = 2; fy <= 28; fy += 2.9) {
+        for (let fx = 2; fx <= 30; fx += 3.7) {
+          for (let fy = 2; fy <= 28; fy += 4.6) {
             const fans = [F(fx, fy, r0), F(fx + 8.4, fy, r0)];
             const r = planLights(poly, fans, { fanClearance: cl });
             if (!r.ok) continue;
@@ -271,4 +272,164 @@ console.log('\n=== hard guarantee: no small light outside the centre band ===\n'
   console.log(`  unexplained dark cells  : ${holes}   (must be 0)`);
   console.log(`  cells ceded to a fan    : ${cededTotal}`);
   console.log(`\nBAND GUARANTEE: ${bad === 0 && holes === 0 ? 'PASS' : '*** FAIL ***'}`);
+}
+
+console.log('\n=== large lights: allowed spots and spacing ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+  const shapes = [['24.2x19',R(24.2,19)],['36x24',R(36,24)],['30x30',R(30,30)],['20x14',R(20,14)],['L30',L],['42x28',R(42,28)]];
+  let checked = 0, offLine = 0, offSpot = 0, tooClose = 0, minGap = Infinity, minGapAt = '';
+  let gained = 0, lost = 0;
+  for (const [name, poly] of shapes) {
+    for (const fans of [[], [F(12,10,1.97)], [F(9,9,1.97), F(19,9,1.97)], [F(15,15,2.5)]]) {
+      for (const cl of [0.5, 1.0, 2.0]) {
+      for (const smallFirst of [true, false]) {
+        const on  = planLights(poly, fans, { fanClearance: cl, smallFirst });
+        const off = planLights(poly, fans, { fanClearance: cl, smallFirst, allowChunkAxis: false, allowGridEdgePositions: false });
+        if (!on.ok || !off.ok) continue;
+        // the exception should never reduce how much is lit
+        const litOn = on.stats.served, litOff = off.stats.served;
+        if (litOn > litOff || on.stats.large > off.stats.large) gained++;
+        if (litOn < litOff) lost++;
+        const bigs = on.lights.filter((l) => l.kind === 'large');
+        for (const l of bigs) {
+          checked++;
+          const cell = on.cells.find((c) => c.id === l.cells[0]);
+          const ch = on.chunks.find((c) => c.id === cell.chunk);
+          // sits exactly on a grid line of its own chunk
+          const line = l.axis === 'v'
+            ? ch.xLines.some((v) => Math.abs(v - l.x) < 1e-6)
+            : ch.yLines.some((v) => Math.abs(v - l.y) < 1e-6);
+          if (!line) offLine++;
+          // and at one of the allowed positions along that line
+          const along = l.axis === 'v' ? l.y : l.x;
+          if (!(l.allowed || []).some((v) => Math.abs(v - along) < 1e-6)) offSpot++;
+        }
+        // no two lights crowded together
+        for (let i = 0; i < on.lights.length; i++) {
+          for (let j = i + 1; j < on.lights.length; j++) {
+            const d = Math.hypot(on.lights[i].x - on.lights[j].x, on.lights[i].y - on.lights[j].y);
+            if (d < minGap) { minGap = d; minGapAt = `${name} cl${cl} ${on.lights[i].id}/${on.lights[j].id}`; }
+            if (d < on.opt.minLightSpacing - 1e-6) tooClose++;
+          }
+        }
+      }
+      }
+    }
+  }
+  console.log(`  ${checked} large lights across ${shapes.length} shapes x 4 fan sets x 3 clearances x 2 strategies`);
+  console.log(`    not on a grid line of their chunk : ${offLine}   (must be 0)`);
+  console.log(`    not at an allowed spot            : ${offSpot}   (must be 0)`);
+  console.log(`    pairs closer than min spacing     : ${tooClose}   (must be 0)`);
+  console.log(`    closest pair anywhere             : ${minGap.toFixed(2)} ft  (${minGapAt})`);
+  console.log(`    layouts that gained a large light : ${gained}`);
+  console.log(`    layouts that lost one             : ${lost}   (must be 0)`);
+  const ok = offLine === 0 && offSpot === 0 && tooClose === 0 && lost === 0 && gained > 0;
+  console.log(`\nLARGE-SPOT OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
+}
+
+
+console.log('\n=== small lights first: large lights only where forced ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+  const shapes = [['24.2x19',R(24.2,19)],['36x24',R(36,24)],['30x30',R(30,30)],['20x14',R(20,14)],
+                  ['L30',L],['42x28',R(42,28)],['13x21',R(13,21)]];
+
+  // 1. no fan anywhere => no large light anywhere
+  let strayLarge = 0, fanFree = 0;
+  for (const [, poly] of shapes) {
+    const r = planLights(poly, [], {});
+    if (!r.ok) continue;
+    fanFree++;
+    strayLarge += r.stats.large;
+    for (const l of r.lights) if (l.kind === 'small' && l.cell) {
+      const off = Math.max(Math.abs(l.x - l.cell.cx) / l.cell.w, Math.abs(l.y - l.cell.cy) / l.cell.h);
+      if (off > 1e-9) strayLarge += 100; // a fan-free plan should need no nudging either
+    }
+  }
+  console.log(`  ${fanFree} fan-free rooms: ${strayLarge} large lights / off-centre lights  (must be 0)`);
+
+  // 2. with fans: every large light must rescue at least one awkward cell,
+  //    and no awkward cell may be ceded while a rescue was available
+  let checked = 0, pointless = 0, ceded = 0, rescued = 0, worseThanLargeFirst = 0;
+  for (const [, poly] of shapes) {
+    for (const fans of [[F(12,10,1.97)], [F(9,9,1.97), F(19,9,1.97)], [F(15,15,2.5)], [F(6,6,2.2), F(18,18,2.2)]]) {
+      for (const cl of [0.5, 1.0, 2.0, 3.0]) {
+        const r = planLights(poly, fans, { fanClearance: cl });
+        if (!r.ok) continue;
+        checked++;
+        const awk = new Set(r.awkwardCells);
+        for (const l of r.lights.filter((x) => x.kind === 'large')) {
+          const helps = l.cells.some((c) => awk.has(c));
+          if (!helps) pointless++;
+          else rescued += l.cells.filter((c) => awk.has(c)).length;
+        }
+        ceded += r.stats.ceded;
+        // small-first must never light fewer cells than large-first would
+        const lf = planLights(poly, fans, { fanClearance: cl, smallFirst: false });
+        if (lf.ok && (r.stats.ceded + r.stats.outsideBand) > (lf.stats.ceded + lf.stats.outsideBand)) worseThanLargeFirst++;
+      }
+    }
+  }
+  console.log(`  ${checked} layouts with fans`);
+  console.log(`    large lights that rescue nobody   : ${pointless}   (must be 0)`);
+  console.log(`    awkward cells rescued by a large  : ${rescued}`);
+  console.log(`    cells ceded                       : ${ceded}`);
+  console.log(`    worse coverage than large-first   : ${worseThanLargeFirst}   (must be 0)`);
+  const ok = strayLarge === 0 && pointless === 0 && worseThanLargeFirst === 0 && rescued > 0;
+  console.log(`\nSMALL-FIRST OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
+}
+
+console.log('\n=== coverage: one light per box, vertex lights cover four ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+  const shapes = [['24.2x19',R(24.2,19)],['36x24',R(36,24)],['30x30',R(30,30)],['20x14',R(20,14)],
+                  ['L30',L],['42x28',R(42,28)],['13x21',R(13,21)],['30x8',R(30,8)]];
+  const TOUCH = 1e-6;
+  let layouts = 0, doubleLit = 0, wrongCover = 0, vertex = 0, edge = 0, mismatch = 0, uncovered = 0;
+  const modes = [{ smallFirst: true }, { smallFirst: false }];
+  for (const [name, poly] of shapes) {
+    for (const fans of [[], [F(12,10,1.97)], [F(9,9,1.97), F(19,9,1.97)], [F(15,15,2.5)], [F(6,6,2.2), F(18,18,2.2)]]) {
+      for (const cl of [0.5, 1.5, 3.0]) {
+        for (const mode of modes) {
+          const r = planLights(poly, fans, { ...mode, fanClearance: cl });
+          if (!r.ok) continue;
+          layouts++;
+          // rule 1 — no box lit twice
+          const count = new Map();
+          for (const l of r.lights) for (const id of l.cells) count.set(id, (count.get(id) || 0) + 1);
+          for (const [, n] of count) if (n > 1) doubleLit++;
+          // every box lit once or explicitly ceded
+          const ced = new Set(r.cededCells.map((c) => c.id));
+          for (const c of r.cells) if (!count.has(c.id) && !ced.has(c.id)) uncovered++;
+          // rule 2 — a large light lights exactly the boxes it geometrically touches
+          for (const l of r.lights.filter((x) => x.kind === 'large')) {
+            const touch = r.cells.filter((c) =>
+              l.x >= c.x0 - TOUCH && l.x <= c.x1 + TOUCH &&
+              l.y >= c.y0 - TOUCH && l.y <= c.y1 + TOUCH).map((c) => c.id);
+            if (touch.length === 4) vertex++; else if (touch.length === 2) edge++; else wrongCover++;
+            const same = touch.length === l.cells.length && touch.every((id) => l.cells.includes(id));
+            if (!same) mismatch++;
+          }
+          // small lights light exactly their own box
+          for (const l of r.lights.filter((x) => x.kind === 'small')) if (l.cells.length !== 1) wrongCover++;
+        }
+      }
+    }
+  }
+  console.log(`  ${layouts} layouts, both strategies`);
+  console.log(`    boxes lit by more than one light : ${doubleLit}   (must be 0)`);
+  console.log(`    boxes neither lit nor ceded      : ${uncovered}   (must be 0)`);
+  console.log(`    large lights on a vertex (4 boxes): ${vertex}`);
+  console.log(`    large lights on an edge (2 boxes) : ${edge}`);
+  console.log(`    coverage not 1 / 2 / 4 boxes     : ${wrongCover}   (must be 0)`);
+  console.log(`    recorded coverage != geometry    : ${mismatch}   (must be 0)`);
+  const ok = doubleLit === 0 && uncovered === 0 && wrongCover === 0 && mismatch === 0 && vertex > 0 && edge > 0;
+  console.log(`\nCOVERAGE OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
 }

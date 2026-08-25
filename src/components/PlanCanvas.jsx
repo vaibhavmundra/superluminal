@@ -120,6 +120,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 x2={l.axis === 'v' ? l.x : l.x + R * 1.7} y2={l.axis === 'v' ? l.y + R * 1.7 : l.y}
                 stroke={col} strokeWidth={lw * 1.1} opacity="0.5" />
             )}
+            {layers.labels && l.kind === 'large' && l.coverPx && l.coverPx.length > 1 && (
+              <g opacity="0.3">
+                {l.coverPx.map((q, k) => (
+                  <line key={k} x1={l.x} y1={l.y} x2={q.x} y2={q.y} stroke={col} strokeWidth={lw} />
+                ))}
+              </g>
+            )}
             {layers.labels && l.nudged && l.centrePx && (
               <g opacity="0.5">
                 <line x1={l.centrePx.x} y1={l.centrePx.y} x2={l.x} y2={l.y}

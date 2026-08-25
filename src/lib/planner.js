@@ -13,9 +13,11 @@
 //                   own width and height.
 //   3b. classify   — a cell that cannot hold a small light near its own centre
 //                   is "awkward", and the matching bids to cover it instead
-//   4. matching   — pairs of adjacent cells (within a chunk) get a LARGE light
-//                   on their shared edge; leftovers get a SMALL light at their
-//                   centre. Zone edges count as walls for the wall-distance rule.
+//   4. lights     — a SMALL light at the centre of every cell is the default.
+//                   Where a cell cannot take one (a fan's clearance covers its
+//                   centre band), it is paired with a neighbour and served by a
+//                   LARGE light on their shared grid line instead. Zone edges
+//                   count as walls for the wall-distance rule.
 //   5. align      — snap light coordinates into shared rows/columns, across
 //                   chunk boundaries too, then re-seat any light that ended up
 //                   diagonal to its own cell back onto a centre line
@@ -36,6 +38,20 @@ export const DEFAULTS = {
                           //      The design rule is 6 ft; 5 ft is that rule with
                           //      its working tolerance.
   minSharedEdge: 3.0,     // ft — cells must share at least this much wall to pair up
+  allowChunkAxis: true,   // a large light may slide along its grid line to sit on
+                          //   one of the chunk's centre axes
+  allowGridEdgePositions: true, // ...or all the way to a grid intersection
+  allowEdgeSliding: true, // a large light may sit anywhere along its grid line,
+                          //   not only at the midpoint, chunk axis or vertices
+  vertexBand: 0.5,        // ft — dead band beside each vertex, so a light is
+                          //   either ON the vertex (lighting four boxes) or
+                          //   clearly away from it (lighting two)
+  chunkAxisBonus: 1.5,    // what landing on the midpoint or a chunk axis is worth
+  minLightSpacing: 3.9,   // ft — no two lights closer than this. Midpoints are
+                          //   naturally spread; the off-midpoint spots are not,
+                          //   so without this two large lights can end up a
+                          //   foot apart.
+  offCentrePenalty: 1.5,  // what sliding the full half-length away costs
   cellEdgePad: 0.10,      // fraction of the cell a nudged light keeps clear of its own edge
   centreBand: 0.20,       // a small light must sit within this fraction of the cell
                           //   from its centre. A cell that cannot take one is
@@ -45,6 +61,16 @@ export const DEFAULTS = {
   awkwardGridPenalty: 0.25, // a mild tiebreak against grids that park a fan on a
                           //   cell centre — not enough to distort the grid, since
                           //   such a cell is ceded gracefully anyway
+  smallFirst: true,       // Small lights are the default: every cell gets one at
+                          //   its centre. A large light is only used where a
+                          //   small one is impossible — see the pricing below.
+  rescueValue: 10,        // what lighting a box that cannot take a small light is
+                          //   worth. Deliberately far above pairCostNormal: if a
+                          //   large light CAN reach such a box we always want it,
+                          //   and only the choice between rescues is a trade-off.
+  pairCostNormal: 0.5,    // what it costs to pull a healthy box into a large
+                          //   light's coverage and take away its own centred
+                          //   light. Raise it above rescueValue to prefer ceding.
   omitAwkwardCells: true, // a cell that can take neither a centred small light
                           //   nor a shared large one gets NO light of its own —
                           //   the fan is the ceiling feature there. Set false to
@@ -346,6 +372,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
 
   // 3. each chunk gets its own grid and cells
   const cells = [];
+  const byId = new Map();
   chunks.forEach((ch, ci) => {
     ch.id = ci;
     const grid = chooseChunkGrid(ch, softX, softY, fans, opt);
@@ -361,10 +388,21 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
           w: rect.x1 - rect.x0, h: rect.y1 - rect.y0,
         };
         cells.push(cell);
+        byId.set(cell.id, cell);
         ch.cellAt.set(`${i},${j}`, cell);
       }
     }
   });
+
+  // Which grid boxes does a light at this point illuminate? A point on the
+  // interior of an edge belongs to the two boxes either side; a point on a
+  // vertex belongs to all four boxes that meet there. Chunk boundaries are not
+  // respected on purpose — a vertex shared with the next chunk still lights its
+  // boxes, and pretending otherwise would double-light them.
+  const TOUCH = 1e-6;
+  const cellsAt = (p) => cells.filter((c) =>
+    p.x >= c.x0 - TOUCH && p.x <= c.x1 + TOUCH &&
+    p.y >= c.y0 - TOUCH && p.y <= c.y1 + TOUCH).map((c) => c.id);
 
   // 3b. Which cells can actually take a small light near their own centre?
   // A cell that cannot is "awkward": a small light there would sit visibly off
@@ -379,47 +417,98 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     else awkward.add(c.id);
   }
 
-  // 4. candidate large-light positions on shared grid lines, within a chunk
+  // 4. candidate large-light positions on shared grid lines, within a chunk.
+  //
+  // A large light lives on the grid line two cells share. The midpoint of that
+  // line is the natural home, but it is not the only allowed spot: the light
+  // may also slide to where the line crosses one of the CHUNK's centre axes
+  // (so it lines up with the chunk as a whole), or all the way to either end of
+  // the line — a grid intersection, which is a corner of the boxes it serves.
+  // Each option is emitted as its own candidate; the matching picks. Parallel
+  // candidates for the same pair are harmless, since only one can be chosen.
   const candidates = [];
+  const pairSpots = new Map();   // every valid position for a given pair
   for (const ch of chunks) {
     const longAxis = ch.w >= ch.h ? 'x' : 'y';
+    const chunkAxis = { x: (ch.x0 + ch.x1) / 2, y: (ch.y0 + ch.y1) / 2 };
     for (const c of ch.cellAt.values()) {
       for (const [di, dj] of [[1, 0], [0, 1]]) {
         const n = ch.cellAt.get(`${c.i + di},${c.j + dj}`);
         if (!n) continue;
-        // the shared edge: vertical if neighbour is to the right
+        // the shared edge: vertical if the neighbour is to the right
         const vertical = di === 1;
-        const shared = vertical
-          ? { len: Math.min(c.y1, n.y1) - Math.max(c.y0, n.y0), x: c.x1, y: (Math.max(c.y0, n.y0) + Math.min(c.y1, n.y1)) / 2 }
-          : { len: Math.min(c.x1, n.x1) - Math.max(c.x0, n.x0), x: (Math.max(c.x0, n.x0) + Math.min(c.x1, n.x1)) / 2, y: c.y1 };
-        if (shared.len < opt.minSharedEdge) continue;
+        const lo = vertical ? Math.max(c.y0, n.y0) : Math.max(c.x0, n.x0);
+        const hi = vertical ? Math.min(c.y1, n.y1) : Math.min(c.x1, n.x1);
+        const len = hi - lo;
+        if (len < opt.minSharedEdge) continue;
+        const fixed = vertical ? c.x1 : c.y1;   // the grid line itself
+        const mid = (lo + hi) / 2;
+        const axis = vertical ? chunkAxis.y : chunkAxis.x;
 
-        // The rule: the nearest wall — zone edges included — must be far
-        // enough away, in ANY direction. Tested at the natural midpoint: the
-        // light belongs on the grid intersection, and sliding it inward to
-        // rescue a failing position would drag the whole layout off-grid.
-        const mid = { x: shared.x, y: shared.y };
-        const wall = wallDist(mid);
-        if (wall + 1e-9 < opt.minWallDistance) continue;
+        // Where along the line the light may sit. The midpoint is the natural
+        // home and the chunk's centre axis is the other meaningful anchor, but
+        // the position is NOT restricted to those two plus the vertices: the
+        // light may sit anywhere along the line, and the weighting below simply
+        // prefers the anchors. That freedom is what lets one light slip between
+        // two fans instead of two expensive lights working around them.
+        //
+        // The band next to each vertex is excluded, though. A light half a foot
+        // from a vertex reads as being ON the vertex, and would then have to
+        // light four boxes rather than two — so it is either at the vertex or
+        // clearly away from it.
+        const vBand = Math.max(opt.vertexBand, len * 0.12);
+        const spots = [];
+        const label = (v) => Math.abs(v - mid) < 1e-6 ? 'midpoint'
+          : (opt.allowChunkAxis && Math.abs(v - axis) < 1e-6) ? 'chunk-axis' : 'edge';
+        if (opt.allowEdgeSliding) {
+          const N = 49;
+          for (let k = 0; k <= N; k++) {
+            const v = lo + (k / N) * len;
+            if (v - lo < vBand - 1e-9 || hi - v < vBand - 1e-9) continue;
+            spots.push({ v, kind: label(v) });
+          }
+        }
+        for (const v of [mid, ...(opt.allowChunkAxis && axis > lo + vBand && axis < hi - vBand ? [axis] : [])]) {
+          if (!spots.some((sp) => Math.abs(sp.v - v) < 1e-6)) spots.push({ v, kind: label(v) });
+        }
+        if (!spots.length) spots.push({ v: mid, kind: 'midpoint' });
+        if (opt.allowGridEdgePositions) {
+          for (const v of [lo, hi]) spots.push({ v, kind: 'grid-corner' });
+        }
 
-        // A large light stays on its grid intersection, full stop. If the fan
-        // is in the way the pair is simply unavailable, and both cells fall
-        // through to small lights — which CAN be nudged aside.
-        if (fanBlocked(mid)) continue;
-        const p = mid;
+        const span = { len, lo, hi, mid, fixed, axisV: axis, dir: vertical ? 'v' : 'h' };
+        for (const spot of spots) {
+          const p = vertical ? { x: fixed, y: spot.v } : { x: spot.v, y: fixed };
+          const wall = wallDist(p);
+          if (wall + 1e-9 < opt.minWallDistance) continue;
+          if (fanBlocked(p)) continue;
 
-        // weight: deeper into the room is better, the long axis is better,
-        // lining up with a fixture is better, a squarer pair is better.
-        let w = 0;
-        w += 2.0 * Math.min(wall, 12) / 12;
-        if (opt.preferLongAxis && (vertical ? 'x' : 'y') === longAxis) w += 1.0;
-        // lining up with ANY fan is worth the same bonus
-        if (fans.some((f) => Math.min(Math.abs(p.x - f.x), Math.abs(p.y - f.y)) < opt.alignTol)) w += 1.5;
-        const ar = Math.min(c.w, c.h) / Math.max(c.w, c.h);
-        w += 0.75 * ar;
-        w += 0.5 * Math.min(shared.len / opt.targetCell, 1);
+          // weight: deeper into the room is better, the long axis is better,
+          // lining up with a fixture is better, a squarer pair is better.
+          let w = 0;
+          w += 2.0 * Math.min(wall, 12) / 12;
+          if (opt.preferLongAxis && (vertical ? 'x' : 'y') === longAxis) w += 1.0;
+          // lining up with ANY fan is worth the same bonus
+          if (fans.some((f) => Math.min(Math.abs(p.x - f.x), Math.abs(p.y - f.y)) < opt.alignTol)) w += 1.5;
+          const ar = Math.min(c.w, c.h) / Math.max(c.w, c.h);
+          w += 0.75 * ar;
+          w += 0.5 * Math.min(len / opt.targetCell, 1);
+          // the midpoint stays the default; a slide has to earn its keep, and
+          // landing on a chunk axis is exactly what earns it
+          // stay near an anchor: the midpoint, or the chunk's centre axis
+          const offMid = Math.abs(spot.v - mid) / (len / 2);
+          const offAxis = opt.allowChunkAxis ? Math.abs(spot.v - axis) / (len / 2) : Infinity;
+          w -= opt.offCentrePenalty * Math.min(offMid, offAxis);
+          if (spot.kind === 'chunk-axis' || spot.kind === 'midpoint') w += opt.chunkAxisBonus;
 
-        candidates.push({ a: c, b: n, p, vertical, w, span: shared });
+          const cover = cellsAt(p);
+          if (!cover.includes(c.id) || !cover.includes(n.id)) continue;
+          const key = `${Math.min(c.id, n.id)}-${Math.max(c.id, n.id)}-${cover.length}`;
+          if (!pairSpots.has(key)) pairSpots.set(key, []);
+          const cand = { a: c, b: n, p, vertical, w, span, spot: spot.kind, cover, key };
+          pairSpots.get(key).push(cand);
+          candidates.push(cand);
+        }
       }
     }
   }
@@ -432,80 +521,228 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     if (!m.has(c.id)) m.set(c.id, m.size);
   }
   // Price a pair by what covering those two cells is WORTH, not just by how
-  // pretty it is. An ordinary cell is worth 1 (it would be fine with a small
-  // light); an awkward one is worth 1 + awkwardPriority. The aesthetic score is
-  // scaled right down so it can only ever break ties between equally valuable
-  // matchings — never buy a worse-covering layout.
+  // pretty it is. The aesthetic score is scaled right down so it can only ever
+  // break ties between equally valuable matchings — never buy a worse layout.
+  //
+  // SMALL FIRST (the default). A small light at the cell centre is the norm, so
+  // covering a healthy cell with a large light is a LOSS: that cell gives up
+  // its own centred light to share one. Only a cell that cannot take a small
+  // light is worth rescuing. Pairs that rescue nobody are dropped outright, so
+  // the result never depends on the aesthetic score outweighing the cost.
+  //
+  // LARGE FIRST (the earlier behaviour, kept for comparison). Every covered
+  // cell is worth 1, an awkward one 1 + awkwardPriority, so large lights spread
+  // across the whole plan.
   const AESTHETIC_SCALE = 1 / 10;
-  const cellValue = (c) => 1 + (awkward.has(c.id) ? opt.awkwardPriority : 0);
-  const solve = (subset) => {
+  const valueOf = (priority) => (c) =>
+    opt.smallFirst
+      ? (awkward.has(c.id) ? opt.rescueValue : -opt.pairCostNormal)
+      : 1 + (awkward.has(c.id) ? priority : 0);
+  const worthPairing = (cand) =>
+    !opt.smallFirst || cand.cover.some((id) => awkward.has(id));
+  const candValue = (cand, priority) => {
+    const cellValue = valueOf(priority);
+    let v = 0;
+    for (const id of cand.cover) v += cellValue(byId.get(id));
+    return v + cand.w * AESTHETIC_SCALE;
+  };
+
+  const solve = (subset, priority) => {
     const mEdges = [];
     for (const cand of subset) {
       const [lc, rc] = (cand.a.i + cand.a.j) % 2 === 0 ? [cand.a, cand.b] : [cand.b, cand.a];
       if (!Lidx.has(lc.id) || !Ridx.has(rc.id)) continue;
-      const w = cellValue(cand.a) + cellValue(cand.b) + cand.w * AESTHETIC_SCALE;
-      mEdges.push({ l: Lidx.get(lc.id), r: Ridx.get(rc.id), w, id: cand });
+      mEdges.push({ l: Lidx.get(lc.id), r: Ridx.get(rc.id), w: candValue(cand, priority), id: cand });
     }
     // Weights now price the trade-off directly, so no cardinality bias: two
     // ordinary pairs and one pair that rescues an awkward cell compete fairly.
     return maxWeightMatching(Lidx.size, Ridx.size, mEdges, { maximizeCardinality: false });
   };
 
-  // A mixed tiling and a uniform one often cover the same number of cells, but
-  // the uniform one reads as a regular array instead of a brick bond. Try all
-  // three and keep the tidiest of the best-covering options.
-  let matched = solve(candidates);
-  if (opt.uniformOrientation) {
-    const tidiness = (m) => {
-      const xs = new Set(m.map((e) => e.id.p.x.toFixed(2)));
-      const ys = new Set(m.map((e) => e.id.p.y.toFixed(2)));
-      return xs.size + ys.size; // fewer distinct rows/columns == tidier
-    };
-    const rescues = (m) => m.reduce((n, e) =>
-      n + (awkward.has(e.id.a.id) ? 1 : 0) + (awkward.has(e.id.b.id) ? 1 : 0), 0);
-    for (const subset of [candidates.filter((c) => c.vertical), candidates.filter((c) => !c.vertical)]) {
-      if (!subset.length) continue;
-      const alt = solve(subset);
-      if (alt.length === matched.length && rescues(alt) >= rescues(matched)
-          && tidiness(alt) < tidiness(matched)) matched = alt;
+  // Midpoints first. They are naturally well spread, and this is the layout
+  // that has always been correct — the off-midpoint spots are an exception,
+  // not an equal option, so they never get to displace a midpoint pairing.
+  const usable = candidates.filter(worthPairing);
+  // A candidate that lights exactly two boxes is a domino, and a matching over
+  // those is automatically a disjoint packing. Anything that lights four (a
+  // light sitting on a vertex) cannot be expressed as a matching edge, so it is
+  // packed separately with an explicit overlap check.
+  //
+  // ANY candidate that lights exactly two boxes is a valid matching edge — its
+  // coverage is precisely the pair it joins — so all of them go into the same
+  // solve, whether they sit on the midpoint or slid along the line. Splitting
+  // them was a real bug: the midpoint-only matching would spend a box on a
+  // mediocre pairing and block a far better slid one that only the second pass
+  // could see. Only four-box pieces, which no matching edge can express, are
+  // packed afterwards.
+  const bestOf = (list) => {
+    const best = new Map();
+    for (const c of list) {
+      const key = `${Math.min(c.a.id, c.b.id)}-${Math.max(c.a.id, c.b.id)}`;
+      const cur = best.get(key);
+      if (!cur || c.w > cur.w) best.set(key, c);
     }
-  }
+    return [...best.values()];
+  };
+  const primary = bestOf(usable.filter((c) => c.cover.length === 2));
+  const alternateBest = bestOf(usable.filter((c) => c.cover.length !== 2));
 
-  const used = new Set();
-  const lights = [];
-  const ceded = [];   // cells deliberately left to a fan
-  for (const e of matched) {
-    const c = e.id;
-    used.add(c.a.id); used.add(c.b.id);
-    lights.push({
-      id: `L${lights.length}`, kind: 'large',
-      x: c.p.x, y: c.p.y,
-      axis: c.vertical ? 'v' : 'h',
-      cells: [c.a.id, c.b.id],
-      span: c.span, locked: false,
-    });
-  }
-  for (const c of cells) {
-    if (used.has(c.id)) continue;
-    // Every remaining cell MUST get a light. If the centre falls inside the
-    // fan's exclusion circle we move the fitting within the cell — deleting it
-    // would leave the cell dark, which is never the right answer.
-    // Inside the centre band: the ordinary case.
-    let spot = centred.get(c.id);
-    if (!spot) {
-      // Awkward, and the matching could not rescue it with a large light.
-      // A light shoved to the edge of its own box looks like a mistake, so by
-      // default we place none: a fan occupies that ceiling anyway. The cell is
-      // recorded as ceded, not lost.
-      if (opt.omitAwkwardCells) { ceded.push(c); continue; }
-      spot = findSmallSpot(c, polygon, fans, zones, opt, wideFrac);
+  /**
+   * Build a complete placement for one value of awkwardPriority.
+   *
+   * The priority steers the FIRST pass, but the second pass and the ceding
+   * decision both depend on what the first pass left behind, so the objective
+   * is not separable — a priority that helps one cell can strand another. Both
+   * settings are therefore built in full and the better result is kept.
+   */
+  const place = (priority) => {
+    let matched = solve(primary, priority);
+    if (opt.uniformOrientation) {
+      const tidiness = (m) => {
+        const xs = new Set(m.map((e) => e.id.p.x.toFixed(2)));
+        const ys = new Set(m.map((e) => e.id.p.y.toFixed(2)));
+        return xs.size + ys.size; // fewer distinct rows/columns == tidier
+      };
+      const rescues = (m) => m.reduce((n, e) =>
+        n + (awkward.has(e.id.a.id) ? 1 : 0) + (awkward.has(e.id.b.id) ? 1 : 0), 0);
+      for (const subset of [primary.filter((c) => c.vertical), primary.filter((c) => !c.vertical)]) {
+        if (!subset.length) continue;
+        const alt = solve(subset, priority);
+        if (alt.length === matched.length && rescues(alt) >= rescues(matched)
+            && tidiness(alt) < tidiness(matched)) matched = alt;
+      }
     }
-    const { p, ok, axis } = spot;
-    lights.push({ id: `S${lights.length}`, kind: 'small', x: p.x, y: p.y,
-                  cells: [c.id], cell: c, locked: false,
-                  nudged: p.x !== c.cx || p.y !== c.cy, slid: axis,
-                  outsideBand: !centred.has(c.id), clash: !ok });
-  }
+
+    const used = new Set();
+    const lights = [];
+    const ceded = [];   // cells deliberately left to a fan
+    const addLarge = (cand) => {
+      for (const id of cand.cover) used.add(id);
+      lights.push({
+        id: `L${lights.length}`, kind: 'large',
+        x: cand.p.x, y: cand.p.y,
+        axis: cand.vertical ? 'v' : 'h',
+        cells: [...cand.cover],
+        span: cand.span, spot: cand.spot, locked: false,
+        lightsBoxes: cand.cover.length,
+        options: (pairSpots.get(cand.key) || [cand]).filter((o) =>
+          o.cover.length === cand.cover.length && o.cover.every((id) => cand.cover.includes(id))),
+        // it may only shift to a spot that lights exactly the same boxes,
+        // otherwise the alignment pass would silently change what is covered
+        allowed: [...new Set([
+          cand.vertical ? cand.p.y : cand.p.x,
+          ...allowedSpots(cand.span, opt).filter((v) => {
+            const q = cand.vertical ? { x: cand.span.fixed, y: v } : { x: v, y: cand.span.fixed };
+            const cv = cellsAt(q);
+            return cv.length === cand.cover.length && cv.every((id) => cand.cover.includes(id));
+          }),
+        ].map((v) => Math.round(v * 1e6) / 1e6))].sort((a, b) => a - b),
+      });
+    };
+    for (const e of matched) addLarge(e.id);
+
+    // Second pass — the exception. Pairs the midpoint could not serve, because
+    // it was too near a wall or inside a fan's clearance, may still work from
+    // the chunk's centre axis or from a grid intersection at the end of their
+    // shared line. Greedy by value, and every placement must keep its distance
+    // from the lights already down: midpoints space themselves, these do not,
+    // and without the check two large lights land a foot apart.
+    if (alternateBest.length) {
+      const farEnough = (p) =>
+        lights.every((l) => Math.hypot(l.x - p.x, l.y - p.y) >= opt.minLightSpacing - 1e-9);
+      const byValue = [...alternateBest].sort((x, y) => candValue(y, priority) - candValue(x, priority));
+      for (const cand of byValue) {
+        if (cand.cover.some((id) => used.has(id))) continue;   // no box lit twice
+        if (candValue(cand, priority) <= 0) continue;          // must earn its place
+        if (!farEnough(cand.p)) continue;
+        addLarge(cand);
+      }
+    }
+
+    for (const c of cells) {
+      if (used.has(c.id)) continue;
+      // Inside the centre band: the ordinary case.
+      let spot = centred.get(c.id);
+      if (!spot) {
+        // Awkward, and neither pass could rescue it with a large light. A light
+        // shoved to the edge of its own box looks like a mistake, so by default
+        // we place none: a fan occupies that ceiling anyway. The cell is
+        // recorded as ceded, not lost.
+        if (opt.omitAwkwardCells) { ceded.push(c); continue; }
+        spot = findSmallSpot(c, polygon, fans, zones, opt, wideFrac);
+      }
+      const { p, ok, axis } = spot;
+      lights.push({ id: `S${lights.length}`, kind: 'small', x: p.x, y: p.y,
+                    cells: [c.id], cell: c, locked: false,
+                    nudged: p.x !== c.cx || p.y !== c.cy, slid: axis,
+                    outsideBand: !centred.has(c.id), clash: !ok });
+    }
+    // A matching cannot express "keep your distance", so crowding is repaired
+    // here. A slid large light is moved to the best other position on its own
+    // line that clears everything; if none does, it is given up and its boxes
+    // fall back to small lights (or are ceded).
+    const spacingOK = (p, self) =>
+      lights.every((l) => l === self || l.kind !== 'large' && self.kind !== 'large'
+        || Math.hypot(l.x - p.x, l.y - p.y) >= opt.minLightSpacing - 1e-9);
+    for (let pass = 0; pass < 8; pass++) {
+      let clash = null;
+      for (let i = 0; i < lights.length && !clash; i++) {
+        for (let j = i + 1; j < lights.length; j++) {
+          const a = lights[i], b = lights[j];
+          if (a.kind !== 'large' && b.kind !== 'large') continue;  // the grid spaces small lights
+          if (Math.hypot(a.x - b.x, a.y - b.y) >= opt.minLightSpacing - 1e-9) continue;
+          clash = a.kind === 'large' ? [a, b] : [b, a];
+          break;
+        }
+      }
+      if (!clash) break;
+      const [mover] = clash;
+      const alt = (mover.options || []).filter((o) =>
+        Math.hypot(o.p.x - mover.x, o.p.y - mover.y) > 1e-9 && spacingOK(o.p, mover))
+        .sort((x, y) => y.w - x.w)[0];
+      if (alt) {
+        mover.x = alt.p.x; mover.y = alt.p.y; mover.spot = alt.spot;
+        const along = mover.axis === 'v' ? mover.y : mover.x;
+        if (!mover.allowed.some((v) => Math.abs(v - along) < 1e-6)) {
+          mover.allowed = [...mover.allowed, Math.round(along * 1e6) / 1e6].sort((a, b) => a - b);
+        }
+        continue;
+      }
+      // nowhere to go: drop it and let its boxes take small lights instead
+      lights.splice(lights.indexOf(mover), 1);
+      for (const id of mover.cells) {
+        used.delete(id);
+        const c = byId.get(id);
+        const sp = centred.get(id);
+        if (!sp) { if (opt.omitAwkwardCells) { ceded.push(c); continue; }
+                   ceded.push(c); continue; }
+        lights.push({ id: `S${lights.length}`, kind: 'small', x: sp.p.x, y: sp.p.y,
+                      cells: [id], cell: c, locked: false,
+                      nudged: sp.p.x !== c.cx || sp.p.y !== c.cy, slid: sp.axis,
+                      outsideBand: false, clash: false });
+        used.add(id);
+      }
+    }
+
+    return { lights, used, ceded };
+  };
+
+  // Fewest compromised cells wins; then most large lights; then the tidier one.
+  const rank = (r) => [
+    -(r.ceded.length + r.lights.filter((l) => l.outsideBand).length),
+    // small-first: a large light costs a healthy cell its own light, so fewer
+    // is better once coverage is equal. large-first: more is the whole point.
+    (opt.smallFirst ? -1 : 1) * r.lights.filter((l) => l.kind === 'large').length,
+    -(new Set(r.lights.map((l) => l.x.toFixed(2))).size + new Set(r.lights.map((l) => l.y.toFixed(2))).size),
+  ];
+  const better = (a, b) => {
+    const ra = rank(a), rb = rank(b);
+    for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return ra[i] > rb[i] ? a : b;
+    return a;
+  };
+  let result = place(opt.awkwardPriority);
+  if (!opt.smallFirst && opt.awkwardPriority > 0) result = better(result, place(0));
+  const { lights, used, ceded } = result;
 
   // 6. alignment pass — cluster into rows and columns, across chunks too
   alignAxis(lights, 'x', polygon, opt, fans, zones, wallDist);
@@ -542,7 +779,8 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     avgCell: cells.reduce((s, c) => s + (c.w + c.h) / 2, 0) / cells.length,
     areaSqft: Math.abs(polygonArea(polygon)),
   };
-  return { ok: true, chunks, omittedChunks: omitted, zones, cells, lights, cededCells: ceded, stats, opt };
+  return { ok: true, chunks, omittedChunks: omitted, zones, cells, lights,
+           cededCells: ceded, awkwardCells: [...awkward], stats, opt };
 }
 
 /**
@@ -630,6 +868,19 @@ function reseatOnCellAxis(lights, polygon, fans, zones, opt) {
   }
 }
 
+/**
+ * The discrete positions a large light may occupy along its grid line: the
+ * midpoint, the chunk's centre axis where it crosses, and the two grid
+ * intersections at the ends. The alignment pass may only choose from these —
+ * free sliding is what made lights look like they had drifted.
+ */
+function allowedSpots(span, opt) {
+  const out = [span.mid];
+  if (opt.allowChunkAxis && span.axisV > span.lo + 1e-6 && span.axisV < span.hi - 1e-6) out.push(span.axisV);
+  if (opt.allowGridEdgePositions) out.push(span.lo, span.hi);
+  return [...new Set(out.map((v) => Math.round(v * 1e6) / 1e6))].sort((a, b) => a - b);
+}
+
 function polygonArea(pts) {
   let a = 0;
   for (let i = 0, n = pts.length; i < n; i++) {
@@ -672,8 +923,16 @@ function alignAxis(lights, axis, polygon, opt, fans = [], zones = [], wallDist =
       target = vals[Math.floor(vals.length / 2)];
     }
     for (const g of group) {
-      const limit = slideLimit(g, axis, opt);
-      const next = Math.max(limit.lo, Math.min(limit.hi, target));
+      let next;
+      if (g.kind === 'large') {
+        // only the discrete allowed spots, and only if one is near the target
+        const spots = g.allowed || [g.span.mid];
+        next = spots.reduce((a, b) => (Math.abs(b - target) < Math.abs(a - target) ? b : a));
+        if (Math.abs(next - target) > opt.alignTol) continue;
+      } else {
+        const limit = slideLimit(g, axis, opt);
+        next = Math.max(limit.lo, Math.min(limit.hi, target));
+      }
       const trial = { ...g, [axis]: next };
       if (!pointInPolygon(trial, polygon)) continue;
       if (g.kind === 'large' && dist(trial) + 1e-9 < opt.minWallDistance) continue;
@@ -699,11 +958,6 @@ function slideLimit(light, axis, opt) {
     return axis === 'x'
       ? { lo: c.cx - band * c.w, hi: c.cx + band * c.w }
       : { lo: c.cy - band * c.h, hi: c.cy + band * c.h };
-  }
-  if (light.kind === 'large' && light.span) {
-    const s = light.span;
-    if (light.axis === 'v') { const half = s.len * 0.34; return { lo: s.y - half, hi: s.y + half }; }
-    const half = s.len * 0.34; return { lo: s.x - half, hi: s.x + half };
   }
   return { lo: -Infinity, hi: Infinity };
 }

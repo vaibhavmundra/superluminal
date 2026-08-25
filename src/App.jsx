@@ -126,7 +126,11 @@ export default function App() {
       })),
       cellsPx: res.cells.map(rectToPx),
       lightsPx: res.lights.map((l) => ({ ...l, ...toPx(l),
-        centrePx: l.cell ? toPx({ x: l.cell.cx, y: l.cell.cy }) : null })),
+        centrePx: l.cell ? toPx({ x: l.cell.cx, y: l.cell.cy }) : null,
+        coverPx: l.cells.map((id) => {
+          const c = res.cells.find((x) => x.id === id);
+          return c ? toPx({ x: c.cx, y: c.cy }) : null;
+        }).filter(Boolean) })),
       fansFt: fixtures,
     };
   }, [region, pxPerFt, opt, fans, useBoundingRect, zones]);
@@ -390,16 +394,54 @@ export default function App() {
             <Slider label="Centre band" v={opt.centreBand} min={0.05} max={0.45} step={0.01}
               onChange={(v) => setOpt((o) => ({ ...o, centreBand: v }))} fmt={(v) => `±${Math.round(v * 100)}%`} />
             <label className="check">
+              <input type="checkbox" checked={opt.smallFirst}
+                onChange={(e) => setOpt((o) => ({ ...o, smallFirst: e.target.checked }))} />
+              Small lights first — large only where forced
+            </label>
+            {opt.smallFirst ? (
+              <>
+                <Slider label="Neighbour cost" v={opt.pairCostNormal} min={0} max={2} step={0.05}
+                  onChange={(v) => setOpt((o) => ({ ...o, pairCostNormal: v }))} fmt={(v) => v.toFixed(2)} />
+                <p className="note">Every cell gets a small light at its centre. A large light is used
+                  only where a fan's clearance covers a cell's centre band — it then serves that cell
+                  and a neighbour, and the neighbour gives up its own light. With no fan on the plan
+                  there are no large lights at all.</p>
+              </>
+            ) : (
+              <Slider label="Awkward-cell priority" v={opt.awkwardPriority} min={0} max={5} step={0.25}
+                onChange={(v) => setOpt((o) => ({ ...o, awkwardPriority: v }))} fmt={(v) => v.toFixed(2)} />
+            )}
+            <label className="check">
+              <input type="checkbox" checked={opt.allowEdgeSliding}
+                onChange={(e) => setOpt((o) => ({ ...o, allowEdgeSliding: e.target.checked }))} />
+              Large light may sit anywhere along its grid line
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={opt.allowChunkAxis}
+                onChange={(e) => setOpt((o) => ({ ...o, allowChunkAxis: e.target.checked }))} />
+              ...preferring the chunk's centre axis
+            </label>
+            <Slider label="Vertex dead band" v={opt.vertexBand} min={0} max={2} step={0.05}
+              onChange={(v) => setOpt((o) => ({ ...o, vertexBand: v }))} fmt={(v) => `${v.toFixed(2)} ft`} />
+            <label className="check">
+              <input type="checkbox" checked={opt.allowGridEdgePositions}
+                onChange={(e) => setOpt((o) => ({ ...o, allowGridEdgePositions: e.target.checked }))} />
+              ...or to a grid crossing at the end of its line
+            </label>
+            <p className="note">A large light always sits on a grid line. Along that line it prefers
+              the midpoint or the chunk's centre axis, but it may slide anywhere else if that is what
+              clears a fan. The dead band beside each vertex keeps it honest: a light is either on the
+              vertex, lighting four boxes, or clearly away from it, lighting two.</p>
+            <label className="check">
               <input type="checkbox" checked={opt.omitAwkwardCells}
                 onChange={(e) => setOpt((o) => ({ ...o, omitAwkwardCells: e.target.checked }))} />
               Leave a cell to the fan rather than place an off-centre light
             </label>
-            <Slider label="Awkward-cell priority" v={opt.awkwardPriority} min={0} max={5} step={0.25}
-              onChange={(v) => setOpt((o) => ({ ...o, awkwardPriority: v }))} fmt={(v) => v.toFixed(2)} />
             <p className="note">A small light must sit within the centre band of its cell. A cell
-              that can't take one is offered to the matching instead, so a large light shared with a
-              neighbour covers it. Set the priority to 0 to switch that off.</p>
+              that can't take one is paired with a neighbour and served by a large light instead.</p>
             <Slider label="Align tolerance" v={opt.alignTol} min={0} max={3} step={0.05} onChange={(v) => setOpt((o) => ({ ...o, alignTol: v }))} fmt={(v) => `${v} ft`} />
+            <Slider label="Min light spacing" v={opt.minLightSpacing} min={0} max={8} step={0.1}
+              onChange={(v) => setOpt((o) => ({ ...o, minLightSpacing: v }))} fmt={(v) => `${v.toFixed(1)} ft`} />
             <Slider label="Fan clearance" v={opt.fanClearance} min={0} max={6} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, fanClearance: v }))} fmt={(v) => `${v} ft`} />
             <label className="check">
               <input type="checkbox" checked={opt.preferLongAxis} onChange={(e) => setOpt((o) => ({ ...o, preferLongAxis: e.target.checked }))} />
@@ -449,6 +491,14 @@ export default function App() {
                 )}
                 {plan.stats.nudged > 0 && (
                   <div className="kv"><span>Moved clear of the fan</span><b>{plan.stats.nudged}</b></div>
+                )}
+                {plan.lights.filter((l) => l.kind === 'large' && l.cells.length === 4).length > 0 && (
+                  <div className="kv"><span>Lights covering 4 boxes</span>
+                    <b>{plan.lights.filter((l) => l.kind === 'large' && l.cells.length === 4).length}</b></div>
+                )}
+                {plan.lights.filter((l) => l.kind === 'large' && l.spot !== 'midpoint').length > 0 && (
+                  <div className="kv"><span>Large lights off the midpoint</span>
+                    <b>{plan.lights.filter((l) => l.kind === 'large' && l.spot !== 'midpoint').length}</b></div>
                 )}
                 {plan.stats.awkward > 0 && (
                   <div className="kv"><span>Off-centre cells rescued</span>
