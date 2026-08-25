@@ -463,11 +463,20 @@ export default function App() {
 
           <div className="sec">
             <h3>Grid</h3>
+            <Slider label="Cell area" v={opt.targetArea} min={16} max={72} step={1} onChange={(v) => setOpt((o) => ({ ...o, targetArea: v }))} fmt={(v) => `${v} sqft`} />
+            <Slider label="Area tolerance" v={opt.areaTol} min={0.05} max={0.5} step={0.05} onChange={(v) => setOpt((o) => ({ ...o, areaTol: v }))} fmt={(v) => `±${Math.round(v * 100)}%`} />
+            <p className="note">What one cell should cover — 36 sqft is the 6&nbsp;×&nbsp;6 ideal, stated
+              as the quantity that actually matters. Anything from{' '}
+              <b>{(opt.targetArea * (1 - opt.areaTol)).toFixed(0)}</b> to{' '}
+              <b>{(opt.targetArea * (1 + opt.areaTol)).toFixed(0)} sqft</b> is simply acceptable, and that
+              slack is what the grid spends on landing a chunk's lone fan on a grid line.</p>
             <Slider label="Target cell" v={opt.targetCell} min={3} max={12} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, targetCell: v }))} fmt={(v) => `${v} ft`} />
             <Slider label="Min cell" v={opt.minCell} min={2} max={8} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, minCell: v }))} fmt={(v) => `${v} ft`} />
             <Slider label="Max cell" v={opt.maxCell} min={5} max={14} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, maxCell: v }))} fmt={(v) => `${v} ft`} />
-            <Slider label="Hold to target" v={opt.sizeWeight} min={0} max={10} step={0.25}
-              onChange={(v) => setOpt((o) => ({ ...o, sizeWeight: v }))} fmt={(v) => v.toFixed(2)} />
+            <Slider label="Keep it square" v={opt.shapeWeight} min={0} max={4} step={0.1}
+              onChange={(v) => setOpt((o) => ({ ...o, shapeWeight: v }))} fmt={(v) => v.toFixed(1)} />
+            <Slider label="Fan on a line" v={opt.fanLineWeight} min={0} max={5} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, fanLineWeight: v }))} fmt={(v) => v.toFixed(2)} />
+            <Slider label="...on a corner" v={opt.fanCornerBonus} min={0} max={5} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, fanCornerBonus: v }))} fmt={(v) => v.toFixed(2)} />
             <Slider label="Fan pull" v={opt.fanAnchorWeight} min={0} max={3} step={0.1} onChange={(v) => setOpt((o) => ({ ...o, fanAnchorWeight: v }))} fmt={(v) => v.toFixed(1)} />
             <Slider label="Skip chunks under" v={opt.minChunk} min={0} max={4} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, minChunk: v }))} fmt={(v) => `${v} ft`} />
             <p className="note">The space (minus no-light zones) is chopped into rectangular chunks,
@@ -592,6 +601,10 @@ export default function App() {
                 )}
                 {plan.stats.nudged > 0 && (
                   <div className="kv"><span>Moved clear of the fan</span><b>{plan.stats.nudged}</b></div>
+                )}
+                {plan.lights.filter((l) => l.follows && (l.follows.x || l.follows.y)).length > 0 && (
+                  <div className="kv"><span>Lined up with a moved light</span>
+                    <b>{plan.lights.filter((l) => l.follows && (l.follows.x || l.follows.y)).length}</b></div>
                 )}
                 {plan.lights.filter((l) => l.roaming).length > 0 && (
                   <div className="kv"><span>Large lights off the grid line</span>

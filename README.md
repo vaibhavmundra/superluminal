@@ -48,8 +48,9 @@ space, as if the outline of the room had changed**:
   (see [Choosing how the space is chunked](#choosing-how-the-space-is-chunked)).
   No chunk, grid line or cell ever overlaps a zone.
 - **Each chunk gets its own near-square grid.** There is nothing sacred about
-  6×6 ft — the target cell is a preference; the chunking comes first, and every
-  chunk sizes its cells to suit its own width and height.
+  6×6 ft — what a cell should cover is **36 sqft, ±25%**; the chunking comes
+  first, and every chunk sizes its cells to suit its own width and height. See
+  [The cell is an area, not a side](#the-cell-is-an-area-not-a-side).
 - **Chunks 1 ft or thinner (either dimension) are omitted entirely** — a sliver
   behind a duct doesn't deserve a light. The threshold is the "Skip chunks
   under" slider; the sidebar reports how many slivers were skipped.
@@ -163,10 +164,13 @@ rectify → carve zones → ENUMERATE CHUNKINGS → you choose → per-chunk gri
    partial — which is what makes an exact rectangular cover possible at all.
    Several decompositions are produced and **you pick one**; chunks thinner than
    `minChunk` (1 ft) are omitted from whichever you pick.
-3. **Partition.** Each chunk's axis of length `W` is split into `round(W/6)`
-   pieces, choosing between `n-1`, `n` and `n+1` by a score that rewards a cut
-   line or cell centre landing on the fan. This is where "squarish, but sizes
-   vary to suit the walls" comes from.
+3. **Partition.** Each chunk is divided in x and y **together**, because both
+   "does a cell cover about 36 sqft" and "does the fan land on a cell centre"
+   are two-dimensional questions that neither axis can answer alone. The
+   candidates on each axis are the even divisions into `n-1`, `n` and `n+1`
+   pieces — plus, for a chunk holding exactly one fan, divisions with a cut line
+   placed **exactly on that fan**. This is where "squarish, but sizes vary to
+   suit the walls" comes from.
 4. **Cells.** Cross the two partitions inside each chunk. Cells are always
    fully inside the room and fully outside every zone, by construction.
 5. **Classify.** Before matching, ask of every cell: can a small light sit
@@ -227,9 +231,13 @@ rectify → carve zones → ENUMERATE CHUNKINGS → you choose → per-chunk gri
    the planner builds the layout both ways and keeps the better result.
 
 7. **Align.** Light coordinates are clustered into rows and columns and
-   snapped — across chunk boundaries too — preferring the fan's coordinate.
-   A large light on a vertical grid line has its x fixed by the grid, so only
-   its y can slide, and only along the shared edge.
+   snapped — across chunk boundaries too. Each row is offered several lines it
+   could form up on and takes whichever puts the most lights on it; a light
+   that cannot land exactly on that line does not move at all. See
+   [Alignment: the line has to be worth
+   having](#alignment-the-line-has-to-be-worth-having). A large light on a
+   vertical grid line has its x fixed by the grid, so only its y can slide, and
+   only along the shared edge.
 8. **Fixtures.** Every fan is both an obstacle and a soft grid anchor, and all
    of them apply at once — a position must clear *every* fan. A large light
    stays on its grid intersection, so if a fan
@@ -243,6 +251,129 @@ so a hole can't hide, and `tools/test-planner.mjs` asserts it on every case.
 
 `src/lib/` is plain JS with no DOM dependency except `detect.js`, so the engine
 is testable in Node and reusable elsewhere.
+
+## The cell is an area, not a side
+
+A cell should cover **36 sqft, give or take 25%** — 27 to 45 sqft. That is the
+same brief as "6 by 6", said in the unit that actually matters, and saying it
+that way changes what the grid is allowed to do.
+
+Held to a 6 ft *side*, every deviation is a cost and the grid has nothing to
+spend. Held to an *area band*, a 5 ft cell next to a 7 ft one is not a
+compromise at all — 35 sqft and 42 sqft are both simply fine — and the width of
+that band becomes a budget. What the grid buys with it is the fan.
+
+So the rule has two tiers rather than one weight:
+
+- **Inside the band, size is nearly free.** A slight pull towards a square cell
+  at the target side is all that remains, and it only breaks ties.
+- **Leaving the band is a step change**, not a slope. Every grid whose cells all
+  sit inside the band beats every grid that leaves it, whatever else is on
+  offer: no amount of fan alignment buys a 22 sqft cell when a 36 sqft one is
+  available. Only when *nothing* fits — a chunk two feet wider than a whole
+  number of cells, a corridor 4 ft across — does the soft penalty decide, and
+  then it prefers the near miss.
+
+`minCell` and `maxCell` still bound the sides, so 36 sqft cannot be delivered as
+4 × 9. Set the band in the sidebar: **Cell area** and **Area tolerance**.
+
+## A lone fan goes on a grid line
+
+**A chunk holding exactly one fan puts a grid line on that fan.** Not near it —
+on it.
+
+One fan is one coordinate pair to hit, with no second fan whose claim could
+contradict it, so the grid can be bent to meet it exactly. The bend is real: the
+cut line goes at the fan's coordinate and *each side of it is then divided on
+its own terms*, so a 30 ft chunk with a fan 7 ft in becomes one 7 ft cell and
+four of 5.75 ft. Cell sizes differ within the chunk — that is the price — and
+the area band above is what keeps the price bounded. A division that would put a
+cell outside 27–45 sqft is not available to be bought.
+
+Both axes are tried, and hitting **both** is worth more than hitting one:
+
+| Where the fan ends up | What that means |
+|---|---|
+| **On a grid intersection** | A shared corner of four cells, each centre half a diagonal away — the best case, and what the algorithm reaches for first. |
+| **On a single grid line** | On the edge between two cells. Good, unless the fan also sits level with those two centres, which the awkward-cell count then charges for. |
+| **Inside a cell, near its centre** | The case worth all this trouble to avoid: that cell can hold no centred small light, and every grid intersection around it is inside the fan's clearance circle too, so no large light can rescue it either. |
+
+A fan closer than one cell to the chunk's edge is left alone — there would be no
+room for a cell on the near side, and such a fan already sits near a wall line.
+
+Chunks with **two or more** fans are unchanged: they keep the older, softer
+behaviour, where each fan pulls the grid towards itself (**Fan pull**) and the
+partition settles where the pulls balance. Bending a grid to hit one fan exactly
+would only move the problem to the others.
+
+`tools/test-planner.mjs` sweeps 82 single-fan rooms and asserts both halves of
+this: the fan lands on a line in every chunk that has room for one, and not one
+cell in 1840 falls outside the area band.
+
+## Alignment: the line has to be worth having
+
+Two rules govern every light the alignment pass touches.
+
+### A light only moves onto something
+
+**A small light lands exactly on the line it was moved for, or it does not
+move.** Its only other stopping place is the edge of its own centre band, and
+that edge means nothing to anybody: a light parked there is off its cell centre
+*and* still out of line — the worst of both. Chasing a fan the light cannot
+quite reach and stopping short is not a partial success, it is a light that now
+looks misplaced for no reason.
+
+A large light is different in kind. Its stopping places are the discrete anchors
+of the grid — the midpoint of its edge, the chunk's centre axis, the grid
+intersections at either end — and each of those is a position that means
+something on its own. So it may take the nearest such anchor within tolerance
+even when that is not exactly the line.
+
+`tools/test-planner.mjs` checks the consequence directly: of every light
+coordinate that has left its cell centre, none sits anywhere but on a fan, on a
+line it shares with another light, or where a fan pushed it.
+
+### The line that holds the most lights wins
+
+A row or column is offered several lines it could form up on:
+
+| | Line | What it means |
+|---|---|---|
+| 1 | **A constrained light's coordinate** | A small light a fan has pushed off its cell centre has no say in where it sits, so the row forms up on *it* rather than leaving it visibly out of line on its own. Moving four lights two inches each is invisible; leaving one light four inches out of a row of five is the first thing anyone notices. |
+| 2 | **A fan's coordinate** | Lights running through the fan read as deliberate. |
+| 3 | **A coordinate the row already uses** | Including, when nothing has moved, the cell-centre line they all share. Choosing this is choosing to leave the row alone. |
+
+**The line that puts the most lights on it wins**, and that ranking only breaks
+ties. This is what stops a row chasing a fan it cannot reach as a group: a fan
+three of four lights can get to scores 3, while the cell-centre line all four
+are on already scores 4 — so nobody moves, and the row stays a row. A whole
+row aligned on the fan is worth having. Half a row aligned on the fan is worse
+than none.
+
+A light counts towards a line only if it can actually land on it: inside its own
+centre band, in the room, clear of every fan and zone, and without crowding a
+neighbour.
+
+### Consequences
+
+- **A constrained light never follows.** It is already at the only position left
+  to it, so it sets a line rather than moving to one. Where two fans pin two
+  lights in the same row to different offsets, one line wins on count and the
+  other pinned light stays put — no arrangement satisfies both.
+- **A light may end up off both its centre lines** — but only when each offset
+  puts it on a real line, once for its row and once for its column. The re-seat
+  pass, which exists to pull drifting lights back onto a cell centre line,
+  leaves those alone: they sit exactly where the layout's own grid of positions
+  puts them. Reported as `alignedDiagonal`; drift is still reported as
+  `offAxis` and is still zero.
+- **The minimum spacing gives a little, and only for a constrained light's
+  line.** A light that forms up on a pushed light reproduces the spacing that
+  light already has with its own neighbour, so the floor for that move is
+  whatever the anchor itself lives with — never tighter. Anything involving a
+  large light keeps the full **Min light spacing**, since a large light can
+  slide along its line or be given up.
+
+The sidebar reports how many lights lined up this way.
 
 ## The wall-distance rule
 
@@ -291,18 +422,24 @@ The slider ranges 2–9 ft if you want to see the rule bite differently.
   the fan is. Mark them by hand as no-light zones.
 - A fan sitting near a cell centre is handled in three stages: the grid tries
   to avoid creating such a cell at all, then the matching tries to cover it with
-  a large light, then — failing both — the cell is ceded. When the fan sits
-  *inside* the cell, the first two usually fail: every candidate grid
-  intersection for that cell is inside the fan's clearance circle too. Lower
-  **Fan clearance** if you'd rather have a light there.
+  a large light, then — failing both — the cell is ceded. With **one** fan in
+  the chunk the first stage now succeeds outright, since the grid can put a line
+  on the fan (see [A lone fan goes on a grid
+  line](#a-lone-fan-goes-on-a-grid-line)). With several fans it can still fail,
+  and when the fan sits *inside* the cell the second stage usually fails too:
+  every candidate grid intersection for that cell is inside the fan's clearance
+  circle. Lower **Fan clearance** if you'd rather have a light there.
 - Because the second pass depends on what the first pass leaves behind, the
   awkward-cell priority is no longer separable from it — a priority that rescues
   one cell can strand another. The planner therefore builds the layout **both**
   ways (priority on and off) and keeps whichever ends with fewer compromised
   cells, then more large lights, then fewer distinct light positions.
-- **Hold to target** (default 4) is what keeps cells near 6 ft; **Fan pull**
-  (default 0.6) is what bends the grid to line up with fixtures. Raising Fan
-  pull much above 1 lets it distort cell sizes noticeably.
+- **Cell area** / **Area tolerance** (36 sqft ±25%) are what keep cells sane;
+  **Keep it square** (0.8) is the mild preference for a square cell inside the
+  band. **Fan on a line** (1.5) and **...on a corner** (1.5) are what a single
+  fan's exact anchoring is worth, and **Fan pull** (0.6) is the older soft
+  attraction that still governs chunks with several fans. Raising Fan pull much
+  above 1 lets it distort cell sizes noticeably.
 - Many fans in a small room can leave a cell with nowhere clear to go. The
   light stays put and is reported as a clash rather than being dropped.
 - A fan sitting near its own cell's centre is the common clash: no point on
@@ -311,7 +448,22 @@ The slider ranges 2–9 ft if you want to see the rule bite differently.
   is flagged. Lower **Fan clearance** to resolve it.
 - Fans pull the grid towards themselves, so several fans can change the cell
   count as the partition bends to line up with all of them. Turn **Fan pull**
-  down to 0 to size the grid purely on the room.
+  down to 0 to size the grid purely on the room — and **Fan on a line** to 0 to
+  stop a lone fan being anchored exactly.
+- A chunk whose cells differ in size can leave two small lights closer together
+  than **Min light spacing** when a fan pushes one of them off its centre — and
+  the rest of that row, following it, inherits the same gap. The spacing rule is
+  enforceable for anything involving a large light, which can slide along its
+  line or be given up; a small light owns a cell that has to stay lit, so it
+  stays put and the pair is reported rather than repaired.
+- Two fans can pin two lights in the same row to different offsets. Only one of
+  those lines can win, so the other pushed light stays visibly out of the row.
+  Nothing can be done about it without leaving a cell dark.
+- A row will decline to align on a fan that only some of its lights can reach,
+  and stay on its cell-centre line instead. That is deliberate — half a row on
+  the fan looks worse than none of it — but it does mean a fan can be sitting
+  right beside a row of lights that ignores it. Widen **Centre band** if you
+  would rather the rest of the row could get there.
 - Scale from the fan carries the stroke width of your drawn circle (~2–4% high).
   Use Measure if you need it tighter.
 

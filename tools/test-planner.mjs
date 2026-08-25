@@ -162,7 +162,11 @@ console.log('\n=== small lights stay on a cell centre line ===\n');
   for (const [name, poly, fans, zones] of cases) {
     const r = planLights(poly, fans, {}, zones);
     if (!r.ok) { console.log(`  ${name}: not ok — ${r.reason}`); continue; }
+    // Off both of its cell's centre lines. A light that is off both because it
+    // lines up with a constrained neighbour on each axis is a deliberate
+    // position, not drift, and is checked in its own section below.
     const diag = r.lights.filter((l) => l.kind === 'small' && l.cell &&
+      l.diagonal !== 'aligned' &&
       Math.abs(l.x - l.cell.cx) > 0.05 && Math.abs(l.y - l.cell.cy) > 0.05);
     const inside = r.lights.filter((l) => l.kind === 'small' && l.cell &&
       (l.x < l.cell.x0 - 1e-6 || l.x > l.cell.x1 + 1e-6 || l.y < l.cell.y0 - 1e-6 || l.y > l.cell.y1 + 1e-6));
@@ -281,6 +285,7 @@ console.log('\n=== large lights: allowed spots and spacing ===\n');
   const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
   const shapes = [['24.2x19',R(24.2,19)],['36x24',R(36,24)],['30x30',R(30,30)],['20x14',R(20,14)],['L30',L],['42x28',R(42,28)]];
   let checked = 0, offLine = 0, offSpot = 0, tooClose = 0, minGap = Infinity, minGapAt = '';
+  let forced = 0, forcedAt = '';
   let gained = 0, lost = 0;
   for (const [name, poly] of shapes) {
     for (const fans of [[], [F(12,10,1.97)], [F(9,9,1.97), F(19,9,1.97)], [F(15,15,2.5)]]) {
@@ -297,8 +302,10 @@ console.log('\n=== large lights: allowed spots and spacing ===\n');
         const bigs = on.lights.filter((l) => l.kind === 'large' && !l.roaming);
         for (const l of bigs) {
           checked++;
-          const cell = on.cells.find((c) => c.id === l.cells[0]);
-          const ch = on.chunks.find((c) => c.id === cell.chunk);
+          // the chunk whose grid line the light sits on — NOT the chunk of
+          // cells[0], which for a light at an intersection on a chunk boundary
+          // can be the neighbour
+          const ch = on.chunks.find((c) => c.id === l.chunk);
           // sits exactly on a grid line of its own chunk
           const line = l.axis === 'v'
             ? ch.xLines.some((v) => Math.abs(v - l.x) < 1e-6)
@@ -308,12 +315,26 @@ console.log('\n=== large lights: allowed spots and spacing ===\n');
           const along = l.axis === 'v' ? l.y : l.x;
           if (!(l.allowed || []).some((v) => Math.abs(v - along) < 1e-6)) offSpot++;
         }
-        // no two lights crowded together
+        // No two lights crowded together. The rule is enforceable for any pair
+        // involving a large light: it can slide along its line or be given up.
+        // Two SMALL lights are a different case — each owns a cell that must
+        // stay lit, so when a fan pushes one off its centre towards its
+        // neighbour there is no legal move left. Those are counted separately
+        // and must stay rare; every other pair must obey.
         for (let i = 0; i < on.lights.length; i++) {
           for (let j = i + 1; j < on.lights.length; j++) {
-            const d = Math.hypot(on.lights[i].x - on.lights[j].x, on.lights[i].y - on.lights[j].y);
-            if (d < minGap) { minGap = d; minGapAt = `${name} cl${cl} ${on.lights[i].id}/${on.lights[j].id}`; }
-            if (d < on.opt.minLightSpacing - 1e-6) tooClose++;
+            const a = on.lights[i], b = on.lights[j];
+            const d = Math.hypot(a.x - b.x, a.y - b.y);
+            if (d < minGap) { minGap = d; minGapAt = `${name} cl${cl} ${a.id}/${b.id}`; }
+            if (d >= on.opt.minLightSpacing - 1e-6) continue;
+            const bothSmall = a.kind === 'small' && b.kind === 'small';
+            // Either a fan pushed one of them off its centre, or one of them
+            // moved onto a pushed light's line to keep its row or column
+            // together. Both are positions the light is not free to give up.
+            const pushed = [a, b].some((l) => l.nudged || l.clash || l.reseated
+              || (l.follows && (l.follows.x || l.follows.y)));
+            if (bothSmall && pushed) { forced++; forcedAt = `${name} cl${cl} ${a.id}/${b.id} ${d.toFixed(2)}ft`; }
+            else tooClose++;
           }
         }
       }
@@ -324,6 +345,7 @@ console.log('\n=== large lights: allowed spots and spacing ===\n');
   console.log(`    not on a grid line of their chunk : ${offLine}   (must be 0)`);
   console.log(`    not at an allowed spot            : ${offSpot}   (must be 0)`);
   console.log(`    pairs closer than min spacing     : ${tooClose}   (must be 0)`);
+  console.log(`    small pairs held close by a fan   : ${forced}${forcedAt ? `  (worst ${forcedAt})` : ''}`);
   console.log(`    closest pair anywhere             : ${minGap.toFixed(2)} ft  (${minGapAt})`);
   console.log(`    layouts that gained a large light : ${gained}`);
   console.log(`    layouts that lost one             : ${lost}   (must be 0)`);
@@ -487,4 +509,182 @@ console.log('\n=== roaming is a last resort, and stays inside its own pair ===\n
   console.log(`    roaming in a fan-free plan       : ${fanFreeRoam}   (must be 0)`);
   const ok = outside === 0 && betterWithout === 0 && fanFreeRoam === 0 && roamWhenAnchorFree === 0 && roamers > 0;
   console.log(`\nROAMING OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
+}
+
+
+console.log('\n=== one fan in a chunk: the grid lands a line on it, at 36 sqft ±25% ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+  const TOL = 0.05;   // ft — "on the line"
+
+  // Rooms with exactly one fan, swept across positions that are deliberately
+  // NOT at tidy multiples of the target cell.
+  const cases = [];
+  for (const [name, poly, W, H] of [['36x24', R(36,24), 36, 24], ['30x22', R(30,22), 30, 22],
+                                    ['24x20', R(24,20), 24, 20], ['42x28', R(42,28), 42, 28]]) {
+    for (const fx of [0.30, 0.41, 0.5, 0.63, 0.77]) {
+      for (const fy of [0.33, 0.5, 0.58, 0.71]) {
+        cases.push([`${name} fan(${(W*fx).toFixed(1)},${(H*fy).toFixed(1)})`, poly,
+                    [F(+(W*fx).toFixed(2), +(H*fy).toFixed(2), 2.5)]]);
+      }
+    }
+  }
+  cases.push(['L30 fan in the tall leg', L, [F(6.4, 19.3, 2.5)]]);
+  cases.push(['L30 fan in the wide leg', L, [F(20.7, 5.8, 2.5)]]);
+
+  let chunksWithOneFan = 0, onAxis = 0, onLine = 0, onCorner = 0;
+  let cells = 0, outOfBand = 0, worstArea = null, worstAt = '';
+  const misses = [];
+  for (const [name, poly, fans] of cases) {
+    const r = planLights(poly, fans, { fanClearance: 2 });
+    if (!r.ok) { console.log(`  ${name}: FAILED — ${r.reason}`); continue; }
+    const lo = r.opt.targetArea * (1 - r.opt.areaTol), hi = r.opt.targetArea * (1 + r.opt.areaTol);
+    for (const c of r.cells) {
+      cells++;
+      const a = c.w * c.h;
+      if (a < lo - 1e-6 || a > hi + 1e-6) outOfBand++;
+      const dev = Math.max(lo - a, a - hi);
+      if (worstArea === null || dev > worstArea) { worstArea = dev; worstAt = `${name} ${c.w.toFixed(2)}x${c.h.toFixed(2)} = ${a.toFixed(1)} sqft`; }
+    }
+    for (const ch of r.chunks) {
+      const inside = fans.filter((f) => f.x > ch.x0 + 1e-6 && f.x < ch.x1 - 1e-6
+                                     && f.y > ch.y0 + 1e-6 && f.y < ch.y1 - 1e-6);
+      if (inside.length !== 1) continue;
+      chunksWithOneFan++;
+      const f = inside[0];
+      const hx = ch.xLines.some((v) => Math.abs(v - f.x) < TOL);
+      const hy = ch.yLines.some((v) => Math.abs(v - f.y) < TOL);
+      // A fan within one cell of a chunk edge cannot have a line put on it —
+      // there would be no room for a cell on the near side — and the fan is
+      // already close to a wall line, so it is not counted as a miss.
+      const room = Math.min(f.x - ch.x0, ch.x1 - f.x) >= r.opt.minCell
+                && Math.min(f.y - ch.y0, ch.y1 - f.y) >= r.opt.minCell;
+      if (hx || hy) onLine++; else if (room) misses.push(`${name} in ${ch.w.toFixed(1)}x${ch.h.toFixed(1)}`);
+      if (hx && hy) onCorner++;
+      if (!hx && !hy && !room) onAxis++;   // excused: too near the chunk edge
+    }
+  }
+  console.log(`  ${cases.length} rooms, ${chunksWithOneFan} chunks holding exactly one fan`);
+  console.log(`    fan on at least one grid line     : ${onLine}`);
+  console.log(`    ...of those, on an intersection   : ${onCorner}`);
+  console.log(`    excused (fan within a cell of the chunk edge) : ${onAxis}`);
+  console.log(`    missed with room to spare         : ${misses.length}   (must be 0)`);
+  if (misses.length) console.log(`      e.g. ${misses.slice(0, 4).join(' | ')}`);
+  console.log(`  ${cells} cells, outside 27–45 sqft: ${outOfBand}   (must be 0)`);
+  console.log(`    worst cell: ${worstAt}`);
+  const ok = misses.length === 0 && outOfBand === 0 && onLine > 0;
+  console.log(`\nFAN-ON-LINE OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
+}
+
+
+console.log('\n=== a constrained light dictates its row and column ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+  const TOL = 0.05;
+
+  const rooms = [
+    ['36x24', R(36,24)], ['30x22', R(30,22)], ['42x28', R(42,28)],
+    ['24x20', R(24,20)], ['L30', L], ['23.9x12.9', R(23.9,12.9)],
+    ['24x26', R(24,26)],
+  ];
+  const fanSets = [
+    [F(17,13.5,2.5)], [F(13,10,2.5)], [F(8,7,2.5),F(18,12,2.5),F(28,17,2.5)],
+    [F(9,9,1.97),F(19,9,1.97)], [F(6.4,19.3,2.5),F(20.7,5.8,2.5)], [F(11.3,7.7,2.2)],
+    [F(7.3,9.1,2.2),F(15.9,9.1,2.2)],
+  ];
+
+  // `slid` records WHICH centre line the light was pushed along, so a light
+  // nudged in x does not count as pinned in y as well.
+  const forcedOn = (l, ax) => {
+    if (l.kind !== 'small' || !l.cell) return false;
+    if (!l.nudged && !l.clash) return false;
+    const along = l.slid === 'h' ? 'x' : l.slid === 'v' ? 'y' : null;
+    if (along && along !== ax) return false;
+    return Math.abs(l[ax] - (ax === 'x' ? l.cell.cx : l.cell.cy)) > TOL;
+  };
+
+  let anchors = 0, aligned = 0, unreachable = 0, blocked = 0, traded = 0, pinned = 0;
+  const stranded = [];
+  let moved = 0; const pointless = [];
+  let diagonals = 0; const badDiagonals = [];
+  for (const [name, poly] of rooms) {
+    for (const fans of fanSets) {
+      for (const cl of [1.0, 2.0]) {
+        const r = planLights(poly, fans, { fanClearance: cl });
+        if (!r.ok) continue;
+        const smalls = r.lights.filter((l) => l.kind === 'small' && l.cell);
+        const centre = (l, ax) => (ax === 'x' ? l.cell.cx : l.cell.cy);
+        const band = (l, ax) => r.opt.centreBand * (ax === 'x' ? l.cell.w : l.cell.h);
+        const onLine = (ax, v) => smalls.filter((k) => Math.abs(k[ax] - v) < TOL).length;
+
+        for (const ax of ['x', 'y']) {
+          // (1) NO POINTLESS MOVES. A light that has left its cell centre must
+          // have landed on something: a fan's coordinate, or a line it now
+          // shares with another light. The edge of its own tolerance band is
+          // not a place — a light parked there is off centre AND out of line.
+          for (const l of smalls) {
+            if (Math.abs(l[ax] - centre(l, ax)) <= TOL) continue;
+            moved++;
+            if (forcedOn(l, ax)) continue;                        // pushed by a fan
+            if (fans.some((f) => Math.abs(f[ax] - l[ax]) < TOL)) continue;  // on a fan
+            if (onLine(ax, l[ax]) > 1) continue;                  // shares a line
+            pointless.push(`${name} cl${cl} ${ax}: ${l.id}@${l[ax].toFixed(2)} (centre ${centre(l, ax).toFixed(2)})`);
+          }
+
+          // (2) THE CONSTRAINED LIGHT SETS THE LINE — unless obeying it would
+          // put FEWER lights in line than leaving the row alone.
+          for (const f of smalls.filter((l) => forcedOn(l, ax))) {
+            anchors++;
+            for (const m of smalls) {
+              if (m === f) continue;
+              if (Math.abs(m[ax] - f[ax]) > r.opt.alignTol) continue;   // not its row/column
+              if (Math.abs(m[ax] - f[ax]) < TOL) { aligned++; continue; }
+              // two fans can pin two lights in one row to different offsets;
+              // neither may move, so no single line satisfies both
+              if (forcedOn(m, ax)) { pinned++; continue; }
+              if (Math.abs(f[ax] - centre(m, ax)) > band(m, ax) + 1e-9) { unreachable++; continue; }
+              const trial = ax === 'x' ? { x: f.x, y: m.y } : { x: m.x, y: f.y };
+              if (fans.some((fn) => Math.hypot(trial.x - fn.x, trial.y - fn.y) < (fn.r || 0) + cl)) {
+                blocked++; continue;
+              }
+              // the line m actually sits on may simply hold more lights
+              if (onLine(ax, m[ax]) >= onLine(ax, f[ax])) { traded++; continue; }
+              stranded.push(`${name} cl${cl} ${ax}: ${m.id}@${m[ax].toFixed(2)} should be ${f[ax].toFixed(2)} (${f.id})`);
+            }
+          }
+        }
+
+        // (3) an "aligned diagonal" must really be in line on BOTH axes
+        for (const l of smalls.filter((l) => l.diagonal === 'aligned')) {
+          diagonals++;
+          const inLine = (ax) => forcedOn(l, ax)
+            || fans.some((f) => Math.abs(f[ax] - l[ax]) < TOL)
+            || onLine(ax, l[ax]) > 1;
+          if (!(inLine('x') && inLine('y'))) {
+            badDiagonals.push(`${name} cl${cl} ${l.id} (${l.x.toFixed(2)},${l.y.toFixed(2)})`);
+          }
+        }
+      }
+    }
+  }
+  console.log(`  ${moved} light coordinates moved off a cell centre`);
+  console.log(`    landed on nothing at all           : ${pointless.length}   (must be 0)`);
+  if (pointless.length) console.log(`      e.g. ${pointless.slice(0, 4).join(' | ')}`);
+  console.log(`  ${anchors} constrained lights across ${rooms.length} rooms x ${fanSets.length} fan sets x 2 clearances`);
+  console.log(`    row/column mates brought into line : ${aligned}`);
+  console.log(`    out of reach (own centre band)     : ${unreachable}`);
+  console.log(`    blocked by a fan on the way        : ${blocked}`);
+  console.log(`    two fans pinning one row apart     : ${pinned}`);
+  console.log(`    left on a line holding as many     : ${traded}`);
+  console.log(`    reachable but left out of line     : ${stranded.length}   (must be 0)`);
+  if (stranded.length) console.log(`      e.g. ${stranded.slice(0, 4).join(' | ')}`);
+  console.log(`  ${diagonals} lights off both centre lines by design`);
+  console.log(`    not actually in line on both axes  : ${badDiagonals.length}   (must be 0)`);
+  if (badDiagonals.length) console.log(`      e.g. ${badDiagonals.slice(0, 4).join(' | ')}`);
+  const ok = stranded.length === 0 && badDiagonals.length === 0 && pointless.length === 0 && aligned > 0;
+  console.log(`\nCONSTRAINED-ANCHOR OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
 }
