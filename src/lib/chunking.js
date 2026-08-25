@@ -227,8 +227,16 @@ export function squareness(r) {
  * 24x18 chunk at a 6 ft target scores 1: its cells come out exactly 6x6 with
  * nothing stretched. A 15x15 chunk has to run 5 ft cells, so it scores lower.
  */
+/**
+ * The ideal cell side. The brief is an area, so the side follows from it —
+ * derived here rather than imported from planner.js, which imports this file.
+ */
+export function idealSide(opt) {
+  return opt.targetCell || Math.sqrt(opt.targetArea || 50);
+}
+
 export function gridFitness(r, opt) {
-  const t = opt.targetCell || 6;
+  const t = idealSide(opt);
   const fit = (s) => {
     const n = Math.max(1, Math.round(s / t));
     return Math.max(0, 1 - Math.abs(s / n - t) / t);
@@ -256,7 +264,7 @@ export function fanFitness(r, fans, opt) {
 
 /** A rough cell count without running the real partition — enough for a chip. */
 function estimateCells(r, opt) {
-  const t = opt.targetCell || 6;
+  const t = idealSide(opt);
   return Math.max(1, Math.round(r.w / t)) * Math.max(1, Math.round(r.h / t));
 }
 
@@ -410,7 +418,8 @@ export function rankChunkings(options, weights = RANK_WEIGHTS) {
  * ceremony rather than a decision.
  */
 export function enumerateChunkings(polygon, zones = [], opt = {}, fans = []) {
-  const o = { targetCell: 6, minChunk: 1, fanClearance: 2, ...opt };
+  const o = { targetArea: 50, minChunk: 1, fanClearance: 2, ...opt };
+  o.targetCell = idealSide(o);
   const grid = elementaryGrid(polygon, zones);
   if (grid.empty || grid.freeArea <= 0) {
     return { options: [], recommendedId: null, needsChoice: false, grid, freeArea: 0 };
@@ -575,7 +584,8 @@ export function chunkingPayload(options, ctx = {}) {
       fans: fans.map((f) => ({ x: round(f.x), y: round(f.y), bladeRadius: round(f.r || 0) })),
     },
     intent: {
-      targetCellFt: opt.targetCell ?? 6,
+      targetCellSqft: opt.targetArea ?? 50,
+      targetCellFt: Math.round(idealSide(opt) * 100) / 100,
       minChunkFt: opt.minChunk ?? 1,
       fanClearanceFt: opt.fanClearance ?? 2,
       minWallDistanceFt: opt.minWallDistance ?? 5,

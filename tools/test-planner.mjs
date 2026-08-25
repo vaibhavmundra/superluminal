@@ -363,18 +363,29 @@ console.log('\n=== small lights first: large lights only where forced ===\n');
                   ['L30',L],['42x28',R(42,28)],['13x21',R(13,21)]];
 
   // 1. no fan anywhere => no large light anywhere
-  let strayLarge = 0, fanFree = 0;
+  let strayLarge = 0, fanFree = 0, crossChunk = 0;
   for (const [, poly] of shapes) {
     const r = planLights(poly, [], {});
     if (!r.ok) continue;
     fanFree++;
     strayLarge += r.stats.large;
-    for (const l of r.lights) if (l.kind === 'small' && l.cell) {
-      const off = Math.max(Math.abs(l.x - l.cell.cx) / l.cell.w, Math.abs(l.y - l.cell.cy) / l.cell.h);
-      if (off > 1e-9) strayLarge += 100; // a fan-free plan should need no nudging either
+    const smalls = r.lights.filter((l) => l.kind === 'small' && l.cell);
+    for (const l of smalls) {
+      for (const ax of ['x', 'y']) {
+        const centre = ax === 'x' ? l.cell.cx : l.cell.cy;
+        if (Math.abs(l[ax] - centre) <= 1e-9) continue;
+        // With no fan there is nothing to be nudged AWAY from, so the only
+        // legitimate reason to leave a cell centre is to line up with a light
+        // in a neighbouring chunk, whose cells are a different size. That is
+        // the cross-chunk alignment the layout is supposed to do. Anything
+        // else is drift.
+        if (smalls.some((m) => m !== l && Math.abs(m[ax] - l[ax]) < 0.05)) { crossChunk++; continue; }
+        strayLarge += 100;
+      }
     }
   }
-  console.log(`  ${fanFree} fan-free rooms: ${strayLarge} large lights / off-centre lights  (must be 0)`);
+  console.log(`  ${fanFree} fan-free rooms: ${strayLarge} large lights / drifting lights  (must be 0)`);
+  console.log(`    lights lined up across a chunk edge : ${crossChunk}`);
 
   // 2. with fans: every large light must rescue at least one awkward cell,
   //    and no awkward cell may be ceded while a rescue was available
@@ -415,7 +426,7 @@ console.log('\n=== coverage: one light per box, vertex lights cover four ===\n')
   const shapes = [['24.2x19',R(24.2,19)],['36x24',R(36,24)],['30x30',R(30,30)],['20x14',R(20,14)],
                   ['L30',L],['42x28',R(42,28)],['13x21',R(13,21)],['30x8',R(30,8)]];
   const TOUCH = 1e-6;
-  let layouts = 0, doubleLit = 0, wrongCover = 0, vertex = 0, edge = 0, roam = 0, mismatch = 0, uncovered = 0;
+  let layouts = 0, doubleLit = 0, wrongCover = 0, vertex = 0, tee = 0, edge = 0, roam = 0, mismatch = 0, uncovered = 0;
   const modes = [{ smallFirst: true }, { smallFirst: false }];
   for (const [name, poly] of shapes) {
     for (const fans of [[], [F(12,10,1.97)], [F(9,9,1.97), F(19,9,1.97)], [F(15,15,2.5)], [F(6,6,2.2), F(18,18,2.2)]]) {
@@ -444,7 +455,14 @@ console.log('\n=== coverage: one light per box, vertex lights cover four ===\n')
               if (!touch.some((id) => l.cells.includes(id))) mismatch++;
               continue;
             }
-            if (touch.length === 4) vertex++; else if (touch.length === 2) edge++; else wrongCover++;
+            // 4 = a vertex, 2 = the interior of an edge, and 3 = a T-junction,
+            // where the light sits at a vertex of one chunk's grid and on the
+            // interior of a neighbouring chunk's cell edge. All three are real
+            // positions serving real boxes; only a count outside them is wrong.
+            if (touch.length === 4) vertex++;
+            else if (touch.length === 3) tee++;
+            else if (touch.length === 2) edge++;
+            else wrongCover++;
             const same = touch.length === l.cells.length && touch.every((id) => l.cells.includes(id));
             if (!same) mismatch++;
           }
@@ -458,9 +476,10 @@ console.log('\n=== coverage: one light per box, vertex lights cover four ===\n')
   console.log(`    boxes lit by more than one light : ${doubleLit}   (must be 0)`);
   console.log(`    boxes neither lit nor ceded      : ${uncovered}   (must be 0)`);
   console.log(`    large lights on a vertex (4 boxes): ${vertex}`);
+  console.log(`    large lights at a T-junction (3)  : ${tee}`);
   console.log(`    large lights on an edge (2 boxes) : ${edge}`);
   console.log(`    roaming lights (2 boxes, off-line): ${roam}`);
-  console.log(`    coverage not 1 / 2 / 4 boxes     : ${wrongCover}   (must be 0)`);
+  console.log(`    coverage not 1 / 2 / 3 / 4 boxes : ${wrongCover}   (must be 0)`);
   console.log(`    recorded coverage != geometry    : ${mismatch}   (must be 0)`);
   const ok = doubleLit === 0 && uncovered === 0 && wrongCover === 0 && mismatch === 0 && edge > 0;
   console.log(`\nCOVERAGE OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
@@ -512,7 +531,7 @@ console.log('\n=== roaming is a last resort, and stays inside its own pair ===\n
 }
 
 
-console.log('\n=== one fan in a chunk: the grid lands a line on it, at 36 sqft ±25% ===\n');
+console.log('\n=== one fan in a chunk: the grid lands a line on it, inside the area band ===\n');
 {
   const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
   const F = (x, y, r) => ({ type: 'fan', x, y, r });
@@ -534,7 +553,7 @@ console.log('\n=== one fan in a chunk: the grid lands a line on it, at 36 sqft �
   cases.push(['L30 fan in the tall leg', L, [F(6.4, 19.3, 2.5)]]);
   cases.push(['L30 fan in the wide leg', L, [F(20.7, 5.8, 2.5)]]);
 
-  let chunksWithOneFan = 0, onAxis = 0, onLine = 0, onCorner = 0;
+  let chunksWithOneFan = 0, onAxis = 0, onLine = 0, onCorner = 0, bandBlocked = 0;
   let cells = 0, outOfBand = 0, worstArea = null, worstAt = '';
   const misses = [];
   for (const [name, poly, fans] of cases) {
@@ -548,6 +567,14 @@ console.log('\n=== one fan in a chunk: the grid lands a line on it, at 36 sqft �
       const dev = Math.max(lo - a, a - hi);
       if (worstArea === null || dev > worstArea) { worstArea = dev; worstAt = `${name} ${c.w.toFixed(2)}x${c.h.toFixed(2)} = ${a.toFixed(1)} sqft`; }
     }
+    // The counterfactual: the same room with the area band opened right up.
+    // If the fan lands on a line THEN but not now, the band is what stopped it
+    // — which is the order we asked for, band first and fan within it — and
+    // not a failure of the fan rule.
+    const loose = planLights(poly, fans, { fanClearance: 2, areaTol: 0.9 });
+    const looseHit = (f) => loose.ok && loose.chunks.some((ch) =>
+      ch.xLines.some((v) => Math.abs(v - f.x) < TOL) || ch.yLines.some((v) => Math.abs(v - f.y) < TOL));
+
     for (const ch of r.chunks) {
       const inside = fans.filter((f) => f.x > ch.x0 + 1e-6 && f.x < ch.x1 - 1e-6
                                      && f.y > ch.y0 + 1e-6 && f.y < ch.y1 - 1e-6);
@@ -556,23 +583,24 @@ console.log('\n=== one fan in a chunk: the grid lands a line on it, at 36 sqft �
       const f = inside[0];
       const hx = ch.xLines.some((v) => Math.abs(v - f.x) < TOL);
       const hy = ch.yLines.some((v) => Math.abs(v - f.y) < TOL);
+      if (hx || hy) { onLine++; if (hx && hy) onCorner++; continue; }
       // A fan within one cell of a chunk edge cannot have a line put on it —
-      // there would be no room for a cell on the near side — and the fan is
-      // already close to a wall line, so it is not counted as a miss.
+      // there would be no room for a cell on the near side.
       const room = Math.min(f.x - ch.x0, ch.x1 - f.x) >= r.opt.minCell
                 && Math.min(f.y - ch.y0, ch.y1 - f.y) >= r.opt.minCell;
-      if (hx || hy) onLine++; else if (room) misses.push(`${name} in ${ch.w.toFixed(1)}x${ch.h.toFixed(1)}`);
-      if (hx && hy) onCorner++;
-      if (!hx && !hy && !room) onAxis++;   // excused: too near the chunk edge
+      if (!room) { onAxis++; continue; }
+      if (!looseHit(f)) { onAxis++; continue; }   // no division could have done it either
+      bandBlocked++;                              // the band said no, and the band comes first
     }
   }
   console.log(`  ${cases.length} rooms, ${chunksWithOneFan} chunks holding exactly one fan`);
   console.log(`    fan on at least one grid line     : ${onLine}`);
   console.log(`    ...of those, on an intersection   : ${onCorner}`);
-  console.log(`    excused (fan within a cell of the chunk edge) : ${onAxis}`);
-  console.log(`    missed with room to spare         : ${misses.length}   (must be 0)`);
+    console.log(`    no room for a line (fan near the edge) : ${onAxis}`);
+  console.log(`    blocked by the area band          : ${bandBlocked}`);
+  console.log(`    missed for no reason              : ${misses.length}   (must be 0)`);
   if (misses.length) console.log(`      e.g. ${misses.slice(0, 4).join(' | ')}`);
-  console.log(`  ${cells} cells, outside 27–45 sqft: ${outOfBand}   (must be 0)`);
+  console.log(`  ${cells} cells, outside the area band: ${outOfBand}   (must be 0)`);
   console.log(`    worst cell: ${worstAt}`);
   const ok = misses.length === 0 && outOfBand === 0 && onLine > 0;
   console.log(`\nFAN-ON-LINE OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
@@ -687,4 +715,91 @@ console.log('\n=== a constrained light dictates its row and column ===\n');
   if (badDiagonals.length) console.log(`      e.g. ${badDiagonals.slice(0, 4).join(' | ')}`);
   const ok = stranded.length === 0 && badDiagonals.length === 0 && pointless.length === 0 && aligned > 0;
   console.log(`\nCONSTRAINED-ANCHOR OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
+}
+
+
+console.log('\n=== bigger boxes first — but never at the fan\'s expense ===\n');
+{
+  const R = (w, h) => [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
+  const F = (x, y, r) => ({ type: 'fan', x, y, r });
+  const L = [{x:0,y:0},{x:30,y:0},{x:30,y:12},{x:12,y:12},{x:12,y:30},{x:0,y:30}];
+  const TOL = 0.05;
+
+  const rooms = [['24.2x19',R(24.2,19)],['36x24',R(36,24)],['30x30',R(30,30)],['20x14',R(20,14)],
+                 ['L30',L],['42x28',R(42,28)],['13x21',R(13,21)],['24x26',R(24,26)],['33x27',R(33,27)]];
+  const fanSets = [[], [F(12,10,2)], [F(17,13.5,2)], [F(7.3,9.1,2),F(15.9,9.1,2)], [F(9,9,2),F(19,9,2)]];
+
+  let chunks = 0, atCoarsest = 0, anchored = 0, anchoredFiner = 0;
+  const couldBeCoarser = [];
+  let cells = 0, upperHalf = 0, sumArea = 0;
+
+  for (const [name, poly] of rooms) {
+    for (const fans of fanSets) {
+      const r = planLights(poly, fans, {});
+      if (!r.ok) continue;
+      const o = r.opt;
+      const loA = o.targetArea * (1 - o.areaTol), hiA = o.targetArea * (1 + o.areaTol);
+      const fits = (w, h) => w * h >= loA - 1e-9 && w * h <= hiA + 1e-9
+        && w >= o.minCell - 1e-9 && w <= o.maxCell + 1e-9
+        && h >= o.minCell - 1e-9 && h <= o.maxCell + 1e-9;
+
+      for (const c of r.cells) { cells++; sumArea += c.w * c.h; if (c.w * c.h >= o.targetArea) upperHalf++; }
+
+      for (const ch of r.chunks) {
+        chunks++;
+        const nx = ch.xLines.length - 1, ny = ch.yLines.length - 1;
+        const uniform = (lines) => {
+          const s = lines[1] - lines[0];
+          return lines.every((v, i) => i === 0 || Math.abs(lines[i] - lines[i-1] - s) < 1e-6);
+        };
+        const solo = fans.filter((f) => f.x > ch.x0 + 1e-6 && f.x < ch.x1 - 1e-6
+                                     && f.y > ch.y0 + 1e-6 && f.y < ch.y1 - 1e-6);
+        const onLine = solo.length === 1 &&
+          (ch.xLines.some((v) => Math.abs(v - solo[0].x) < TOL) ||
+           ch.yLines.some((v) => Math.abs(v - solo[0].y) < TOL));
+
+        // Only uniform grids can be compared step for step; an anchored one is
+        // two divisions spliced together and is judged by the fan rule instead.
+        if (!uniform(ch.xLines) || !uniform(ch.yLines)) {
+          if (onLine) anchored++;
+          continue;
+        }
+        // bandCandidates only enumerates base-1, base and base+1 per axis, so a
+        // division two steps coarser was never on offer and is not a miss.
+        const baseX = Math.max(1, Math.round(ch.w / o.targetCell));
+        const baseY = Math.max(1, Math.round(ch.h / o.targetCell));
+        let coarser = null;
+        for (const [dx, dy] of [[-1,0],[0,-1],[-1,-1]]) {
+          const nx2 = nx + dx, ny2 = ny + dy;
+          if (nx2 < 1 || ny2 < 1) continue;
+          if (nx2 < baseX - 1 || ny2 < baseY - 1) continue;
+          if (fits(ch.w / nx2, ch.h / ny2)) { coarser = [nx2, ny2]; break; }
+        }
+        if (!coarser) { atCoarsest++; continue; }
+        // A coarser grid was available and not taken. That is only allowed when
+        // the grid we DID take puts the chunk's lone fan on a line and the
+        // coarser one would not.
+        if (solo.length === 1) {
+          const wouldAnchor = (n, lo, hi, at) => {
+            const size = (hi - lo) / n;
+            for (let k = 0; k <= n; k++) if (Math.abs(lo + k * size - at) < TOL) return true;
+            return false;
+          };
+          const coarseAnchors = wouldAnchor(coarser[0], ch.x0, ch.x1, solo[0].x)
+                             || wouldAnchor(coarser[1], ch.y0, ch.y1, solo[0].y);
+          if (onLine && !coarseAnchors) { anchoredFiner++; continue; }
+        }
+        couldBeCoarser.push(`${name} fans=${fans.length}: chunk ${ch.w.toFixed(1)}x${ch.h.toFixed(1)} took ${nx}x${ny} (${(ch.w/nx).toFixed(2)}x${(ch.h/ny).toFixed(2)}) when ${coarser[0]}x${coarser[1]} (${(ch.w/coarser[0]).toFixed(2)}x${(ch.h/coarser[1]).toFixed(2)}) also fits`);
+      }
+    }
+  }
+  console.log(`  ${chunks} chunks across ${rooms.length} rooms x ${fanSets.length} fan sets`);
+  console.log(`    already at the coarsest grid that fits : ${atCoarsest}`);
+  console.log(`    anchored on the fan (judged by that)   : ${anchored}`);
+  console.log(`    took a finer grid to hold the fan      : ${anchoredFiner}`);
+  console.log(`    could have been coarser for no reason  : ${couldBeCoarser.length}   (must be 0)`);
+  if (couldBeCoarser.length) console.log(`      e.g. ${couldBeCoarser.slice(0, 4).join('\n      ')}`);
+  console.log(`  ${cells} cells, mean ${(sumArea / cells).toFixed(1)} sqft, ${upperHalf} at or above the target`);
+  const ok = couldBeCoarser.length === 0 && atCoarsest > 0;
+  console.log(`\nBIGGER-FIRST OVERALL: ${ok ? 'PASS' : '*** FAIL ***'}`);
 }

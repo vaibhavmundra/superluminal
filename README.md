@@ -48,7 +48,7 @@ space, as if the outline of the room had changed**:
   (see [Choosing how the space is chunked](#choosing-how-the-space-is-chunked)).
   No chunk, grid line or cell ever overlaps a zone.
 - **Each chunk gets its own near-square grid.** There is nothing sacred about
-  6×6 ft — what a cell should cover is **36 sqft, ±25%**; the chunking comes
+  6×6 ft — what a cell should cover is **50 sqft, ±25%**; the chunking comes
   first, and every chunk sizes its cells to suit its own width and height. See
   [The cell is an area, not a side](#the-cell-is-an-area-not-a-side).
 - **Chunks 1 ft or thinner (either dimension) are omitted entirely** — a sliver
@@ -88,7 +88,7 @@ decompositions that differ by a foot are noise, not a choice:
 | **Vertical slices** | One sweep top to bottom: full-height bays. Lights line up in columns. |
 | **Horizontal slices** | One sweep left to right: full-width courses. Lights line up in rows. |
 | **Squarest pieces** | Prefer pieces close to square, so no chunk has to stretch its cells. |
-| **Best grid fit** | Prefer pieces whose sides divide cleanly into the target cell, so cells land *on* 6 ft rather than near it. |
+| **Best grid fit** | Prefer pieces whose sides divide cleanly into the ideal cell side, so cells land *on* the target area rather than near it. |
 | **Around the fans** | Prefer pieces that hold each fan well inside them, so no chunk edge cuts a blade circle in half. |
 
 Strategies that land on the same answer **collapse into one card** — a plain
@@ -165,7 +165,7 @@ rectify → carve zones → ENUMERATE CHUNKINGS → you choose → per-chunk gri
    Several decompositions are produced and **you pick one**; chunks thinner than
    `minChunk` (1 ft) are omitted from whichever you pick.
 3. **Partition.** Each chunk is divided in x and y **together**, because both
-   "does a cell cover about 36 sqft" and "does the fan land on a cell centre"
+   "does a cell cover about 50 sqft" and "does the fan land on a cell centre"
    are two-dimensional questions that neither axis can answer alone. The
    candidates on each axis are the even divisions into `n-1`, `n` and `n+1`
    pieces — plus, for a chunk holding exactly one fan, divisions with a cut line
@@ -187,8 +187,10 @@ rectify → carve zones → ENUMERATE CHUNKINGS → you choose → per-chunk gri
    **What a light illuminates is geometry, not bookkeeping.** A small light
    lights its own box. A large light on the interior of a grid edge lights the
    **two** boxes either side of it. A large light sitting on a **vertex** lights
-   all **four** boxes that meet there. Coverage is computed by asking which
-   boxes contain the point, so chunk boundaries are crossed where they should be.
+   all **four** boxes that meet there — and at a **T-junction**, where it sits on
+   a vertex of one chunk's grid and on the interior of a neighbouring chunk's
+   cell edge, it lights **three**. Coverage is computed by asking which boxes
+   contain the point, so chunk boundaries are crossed where they should be.
 
    **No box may be lit twice.** Every light claims the boxes it illuminates, and
    nothing else may claim them — which makes this a set-packing problem, not a
@@ -254,28 +256,58 @@ is testable in Node and reusable elsewhere.
 
 ## The cell is an area, not a side
 
-A cell should cover **36 sqft, give or take 25%** — 27 to 45 sqft. That is the
-same brief as "6 by 6", said in the unit that actually matters, and saying it
-that way changes what the grid is allowed to do.
+A cell should cover **50 sqft, give or take 25%** — 37.5 to 62.5. That is the
+brief said in the unit that actually matters, and saying it that way changes
+what the grid is allowed to do.
 
-Held to a 6 ft *side*, every deviation is a cost and the grid has nothing to
-spend. Held to an *area band*, a 5 ft cell next to a 7 ft one is not a
-compromise at all — 35 sqft and 42 sqft are both simply fine — and the width of
-that band becomes a budget. What the grid buys with it is the fan.
+Held to a fixed *side*, every deviation is a cost and the grid has nothing to
+spend. Held to an *area band*, a 6 ft cell next to an 8 ft one is not a
+compromise at all — both are simply fine — and the width of that band becomes a
+budget the grid can spend on the things that matter.
 
-So the rule has two tiers rather than one weight:
+### The sides follow from the area
 
-- **Inside the band, size is nearly free.** A slight pull towards a square cell
-  at the target side is all that remains, and it only breaks ties.
-- **Leaving the band is a step change**, not a slope. Every grid whose cells all
-  sit inside the band beats every grid that leaves it, whatever else is on
-  offer: no amount of fan alignment buys a 22 sqft cell when a 36 sqft one is
-  available. Only when *nothing* fits — a chunk two feet wider than a whole
-  number of cells, a corridor 4 ft across — does the soft penalty decide, and
-  then it prefers the near miss.
+`targetCell`, `minCell` and `maxCell` are **derived**: the ideal side is
+`sqrt(targetArea)`, and the bounds are 2/3 and 4/3 of it. Those are the same
+proportions the old absolute 4 ft and 8 ft bore to a 6 ft ideal, which means the
+worst oblong the bounds admit is the *same shape* at 50 sqft as at 36 — the
+aspect envelope does not drift when you move the area. Pass any of the three
+explicitly and your value is used instead.
 
-`minCell` and `maxCell` still bound the sides, so 36 sqft cannot be delivered as
-4 × 9. Set the band in the sidebar: **Cell area** and **Area tolerance**.
+This matters more than it sounds. `targetCell` is not only the ideal side, it is
+the centre of the search: the divisions ever considered are
+`round(W / targetCell)` minus one, that, and plus one. Leave it at 6 while the
+area asks for 50 and the coarse division is never enumerated at all.
+
+### Bigger boxes first
+
+Inside the band, **bigger wins**. The cost of a cell falls linearly to zero at
+the top of the band, so between two divisions that both qualify the grid takes
+the coarser one: fewer, larger boxes, fewer lights. It cannot push past the band,
+because outside it the charge is a step change rather than a slope.
+
+The order of precedence, when these pull against each other:
+
+1. **The cell has to be a cell.** Area inside the band *and* both sides inside
+   `minCell`..`maxCell`. Every grid that qualifies beats every grid that does
+   not, whatever else is on offer — a 12 × 4 ft box covers 48 sqft and is
+   nobody's idea of a lighting grid. Only when *nothing* qualifies does the soft
+   penalty decide, and then it prefers the near miss.
+2. **The fan.** A chunk's lone fan goes on a grid line, and `fanLineWeight` sits
+   above the entire spread of the size and aspect terms combined, so a fan on a
+   line is never traded away for a bigger cell. See below.
+3. **Bigger.** The coarsest division that still qualifies.
+4. **Squarer.** `shapeWeight` prices the aspect *ratio*, not the distance from
+   the ideal side, so it stays orthogonal to (3): a big square cell and a small
+   square cell are equally square, and the two terms never fight.
+
+So the fallback chain reads: try to be big, and if the band will not have it get
+smaller; if no near-square division fits, take a more rectangular one. That last
+step is the hard tier doing its work — an oblong inside the band beats a square
+outside it.
+
+Set it in the sidebar: **Cell area**, **Area tolerance**, and **Prefer bigger
+cells** for the strength of (3).
 
 ## A lone fan goes on a grid line
 
@@ -288,7 +320,7 @@ cut line goes at the fan's coordinate and *each side of it is then divided on
 its own terms*, so a 30 ft chunk with a fan 7 ft in becomes one 7 ft cell and
 four of 5.75 ft. Cell sizes differ within the chunk — that is the price — and
 the area band above is what keeps the price bounded. A division that would put a
-cell outside 27–45 sqft is not available to be bought.
+cell outside the area band is not available to be bought.
 
 Both axes are tried, and hitting **both** is worth more than hitting one:
 
@@ -300,6 +332,13 @@ Both axes are tried, and hitting **both** is worth more than hitting one:
 
 A fan closer than one cell to the chunk's edge is left alone — there would be no
 room for a cell on the near side, and such a fan already sits near a wall line.
+
+**The band comes first and the fan second.** Where no division that puts a line
+on the fan can keep every cell inside the band, the fan does not get its line —
+the grid is not allowed to buy it with a 28 sqft cell. That is rare (2 of 82
+single-fan rooms in the sweep) and the test reports it separately rather than
+counting it as a miss. **Bigger comes third**: where a coarser grid and an
+anchored one both qualify, the anchored one wins.
 
 Chunks with **two or more** fans are unchanged: they keep the older, softer
 behaviour, where each fan pulls the grid towards itself (**Fan pull**) and the
@@ -383,7 +422,10 @@ corners count too. Any candidate position closer than that becomes a small
 light at its cell centre instead.
 
 The design intent is 6 ft. 5 ft is that rule carrying its working tolerance,
-and it turns out to be the robust choice rather than a fudge. With ~6 ft cells,
+and it turns out to be the robust choice rather than a fudge. The table below
+was measured at ~6 ft cells; at the 50 sqft default the cells are nearer 7.5 ft,
+which pushes the two clusters further apart and makes the plateau wider still.
+With ~6 ft cells,
 candidate positions only ever sit at ~3 ft from a wall (cell centres, outer
 band) or at 6 ft and beyond (interior grid lines) — nothing lands in between.
 So the threshold sits in an empty gap:
@@ -434,12 +476,21 @@ The slider ranges 2–9 ft if you want to see the rule bite differently.
   one cell can strand another. The planner therefore builds the layout **both**
   ways (priority on and off) and keeps whichever ends with fewer compromised
   cells, then more large lights, then fewer distinct light positions.
-- **Cell area** / **Area tolerance** (36 sqft ±25%) are what keep cells sane;
-  **Keep it square** (0.8) is the mild preference for a square cell inside the
-  band. **Fan on a line** (1.5) and **...on a corner** (1.5) are what a single
-  fan's exact anchoring is worth, and **Fan pull** (0.6) is the older soft
-  attraction that still governs chunks with several fans. Raising Fan pull much
-  above 1 lets it distort cell sizes noticeably.
+- **Cell area** / **Area tolerance** (50 sqft ±25%) are what keep cells sane;
+  **Prefer bigger cells** (1.0) is how hard the grid reaches for the top of the
+  band, and **Keep it square** (0.8) prices the aspect ratio. **Fan on a line**
+  (2.5) and **...on a corner** (2.5) are what a single fan's exact anchoring is
+  worth — deliberately above the whole spread of the first two, so the fan is
+  settled before the size. **Fan pull** (0.6) is the older soft attraction that
+  still governs chunks with several fans; raising it much above 1 lets it
+  distort cell sizes noticeably.
+- Raising the cell area lowers the light count roughly in proportion — 36 to 50
+  sqft drops it about 28%. That is the point, but it is a visible change to a
+  drawing, not just a grid setting.
+- A room can be too small for its own target area. A 12 × 12 room at 50 sqft has
+  no near-square division inside the band (2 × 2 gives 36, a foot and a half
+  short), so it falls back to 6 × 6 cells on the soft penalty. That is the right
+  answer, but it means small rooms quietly ignore the area setting.
 - Many fans in a small room can leave a cell with nowhere clear to go. The
   light stays put and is reported as a clash rather than being dropped.
 - A fan sitting near its own cell's centre is the common clash: no point on

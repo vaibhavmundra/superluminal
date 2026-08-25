@@ -40,10 +40,47 @@ import {
 // planner has always exported normalizeZone, so callers keep working.
 export { normalizeZone, prepareZones, enumerateChunkings };
 
+/**
+ * The brief is an AREA. Everything about a cell's sides follows from it.
+ *
+ * `targetArea` is the number a person actually states — "about 50 square feet
+ * to a light". The ideal side is its square root, and the bounds on a side are
+ * fixed fractions of that: 2/3 and 4/3, the same proportions the old absolute
+ * 4 ft and 8 ft bore to a 6 ft ideal. Keeping them proportional keeps the
+ * ASPECT envelope identical as the area moves — the worst oblong the bounds
+ * admit is the same shape at 36 sqft as at 50 — which is why they are derived
+ * rather than left as constants to drift out of step.
+ *
+ * Any of the three can still be passed explicitly to override its derivation.
+ */
+export const MIN_SIDE_RATIO = 2 / 3;
+export const MAX_SIDE_RATIO = 4 / 3;
+
+/** The side lengths implied by a target cell area. */
+export function sidesForArea(area) {
+  const side = Math.sqrt(area);
+  return {
+    targetCell: Math.round(side * 100) / 100,
+    minCell: Math.round(side * MIN_SIDE_RATIO * 100) / 100,
+    maxCell: Math.round(side * MAX_SIDE_RATIO * 100) / 100,
+  };
+}
+
+/** Fill in whatever a caller left to be derived from targetArea. */
+export function resolveOptions(o) {
+  const derived = sidesForArea(o.targetArea ?? 50);
+  return {
+    ...o,
+    targetCell: o.targetCell ?? derived.targetCell,
+    minCell: o.minCell ?? derived.minCell,
+    maxCell: o.maxCell ?? derived.maxCell,
+  };
+}
+
 export const DEFAULTS = {
-  targetCell: 6.0,        // ft — the "6 by 6" ideal, a preference not a rule
-  minCell: 4.0,           // ft — below this we merge rather than make a sliver
-  maxCell: 8.0,           // ft — above this we split again
+  // targetCell / minCell / maxCell are DERIVED from targetArea — see
+  // resolveOptions. They are absent here on purpose: pinning them in the
+  // defaults is what let the ideal side say 6 ft while the area said 50.
   minBand: 3.0,           // ft — a band thinner than this dissolves into its neighbour
   minChunk: 1.0,          // ft — a chunk this thin (either dimension) is omitted entirely
   chunkStrategy: 'auto',  // which of the enumerated decompositions to lay the
@@ -90,21 +127,32 @@ export const DEFAULTS = {
   sizeWeight: 4.0,        // how hard partitionAxis alone holds a band to targetCell.
                           //   A chunk's own grid is judged on area instead — see
                           //   targetArea below — because a cell is a 2D thing.
-  targetArea: 36.0,       // sqft — what one cell should cover. 6 by 6, stated as
-                          //   the quantity that actually matters.
-  areaTol: 0.25,          // ± fraction of targetArea that is simply acceptable:
-                          //   27–45 sqft. This band is not slop, it is the budget
-                          //   the grid is allowed to spend on landing a fan on a
-                          //   grid line, and inside it cell size is nearly free.
+  targetArea: 50.0,       // sqft — what one cell should cover. The whole brief,
+                          //   stated in the quantity that actually matters; the
+                          //   sides follow from it (see sidesForArea).
+  areaTol: 0.25,          // ± fraction of targetArea that is acceptable: 37.5 to
+                          //   62.5 sqft. Not slop — an acceptance band. A grid
+                          //   whose cells all sit inside it beats one that leaves
+                          //   it, whatever else is on offer.
   areaWeight: 6.0,        // how steeply a cell outside the band is penalised. Well
                           //   above fanLineWeight, so the fan never drags a grid
                           //   out of the band — it only chooses within it.
-  shapeWeight: 0.8,       // the mild pull, inside the band, towards a square cell
-                          //   at targetCell. A tiebreak, not a constraint: 36 sqft
-                          //   drawn as 4 x 9 is not what anyone means by 6 by 6.
-  fanLineWeight: 1.5,     // what putting a grid line exactly on the one fan in a
-                          //   chunk is worth, per axis.
-  fanCornerBonus: 1.5,    // ...and what hitting BOTH axes is worth on top, because
+  sizeBias: 1.0,          // BIGGER IS BETTER, inside the band. The cost of a cell
+                          //   falls as its area rises, so between two divisions
+                          //   that both qualify the coarser one wins: fewer, larger
+                          //   boxes. Held below fanLineWeight on purpose — the fan
+                          //   is settled first, and only then does the grid reach
+                          //   for the biggest cells that still fit the band.
+  shapeWeight: 0.8,       // what an oblong cell costs, per unit of aspect ratio
+                          //   beyond square. Priced on the RATIO, not on distance
+                          //   from the ideal side, so it does not quietly fight
+                          //   sizeBias — a big square cell and a small square cell
+                          //   are equally square.
+  fanLineWeight: 2.5,     // what putting a grid line exactly on the one fan in a
+                          //   chunk is worth, per axis. Above the whole spread of
+                          //   sizeBias and shapeWeight combined, so a fan on a
+                          //   line is never traded away for a bigger cell.
+  fanCornerBonus: 2.5,    // ...and what hitting BOTH axes is worth on top, because
                           //   a fan on an intersection is a shared corner of four
                           //   cells, while a fan on a single line can sit level
                           //   with the centres of the two cells it divides.
@@ -410,7 +458,8 @@ export function bandCandidates(lo, hi, softAnchors, opt, anchor = null) {
 function gridCost(cx, cy, opt) {
   const loA = opt.targetArea * (1 - opt.areaTol);
   const hiA = opt.targetArea * (1 + opt.areaTol);
-  let pen = 0, n = 0, worst = 0;
+  const bandWidth = Math.max(1e-9, hiA - loA);
+  let pen = 0, n = 0, ok = true;
   for (const w of cx.sizes) {
     for (const h of cy.sizes) {
       const area = w * h;
@@ -420,19 +469,28 @@ function gridCost(cx, cy, opt) {
       const outside = area < loA ? loA - area : area > hiA ? area - hiA : 0;
       if (outside > 0) {
         pen += opt.areaWeight * (0.5 + outside / (opt.targetArea * opt.areaTol));
-        worst = Math.max(worst, outside);
+        ok = false;
       }
-      pen += opt.shapeWeight
-        * (Math.abs(w - opt.targetCell) + Math.abs(h - opt.targetCell))
-        / (2 * opt.targetCell);
+      // Bigger is better, inside the band: the cost falls linearly to zero at
+      // the top of it. Between two divisions that both qualify, this is what
+      // takes the coarser — fewer, larger boxes — and it cannot push a cell
+      // past the band, because outside it the charge above dominates.
+      pen += opt.sizeBias * Math.min(1, Math.max(0, (hiA - area) / bandWidth));
+      // Aspect, priced on the ratio so it stays orthogonal to size.
+      pen += opt.shapeWeight * (Math.max(w, h) / Math.min(w, h) - 1);
       for (const s of [w, h]) {
-        if (s < opt.minCell) pen += 3 * (opt.minCell - s);
-        if (s > opt.maxCell) pen += 3 * (s - opt.maxCell);
+        if (s < opt.minCell) { pen += 3 * (opt.minCell - s); ok = false; }
+        if (s > opt.maxCell) { pen += 3 * (s - opt.maxCell); ok = false; }
       }
       n++;
     }
   }
-  return { cost: n ? pen / n : 0, inBand: worst === 0 };
+  // "Acceptable" means acceptable as a CELL, not merely as an area. A 12 x 4
+  // ft box covers 48 sqft and is nobody's idea of a lighting grid, so the
+  // side bounds gate the preferred tier alongside the area band — otherwise a
+  // 3:1 oblong that happens to land in the band would beat a near-square cell
+  // a foot and a half short of it.
+  return { cost: n ? pen / n : 0, inBand: ok };
 }
 
 /**
@@ -516,7 +574,7 @@ function cellIsAwkward(cell, fans, opt) {
 // --- main -------------------------------------------------------------------
 
 export function planLights(polygon, fixtures = [], options = {}, noLightZones = []) {
-  const opt = { ...DEFAULTS, ...options };
+  const opt = resolveOptions({ ...DEFAULTS, ...options });
   if (!polygon || polygon.length < 4) {
     return { ok: false, reason: 'No usable room outline.', chunks: [], cells: [], lights: [] };
   }
