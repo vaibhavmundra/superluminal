@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tools/test-planner.mjs"
+    "test": "node tools/test-planner.mjs && node tools/test-chunking.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

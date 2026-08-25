@@ -5,8 +5,13 @@
 // Pipeline
 //   1. carve      — subtract the no-light zones from the room, as if the
 //                   outline of the space had changed
-//   2. chunk      — decompose what's left into rectangular chunks (largest
-//                   rectangle first); chunks thinner than minChunk are omitted
+//   2. chunk      — ADOPT one of the ways what's left can be cut into
+//                   rectangles. The planner does not invent the decomposition:
+//                   chunking.js enumerates the candidates, somebody chooses,
+//                   and the choice arrives here as `chunkStrategy` (an id) or
+//                   `chunkPlan` (an explicit set of rectangles). With neither,
+//                   the heuristic recommendation is used so a headless call
+//                   still works. Chunks thinner than minChunk are omitted.
 //   3. grid       — each chunk is divided into its own near-square grid.
 //                   There is nothing sacred about 6x6: the target cell is a
 //                   preference, and every chunk sizes its cells to suit its
@@ -26,6 +31,14 @@
 
 import { bbox, pointInPolygon, distanceToBoundary } from './geometry.js';
 import { maxWeightMatching } from './matching.js';
+import {
+  enumerateChunkings, findChunking, prepareZones,
+  normalizeZone, pointInZone, inAnyZone,
+} from './chunking.js';
+
+// Zone geometry lives in chunking.js — it is what defines the chunks — but the
+// planner has always exported normalizeZone, so callers keep working.
+export { normalizeZone, prepareZones, enumerateChunkings };
 
 export const DEFAULTS = {
   targetCell: 6.0,        // ft — the "6 by 6" ideal, a preference not a rule
@@ -33,6 +46,13 @@ export const DEFAULTS = {
   maxCell: 8.0,           // ft — above this we split again
   minBand: 3.0,           // ft — a band thinner than this dissolves into its neighbour
   minChunk: 1.0,          // ft — a chunk this thin (either dimension) is omitted entirely
+  chunkStrategy: 'auto',  // which of the enumerated decompositions to lay the
+                          //   grid on: a strategy id from chunking.js, or
+                          //   'auto' for the heuristic recommendation. The app
+                          //   sets this from what the user picked.
+  chunkPlan: null,        // ...or an explicit { chunks, omitted } handed in
+                          //   whole, for a decomposition that came from
+                          //   somewhere other than the strategy list.
   minWallDistance: 5.0,   // ft — a large light must be this far from the NEAREST
                           //      wall in every direction. Zone edges are walls.
                           //      The design rule is 6 ft; 5 ft is that rule with
@@ -97,23 +117,6 @@ export const DEFAULTS = {
 
 // --- no-light zones ---------------------------------------------------------
 
-/** Put a rectangle's corners in canonical order, whatever way it was dragged. */
-export function normalizeZone(z) {
-  return {
-    x0: Math.min(z.x0, z.x1), x1: Math.max(z.x0, z.x1),
-    y0: Math.min(z.y0, z.y1), y1: Math.max(z.y0, z.y1),
-  };
-}
-
-function pointInZone(p, z, pad = 0) {
-  return p.x > z.x0 - pad && p.x < z.x1 + pad && p.y > z.y0 - pad && p.y < z.y1 + pad;
-}
-
-function inAnyZone(p, zones, pad = 0) {
-  for (const z of zones) if (pointInZone(p, z, pad)) return true;
-  return false;
-}
-
 /** How deep inside the zones a point sits — 0 when clear. Used as a penalty. */
 function zoneDepth(p, zones) {
   let d = 0;
@@ -132,71 +135,83 @@ function rectEdgeDistance(p, z) {
   return Math.min(p.x - z.x0, z.x1 - p.x, p.y - z.y0, z.y1 - p.y);
 }
 
-// --- chunk decomposition ----------------------------------------------------
+// --- which decomposition do we lay the grid on? -----------------------------
+
+/**
+ * The decomposition is a DECISION, not a derivation.
+ *
+ * An L-shaped room can be cut into two rectangles two different ways and
+ * neither is wrong — which one is right depends on how the space is used, which
+ * the geometry does not know. So the planner never invents one. chunking.js
+ * enumerates the candidates, somebody chooses, and the choice arrives here:
+ *
+ *   opt.chunkPlan      an explicit { chunks, omitted } — used verbatim. This is
+ *                      the user's (or a model's) answer; re-deriving it would
+ *                      silently overrule them.
+ *   opt.chunkStrategy  a strategy id from chunking.js.
+ *   neither            the heuristic recommendation, so a headless call
+ *                      (a test, a script, an export) still produces a layout.
+ *
+ * A requested strategy that no longer exists — the sliders moved, and two
+ * strategies that used to differ now agree — falls back to the recommendation
+ * rather than failing, and says so in `unavailable`.
+ */
+function resolveChunking(polygon, zones, opt, fans) {
+  if (opt.chunkPlan && Array.isArray(opt.chunkPlan.chunks) && opt.chunkPlan.chunks.length) {
+    const p = opt.chunkPlan;
+    return {
+      id: p.id || 'given', label: p.label || 'Chosen configuration', strategy: p.strategy || null,
+      blurb: p.blurb || '', highlights: p.highlights || [], metrics: p.metrics || null,
+      chunks: p.chunks, omitted: p.omitted || [],
+      optionCount: null, recommendedId: null, needsChoice: null,
+      chosenBy: 'given', unavailable: null,
+    };
+  }
+  const all = enumerateChunkings(polygon, zones, opt, fans);
+  const wanted = opt.chunkStrategy && opt.chunkStrategy !== 'auto'
+    ? findChunking(all.options, opt.chunkStrategy) : null;
+  const chosen = wanted || findChunking(all.options, all.recommendedId);
+  if (!chosen) {
+    return { id: null, label: null, strategy: null, blurb: '', highlights: [], metrics: null,
+             chunks: [], omitted: [], optionCount: 0, recommendedId: null,
+             needsChoice: false, chosenBy: 'none', unavailable: null };
+  }
+  return {
+    id: chosen.id, label: chosen.label, strategy: chosen.strategy, blurb: chosen.blurb,
+    highlights: chosen.highlights || [], metrics: chosen.metrics,
+    chunks: chosen.chunks, omitted: chosen.omitted,
+    optionCount: all.options.length, recommendedId: all.recommendedId,
+    needsChoice: all.needsChoice,
+    chosenBy: wanted ? 'requested' : 'auto',
+    unavailable: (opt.chunkStrategy && opt.chunkStrategy !== 'auto' && !wanted) ? opt.chunkStrategy : null,
+  };
+}
+
+/** What the caller gets to know about the decomposition it ended up with,
+ *  minus the rectangles themselves (those are already in `chunks`). */
+function chunkingReport(c) {
+  return {
+    id: c.id, label: c.label, strategy: c.strategy, blurb: c.blurb,
+    highlights: c.highlights, metrics: c.metrics,
+    optionCount: c.optionCount, recommendedId: c.recommendedId,
+    needsChoice: c.needsChoice, chosenBy: c.chosenBy, unavailable: c.unavailable,
+  };
+}
 
 /**
  * Subtract the zones from the room and decompose the remaining space into
- * rectangular chunks. This is the heart of the model: the room minus its
- * no-light zones is treated as a new outline, chopped into rectangles.
+ * rectangular chunks — the single-answer form kept for callers that just want
+ * one. It resolves through the same path as the planner, so "the default
+ * decomposition" means one thing in this codebase, not two.
  *
- * Method: every wall line and zone edge defines an elementary grid. Each
- * elementary cell is either free (inside the room, outside every zone) or
- * not — never partial, because the room is rectilinear and all of its edges
- * lie on those very lines. Then greedily claim the largest all-free rectangle
- * until nothing is left. Chunks thinner than minChunk in either dimension are
- * set aside as omitted.
+ * For the actual candidate list, use enumerateChunkings() in chunking.js.
  */
 export function decomposeIntoChunks(polygon, zones, opt) {
-  const box = bbox(polygon);
-  const xs = new Set(), ys = new Set();
-  const R = (v) => Math.round(v * 1e6) / 1e6;
-  for (const p of polygon) { xs.add(R(p.x)); ys.add(R(p.y)); }
-  for (const z of zones) {
-    for (const v of [z.x0, z.x1]) if (v > box.minX + 1e-6 && v < box.maxX - 1e-6) xs.add(R(v));
-    for (const v of [z.y0, z.y1]) if (v > box.minY + 1e-6 && v < box.maxY - 1e-6) ys.add(R(v));
-  }
-  const X = [...xs].sort((a, b) => a - b);
-  const Y = [...ys].sort((a, b) => a - b);
-  const nx = X.length - 1, ny = Y.length - 1;
-  if (nx < 1 || ny < 1) return { chunks: [], omitted: [] };
-
-  // free matrix + prefix sums for O(1) "is this whole rect free?"
-  const free = [];
-  for (let i = 0; i < nx; i++) {
-    free.push([]);
-    for (let j = 0; j < ny; j++) {
-      const c = { x: (X[i] + X[i + 1]) / 2, y: (Y[j] + Y[j + 1]) / 2 };
-      free[i].push(pointInPolygon(c, polygon) && !inAnyZone(c, zones) ? 1 : 0);
-    }
-  }
-  const claimed = free.map((col) => col.map(() => false));
-  const isFree = (i, j) => free[i][j] === 1 && !claimed[i][j];
-
-  const chunks = [], omitted = [];
-  for (;;) {
-    // largest-area all-free rectangle of elementary cells (real area, in sqft)
-    let best = null, bestArea = 0;
-    for (let i0 = 0; i0 < nx; i0++) {
-      for (let j0 = 0; j0 < ny; j0++) {
-        if (!isFree(i0, j0)) continue;
-        let jMax = ny; // widest usable row-span shrinks as we extend columns
-        for (let i1 = i0; i1 < nx; i1++) {
-          let j1 = j0;
-          while (j1 < jMax && isFree(i1, j1)) j1++;
-          jMax = j1;
-          if (jMax === j0) break;
-          const area = (X[i1 + 1] - X[i0]) * (Y[jMax] - Y[j0]);
-          if (area > bestArea) { bestArea = area; best = { i0, i1: i1 + 1, j0, j1: jMax }; }
-        }
-      }
-    }
-    if (!best) break;
-    for (let i = best.i0; i < best.i1; i++) for (let j = best.j0; j < best.j1; j++) claimed[i][j] = true;
-    const ch = { x0: X[best.i0], x1: X[best.i1], y0: Y[best.j0], y1: Y[best.j1] };
-    ch.w = ch.x1 - ch.x0; ch.h = ch.y1 - ch.y0;
-    (Math.min(ch.w, ch.h) > opt.minChunk ? chunks : omitted).push(ch);
-  }
-  return { chunks, omitted };
+  const picked = resolveChunking(polygon, zones, { ...DEFAULTS, ...opt }, []);
+  return {
+    chunks: picked.chunks.map((c) => ({ ...c })),
+    omitted: picked.omitted.map((c) => ({ ...c })),
+  };
 }
 
 // --- 1D band partition ------------------------------------------------------
@@ -357,16 +372,21 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   // and every fan is a soft anchor the grid tries to line up with.
   const fanNeed = (f) => (f.r || 0) + opt.fanClearance;
   const fanBlocked = (q) => fans.some((f) => Math.hypot(q.x - f.x, q.y - f.y) < fanNeed(f));
-  const zones = noLightZones.map(normalizeZone)
-    .filter((z) => z.x1 - z.x0 > 0.1 && z.y1 - z.y0 > 0.1);
+  const zones = prepareZones(noLightZones);
 
-  // 1+2. carve the zones out and chunk what remains
-  const { chunks, omitted } = decomposeIntoChunks(polygon, zones, opt);
+  // 1+2. carve the zones out, then adopt ONE of the ways what remains can be
+  // cut into rectangles. See resolveChunking: the choice is made elsewhere and
+  // handed in, which is what lets the app show the options and place lights
+  // only afterwards.
+  const chosen = resolveChunking(polygon, zones, opt, fans);
+  const chunks = chosen.chunks.map((c) => ({ ...c }));
+  const omitted = chosen.omitted.map((c) => ({ ...c }));
   if (!chunks.length) {
     const reason = zones.length
       ? 'No-light zones cover the whole region — nowhere left to put a light.'
       : 'Room is smaller than one grid cell.';
-    return { ok: false, reason, chunks: [], omittedChunks: omitted, zones, cells: [], lights: [] };
+    return { ok: false, reason, chunks: [], omittedChunks: omitted, zones, cells: [], lights: [],
+             chunking: chunkingReport(chosen) };
   }
 
   // The outline has effectively changed: zone edges are walls now, so the
@@ -888,7 +908,8 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     areaSqft: Math.abs(polygonArea(polygon)),
   };
   return { ok: true, chunks, omittedChunks: omitted, zones, cells, lights,
-           cededCells: ceded, awkwardCells: [...awkward], stats, opt };
+           cededCells: ceded, awkwardCells: [...awkward], stats, opt,
+           chunking: chunkingReport(chosen) };
 }
 
 /**

@@ -43,8 +43,10 @@ its size in feet and a delete button.
 A zone is not a keep-out circle like the fan — it is **subtracted from the
 space, as if the outline of the room had changed**:
 
-- The room minus its zones is decomposed into **rectangular chunks** (largest
-  rectangle first). No chunk, grid line or cell ever overlaps a zone.
+- The room minus its zones is decomposed into **rectangular chunks** — and
+  because there is usually more than one way to do that, the app asks
+  (see [Choosing how the space is chunked](#choosing-how-the-space-is-chunked)).
+  No chunk, grid line or cell ever overlaps a zone.
 - **Each chunk gets its own near-square grid.** There is nothing sacred about
   6×6 ft — the target cell is a preference; the chunking comes first, and every
   chunk sizes its cells to suit its own width and height.
@@ -59,6 +61,74 @@ space, as if the outline of the room had changed**:
 
 Chunks export on the `CHUNK` DXF layer, zones on `NO-LIGHT` (rectangle +
 cross), and both appear in the JSON under `chunks` / `noLightZones`.
+
+## Choosing how the space is chunked
+
+There is rarely one right answer here, and pretending otherwise was the old
+behaviour. An L-shaped room can be cut into two rectangles two different ways.
+A room with a duct through the middle has half a dozen readings. Which is right
+depends on how the space is actually used — something the geometry does not know
+and the person standing in the room does.
+
+So the app no longer decides. **Before a single light is placed** it enumerates
+the readings, draws each one over the plan to the same scale, measures them the
+same way, and asks:
+
+```
+plan  ->  scale  ->  CHOOSE A CHUNKING  ->  grid  ->  lights
+```
+
+The strategies are deliberately different in kind, not in tuning — two
+decompositions that differ by a foot are noise, not a choice:
+
+| Reading | What it does |
+|---|---|
+| **Largest first** | Claim the biggest rectangle that fits, then the next biggest. The main body of the room stays whole. |
+| **Vertical slices** | One sweep top to bottom: full-height bays. Lights line up in columns. |
+| **Horizontal slices** | One sweep left to right: full-width courses. Lights line up in rows. |
+| **Squarest pieces** | Prefer pieces close to square, so no chunk has to stretch its cells. |
+| **Best grid fit** | Prefer pieces whose sides divide cleanly into the target cell, so cells land *on* 6 ft rather than near it. |
+| **Around the fans** | Prefer pieces that hold each fan well inside them, so no chunk edge cuts a blade circle in half. |
+
+Strategies that land on the same answer **collapse into one card** — a plain
+rectangle has one reading, and the picker is skipped entirely rather than
+offering a choice that isn't one. Every card carries its own numbers: chunk
+count, estimated cells, area lost to slivers, average squareness, and how many
+fans it holds clear. The highest-scoring one is badged *recommended*; coverage
+dominates that score, because area lost to a sliver is ceiling left dark and no
+amount of tidiness buys it back.
+
+Nothing is placed until you confirm. Afterwards the sidebar shows which reading
+is in force and **Change chunking** takes you back. The choice is remembered as
+an *intent* ("slice it horizontally"), not as a set of rectangles, so nudging
+the target-cell slider keeps it — and changing the space enough that the reading
+no longer exists asks again rather than quietly substituting a different one.
+
+### Letting a model choose
+
+The picker and a model choose from the same evidence, by construction. Every
+selector is `({ options, ctx }) => { id, reason, confidence }`, registered by
+name, and `selectChunking()` falls back to the heuristic when a selector is
+missing, throws, or names an id that doesn't exist. Wiring the model up is one
+line at start-up:
+
+```js
+import { registerChunkSelector, createClaudeChunkSelector } from './lib/chunking.js';
+registerChunkSelector('claude', createClaudeChunkSelector({ apiKey }));
+// ...then: await selectChunking(options, { mode: 'claude', ctx })
+```
+
+`createClaudeChunkSelector` is written and tested against that contract but
+**not registered** — nothing calls a model until someone decides it should.
+`chunkingPayload()` is what it reads: the same geometry and metrics the cards are
+drawn from, serialisable, no cycles, so the two cannot drift apart.
+`buildChunkingPrompt()` wraps it in `CHUNKING_PROMPT`, which spells out what
+matters and in what order.
+
+Callers below the UI can bypass the whole question: `planLights` takes
+`chunkStrategy` (an id) or `chunkPlan` (explicit rectangles), and with neither it
+uses the recommendation — so a test, a script or an export still produces a
+layout headlessly.
 
 ## Scale
 
@@ -80,15 +150,19 @@ your own API key, which stays in this browser's local storage.
 ## How the layout is computed
 
 ```
-rectify → carve zones → chunk → per-chunk grid → matching → align → fixtures
+rectify → carve zones → ENUMERATE CHUNKINGS → you choose → per-chunk grid
+        → matching → align → fixtures
 ```
 
 1. **Rectify.** The traced green outline is simplified, forced to 90°, and its
    coordinates are clustered so near-aligned walls become aligned.
 2. **Carve + chunk.** No-light zones are subtracted from the room, and the
-   remaining space is decomposed into rectangular chunks — repeatedly claiming
-   the largest all-free rectangle on the elementary grid formed by wall lines
-   and zone edges. Chunks thinner than `minChunk` (1 ft) are omitted.
+   remaining space is decomposed into rectangular chunks on the elementary grid
+   formed by wall lines and zone edges. Every wall line and zone edge is
+   crossed, so each elementary cell is wholly free or wholly blocked — never
+   partial — which is what makes an exact rectangular cover possible at all.
+   Several decompositions are produced and **you pick one**; chunks thinner than
+   `minChunk` (1 ft) are omitted from whichever you pick.
 3. **Partition.** Each chunk's axis of length `W` is split into `round(W/6)`
    pieces, choosing between `n-1`, `n` and `n+1` by a score that rewards a cut
    line or cell centre landing on the fan. This is where "squarish, but sizes
@@ -204,6 +278,13 @@ The slider ranges 2–9 ft if you want to see the rule bite differently.
 
 ## Known limits (v1)
 
+- The chunking strategies are a fixed list of six, not a search over every
+  possible rectangular partition. A room can in principle be cut a way none of
+  them proposes; `chunkPlan` is the way in for such a decomposition, but there is
+  no UI for drawing one by hand.
+- **Minimum-piece partitions are not guaranteed.** The slab sweeps plus a merge
+  pass get there for most shapes, but a room with several interlocking notches
+  can admit a partition with fewer rectangles than any strategy finds.
 - One region per image — the largest enclosed green area wins.
 - Walls are assumed rectilinear. Diagonals become staircases.
 - Beams, diffusers and sprinklers aren't read from the plan automatically; only
@@ -241,6 +322,7 @@ end-to-end scripts:
 
 ```bash
 node tools/test-planner.mjs           # layout invariants on synthetic rooms
+node tools/test-chunking.mjs          # every chunking is an exact cover, 16 shapes
 node tools/test-match-bruteforce.mjs  # matching vs brute force, 400 cases
 node tools/make-plans.mjs             # regenerate public/samples/
 node tools/e2e.mjs hall lshape        # drive the built app headless

@@ -20,6 +20,17 @@ export function toJSON(plan, meta) {
     noLightZones: (plan.zones || []).map((z) => ({
       x0: +z.x0.toFixed(3), y0: +z.y0.toFixed(3), x1: +z.x1.toFixed(3), y1: +z.y1.toFixed(3),
     })),
+    // which of the possible decompositions this layout was built on. Without
+    // it a JSON export cannot be reproduced: the same room and the same
+    // settings can legitimately produce several different layouts.
+    chunking: plan.chunking ? {
+      id: plan.chunking.id,
+      label: plan.chunking.label,
+      chosenBy: plan.chunking.chosenBy,
+      optionsAvailable: plan.chunking.optionCount,
+      recommended: plan.chunking.recommendedId,
+      metrics: plan.chunking.metrics,
+    } : null,
     chunks: (plan.chunks || []).map((ch) => ({
       x0: +ch.x0.toFixed(3), y0: +ch.y0.toFixed(3), x1: +ch.x1.toFixed(3), y1: +ch.y1.toFixed(3),
       xLines: ch.xLines.map((v) => +v.toFixed(3)), yLines: ch.yLines.map((v) => +v.toFixed(3)),

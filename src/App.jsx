@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PlanCanvas from './components/PlanCanvas.jsx';
+import ChunkPicker from './components/ChunkPicker.jsx';
 import { imageToPixels, detectRegion, detectFans } from './lib/detect.js';
 import { planLights, DEFAULTS } from './lib/planner.js';
+import { enumerateChunkings, findChunking } from './lib/chunking.js';
 import { bbox } from './lib/geometry.js';
 import { REFERENCES, scaleFromFans, scaleFromReference, describeScale, estimateScaleWithAI } from './lib/scale.js';
 import { download, toJSON, toCSV, toDXF, svgString, svgToPNG } from './lib/exporters.js';
@@ -20,6 +22,11 @@ export default function App() {
   const [zones, setZones] = useState([]);        // no-light rects in image px {id,x0,y0,x1,y1}
   const [zoneMode, setZoneMode] = useState(false);
   const [draftZone, setDraftZone] = useState(null);
+
+  // Which of the possible chunk decompositions to light. Held as a STRATEGY ID,
+  // not a set of rectangles: the user is choosing how to read the space, and
+  // that intent should survive a nudge of the target-cell slider.
+  const [chunkPick, setChunkPick] = useState(null);
 
   const [scaleMode, setScaleMode] = useState('fan');   // fan | ref | manual
   const [fanSweep, setFanSweep] = useState('fan1200');
@@ -59,7 +66,7 @@ export default function App() {
         setImg({ src, el, w: el.naturalWidth, h: el.naturalHeight, name: file.name,
                  base64: String(src).split(',')[1], mime: file.type });
         setMeasure({ a: null, b: null }); setAiResult(null); setZoom(1);
-        setZones([]); setZoneMode(false); setDraftZone(null);
+        setZones([]); setZoneMode(false); setDraftZone(null); setChunkPick(null);
       };
       el.src = src;
     };
@@ -96,29 +103,67 @@ export default function App() {
     return fans.length ? scaleFromFans(fans, sweep) : null;
   }, [scaleMode, manualPx, measure, refId, customFt, fans, fanSweep]);
 
-  // --- plan -----------------------------------------------------------------
-  const plan = useMemo(() => {
+  // --- the space, in feet ---------------------------------------------------
+  // Split out from the layout on purpose: the chunk choice sits between them.
+  // Nothing here depends on how the space will be cut up, so it survives the
+  // user changing their mind about that.
+  const geo = useMemo(() => {
     if (!region?.ok || !pxPerFt) return null;
-    const polyPx = useBoundingRect ? region.boundingRect : region.polygon;
-    const b = bbox(polyPx);
+    const polygonPx = useBoundingRect ? region.boundingRect : region.polygon;
+    const b = bbox(polygonPx);
     const origin = { x: b.minX, y: b.minY };
     const toFt = (p) => ({ x: (p.x - origin.x) / pxPerFt, y: (p.y - origin.y) / pxPerFt });
     const toPx = (p) => ({ x: p.x * pxPerFt + origin.x, y: p.y * pxPerFt + origin.y });
+    return {
+      polygonPx, origin, toFt, toPx,
+      polygonFt: polygonPx.map(toFt),
+      fixturesFt: fans.map((f) => ({ type: 'fan', ...toFt(f), r: f.r / pxPerFt })),
+      zonesFt: zones.map((z) => {
+        const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
+        return { x0: a.x, y0: a.y, x1: c.x, y1: c.y };
+      }),
+    };
+  }, [region, pxPerFt, fans, useBoundingRect, zones]);
 
-    const polygonFt = polyPx.map(toFt);
-    const fixtures = fans.map((f) => ({ type: 'fan', ...toFt(f), r: f.r / pxPerFt }));
-    const zonesFt = zones.map((z) => {
-      const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
-      return { x0: a.x, y0: a.y, x1: c.x, y1: c.y };
-    });
-    const res = planLights(polygonFt, fixtures, opt, zonesFt);
-    if (!res.ok) return { ...res, polygonPx: polyPx };
+  // --- step one: how should the space be cut up? ----------------------------
+  // Only the three settings that genuinely shape a decomposition are in this
+  // dependency list, so moving an unrelated slider does not re-enumerate and
+  // cannot invalidate a choice that is still perfectly valid.
+  const chunkOpt = useMemo(
+    () => ({ targetCell: opt.targetCell, minChunk: opt.minChunk, fanClearance: opt.fanClearance }),
+    [opt.targetCell, opt.minChunk, opt.fanClearance]);
+
+  const chunking = useMemo(
+    () => (geo ? enumerateChunkings(geo.polygonFt, geo.zonesFt, chunkOpt, geo.fixturesFt) : null),
+    [geo, chunkOpt]);
+
+  // A remembered intent, resolved afresh each time. Change the space enough
+  // that the chosen reading no longer exists and we ask again, rather than
+  // quietly substituting a different one under the same name.
+  const chosenId = useMemo(() => {
+    if (!chunking?.options.length) return null;
+    if (!chunking.needsChoice) return chunking.recommendedId;  // one reading: nothing to decide
+    return findChunking(chunking.options, chunkPick)?.id ?? null;
+  }, [chunking, chunkPick]);
+
+  const step = !img ? 'upload'
+    : (chunking?.needsChoice && !chosenId) ? 'chunks'
+    : 'plan';
+  const showPicker = step === 'chunks' && !zoneMode && !!geo;
+
+  // --- step two: the layout, inside the chosen configuration ----------------
+  const plan = useMemo(() => {
+    if (!geo) return null;
+    if (chunking?.needsChoice && !chosenId) return null;   // no lights until it is picked
+    const { polygonFt, fixturesFt, zonesFt, polygonPx, origin, toPx } = geo;
+    const res = planLights(polygonFt, fixturesFt, { ...opt, chunkStrategy: chosenId || 'auto' }, zonesFt);
+    if (!res.ok) return { ...res, polygonPx };
 
     const rectToPx = (c) => ({ ...c, x0: c.x0 * pxPerFt + origin.x, x1: c.x1 * pxPerFt + origin.x,
                                y0: c.y0 * pxPerFt + origin.y, y1: c.y1 * pxPerFt + origin.y });
     return {
       ...res,
-      polygonFt, polygonPx: polyPx, origin, toPx,
+      polygonFt, polygonPx, origin, toPx,
       chunksPx: res.chunks.map((ch) => ({
         ...rectToPx(ch),
         xLines: ch.xLines.map((x) => x * pxPerFt + origin.x),
@@ -131,9 +176,10 @@ export default function App() {
           const c = res.cells.find((x) => x.id === id);
           return c ? toPx({ x: c.cx, y: c.cy }) : null;
         }).filter(Boolean) })),
-      fansFt: fixtures,
+      fansFt: fixturesFt,
     };
-  }, [region, pxPerFt, opt, fans, useBoundingRect, zones]);
+  }, [geo, chunking, chosenId, opt, pxPerFt]);
+
 
   // --- interactions ---------------------------------------------------------
   const svgPoint = (e) => {
@@ -200,11 +246,18 @@ export default function App() {
         <div className={'pill ' + (fans.length ? 'ok' : 'warn')} title={fanReason || ''}>
           {fans.length ? `${fans.length} fan${fans.length > 1 ? 's' : ''} found` : 'no fan marker'}</div>
         <div className={'pill ' + (pxPerFt ? 'ok' : 'bad')}>{pxPerFt ? describeScale(pxPerFt) : 'scale not set'}</div>
+        {chunking && chunking.options.length > 1 && (
+          <div className={'pill ' + (chosenId ? 'ok' : 'warn')}>
+            {chosenId
+              ? `chunks · ${plan?.chunking?.label ?? chosenId}`
+              : `${chunking.options.length} ways to chunk — pick one`}
+          </div>
+        )}
         <div className="spacer" />
         {busy && <div className="pill">{busy}</div>}
       </div>
 
-      <div className={'stage' + (img ? '' : ' empty')}
+      <div className={'stage' + (img ? '' : ' empty') + (showPicker ? ' wide' : '')}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); loadFile(e.dataTransfer.files[0]); }}
@@ -224,6 +277,14 @@ export default function App() {
               <div><span className="swatch r" /> ceiling fan</div>
             </div>
           </div>
+        ) : showPicker ? (
+          <ChunkPicker
+            options={chunking.options}
+            recommendedId={chunking.recommendedId}
+            initialId={chunkPick}
+            onConfirm={setChunkPick}
+            src={img.src} imgW={img.w} imgH={img.h}
+            polygonPx={geo.polygonPx} zonesPx={zones} fansPx={fans} toPx={geo.toPx} />
         ) : (
           <div className="canvas-wrap">
             <PlanCanvas ref={svgRef} src={img.src} width={img.w} height={img.h}
@@ -242,7 +303,7 @@ export default function App() {
             <label className="btn">Load image
               <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => loadFile(e.target.files[0])} />
             </label>
-            {img && <button className="btn" onClick={() => { setImg(null); setRegion(null); setFans([]); }}>Clear</button>}
+            {img && <button className="btn" onClick={() => { setImg(null); setRegion(null); setFans([]); setChunkPick(null); }}>Clear</button>}
           </div>
           {region && !region.ok && <p className="note warn">{region.reason}</p>}
           {region?.ok && region.warning && <p className="note warn">{region.warning}</p>}
@@ -295,6 +356,35 @@ export default function App() {
               </div>
             ))}
           </div>
+
+          {chunking && chunking.options.length > 0 && (
+            <div className="sec">
+              <h3>Chunking</h3>
+              {!chunking.needsChoice ? (
+                <p className="note">
+                  {chunking.options[0].metrics.pieces === 1
+                    ? 'The space is a single rectangle, so there is nothing to decide.'
+                    : `Only one way to read this space — ${chunking.options[0].metrics.pieces} chunks — so there is nothing to decide.`}
+                </p>
+              ) : step === 'chunks' ? (
+                <p className="note">{chunking.options.length} configurations. Pick one on the plan and
+                  the lights get placed inside it. Nothing is placed until you do.</p>
+              ) : (<>
+                <div className="kv"><span>Reading</span><b>{plan?.chunking?.label ?? '—'}</b></div>
+                <div className="kv"><span>Chunks</span><b>{plan?.chunking?.metrics?.pieces ?? '—'}</b></div>
+                <div className="kv"><span>Chosen from</span><b>{chunking.options.length} options</b></div>
+                {plan?.chunking?.chosenBy === 'auto' && (
+                  <p className="note">Using the recommendation. Change it below if the space reads
+                    differently to you.</p>
+                )}
+                <button className="btn" style={{ marginTop: 6 }} onClick={() => setChunkPick(null)}>
+                  Change chunking
+                </button>
+                <p className="note">The target cell, the sliver threshold and the zones all re-read
+                  the space. Your choice is kept for as long as it still exists.</p>
+              </>)}
+            </div>
+          )}
 
           <div className="sec">
             <h3>Scale</h3>
@@ -385,6 +475,7 @@ export default function App() {
               is left out entirely.</p>
           </div>
 
+          {step !== 'chunks' && <>
           <div className="sec">
             <h3>Lights</h3>
             <Slider label="Min wall distance" v={opt.minWallDistance} min={2} max={9} step={0.25}
@@ -555,6 +646,7 @@ export default function App() {
             </div>
             <p className="note">DXF comes out in feet on layers ROOM / CHUNK / GRID / NO-LIGHT / LIGHT-LARGE / LIGHT-SMALL / FAN.</p>
           </div>
+          </>}
         </>}
       </div>
     </div>
