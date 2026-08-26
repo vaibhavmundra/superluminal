@@ -190,10 +190,21 @@ the correction snaps.
 
 | Do this | To get |
 |---|---|
-| **drag** a corner | move it, snapping |
+| **drag** a corner | move it — free angle, snapping to walls and to the other corners |
+| **Shift** while dragging | hold it square to its neighbour |
 | **click** a hollow diamond on an edge | insert a corner there |
 | **right-click** (or alt-click) a corner | delete it |
 | **Show corner grips** off | get them out of the way |
+
+**A corner drag is a free move, and the right-angle lock is off.** That is the
+opposite of tracing, where the lock is on by default, and the reason is that a
+corner is not the end of a wall being drawn: moving one corner of a rectangle is
+*meant* to leave two edges angled. With the lock on you drag 190 px and the point
+travels 115 px sideways along its neighbour's axis, and there is no way to say
+what you meant. What replaces the lock is the **alignment snap** — the corner
+still lines up with its neighbours when it is near to being in line, and lets go
+when it is not. A preference rather than a rule. Shift, which releases the lock
+everywhere else on this screen, is what turns one on here.
 
 Two things about the implementation that are load-bearing:
 
@@ -210,18 +221,77 @@ A drag is local state until it ends. Committing per mouse move would rebuild the
 snap index under the cursor sixty times a second, and the index is the thing the
 cursor is snapping against.
 
-### The rooms are simplified, then squared
+### The rooms are simplified and squared before you see them
 
 A mask comes in with dozens of vertices and goes out with a handful: Douglas-
 Peucker at four inches, which is small enough to keep a real nook and large
-enough to throw away the staircase along a straight wall. Squaring is **not**
-done here — it belongs to the outline, where it is a per-room switch you can turn
-off and where the polygon you see is derived rather than stored. Squaring at
-proposal time would bake it in and lose the mask boundary you might want to
-compare against.
+enough to throw away the staircase along a straight wall. Then it is **squared**,
+and the stored points are the squared ones.
+
+That last part is a reversal worth explaining, because a hand-traced outline
+works the other way round: there, the points you clicked are the record and the
+squared version is derived from them, so the `square` switch can be turned off
+per room without losing anything. That is the right design for a record of what
+someone clicked. It is the wrong design for a proposal that is about to be
+dragged — the grips sit on the *stored* points, so with squaring derived you drag
+a corner and watch the correction get squared away underneath you. The point
+moves, the polygon does not, and nothing on screen explains why.
+
+So for a proposal it is baked in: what you see is what you drag. The per-room
+`square` switch is still there to re-apply it after a session of free dragging.
 
 An **L-shaped room stays L-shaped**. That is the reason not to simplify to a
 bounding box, and `tools/test-rooms-detect.mjs` asserts it.
+
+### No two rooms may overlap
+
+A segmenter does not know that rooms are disjoint. It returns one mask per thing
+that looks like a room, and two of those routinely cover the same floor: an
+ensuite inside a bedroom, or two masks that merged through a doorway and now
+share a strip. Left alone that floor is lit twice, counted twice in the lumens
+per square foot, and exported as two polygons on top of each other.
+
+So the smaller room is subtracted from the larger — `src/lib/roomBooleans.js`.
+**Largest first is the whole policy:** a small room inside a big one is a real
+room and the big one is the one whose boundary is wrong, so the big one gives
+way. Subtract the other way round and the ensuite disappears into the bedroom.
+It also means a room is only ever eroded by rooms smaller than itself, so the
+pass terminates and the result does not depend on which mask was more confident.
+
+| Case | What happens |
+|---|---|
+| ensuite in a corner, sharing two walls | the bedroom becomes an L |
+| ensuite along one wall | the bedroom becomes a U |
+| ensuite that stops short of the wall | walls within **1.5 ft** count as shared, so it subtracts anyway |
+| two masks overlapping through a doorway | the larger loses the strip; the smaller is untouched |
+| a mask other rooms almost entirely cover | dropped — it was a duplicate, not a room |
+| a room *wholly* inside another | cannot be subtracted; see below |
+
+**Why a cell grid rather than a polygon clipper.** Everything downstream is
+rectilinear, so a clipper's exact answer would be squared up two stages later
+regardless. More to the point, a clipper's failure mode is a crash or a silently
+malformed ring on touching and coincident edges — which is *exactly* this input,
+because rooms share walls. A grid built from the polygons' own coordinates has no
+degenerate case: every cell centre is strictly inside or strictly outside. It is
+fifty lines that can be read. The cost is that a diagonal edge becomes a
+staircase as coarse as the coordinate spacing, which is why subtraction runs only
+on the pair that actually overlaps, and only after squaring.
+
+**The 1.5 ft shared-wall tolerance** sounds generous until you count what is in
+the gap: a 9-inch wall, plus the inner mask falling short of its face, plus the
+outer mask falling short of the other face. Anything tighter and an ensuite
+plainly in the corner of a bedroom reads as floating in the middle of it. The
+snap applies *only inside the subtraction* — the inner room's own outline is
+never rewritten — so the outer room is carved a little generously and the strip
+between them stays unlit. Which is correct: that strip is the wall.
+
+**A room wholly inside another** has a difference that is an annulus, and an
+annulus is not a polygon the planner can lay a grid inside. Rather than invent a
+wall that is not on the drawing, the enclosing room keeps its outline and the
+inner room is held out of its ceiling as a **no-light zone** — so no light is
+ever placed over a room that is not the room being lit, even where the geometry
+could not say so. The row says as much, and dragging a corner of the inner room
+out to a wall converts it into a proper subtraction.
 
 ### Names
 
@@ -1470,9 +1540,14 @@ the screen. It is all still in the JSON export and in `plan.stats`.
   contour is the upgrade; it needs a real RLE response to test against.
 - **A base64 RLE `counts` string is refused rather than misread.** Only an array
   of run lengths is decoded.
-- **Doorways.** A mask routinely runs through an opening, so two rooms can arrive
-  sharing a strip of floor. Nothing detects or corrects that — the overlap is
-  visible, and it is a drag to fix.
+- **A room wholly inside another is not subtracted**, because the result would be
+  an annulus. It is held out of the outer room's ceiling as a no-light zone
+  instead, which means the outer room's *area* still counts the inner room's
+  floor — so the lumens-per-square-foot figure for that room reads low. Drag a
+  corner of the inner room out to a wall and it subtracts properly.
+- **A diagonal edge on a room that gets carved becomes a staircase**, as coarse
+  as the coordinate spacing of the pair being subtracted. Rooms that do not
+  overlap keep their exact geometry.
 - **The enclosure test needs two enclosed rooms to fire.** A plan the model
   reduces to the sheet plus one room keeps the sheet, and it arrives as one
   enormous outline. Delete it.
@@ -1558,6 +1633,7 @@ node tools/test-furniture.mjs         # detection -> zones: centres, rescaling, 
 node tools/test-detect-api.mjs        # the proxy, network stubbed: refusals, key never leaks
 node tools/test-detect-flow.mjs       # response -> zone -> NO LIGHT OVER THE BED, as App.jsx wires it
 node tools/test-openai-detect.mjs     # the GPT route: every reply shape, and the same bed claim
+node tools/test-room-booleans.mjs     # no two rooms overlap: nesting, carving, and 27 lattice arrangements
 node tools/test-rooms-detect.mjs      # room masks -> outlines -> a lit plan, and the sheet thrown away
                                       # test-furniture also covers the DXF render for detection
 node tools/test-match-bruteforce.mjs  # matching vs brute force, 400 cases
@@ -1569,7 +1645,7 @@ node tools/probe-rooms.mjs plan.png   # call the ROOM workflow for real; writes 
 node tools/e2e.mjs hall lshape        # drive the built app headless
 ```
 
-The first twelve are in `npm run test`. `tools/probe-rooms.mjs` needs the
+The first thirteen are in `npm run test`. `tools/probe-rooms.mjs` needs the
 network and a key, so it is a script you run rather than a test that runs
 itself. `tools/test-match-bruteforce.mjs`,
 `make-plans.mjs` and `e2e.mjs` need `npm i -D playwright`;

@@ -30,7 +30,8 @@
 // than bad arithmetic.
 // ---------------------------------------------------------------------------
 
-import { bbox, polygonArea, douglasPeucker, ensureCCW, pointInPolygon } from './geometry.js';
+import { bbox, polygonArea, douglasPeucker, ensureCCW, pointInPolygon, rectifyPolygon } from './geometry.js';
+import { disjoin } from './roomBooleans.js';
 import { collectPredictions, className, iou } from './furniture.js';
 
 /** The class list sent when the workflow turns out to want one. */
@@ -73,6 +74,25 @@ export const ROOM_DEFAULTS = {
   // The same, as a fraction of the image diagonal, for when there is no scale
   // yet — which on an uploaded photo is the normal case at detection time.
   simplifyFrac: 0.004,
+  // Squaring, in FEET. Walls within this of aligned are aligned. Looser than the
+  // tolerance a HAND-TRACED outline gets, because a mask boundary is jittery in
+  // a way a person's clicking is not.
+  squareSnapFt: 0.5,
+  squareSimplifyFt: 0.08,
+  // How close two rooms' walls have to be before they are treated as the SAME
+  // wall when one is subtracted from the other. A mask that stopped short of the
+  // party wall is not an interior room, it is a bad outline.
+  //
+  // A FOOT AND A HALF, which sounds generous until you count what is in the gap:
+  // a 9-inch wall, plus the inner mask falling short of its face, plus the outer
+  // mask falling short of the other face. Anything tighter and an ensuite that
+  // is plainly in the corner of a bedroom reads as floating in the middle of it,
+  // which is the difference between a clean subtraction and a no-light zone.
+  //
+  // The snap applies only INSIDE the subtraction — the inner room's own outline
+  // is never rewritten. So the outer room is carved a little generously and the
+  // strip between them stays unlit, which is correct: that strip is the wall.
+  shareWallFt: 1.5,
 };
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -228,10 +248,14 @@ const clampPoly = (pts, w, h) => pts.map((p) => ({
  */
 function readingOrder(items, image) {
   const band = Math.max(1, image.h * 0.10);
-  return [...items].sort((a, b) => {
-    const ra = Math.round(a.centroid.y / band), rb = Math.round(b.centroid.y / band);
-    return ra - rb || a.centroid.x - b.centroid.x;
-  });
+  // Off the polygon and not off a centroid computed earlier: carving a room
+  // moves its middle, and an order computed before the carve puts the rooms in
+  // an order the finished plan does not have.
+  const mid = (it) => { const b = bbox(it.pointsPx); return { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 }; };
+  return [...items].map((it) => ({ it, m: mid(it) })).sort((a, b) => {
+    const ra = Math.round(a.m.y / band), rb = Math.round(b.m.y / band);
+    return ra - rb || a.m.x - b.m.x;
+  }).map((x) => x.it);
 }
 
 /**
@@ -335,27 +359,71 @@ export function roomsFromPayload(payload, { image, pxPerFt = null, ...o } = {}) 
     unique.push(k);
   }
 
-  const rooms = readingOrder(unique, image).map((k, i) => {
-    // Simplify BEFORE anything downstream sees it, but do not square it up
-    // here. Rectification belongs to the outline (see resolveOutline), where it
-    // is a per-room switch the user can turn off and where the polygon they
-    // actually see is derived rather than stored. Squaring here would bake it
-    // in and lose the mask boundary they might want to compare against.
+  // --- simplify, square up, then make them disjoint -----------------------
+  //
+  // SQUARED HERE, and this is a reversal worth explaining. Rectifying used to be
+  // left to the outline, where it is derived from the stored points and can be
+  // switched off per room — which is the right design for a HAND-TRACED outline,
+  // because the points the user clicked are the record and the squared version
+  // is an opinion about them.
+  //
+  // It is the wrong design for a proposal that is about to be edited by hand.
+  // The grips sit on the stored points, so with squaring derived you drag a
+  // corner and watch the correction get squared away underneath you — the point
+  // moves, the polygon does not, and there is nothing on screen to explain it.
+  // Baking it means what you see is what you drag: move one corner of a
+  // rectangle and two edges go slack, which is what a corner handle has meant
+  // in every drawing program ever written. The per-room `square` switch is still
+  // there to re-apply it on demand.
+  const shaped = unique.map((k) => {
     const closed = [...k.pts, k.pts[0]];
     let simple = douglasPeucker(closed, simplifyPx).slice(0, -1);
     if (simple.length < 4) simple = rectPoly(k.rect);
+    const squared = rectifyPolygon(simple, pxPerFt
+      ? { simplifyEps: opt.squareSimplifyFt * pxPerFt, snapTol: opt.squareSnapFt * pxPerFt }
+      : { simplifyEps: diag * 0.004, snapTol: diag * 0.012 });
+    return { ...k, simplifiedFrom: k.pts.length, pointsPx: ensureCCW(squared) };
+  });
 
-    const named = cleanName(k.cls);
+  // NO TWO ROOMS MAY OVERLAP. Squaring first is not just tidiness: it puts every
+  // edge on an axis and every near-shared wall on the same coordinate, which is
+  // what makes the subtraction below exact instead of approximate. See
+  // roomBooleans.js for what happens when a room sits wholly inside another.
+  const carved = disjoin(shaped, {
+    // With no scale yet, a fraction of the diagonal stands in for the feet. On a
+    // 1042x1642 plan that is about 49px, which is a foot and a half at any
+    // plausible scale for a plan of that size.
+    snapPx: pxPerFt ? opt.shareWallFt * pxPerFt : diag * 0.025,
+  });
+
+  // A room the others cover almost entirely was never a room. It goes on the
+  // discarded list with its reason rather than being kept as an overlapping
+  // remnant — see disjoin.
+  const disjointed = [];
+  for (const k of carved) {
+    if (k.dropped) rejected.push({ cls: k.cls, conf: k.conf, rect: k.rect, reason: k.note });
+    else disjointed.push(k);
+  }
+
+  const rooms = readingOrder(disjointed, image).map((k, i) => {
     return {
-      pointsPx: ensureCCW(simple),
-      label: named,
+      pointsPx: k.pointsPx,
+      label: cleanName(k.cls),
       confidence: k.conf,
       score: k.conf,
       from: k.from,
-      areaSqft: pxPerFt ? Math.abs(polygonArea(simple)) / (pxPerFt * pxPerFt) : null,
+      // The rooms that sit wholly inside this one and could not be subtracted
+      // from it. The caller turns these into no-light zones, so that a ceiling
+      // is never laid over a room that is not this one even when the geometry
+      // could not say so.
+      enclosingPx: k.enclosing ?? null,
+      carved: k.carved ?? 0,
+      areaSqft: pxPerFt ? Math.abs(polygonArea(k.pointsPx)) / (pxPerFt * pxPerFt) : null,
       why: `${k.from === 'points' ? 'mask' : k.from === 'rle' ? 'mask bounds' : 'box'}`
-        + `, ${k.rawCorners} corners in, ${simple.length} out`
-        + (isNum(k.conf) ? `, ${Math.round(k.conf * 100)}% sure` : ''),
+        + `, ${k.simplifiedFrom} corners in, ${k.pointsPx.length} out`
+        + (isNum(k.conf) ? `, ${Math.round(k.conf * 100)}% sure` : '')
+        + (k.note ? `, ${k.note}` : ''),
+      note: k.note ?? '',
       order: i,
     };
   });

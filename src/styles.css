@@ -199,6 +199,11 @@ input:focus,select:focus{outline:2px solid var(--accent-soft);border-color:var(-
   width:100%;border:0;background:none;font:inherit;cursor:pointer;padding:0;text-align:left;
 }
 .outline-name{font-family:var(--mono);font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The same row without the colour dot. The tracer colours each outline and can
+   key a swatch to it; the plan canvas draws every room in one green, so a
+   swatch there would be a lie. Without this variant the name landed in the
+   10px dot column and every room read as "R.". */
+.outline-pick.plain{grid-template-columns:minmax(0,1fr) auto}
 .outline-meta{
   display:flex;justify-content:space-between;align-items:center;gap:6px;
   font-size:10px;color:var(--text-subtle);margin-top:3px;

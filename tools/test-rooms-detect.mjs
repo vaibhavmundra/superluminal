@@ -254,6 +254,67 @@ section('the handoff — a proposed room is lit exactly like a traced one');
      `${Math.round(lit.reduce((s, r) => s + r.st.areaSqft, 0))} sq ft`);
 }
 
+section('a room inside a room — the payload the detector actually produces');
+{
+  // The bedroom spans the width of the flat and the ensuite sits inside it. This
+  // is the case that used to hand the planner two overlapping polygons, light
+  // the ensuite twice and count its floor twice in the lumens per square foot.
+  const nested = JSON.parse(JSON.stringify(payload));
+  const list = nested.outputs[0].model_predictions.predictions;
+  const keep = list.filter((p) => ['living-1', 'kitchen-1'].includes(p.detection_id));
+  const box = (x0, y0, x1, y1, id, conf) => {
+    const pts = [];
+    const ring = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    for (let i = 0; i < 4; i++) {
+      const [ax, ay] = ring[i], [bx, by] = ring[(i + 1) % 4];
+      for (let t = 0; t < 12; t++) {
+        pts.push({ x: (ax + (bx - ax) * t / 12) * 640 / 1042 + (t % 3 - 1) * 0.6,
+                   y: (ay + (by - ay) * t / 12) * 1009 / 1642 + (t % 3 - 1) * 0.6 });
+      }
+    }
+    const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+    return { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2,
+             width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys),
+             confidence: conf, class: 'room', class_id: 0, detection_id: id, points: pts };
+  };
+  // a corner ensuite: shares the bedroom's right and bottom walls
+  nested.outputs[0].model_predictions.predictions = [
+    ...keep,
+    box(88, 962, 920, 1440, 'bedroom', 0.90),
+    box(700, 1150, 920, 1440, 'ensuite-corner', 0.85),
+  ];
+  const a = roomsFromPayload(nested, { image: IMAGE });
+  ok('both rooms survive', a.rooms.length === 4, `${a.rooms.length}`);
+  const bed = a.rooms.find((r) => bbox(r.pointsPx).w > 700 && bbox(r.pointsPx).minY > IMAGE.h * 0.5);
+  ok('the bedroom was carved into an L', bed && bed.pointsPx.length >= 6,
+     bed ? `${bed.pointsPx.length} corners` : 'not found');
+  ok('...and says so', bed && /subtracted/.test(bed.note), bed?.note);
+  // The invariant, on the real pipeline: no point of one room is inside another.
+  const overlaps = [];
+  for (const p of a.rooms) for (const q of a.rooms) {
+    if (p === q) continue;
+    const c = { x: (bbox(q.pointsPx).minX + bbox(q.pointsPx).maxX) / 2,
+                y: (bbox(q.pointsPx).minY + bbox(q.pointsPx).maxY) / 2 };
+    if (pointInPolygon(c, p.pointsPx)) overlaps.push(`${q.label ?? '?'} in ${p.label ?? '?'}`);
+  }
+  ok('no room contains the middle of another', overlaps.length === 0, overlaps.join(', '));
+
+  // ...and the same flat with the ensuite floating in the middle of the bedroom,
+  // which cannot be subtracted and must be REPORTED for the caller to zone.
+  nested.outputs[0].model_predictions.predictions = [
+    ...keep,
+    box(88, 962, 920, 1440, 'bedroom', 0.90),
+    box(400, 1080, 640, 1300, 'ensuite-floating', 0.85),
+  ];
+  const b = roomsFromPayload(nested, { image: IMAGE });
+  const bed2 = b.rooms.find((r) => bbox(r.pointsPx).w > 700 && bbox(r.pointsPx).minY > IMAGE.h * 0.5);
+  ok('the enclosing room is kept, not dropped', !!bed2);
+  ok('and hands back the room inside it for the caller to hold out of the ceiling',
+     bed2?.enclosingPx?.length === 1, JSON.stringify(bed2?.note));
+  ok('...saying so in words', /wholly inside/.test(bed2?.note || ''), bed2?.note);
+  ok('the room inside it is still its own room', b.rooms.length === 4, `${b.rooms.length}`);
+}
+
 section('nothing found is not a failure');
 {
   const empty = roomsFromPayload({ outputs: [{ model_predictions: { image: IMAGE, predictions: [] } }] },

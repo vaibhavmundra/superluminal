@@ -271,6 +271,14 @@ export default function OutlineTracer({
    * The grid is off. It is anchored on the first corner of a trace in progress
    * (see gridOrigin) and there is no trace in progress here; anchoring it on
    * the plan would round the corner's POSITION, which means nothing.
+   *
+   * AND THE RIGHT-ANGLE LOCK IS OFF, which is the important one. A corner is a
+   * corner, not the end of a wall being drawn: moving one corner of a rectangle
+   * is *meant* to leave two angled edges, and a lock that holds it on the
+   * previous corner's axis makes that impossible — you drag 190px and the point
+   * moves 115px sideways. What replaces the lock is the alignment snap, which
+   * still pulls the corner into line with its neighbours when it is close to
+   * being in line, and lets go when it is not. A preference rather than a rule.
    */
   const snapForDrag = (o, k, cursor) => {
     const pts = o.pointsPx;
@@ -285,7 +293,10 @@ export default function OutlineTracer({
       tol: SNAP_PX / zoom,
       last: prev,
       points: [],
-      ortho,
+      // Free angle. Shift is the ESCAPE from a lock everywhere else in this
+      // screen, so here — where there is no lock — it is what turns one on, for
+      // the times you do want the corner held on its neighbour's axis.
+      ortho: shift,
       layers: visible,
       alignTo: alignOn ? others : [prev, next],
       gridPx: 0,
@@ -444,7 +455,12 @@ export default function OutlineTracer({
             ? <>Click the two ends of something you can name, then say what it is.</>
             : !hasScale
               ? <>Set the scale on the right first — an image does not say how big it is.</>
-              : <>Click the corners. <b>Shift</b> releases the right-angle lock,
+              : outlines.length
+                ? <>Drag a corner to move it — free angle, snapping to walls and
+                    to the other corners. <b>Shift</b> holds it square.
+                    Click an edge's diamond to add a corner, right-click one to
+                    remove it.</>
+                : <>Click the corners. <b>Shift</b> releases the right-angle lock,
                   <b> Backspace</b> undoes one, <b>Enter</b> closes.</>}
         </p>
       </div>
@@ -457,7 +473,19 @@ export default function OutlineTracer({
             width={SW} height={SH}
             scaleX={zoom} scaleY={zoom} x={pos.x} y={pos.y}
             draggable={panMode}
-            onDragEnd={(e) => setPos({ x: e.target.x(), y: e.target.y() })}
+            /* ONLY THE STAGE'S OWN DRAG MOVES THE STAGE.
+               Konva bubbles a child's drag events up to the stage, so a grip's
+               dragend arrived here too — and this handler read `e.target.x()`,
+               which was then the GRIP's coordinate, and panned the plan to it.
+               The plan flew off screen on the first nudge and every grip after
+               that was outside the canvas, so nothing could be dragged again.
+               "The whole plan vanishes as soon as I move a vertex" was this one
+               line. Guarding on the target is the fix; it also covers anything
+               draggable added here later. */
+            onDragEnd={(e) => {
+              if (e.target !== stageRef.current) return;
+              setPos({ x: e.target.x(), y: e.target.y() });
+            }}
             onMouseMove={onMouseMove}
             onMouseDown={onMouseDown}
             onWheel={onWheel}
@@ -680,7 +708,7 @@ export default function OutlineTracer({
           <div className="tracer-hud">
             {!ortho && <span className="chip">free angle</span>}
             {gridIn > 0 && <span className="chip on">{gridIn === 12 ? '1′' : `${gridIn}″`} grid</span>}
-            {drag && <span className="chip on">nudging</span>}
+            {drag && <span className="chip on">{shift ? 'nudging · square' : 'nudging · free'}</span>}
             {(drag?.snap || (!drag && snap)) && (
               <span className="chip snap">{(drag?.snap || snap).label}</span>
             )}
@@ -971,6 +999,18 @@ export default function OutlineTracer({
                         onClick={() => onDeleteOutline(o.id)}>×</button>
                     </span>
                   </div>
+                  {o.enclosingPx?.length > 0 && (
+                    <p className="note warn" style={{ margin: '2px 0 0' }}>
+                      {o.enclosingPx.length} room{o.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly
+                      inside this one, so it cannot be subtracted — the inner
+                      {o.enclosingPx.length > 1 ? ' rooms are' : ' room is'} held out of this
+                      ceiling instead. Drag a corner of the inner room out to a wall and it
+                      will be subtracted properly.
+                    </p>
+                  )}
+                  {o.note && !o.enclosingPx?.length && (
+                    <p className="note" style={{ margin: '2px 0 0' }}>{o.note}</p>
+                  )}
                   {o.rectify && st.movedFt > 0.08 && (
                     <p className="note" style={{ margin: '2px 0 0' }}>
                       Squaring moved a corner {(st.movedFt * 12).toFixed(0)}″ — the dashed

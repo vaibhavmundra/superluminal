@@ -185,8 +185,32 @@ export default function App() {
   // is the identity — its pixels ARE its units — and the same code runs.
   const outlinesPx = useMemo(() => {
     if (!source) return [];
-    return outlines.map((o) => ({ ...o, pointsPx: o.pointsDu.map(source.fromDu) }));
+    return outlines.map((o) => ({
+      ...o,
+      pointsPx: o.pointsDu.map(source.fromDu),
+      enclosingPx: o.enclosingDu ? o.enclosingDu.map((poly) => poly.map(source.fromDu)) : null,
+    }));
   }, [source, outlines]);
+
+  /**
+   * A room that sits wholly inside another becomes a NO-LIGHT ZONE in the outer
+   * one.
+   *
+   * Subtracting it would be better and is what happens whenever the geometry
+   * allows (see roomBooleans.js) — but an annulus is not a polygon the planner
+   * can lay a grid inside, and the alternative to this is a ceiling laid over a
+   * room that is not the room being lit. The zone is keyed to the OUTER room
+   * only: put it in the global list and the inner room would find a no-light
+   * zone covering the whole of itself and come back with no lights at all.
+   */
+  const enclosedZones = useCallback((outline) => {
+    if (!outline?.enclosingPx?.length) return [];
+    return outline.enclosingPx.map((poly, i) => {
+      const b = bbox(poly);
+      return { id: `encl-${outline.id}-${i}`, source: 'enclosed', cls: 'room',
+               x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY };
+    });
+  }, []);
 
   const litOutlines = useMemo(
     () => outlinesPx.filter((o) => litIds.includes(o.id)),
@@ -379,8 +403,12 @@ export default function App() {
       // over THIS ceiling are obstacles in THIS layout, and a centre inside the
       // polygon is the test — a bed belongs to the room it is standing in.
       const mine = fans.filter((f) => pointInPolygon({ x: f.x, y: f.y }, polygonPx));
-      const myZones = zoneList.filter((z) => pointInPolygon(
-        { x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 }, polygonPx));
+      const myZones = [
+        ...zoneList.filter((z) => pointInPolygon(
+          { x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 }, polygonPx)),
+        // This room's own enclosed rooms, which belong to it and to no other.
+        ...enclosedZones(o),
+      ];
 
       const geo = {
         polygonPx, origin, toFt, toPx,
@@ -444,7 +472,13 @@ export default function App() {
     }
     return out;
   }, [source, pxPerFt, litOutlines, useBoundingRect, fans, zoneList,
-      chunkOpt, chunkPicks, opt]);
+      chunkOpt, chunkPicks, opt, enclosedZones]);
+
+  // What the canvas draws: every zone, whoever it belongs to. The planner sees
+  // the per-room subsets above; this is only for the eye.
+  const drawnZones = useMemo(
+    () => [...zoneList, ...rooms.flatMap((r) => enclosedZones(r.outline))],
+    [zoneList, rooms, enclosedZones]);
 
   /** The room the right-hand panel and the chunk picker are talking about. */
   const focus = useMemo(
@@ -647,11 +681,22 @@ export default function App() {
           existing.push(rect);
           made.push({
             id: makeOutline(prop.pointsPx, { name }).id,
-            name, rectify: true,
+            name,
+            // ALREADY SQUARE. roomsFromPayload rectified it, so the stored
+            // points ARE the polygon and a grip moves what you can see. Leaving
+            // this on would square the correction away under the user's hand.
+            // The per-room switch stays available to re-apply it.
+            rectify: false,
             detected: true, reviewed: false,
             confidence: prop.confidence ?? null,
             why: prop.why || '',
+            note: prop.note || '',
             pointsDu: prop.pointsPx.map(source.toDu),
+            // Rooms that sit wholly inside this one and could not be subtracted
+            // from it. Held in the plan's own units like everything else, so a
+            // unit correction moves them with the walls.
+            enclosingDu: prop.enclosingPx
+              ? prop.enclosingPx.map((poly) => poly.map(source.toDu)) : null,
           });
         }
         added = made.length;
@@ -858,7 +903,7 @@ export default function App() {
               fansPx={fans} pxPerFt={pxPerFt} layers={layers} zoom={zoom}
               measure={measure} onCanvasClick={onCanvasClick}
               cursor={fanMode ? 'crosshair' : null}
-              zones={zoneList} draftZone={draftZone} zoneMode={zoneMode}
+              zones={drawnZones} draftZone={draftZone} zoneMode={zoneMode}
               onZoneDown={onZoneDown} onZoneMove={onZoneMove} onZoneUp={onZoneUp} />
           </div>
         )}
@@ -898,7 +943,7 @@ export default function App() {
               const on = r.id === focus?.id;
               return (
                 <div key={r.id} className={'outline-row' + (on ? ' on' : '')}>
-                  <button className="outline-pick" onClick={() => setFocusId(r.id)}>
+                  <button className="outline-pick plain" onClick={() => setFocusId(r.id)}>
                     <span className="outline-name">{r.outline.name || 'Room'}</span>
                     <span className="layer-count">
                       {r.plan?.ok ? `${r.plan.lights.length} lights` : 'no layout'}
@@ -921,6 +966,15 @@ export default function App() {
                         onClick={() => setLitIds((ids) => ids.filter((x) => x !== r.id))}>×</button>
                     </span>
                   </div>
+                  {r.outline.enclosingPx?.length > 0 && (
+                    <p className="note warn" style={{ margin: '2px 0 0' }}>
+                      {r.outline.enclosingPx.length} room
+                      {r.outline.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly inside this
+                      one, so {r.outline.enclosingPx.length > 1 ? 'they are' : 'it is'} held out
+                      of the ceiling as a no-light zone. Drag a corner out to a wall and it
+                      will be subtracted properly instead.
+                    </p>
+                  )}
                   {r.region?.warning && <p className="note warn" style={{ margin: '2px 0 0' }}>{r.region.warning}</p>}
                 </div>
               );
