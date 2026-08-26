@@ -1,7 +1,16 @@
 // ---------------------------------------------------------------------------
 // api/detect.js — the only place the detection keys exist.
 //
-// TWO PROVIDERS, ONE RESPONSE SHAPE. `provider` in the body picks between them:
+// TWO QUESTIONS, asked through one endpoint because they share one key.
+// `task` in the body picks between them:
+//
+//   'furniture'  what is standing on this plan, so the ceiling can avoid it.
+//                Two providers, described below.
+//   'rooms'      where the rooms are, so an outline can be PROPOSED instead of
+//                traced by hand. One trained segmentation workflow, no
+//                general-model alternative — see the rooms branch for why.
+//
+// TWO PROVIDERS, ONE RESPONSE SHAPE, on the furniture task. `provider` in the body picks between them:
 //
 //   'roboflow'  a trained open-vocabulary detector. Tight boxes when it commits
 //               to one, and it often does not commit at all on a line drawing.
@@ -30,6 +39,12 @@
 import { buildRequest, textFromResponse, replyToPayload, DEFAULT_MODEL, DEFAULT_ARM } from '../src/lib/openaiDetect.js';
 
 const DEFAULT_URL = 'https://serverless.roboflow.com/baibhav-mundra/workflows/general-segmentation-api-4';
+
+// The ROOM workflow. A different trained model answering a different question —
+// not "where is the bed" but "where are the rooms" — so it is a second URL and
+// not a second class list. It returns one polygon per room; roomsDetect.js
+// turns those into the outlines the user nudges.
+const DEFAULT_ROOMS_URL = 'https://serverless.roboflow.com/baibhav-mundra/workflows/detect-and-count-objects-in-image';
 
 // Roboflow has published two shapes for this route over time. If the
 // configured one 404s we try the other before believing the workflow is gone,
@@ -139,91 +154,118 @@ async function readBody(req) {
 
 
 /**
- * The Roboflow leg, lifted out of the handler unchanged so that `both` can run
- * it concurrently with the other one. Everything about it — the two URL shapes,
- * the 404-only retry, the scrubbing — is as it was; only the return changed
- * from writing to the response to handing back a result.
+ * The Roboflow leg. One function for both workflows, because everything
+ * awkward about calling one of them — the two published URL shapes, the
+ * 404-only retry, the scrubbing, the logging — is awkward about calling any of
+ * them, and a copy per workflow is how the two quietly diverge.
+ *
+ * WHAT VARIES is the URL and the INPUT NAMES. A workflow's inputs are whatever
+ * its author declared: the furniture one takes an image and a class list, and
+ * a stock "detect and count objects" workflow usually takes only an image and
+ * rejects anything else as an unexpected input. Those two failures — "you sent
+ * a field I do not have" and "you are missing a field I need" — are both a
+ * plain 4xx with a message nobody can act on programmatically, so `variants`
+ * is a list of input shapes to try in order. The first one that is accepted
+ * wins, and which one it was is logged, because that is the answer worth
+ * writing down.
  */
-async function callRoboflow({ id, b64, key, classes, bytes, mime }) {
-  const payload = {
-    api_key: key,
-    inputs: {
-      image: { type: 'base64', value: b64 },
-      classes,
-    },
-  };
+async function callRoboflow({ id, b64, key, classes, url: configured, tag = 'roboflow',
+                              variants = null }) {
+  const shapes = variants && variants.length ? variants : [
+    { image: { type: 'base64', value: b64 }, classes },
+  ];
 
-  const configured = process.env.ROBOFLOW_WORKFLOW_URL || DEFAULT_URL;
   const candidates = [configured, alternateUrl(configured)].filter(Boolean);
   let last = null;
 
   for (const url of candidates) {
-    const t0 = Date.now();
-    let upstream;
-    try {
-      upstream = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(55_000),
-      });
-    } catch (err) {
-      log(id, '!!', `could not reach ${url}: ${err.message}`);
-      last = { code: 502, body: { error: `Could not reach Roboflow: ${err.message}` } };
-      continue;
-    }
-
-    const ms = Date.now() - t0;
-    const text = await upstream.text();
-    log(id, '<-', `${upstream.status} in ${ms}ms via ${url}`);
-
-    if (upstream.ok) {
-      let parsed;
-      try { parsed = JSON.parse(text); } catch { parsed = null; }
-      const found = parsed ? summarise(parsed) : [];
-      log(id, '==', found.length
-        ? `${found.length} prediction${found.length > 1 ? 's' : ''}: ${found.slice(0, 8).join(' | ')}`
-        : 'no predictions in the response');
-      // A 200 with nothing in it is the confusing case, so say what the shape
-      // was — usually it means the workflow output is named something else.
-      if (parsed && !found.length) {
-        // A 200 with nothing parseable is the case that costs hours, so dump
-        // enough to identify the shape. Long base64 blobs (a mask PNG, an
-        // annotated image) are collapsed so the real structure is readable
-        // instead of being buried under a megabyte of data.
-        log(id, '??', `nothing parseable. shape: ${shapeOf(parsed)}`);
-        log(id, '??', `body: ${redactBlobs(text).slice(0, 1200)}`);
+    let wrongUrl = false;
+    for (let vi = 0; vi < shapes.length && !wrongUrl; vi++) {
+      const payload = { api_key: key, inputs: shapes[vi] };
+      const named = Object.keys(shapes[vi]).join('+');
+      const t0 = Date.now();
+      let upstream;
+      try {
+        upstream = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(55_000),
+        });
+      } catch (err) {
+        log(id, '!!', `${tag}: could not reach ${url}: ${err.message}`);
+        last = { code: 502, body: { error: `Could not reach Roboflow: ${err.message}` } };
+        break;   // the host is unreachable; a different input shape will not help
       }
-      return {
-        payload: parsed ?? text,
-        meta: {
-          provider: 'roboflow', ms, endpoint: url, classes,
-          predictions: found.length, summary: found,
-          // Present only when nothing parsed, so the browser console can show
-          // what the server saw without anyone opening the terminal.
-          ...(parsed && !found.length ? { unparsedShape: shapeOf(parsed) } : {}),
+
+      const ms = Date.now() - t0;
+      const text = await upstream.text();
+      log(id, '<-', `${tag}: ${upstream.status} in ${ms}ms via ${url} (inputs: ${named})`);
+
+      if (upstream.ok) {
+        let parsed;
+        try { parsed = JSON.parse(text); } catch { parsed = null; }
+        const found = parsed ? summarise(parsed) : [];
+        log(id, '==', found.length
+          ? `${found.length} prediction${found.length > 1 ? 's' : ''}: ${found.slice(0, 8).join(' | ')}`
+          : 'no predictions in the response');
+        // A 200 with nothing in it is the confusing case, so say what the shape
+        // was — usually it means the workflow output is named something else.
+        if (parsed && !found.length) {
+          // A 200 with nothing parseable is the case that costs hours, so dump
+          // enough to identify the shape. Long base64 blobs (a mask PNG, an
+          // annotated image) are collapsed so the real structure is readable
+          // instead of being buried under a megabyte of data.
+          log(id, '??', `nothing parseable. shape: ${shapeOf(parsed)}`);
+          log(id, '??', `body: ${redactBlobs(text).slice(0, 1200)}`);
+        }
+        return {
+          payload: parsed ?? text,
+          meta: {
+            provider: tag, ms, endpoint: url, inputs: named, classes,
+            predictions: found.length, summary: found,
+            // Present only when nothing parsed, so the browser console can show
+            // what the server saw without anyone opening the terminal.
+            ...(parsed && !found.length ? { unparsedShape: shapeOf(parsed) } : {}),
+          },
+        };
+      }
+
+      let detail;
+      try { detail = JSON.parse(text); } catch { detail = { raw: text.slice(0, 500) }; }
+      detail = scrub(detail, key);
+      last = {
+        code: upstream.status === 404 ? 404 : 502,
+        body: {
+          error: upstream.status === 401 || upstream.status === 403
+            ? 'Roboflow rejected the key. Check ROBOFLOW_INFERENCE_KEY.'
+            : `Roboflow returned ${upstream.status}.`,
+          status: upstream.status,
+          tried: url,
+          inputs: named,
+          detail,
         },
       };
-    }
 
-    let detail;
-    try { detail = JSON.parse(text); } catch { detail = { raw: text.slice(0, 500) }; }
-    detail = scrub(detail, key);
-    last = {
-      code: upstream.status === 404 ? 404 : 502,
-      body: {
-        error: upstream.status === 401 || upstream.status === 403
-          ? 'Roboflow rejected the key. Check ROBOFLOW_INFERENCE_KEY.'
-          : `Roboflow returned ${upstream.status}.`,
-        status: upstream.status,
-        tried: url,
-        detail,
-      },
-    };
-    if (upstream.status !== 404) break;   // only a 404 is worth retrying elsewhere
+      // A rejected KEY is final: neither another URL shape nor another set of
+      // input names is going to be let through.
+      if (upstream.status === 401 || upstream.status === 403) return {
+        error: last.body.error, code: 401, body: last.body,
+      };
+      // A 404 means this URL shape is wrong, not these inputs. Stop varying
+      // the inputs against a URL that does not exist and try the other shape.
+      if (upstream.status === 404) { wrongUrl = true; continue; }
+      // Any other 4xx is plausibly "wrong input names" — try the next shape.
+      if (upstream.status < 500 && vi < shapes.length - 1) {
+        log(id, '??', `${tag}: ${upstream.status} on inputs ${named} — trying the next input shape`);
+        continue;
+      }
+      // A 5xx is the workflow itself failing. Nothing here will fix it.
+      return { error: last.body.error, code: last.code, body: last.body };
+    }
   }
 
-  log(id, '!!', `giving up: ${last?.body?.error ?? 'unknown'}`);
+  log(id, '!!', `${tag}: giving up: ${last?.body?.error ?? 'unknown'}`);
   return { error: last?.body?.error ?? 'Detection failed.', code: last?.code ?? 502, body: last?.body ?? { error: 'Detection failed.' } };
 }
 
@@ -345,6 +387,15 @@ export default async function handler(req, res) {
   const classes = typeof body.classes === 'string' && body.classes.trim()
     ? body.classes.trim() : 'bed';
 
+  // WHICH QUESTION. 'furniture' is the original one — what is standing on this
+  // plan, so the ceiling can avoid it. 'rooms' is the new one — where are the
+  // rooms, so an outline can be proposed instead of traced by hand. They are
+  // different workflows and different models; the only thing they share is
+  // this endpoint, the key and the scrubbing.
+  const task = body.task === 'rooms' ? 'rooms' : 'furniture';
+  const furnitureUrl = process.env.ROBOFLOW_WORKFLOW_URL || DEFAULT_URL;
+  const roomsUrl = process.env.ROBOFLOW_ROOMS_WORKFLOW_URL || DEFAULT_ROOMS_URL;
+
   const provider = ['roboflow', 'openai', 'both'].includes(body.provider) ? body.provider : 'roboflow';
   // The arm is NOT taken from the body. The two grid arms need a measuring grid
   // drawn onto the image before it is sent, and this endpoint sends the image it
@@ -369,12 +420,39 @@ export default async function handler(req, res) {
   // a missing key is the most ordinary way for one to be unavailable. Gating
   // the whole request on it made `both` dead on exactly the setup that
   // DEFAULT_PROVIDER assumes.
-  if (!key && provider === 'roboflow') {
+  if (!key && provider === 'roboflow' && task === 'furniture') {
     return send(500, { error: 'ROBOFLOW_INFERENCE_KEY is not set on the server.' });
   }
 
-  log(id, '->', `${(bytes / 1024).toFixed(0)}KB ${body.mime || 'image'}, classes="${classes}"`
-    + `, provider=${provider}${provider !== 'roboflow' ? ` (${model}, ${arm})` : ''}`);
+  log(id, '->', `${(bytes / 1024).toFixed(0)}KB ${body.mime || 'image'}, task=${task}`
+    + (task === 'rooms' ? '' : `, classes="${classes}", provider=${provider}`
+        + `${provider !== 'roboflow' ? ` (${model}, ${arm})` : ''}`));
+
+  // --- rooms ---------------------------------------------------------------
+  //
+  // No provider switch and no OpenAI counterpart. Asking a general vision model
+  // for a room boundary means asking it to MEASURE, which is the one thing it
+  // cannot do — the bed route gets away with it because a bed's box only has to
+  // be roughly right to be a useful obstacle, whereas a room outline that is
+  // roughly right puts every light in the wrong place. So this is the trained
+  // segmenter or nothing, and "nothing" is survivable: the user traces by hand,
+  // which is what they did before this existed.
+  if (task === 'rooms') {
+    if (!key) return send(500, { error: 'ROBOFLOW_INFERENCE_KEY is not set on the server.' });
+    const rf = await callRoboflow({
+      id, b64, key, classes, url: roomsUrl, tag: 'rooms',
+      // Image alone first. A stock detect-and-count workflow declares one
+      // input and rejects a class list it never asked for; a customised one
+      // may want it. Trying the narrower shape first means the common case
+      // costs one call and the other one costs two.
+      variants: [
+        { image: { type: 'base64', value: b64 } },
+        { image: { type: 'base64', value: b64 }, classes },
+      ],
+    });
+    if (rf.error) return send(rf.code ?? 502, { ...rf.body, id });
+    return send(200, { meta: { id, task: 'rooms', ...rf.meta, bytes }, result: rf.payload });
+  }
 
   // --- openai only ---------------------------------------------------------
   if (provider === 'openai') {
@@ -397,7 +475,7 @@ export default async function handler(req, res) {
   if (provider === 'both') {
     const [rf, oa] = await Promise.all([
       key
-        ? callRoboflow({ id, b64, key, classes, bytes, mime: body.mime }).catch((e) => ({ error: String(e.message || e) }))
+        ? callRoboflow({ id, b64, key, classes, url: furnitureUrl }).catch((e) => ({ error: String(e.message || e) }))
         // Not a call we need to make to learn the answer.
         : Promise.resolve({ error: 'ROBOFLOW_INFERENCE_KEY is not set on the server.' }),
       askOpenAI({ id, b64, mime: body.mime || 'image/jpeg', w, h, arm, model }).catch((e) => ({ error: String(e.message || e) })),
@@ -424,7 +502,7 @@ export default async function handler(req, res) {
   }
 
   // --- roboflow only -------------------------------------------------------
-  const rf = await callRoboflow({ id, b64, key, classes, bytes, mime: body.mime });
+  const rf = await callRoboflow({ id, b64, key, classes, url: furnitureUrl });
   if (rf.error) return send(rf.code ?? 502, { ...rf.body, id });
   return send(200, { meta: { id, provider: 'roboflow', ...rf.meta, bytes }, result: rf.payload });
 }

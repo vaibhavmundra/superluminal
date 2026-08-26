@@ -16,7 +16,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 const FILL = ['#6366F1', '#0EA5E9', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#14B8A6', '#DC2626'];
 
 export default function ChunkPicker({
-  options, recommendedId, initialId, onConfirm,
+  options, recommendedId, initialId, onConfirm, onCancel = null,
   src, vector = null, wallLayers = null,
   imgW, imgH, polygonPx, zonesPx = [], fansPx = [], toPx,
 }) {
@@ -64,9 +64,17 @@ export default function ChunkPicker({
             ? <><b>{chosen.label}</b> — {chosen.metrics.pieces} chunks, about {chosen.metrics.estCells} cells.</>
             : <>Click a configuration to select it. Double-click to go straight through.</>}
         </div>
-        <button className="btn primary" disabled={!chosen} onClick={() => chosen && onConfirm(chosen.id)}>
-          {chosen ? 'Place the lights →' : 'Select a configuration'}
-        </button>
+        {/* An escape. This screen used to be a GATE — you could not reach a
+            layout without passing it — so leaving it was meaningless. Now the
+            whole plan is lit off the recommended chunkings and this is somewhere
+            you came to on purpose, which means there has to be a way back out
+            without having to make a choice you did not want to make. */}
+        <div className="btnrow">
+          {onCancel && <button className="btn" onClick={onCancel}>Leave it as it is</button>}
+          <button className="btn primary" disabled={!chosen} onClick={() => chosen && onConfirm(chosen.id)}>
+            {chosen ? 'Place the lights →' : 'Select a configuration'}
+          </button>
+        </div>
       </div>
     </div>
   );

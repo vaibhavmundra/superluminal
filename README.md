@@ -7,12 +7,19 @@ Two ways in:
 
 | Input | What you do | What it costs you |
 |---|---|---|
-| **DXF** | drop the file, trace the room over the walls | four clicks — the scale comes out of the file |
-| **Image** | drop it, set the scale, trace the room over the plan | four clicks and one measurement |
+| **DXF** | drop the file, nudge the rooms it found, light the lot | a few drags — the scale comes out of the file |
+| **Image** | drop it, set the scale, nudge the rooms it found, light the lot | a few drags and one measurement |
 
-**Both routes are traced by hand, on the same screen.** The only thing a DXF
-still does for you is state its own scale; an image has to be measured once
-before anything can be traced against it.
+**The rooms are found for you on upload.** A segmentation model reads the plan
+and proposes one outline per room; you drag the corners that are wrong and light
+the whole plan in one go. See [Finding the rooms for
+you](#finding-the-rooms-for-you).
+
+**Tracing by hand is still there and still exact**, on the same screen, and it
+is what you fall back to when the model comes back empty or misses a room. The
+only thing a DXF still does for you that an image does not is state its own
+scale; an image has to be measured once before anything can be traced or
+measured against it.
 
 The DXF route is the better one and the rest of this section explains why — the
 cursor has real line work to hold on to. On an image it holds on to the geometry
@@ -107,6 +114,154 @@ await proposeOutlines('model', { source, layers });
 An outline is a list of points; where they came from is nobody's business
 downstream. That is the slot a model goes in, and everything after it is
 unchanged. Same shape as `registerChunkSelector`.
+
+## Finding the rooms for you
+
+On upload, before there is anything to light, the plan goes to a trained
+segmentation workflow and comes back with one polygon per room. Those become
+outlines with a **grip on every corner**, drawn dashed until someone has looked
+at them. You drag what is wrong and press **Light all N rooms**.
+
+```
+upload ──► snapshot ──► /api/detect (task: rooms) ──► roomsFromPayload
+                                                          │
+                                              proposals with grips
+                                                          │
+                                            drag ──► Light the whole plan
+```
+
+The workflow is set in one place and overridable without a code change:
+
+```bash
+# .env.local — server-side only, never VITE_ prefixed
+ROBOFLOW_INFERENCE_KEY=...
+ROBOFLOW_ROOMS_WORKFLOW_URL=https://serverless.roboflow.com/<workspace>/workflows/<id>
+```
+
+**It is one endpoint and two questions.** `/api/detect` already held the key for
+the bed detector, so the room detector goes through the same function with
+`task: 'rooms'` in the body rather than a second function with a second copy of
+the key handling, the error scrubbing and the two-URL-shape retry. The two run in
+separate requests, and one of them failing does not take the other down.
+
+**The inputs are discovered, not assumed.** A workflow's inputs are whatever its
+author declared. A stock detect-and-count workflow takes an image and rejects a
+class list it never asked for; a customised one may want one. Both refusals come
+back as a plain 4xx with a message nothing can act on programmatically, so the
+server tries `{image}` first and `{image, classes}` second, and logs which one
+was accepted.
+
+### What comes back is not trusted
+
+A mask boundary is a jagged thing that wanders across doorways and sits a few
+inches off the wall face, and a segmenter on a line drawing will hand you the
+sheet itself as a room if you let it. So every proposal is filtered before anyone
+sees it — `ROOM_DEFAULTS` in `src/lib/roomsDetect.js`:
+
+| Thrown away | Why |
+|---|---|
+| **encloses two or more other rooms** | that is the drawing's border, or every room merged through the doorways |
+| under 20% confidence | below this the polygon is rarely worth correcting |
+| under 0.4% of the sheet | a light fitting, a label, noise |
+| under 12 sq ft, once the scale is known | smaller than a WC |
+| overlapping another by more than 55% (IoU) | two masks over one room |
+
+**The enclosure test is the one that matters**, and it is worth saying why it is
+not an area threshold. The whole sheet, on the sample plan, is 88% of the image —
+and a tightly cropped single-room drawing can legitimately be 70%. No area
+threshold separates those. "This outline has three rooms inside it" is not a
+guess. Two is the cut: one room inside another's bounding box is a real
+arrangement (an ensuite, an L-shaped living room whose box swallows the kitchen),
+three is a floor plan.
+
+When two masks cover one room the **larger** wins, not the more confident one.
+They usually differ by one of them stopping at a doorway, and confidence does not
+say which did.
+
+### Grips, and why they use the same snap engine
+
+A corner nudged by eye is off by the same two inches that made hand-tracing
+necessary in the first place. So dragging a grip runs the full snap engine from
+[Tracing the outline](#tracing-the-outline) — wall ends, wall crossings,
+alignment with every other corner on the plan, the right-angle lock off the
+previous corner. The whole value of a proposal is that correcting it lands you
+somewhere *more* accurate than you would have got by hand, and that only holds if
+the correction snaps.
+
+| Do this | To get |
+|---|---|
+| **drag** a corner | move it, snapping |
+| **click** a hollow diamond on an edge | insert a corner there |
+| **right-click** (or alt-click) a corner | delete it |
+| **Show corner grips** off | get them out of the way |
+
+Two things about the implementation that are load-bearing:
+
+* **the dragged outline comes out of the snap index.** Its own two edges pass
+  through the corner being moved, so `edge` and `end` candidates sit at zero
+  distance and win every comparison — the corner cannot be moved off its own
+  lines. The whole outline is removed rather than just the two adjacent edges,
+  or a corner dragged across the room catches on the far wall of its own polygon.
+* **the grips sit on the raw points, not the squared-up polygon.** Rectifying is
+  derived (see [Tracing the outline](#tracing-the-outline)), so a grip on a
+  rectified point would move something that is not stored.
+
+A drag is local state until it ends. Committing per mouse move would rebuild the
+snap index under the cursor sixty times a second, and the index is the thing the
+cursor is snapping against.
+
+### The rooms are simplified, then squared
+
+A mask comes in with dozens of vertices and goes out with a handful: Douglas-
+Peucker at four inches, which is small enough to keep a real nook and large
+enough to throw away the staircase along a straight wall. Squaring is **not**
+done here — it belongs to the outline, where it is a per-room switch you can turn
+off and where the polygon you see is derived rather than stored. Squaring at
+proposal time would bake it in and lose the mask boundary you might want to
+compare against.
+
+An **L-shaped room stays L-shaped**. That is the reason not to simplify to a
+bounding box, and `tools/test-rooms-detect.mjs` asserts it.
+
+### Names
+
+In order of who is most likely to be right: a specific class from the model
+(`kitchen`, not `room`), then a **text label on the drawing whose insertion point
+falls inside the polygon** — the draughtsman's own word beats anything we can
+compute — then `Room 1`, `Room 2` in reading order. Reading order is banded: rows
+within a tenth of the plan's height are one row, ordered left to right, so
+`Room 2` means the same room twice running.
+
+### There is no GPT alternative to this one
+
+The bed detector has two providers because a bed's box only has to be roughly
+right to be a useful obstacle. A room outline that is roughly right puts every
+light in the wrong place. Asking a general vision model for a boundary is asking
+it to measure, which is the one thing it cannot do — so this is the trained
+segmenter or nothing, and *nothing* is survivable: you trace by hand, which is
+what you did before this existed.
+
+### Seeing what it actually said
+
+```bash
+node tools/probe-rooms.mjs                     # the FLOOR_PLAN_03 sample
+node tools/probe-rooms.mjs path/to/plan.png
+```
+
+Prints a type sketch of the response, what the parser made of it, and what it
+threw away and why. Writes three files to `.detect-debug/`: the raw payload, the
+same with base64 blobs collapsed, and **`rooms-overlay.svg`** — the polygons
+drawn over the plan. That last one is the point: "the arithmetic is wrong" and
+"the model is wrong" look identical in a list of numbers and completely different
+in a picture.
+
+`polygonFromPrediction` accepts a list of `{x,y}`, a list of `[x,y]`, a flat run
+of numbers, an RLE mask and a bare box, because a workflow's output shape is not
+knowable from here. **An RLE mask is reduced to its bounding rectangle, not
+traced.** For a rectangular room that is the right answer; for an L-shaped one it
+means one corner to drag in. If a real response turns out to be RLE-only and the
+plans are full of L-shaped rooms, tracing the contour properly is the upgrade and
+it belongs in `rectFromRle`'s place.
 
 ## Tracing the outline
 
@@ -252,10 +407,35 @@ The planner needs a rectilinear polygon and a diagonal becomes a staircase
 either way — better to square it here, visibly, than to have the grid do it
 silently later.
 
-### Several rooms
+### Several rooms — the whole plan at once
 
-Trace as many outlines as you like; they are listed, renameable and switchable,
-and one is lit at a time.
+Every outline on the plan is lit, together, with one layout each. They are
+listed, renameable, and any one of them can be dropped out of the layout or lit
+on its own.
+
+This used to be one room at a time, and that was an artefact of an outline having
+been something you traced by hand: tracing four rooms in order to light one of
+them is work nobody would do, so the app only ever held one. Now that the rooms
+arrive together from the detector, they are lit together.
+
+Three things follow from it:
+
+* **each room is still planned in its own local feet**, measured from its own
+  bounding box. Nothing about room 3's layout can perturb room 4's, and the
+  numbers the planner sees are the numbers it saw when there was only ever one
+  room.
+* **the exporters take pixels and a scale**, not the planner's feet, because
+  pixels are the one space several rooms on a sheet share. Eight rooms each
+  measured from their own corner would stack eight layouts at the origin. See
+  `roomInFeet` in `exporters.js` — the only place that conversion happens.
+* **an ambiguous chunking no longer stops the world.** With one room it was worth
+  asking; with eight, asking eight times is an interrogation. A room nobody has
+  answered for takes the recommendation and says so in its row, and the picker is
+  somewhere to go rather than a gate to get through.
+
+One file per export, whole plan: the DXF puts each room's outline, chunks and
+grid on its own layer and prefixes the light tags with the room; the CSV names
+the room in the first column; the JSON is a list of rooms with totals.
 
 They are stored in the **plan's own units**, not in the pixel space they were
 clicked in. On a DXF that indirection is load-bearing: the pixel space is derived
@@ -265,11 +445,23 @@ identity — its pixels *are* its units, and there is no unit interpretation to
 correct — so the same code path serves both and `rasterSource` carries a
 `toDu`/`fromDu` pair that does nothing on purpose.
 
-### If you want the geometric reader back
+### Two automatic sources, failing in opposite directions
 
-`node -e` it, or register it and call `proposeOutlines('faces', ...)`. What it
-does, and why doorways are the hard part, is below — it is still the best
-answer for a well-layered drawing.
+`outlineSources.js` holds both, and they are registered the same way:
+
+| Source | Reads | Fails by |
+|---|---|---|
+| `roboflow-rooms` | a picture of the plan — so a photo or a DXF, and it does not care what layer anything is on | being approximate everywhere: a boundary a few inches off the wall, sometimes through a doorway |
+| `faces` | the wall lines, as a planar graph with the doorways bridged | being exact when it works and nonsense when it does not — on a drawing whose furniture shares layer 0 with the walls it will confidently return the dining table as a room |
+
+`roboflow-rooms` is the one wired to upload, because approximately right
+everywhere beats exactly right sometimes — *provided the correction is a drag and
+not a re-trace*. Which is why the grips are part of that feature and not a nicety
+attached to it.
+
+`faces` is still the better answer for a well-layered drawing. Register it and
+call `proposeOutlines('faces', ...)`. What it does, and why doorways are the hard
+part, is below.
 
 ### Rooms are faces, and doorways are the hard part
 
@@ -1200,10 +1392,9 @@ the screen. It is all still in the JSON export and in `plan.stats`.
 - **Minimum-piece partitions are not guaranteed.** The slab sweeps plus a merge
   pass get there for most shapes, but a room with several interlocking notches
   can admit a partition with fewer rectangles than any strategy finds.
-- Trace as many outlines as you like, on either kind of plan, but **one room is
-  lit at a time**. The state is shaped for a whole-floor version (a layout per
-  outline id) but there is no accumulating project yet, and no floor-wide export
-  putting every room on one drawing in its true position.
+- The whole plan is lit at once and exports as one drawing in true positions,
+  but **there is no accumulating project**: one plan at a time, and reloading
+  starts over.
 - Walls are assumed rectilinear. Diagonals become staircases. A curved wall
   comes in from a DXF correctly and then gets stepped, so a bay window becomes
   a staircase of small treads — right for the grid, ugly on the drawing.
@@ -1265,6 +1456,35 @@ the screen. It is all still in the JSON export and in `plan.stats`.
 - Scale from the fan carries the stroke width of your drawn circle (~2–4% high).
   Use Measure if you need it tighter. A DXF has no such error.
 
+### Known limits of the room detector
+
+- **The polygons are approximate and nobody has checked them but you.** The
+  dashed stroke says which outlines are still machine-guessed and the grips are
+  there because the answer needs correcting, not because correcting it is
+  optional. A plan lit off four proposals nobody looked at is the same failure the
+  green marker used to produce — plausible and wrong, with nothing on screen
+  saying so.
+- **An RLE-only response arrives as bounding rectangles.** `rectFromRle` reduces
+  a run-length mask to its bounds rather than tracing its contour, so an L-shaped
+  room comes in as the rectangle round it and needs a corner dragged. Tracing the
+  contour is the upgrade; it needs a real RLE response to test against.
+- **A base64 RLE `counts` string is refused rather than misread.** Only an array
+  of run lengths is decoded.
+- **Doorways.** A mask routinely runs through an opening, so two rooms can arrive
+  sharing a strip of floor. Nothing detects or corrects that — the overlap is
+  visible, and it is a drag to fix.
+- **The enclosure test needs two enclosed rooms to fire.** A plan the model
+  reduces to the sheet plus one room keeps the sheet, and it arrives as one
+  enormous outline. Delete it.
+- **Confidence is not filtered hard**, on purpose: a room the model was unsure
+  about is still a better starting point than a blank plan. The consequence is
+  the occasional confident-looking outline over something that is not a room.
+- **A photographed plan inherits its own distortions.** The detector reads what
+  the camera saw; a keystoned or creased plan produces a keystoned room, and the
+  grips are how it gets straightened.
+- **No cache.** Reloading, or `Look again`, is another inference and another
+  charge. The workflow bills by processing time.
+
 ### Known limits of tracing
 
 - **The outline is only as good as the trace.** Snapping makes the accuracy the
@@ -1279,9 +1499,8 @@ the screen. It is all still in the JSON export and in `plan.stats`.
   reference misidentified by 20% makes every room 20% wrong while looking
   perfectly fine on screen. The overall plan dimension in the scale panel is
   there to be read.
-- **Tracing is per room and manual.** A twelve-room floor is twelve traces. The
-  geometric reader exists for drawings where it works, and the outline-source
-  registry is where a model goes, but neither is wired into the screen.
+- **A room the detector missed is still a manual trace.** The proposals cover
+  what the model saw; anything it did not see is as much work as it ever was.
 - Konva adds about 288 KB to the bundle (284 → 572 KB raw). Worth it for the
   tracer, and it is why `PlanCanvas` was **not** ported: that canvas is the SVG
   and PNG export path, and Konva exports raster only.
@@ -1339,16 +1558,20 @@ node tools/test-furniture.mjs         # detection -> zones: centres, rescaling, 
 node tools/test-detect-api.mjs        # the proxy, network stubbed: refusals, key never leaks
 node tools/test-detect-flow.mjs       # response -> zone -> NO LIGHT OVER THE BED, as App.jsx wires it
 node tools/test-openai-detect.mjs     # the GPT route: every reply shape, and the same bed claim
+node tools/test-rooms-detect.mjs      # room masks -> outlines -> a lit plan, and the sheet thrown away
                                       # test-furniture also covers the DXF render for detection
 node tools/test-match-bruteforce.mjs  # matching vs brute force, 400 cases
 node tools/make-plans.mjs             # regenerate the image samples
 node tools/make-sample-dxf.mjs        # regenerate the DXF sample
 node tools/make-bedroom-fixture.mjs   # regenerate the synthetic bedroom plan AND its truth file
 node tools/eval-detect.mjs plan.png   # which detector actually finds the bed, and how far off
+node tools/probe-rooms.mjs plan.png   # call the ROOM workflow for real; writes the overlay SVG
 node tools/e2e.mjs hall lshape        # drive the built app headless
 ```
 
-The first eleven are in `npm run test`. `tools/test-match-bruteforce.mjs`,
+The first twelve are in `npm run test`. `tools/probe-rooms.mjs` needs the
+network and a key, so it is a script you run rather than a test that runs
+itself. `tools/test-match-bruteforce.mjs`,
 `make-plans.mjs` and `e2e.mjs` need `npm i -D playwright`;
 `make-bedroom-fixture.mjs` and `eval-detect.mjs` need nothing at all, which is
 the point of `tools/pnglite.mjs`.

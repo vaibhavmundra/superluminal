@@ -13,6 +13,7 @@ function detectApi(env) {
       // fail loudly — it fails as "the provider is not configured" on a machine
       // where .env.local plainly contains it, which is a bad hour.
       for (const k of ['ROBOFLOW_INFERENCE_KEY', 'ROBOFLOW_WORKFLOW_URL',
+                       'ROBOFLOW_ROOMS_WORKFLOW_URL',
                        'OPENAI_API_KEY', 'OPENAI_VISION_MODEL']) {
         if (env[k] && !process.env[k]) process.env[k] = env[k];
       }

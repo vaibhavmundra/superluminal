@@ -37,6 +37,24 @@ import { REFERENCES, describeScale } from '../lib/scale.js';
 // encloses a bedroom or a wardrobe — so on an image the scale is set on this
 // screen, before anything is traced.
 //
+// THE OUTLINES ARE NOW ALSO PROPOSED, not only traced. A segmentation model
+// reads the plan on upload and hands back one polygon per room (see
+// roomsDetect.js), which changes what this screen is for: less often "draw the
+// room" and more often "the room is nearly right, put that corner where it
+// belongs". So every corner of every outline carries a GRIP.
+//
+// A grip drags under exactly the same snap engine as a click while tracing, and
+// that is the point rather than a convenience — a corner nudged by eye is off by
+// the same two inches that made hand-tracing necessary in the first place, and
+// the whole value of a proposal is that correcting it lands you somewhere more
+// accurate than you would have got by hand. Two details make it work:
+//
+//   * the outline BEING dragged is taken out of the snap index, or its corner
+//     snaps to its own edges and cannot be moved off them;
+//   * the grips sit on the RAW points, not on the squared-up polygon. Squaring
+//     is derived (see resolveOutline) and a grip on a derived point would move
+//     something that is not stored.
+//
 // Canvas rather than SVG because this is the one screen where the frame budget
 // is real: snapping runs on every mouse move over thousands of segments, and
 // `strokeScaleEnabled={false}` keeps every line one screen pixel wide at any
@@ -90,6 +108,8 @@ function useSize(ref) {
 export default function OutlineTracer({
   source, pxPerFt, outlines, selectedId, onSelect, onCommit,
   onUpdateOutline, onDeleteOutline, onConfirm,
+  onMovePoint, onInsertPoint, onRemovePoint, onProceed,
+  detectState = null, onRedetect = null,
   unitId, unitCandidates, onUnitChange,
   scale: scaleUI, fans = [],
 }) {
@@ -117,6 +137,12 @@ export default function OutlineTracer({
   // the measuring line instead of placing a corner. Taking the measurement is
   // an explicit act, exactly like closing an outline.
   const [measureDone, setMeasureDone] = useState(false);
+  // The corner under the cursor, mid-drag. Held here and not pushed to the
+  // parent on every mouse move: committing per move would rebuild the snap
+  // index under the cursor sixty times a second, and the index is what the
+  // cursor is snapping against.
+  const [drag, setDrag] = useState(null);
+  const [showGrips, setShowGrips] = useState(true);
 
   const ortho = orthoLock && !shift;
   const panMode = space;
@@ -137,10 +163,20 @@ export default function OutlineTracer({
     if (scaleUI?.mode !== 'ref') setMeasureDone(false);
   }, [scaleUI?.mode]);
 
+  // The outlines as they look RIGHT NOW. Identical to the props except for the
+  // one corner being dragged, which is local until the drag ends.
+  const liveOutlines = useMemo(() => {
+    if (!drag) return outlines;
+    return outlines.map((o) => (o.id !== drag.id ? o : {
+      ...o,
+      pointsPx: o.pointsPx.map((p, i) => (i === drag.index ? { x: drag.x, y: drag.y } : p)),
+    }));
+  }, [outlines, drag]);
+
   // --- what the cursor can hold on to --------------------------------------
   const tracedSegs = useMemo(
-    () => outlines.flatMap((o) => edgesOf(o.pointsPx, TRACED_LAYER)),
-    [outlines]);
+    () => liveOutlines.flatMap((o) => edgesOf(o.pointsPx, TRACED_LAYER)),
+    [liveOutlines]);
 
   // Outlines already traced join the index, so tracing the room next door picks
   // up the shared wall exactly rather than nearly. On an image they are the
@@ -154,9 +190,9 @@ export default function OutlineTracer({
   const alignTo = useMemo(() => {
     if (!alignOn) return [];
     const pts = [...draft];
-    for (const o of outlines) pts.push(...o.pointsPx);
+    for (const o of liveOutlines) pts.push(...o.pointsPx);
     return pts;
-  }, [alignOn, draft, outlines]);
+  }, [alignOn, draft, liveOutlines]);
 
   // The grid is anchored on the FIRST CORNER PLACED, not on the plan's origin.
   // Anchored to the plan it rounds coordinates, which is meaningless; anchored
@@ -165,6 +201,27 @@ export default function OutlineTracer({
   // anchor it to yet, and no dimension to round.
   const gridPx = gridIn > 0 && hasScale && draft.length ? (gridIn / 12) * pxPerFt : 0;
   const gridOrigin = draft[0] || null;
+
+  /**
+   * The snap index for a drag, with the dragged outline's OWN edges removed.
+   *
+   * Without this the corner cannot be moved: its two edges pass through it, so
+   * `edge` and `end` candidates sit exactly under the cursor at zero distance
+   * and win every comparison. Removing the whole outline rather than just its
+   * two adjacent edges is deliberate — a corner dragged across the room would
+   * otherwise catch on the far wall of its own polygon.
+   *
+   * Rebuilt once per drag, not once per move: `outlines` does not change while
+   * a drag is in flight, which is the reason the drag is local state.
+   */
+  const dragIndex = useMemo(() => {
+    if (!drag) return null;
+    const others = outlines
+      .filter((o) => o.id !== drag.id)
+      .flatMap((o) => edgesOf(o.pointsPx, TRACED_LAYER));
+    return buildSnapIndex([...source.segmentsPx, ...others], source.circlesPx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag?.id, outlines, source]);
 
   // --- fit to the frame, once per plan and on demand -----------------------
   const fit = useCallback(() => {
@@ -197,10 +254,64 @@ export default function OutlineTracer({
     return s;
   };
 
-  const onMouseMove = () => { if (!panMode) recomputeSnap(); };
+  const onMouseMove = () => { if (!panMode && !drag) recomputeSnap(); };
+
+  /**
+   * Where a dragged corner lands. The same engine as a click while tracing,
+   * with three differences that all come from the fact that this corner already
+   * exists:
+   *
+   *   `points: []`   nothing to close and no vertex of its own to catch on.
+   *   `last: prev`   the right-angle lock works off the PREVIOUS corner, so a
+   *                  wall being straightened stays a wall.
+   *   alignTo        always carries both neighbours, even with alignment off,
+   *                  because squaring a corner against the two walls it joins
+   *                  is not an optional nicety — it is the correction.
+   *
+   * The grid is off. It is anchored on the first corner of a trace in progress
+   * (see gridOrigin) and there is no trace in progress here; anchoring it on
+   * the plan would round the corner's POSITION, which means nothing.
+   */
+  const snapForDrag = (o, k, cursor) => {
+    const pts = o.pointsPx;
+    const n = pts.length;
+    const prev = pts[(k - 1 + n) % n];
+    const next = pts[(k + 1) % n];
+    const others = [];
+    for (const q of liveOutlines) {
+      q.pointsPx.forEach((pt, j) => { if (!(q.id === o.id && j === k)) others.push(pt); });
+    }
+    return snapAt(dragIndex || index, cursor, {
+      tol: SNAP_PX / zoom,
+      last: prev,
+      points: [],
+      ortho,
+      layers: visible,
+      alignTo: alignOn ? others : [prev, next],
+      gridPx: 0,
+      gridOrigin: null,
+    });
+  };
+
+  const removeCorner = (o, k) => {
+    // Three is the floor the validator uses, so it is the floor here. Below it
+    // there is no inside for the planner to light.
+    if (o.pointsPx.length <= 3) {
+      setProblem('That outline is down to three corners — delete the whole outline instead.');
+      return;
+    }
+    setProblem('');
+    onRemovePoint?.(o.id, k);
+  };
+
+  const isDragging = (id, k) => !!drag && drag.id === id && drag.index === k;
 
   const onMouseDown = (e) => {
     if (panMode || e.evt.button !== 0) return;
+    // A mousedown on a grip is the start of a drag, not a corner being placed.
+    // The click handler cancels bubbling; mousedown is a separate event and has
+    // to be turned away by name.
+    if (e.target?.name?.() === 'grip') return;
     const s = recomputeSnap();
     if (!s) return;
 
@@ -295,8 +406,8 @@ export default function OutlineTracer({
   // --- derived -------------------------------------------------------------
   const px = (n) => n / zoom;              // screen px -> plan units
   const stats = useMemo(
-    () => (hasScale ? outlines.map((o) => ({ o, st: outlineStats(o, pxPerFt) })) : []),
-    [outlines, pxPerFt, hasScale]);
+    () => (hasScale ? liveOutlines.map((o) => ({ o, st: outlineStats(o, pxPerFt) })) : []),
+    [liveOutlines, pxPerFt, hasScale]);
   const chosen = stats.find((s) => s.o.id === selectedId) || null;
 
   const widthFt = isRaster ? (hasScale ? source.w / pxPerFt : null) : source.widthFt;
@@ -374,11 +485,17 @@ export default function OutlineTracer({
               ))}
             </Layer>
 
-            {/* outlines already traced */}
+            {/* the outlines: traced by hand, or proposed by the detector */}
             <Layer listening={!tracing}>
               {stats.map(({ o, st }, i) => {
                 const col = FILL[i % FILL.length];
                 const on = o.id === selectedId;
+                // A proposal is drawn DASHED until it has been touched or
+                // confirmed. The distinction is worth a stroke style: a solid
+                // line is a boundary someone has agreed to, and lighting a plan
+                // off four polygons nobody has looked at is exactly the failure
+                // the old green-marker route used to produce.
+                const provisional = o.detected && !o.reviewed;
                 return (
                   <Group key={o.id} onClick={() => onSelect(o.id)} onTap={() => onSelect(o.id)}>
                     {st.rectified && st.movedFt > 0.08 && (
@@ -388,9 +505,10 @@ export default function OutlineTracer({
                     <Line points={flat(st.polygonPx)} closed
                       fill={col} opacity={on ? 0.26 : 0.1}
                       stroke={col} strokeWidth={on ? 2.6 : 1.6}
+                      dash={provisional ? [10, 6] : null}
                       strokeScaleEnabled={false} lineJoin="round" />
                     <Text x={st.centroid.x} y={st.centroid.y}
-                      text={`${o.name || 'Room'}\n${ftin(st.widthFt)} × ${ftin(st.heightFt)} · ${Math.round(st.areaSqft)} sqft`}
+                      text={`${o.name || 'Room'}${provisional ? ' ·  found' : ''}\n${ftin(st.widthFt)} × ${ftin(st.heightFt)} · ${Math.round(st.areaSqft)} sqft`}
                       fontSize={px(11)} fontFamily="JetBrains Mono, monospace"
                       fill={col} align="center" lineHeight={1.35}
                       offsetX={px(60)} offsetY={px(14)} width={px(120)}
@@ -399,6 +517,94 @@ export default function OutlineTracer({
                 );
               })}
             </Layer>
+
+            {/* THE GRIPS.
+                Their own layer, above the fills, because a handle you cannot hit
+                is not a handle — inside the outline group the polygon's own fill
+                takes the pointer at the edges, which is precisely where every
+                corner is. Hidden while a trace is in progress: mid-trace every
+                click belongs to the draft. */}
+            {showGrips && !tracing && hasScale && (
+              <Layer>
+                {liveOutlines.map((o, i) => {
+                  const col = FILL[i % FILL.length];
+                  const on = o.id === selectedId;
+                  const pts = o.pointsPx;
+                  return (
+                    <Group key={o.id}>
+                      {/* Insert a corner. Only on the selected outline, and only
+                          on an edge long enough to have a middle worth clicking
+                          — a plan with four rooms otherwise carries forty
+                          handles and the corners get lost among them. */}
+                      {on && pts.map((pt, k) => {
+                        const q = pts[(k + 1) % pts.length];
+                        if (Math.hypot(q.x - pt.x, q.y - pt.y) < px(26)) return null;
+                        const m = { x: (pt.x + q.x) / 2, y: (pt.y + q.y) / 2 };
+                        return (
+                          <Rect key={'m' + k} name="grip"
+                            x={m.x} y={m.y} width={px(6.5)} height={px(6.5)}
+                            offsetX={px(3.25)} offsetY={px(3.25)} rotation={45}
+                            fill="#fff" stroke={col} strokeWidth={1.4}
+                            strokeScaleEnabled={false} opacity={0.95}
+                            onClick={(e) => { e.cancelBubble = true; onInsertPoint?.(o.id, k + 1, m); }}
+                            onTap={(e) => { e.cancelBubble = true; onInsertPoint?.(o.id, k + 1, m); }} />
+                        );
+                      })}
+
+                      {pts.map((pt, k) => (
+                        <Circle key={'g' + k} name="grip"
+                          x={pt.x} y={pt.y} radius={px(on ? 5.5 : 4.2)}
+                          fill={isDragging(o.id, k) ? SNAPCOL : '#fff'}
+                          stroke={isDragging(o.id, k) ? SNAPCOL : col}
+                          strokeWidth={on ? 2.2 : 1.5} strokeScaleEnabled={false}
+                          draggable
+                          onDragStart={() => { onSelect(o.id); setDrag({ id: o.id, index: k, x: pt.x, y: pt.y, snap: null }); }}
+                          onDragMove={(e) => {
+                            const sp = snapForDrag(o, k, e.target.position());
+                            // Put the node exactly where the snap says. Konva
+                            // has already moved it to the raw cursor; leaving it
+                            // there and only storing the snapped point makes the
+                            // handle and the outline disagree under the hand.
+                            e.target.position({ x: sp.x, y: sp.y });
+                            setDrag({ id: o.id, index: k, x: sp.x, y: sp.y, snap: sp });
+                          }}
+                          onDragEnd={(e) => {
+                            const at = e.target.position();
+                            setDrag(null);
+                            onMovePoint?.(o.id, k, { x: at.x, y: at.y });
+                          }}
+                          onClick={(e) => {
+                            e.cancelBubble = true;
+                            if (e.evt.altKey) removeCorner(o, k); else onSelect(o.id);
+                          }}
+                          onContextMenu={(e) => {
+                            e.evt.preventDefault(); e.cancelBubble = true; removeCorner(o, k);
+                          }} />
+                      ))}
+                    </Group>
+                  );
+                })}
+
+                {/* What the dragged corner has caught on. The same guide and the
+                    same glyph as tracing, for the same reason: a corner that
+                    moved four inches on its own needs to say why. */}
+                {drag?.snap?.guide && (
+                  <Line listening={false}
+                    points={drag.snap.guide.axis === 'x'
+                      ? [drag.snap.guide.from.x, drag.snap.guide.from.y, drag.x, drag.snap.guide.from.y]
+                      : [drag.snap.guide.from.x, drag.snap.guide.from.y, drag.snap.guide.from.x, drag.y]}
+                    stroke={GUIDE} strokeWidth={1} strokeScaleEnabled={false}
+                    dash={[3, 3]} opacity={0.9} />
+                )}
+                {drag?.snap?.align?.map((pt, i) => (
+                  <Line key={'dal' + i} listening={false}
+                    points={[pt.x, pt.y, drag.x, drag.y]}
+                    stroke={GUIDE} strokeWidth={1} strokeScaleEnabled={false}
+                    dash={[2, 4]} opacity={0.75} />
+                ))}
+                {drag?.snap && <SnapGlyph snap={drag.snap} px={px} />}
+              </Layer>
+            )}
 
             {/* the trace in progress */}
             <Layer listening={false}>
@@ -474,7 +680,10 @@ export default function OutlineTracer({
           <div className="tracer-hud">
             {!ortho && <span className="chip">free angle</span>}
             {gridIn > 0 && <span className="chip on">{gridIn === 12 ? '1′' : `${gridIn}″`} grid</span>}
-            {snap && <span className="chip snap">{snap.label}</span>}
+            {drag && <span className="chip on">nudging</span>}
+            {(drag?.snap || (!drag && snap)) && (
+              <span className="chip snap">{(drag?.snap || snap).label}</span>
+            )}
           </div>
         </div>
 
@@ -554,6 +763,48 @@ export default function OutlineTracer({
                   <b>{ftin(widthFt)} × {ftin(heightFt)}</b></div>
               )}
               {hasScale && <p className="note">Does that overall size look right?</p>}
+            </div>
+          )}
+
+          {/* --- what the detector proposed -------------------------------- */}
+          {detectState && (
+            <div className="sec">
+              <h3>Rooms on the plan</h3>
+              {detectState.status === 'running' && (
+                <p className="note">Reading the plan for rooms…</p>
+              )}
+              {detectState.status === 'error' && (
+                <p className="note warn">The room detector is not answering
+                  ({detectState.error}). Trace by hand — everything below still works.</p>
+              )}
+              {detectState.status === 'done' && (
+                detectState.proposed > 0 ? (<>
+                  <div className="kv"><span>Proposed</span><b>{detectState.proposed}</b></div>
+                  {detectState.dropped > 0 && (
+                    <div className="kv"><span>Discarded</span><b>{detectState.dropped}</b></div>
+                  )}
+                  <p className="note">Drag any corner to put it on the wall. The
+                    grip snaps like the cursor does. A dashed outline is one
+                    nobody has looked at yet.</p>
+                </>) : detectState.returned > 0 ? (
+                  <p className="note">Nothing new — the {detectState.returned} room
+                    {detectState.returned > 1 ? 's' : ''} it found {detectState.returned > 1 ? 'are' : 'is'}
+                    {' '}already on the plan.</p>
+                ) : (
+                  <p className="note warn">No rooms found on this plan. Trace them
+                    by hand — click the corners.</p>
+                )
+              )}
+              <label className="check">
+                <input type="checkbox" checked={showGrips}
+                  onChange={(e) => setShowGrips(e.target.checked)} />
+                Show corner grips
+              </label>
+              {onRedetect && (
+                <button className="btn" style={{ marginTop: 6, width: '100%' }}
+                  disabled={detectState.status === 'running'}
+                  onClick={onRedetect}>Look again</button>
+              )}
             </div>
           )}
 
@@ -702,7 +953,9 @@ export default function OutlineTracer({
                         {o.name || `Room ${i + 1}`}
                       </span>
                     )}
-                    <span className="layer-count">{Math.round(st.areaSqft)} sqft</span>
+                    <span className="layer-count">
+                      {o.detected && !o.reviewed ? 'found · ' : ''}{Math.round(st.areaSqft)} sqft
+                    </span>
                   </button>
                   <div className="outline-meta">
                     <span>{ftin(st.widthFt)} × {ftin(st.heightFt)} · {st.corners} cnr</span>
@@ -746,12 +999,16 @@ export default function OutlineTracer({
             : tracing
               ? <>{draft.length} corner{draft.length > 1 ? 's' : ''} down.
                   {draft.length >= 3 ? ' Close it to keep it.' : ' Keep clicking.'}</>
-              : chosen
-                ? <><b>{chosen.o.name || 'Room'}</b> — {ftin(chosen.st.widthFt)} × {ftin(chosen.st.heightFt)},
-                    {' '}{Math.round(chosen.st.areaSqft)} sq ft, {chosen.st.corners} corners.</>
-                : outlines.length
-                  ? <>Pick an outline to light, or trace another.</>
-                  : <>Nothing traced yet. Click a corner on the plan to start.</>}
+              : drag
+                ? <>Nudging a corner. {drag.snap ? <>Holding on to <b>{drag.snap.label}</b>.</> : <>Nothing under it.</>}</>
+                : chosen
+                  ? <><b>{chosen.o.name || 'Room'}</b> — {ftin(chosen.st.widthFt)} × {ftin(chosen.st.heightFt)},
+                      {' '}{Math.round(chosen.st.areaSqft)} sq ft, {chosen.st.corners} corners.
+                      {' '}Drag a corner to move it, right-click one to delete it.</>
+                  : outlines.length
+                    ? <>{outlines.length} outline{outlines.length > 1 ? 's' : ''} on the plan.
+                        Nudge the corners, then light the lot.</>
+                    : <>Nothing traced yet. Click a corner on the plan to start.</>}
         </div>
         {measuring ? (
           <button className="btn primary" disabled={!scaleUI?.measure?.b}
@@ -759,10 +1016,27 @@ export default function OutlineTracer({
             Use this measurement →
           </button>
         ) : (
-          <button className="btn primary" disabled={!chosen || tracing}
-            onClick={() => chosen && onConfirm(chosen.o.id)}>
-            {chosen ? 'Light this room →' : 'Trace an outline'}
-          </button>
+          /* THE WHOLE PLAN IS THE PRIMARY ACT. A floor plan is a floor plan —
+             the rooms come as a set, the detector proposes the set, and lighting
+             them one at a time was an artefact of there having been only ever
+             one outline to light. Lighting a single room stays available because
+             a single room is genuinely sometimes the job. */
+          <div className="btnrow">
+            {chosen && outlines.length > 1 && (
+              <button className="btn" disabled={tracing}
+                onClick={() => onConfirm(chosen.o.id)}>
+                Just this room
+              </button>
+            )}
+            <button className="btn primary" disabled={!outlines.length || tracing}
+              onClick={() => (outlines.length > 1 || !chosen
+                ? onProceed?.()
+                : onConfirm(chosen.o.id))}>
+              {!outlines.length ? 'Trace an outline'
+                : outlines.length === 1 ? 'Light this room →'
+                : `Light all ${outlines.length} rooms →`}
+            </button>
+          </div>
         )}
       </div>
     </div>

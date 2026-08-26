@@ -288,5 +288,67 @@ console.log('detect api — an unknown provider falls back rather than failing')
     'a provider we do not have goes to the default, not to a crash');
 }
 
+console.log('detect api — the rooms task');
+{
+  // A different workflow, not a different class list. The one thing that would
+  // silently break the feature is the rooms question reaching the furniture
+  // workflow, which would answer it — with beds.
+  const { calls, res } = await run(req('POST', { image: B64, task: 'rooms' }));
+  ok(calls.length === 1, 'one upstream call for a rooms request');
+  ok(/detect-and-count-objects-in-image/.test(calls[0].url),
+    `the rooms workflow is the one called (got ${calls[0].url})`);
+  ok(res.json().meta.task === 'rooms', 'the response says which question was asked');
+
+  // Inputs are discovered, not assumed: image alone first.
+  ok(Object.keys(calls[0].body.inputs).join() === 'image',
+    `image alone goes first (got ${Object.keys(calls[0].body.inputs).join('+')})`);
+
+  // ...and a 4xx that reads as "wrong inputs" retries with the class list.
+  const tried = [];
+  const { res: retried } = await run(req('POST', { image: B64, task: 'rooms', classes: 'room' }), {},
+    async (url, init) => {
+      const inputs = Object.keys(JSON.parse(init.body).inputs).join('+');
+      tried.push(inputs);
+      if (inputs === 'image') {
+        return { ok: false, status: 400, text: async () => '{"detail":"missing input: classes"}' };
+      }
+      return { ok: true, status: 200, text: async () => '{"outputs":[]}' };
+    });
+  ok(tried.join(' -> ') === 'image -> image+classes',
+    `a 400 on the narrow shape retries with the class list (got ${tried.join(' -> ')})`);
+  ok(retried.statusCode === 200, 'and the second shape being accepted is a success');
+
+  // A rejected key is final: it must not be retried against every input shape.
+  const auth = [];
+  const { res: bad } = await run(req('POST', { image: B64, task: 'rooms' }), {},
+    async (url, init) => {
+      auth.push(Object.keys(JSON.parse(init.body).inputs).join('+'));
+      return { ok: false, status: 401, text: async () => '{"message":"Unauthorized"}' };
+    });
+  ok(auth.length === 1, `a 401 is not retried against other input shapes (${auth.length} calls)`);
+  ok(bad.statusCode === 401 && /ROBOFLOW_INFERENCE_KEY/.test(bad.json().error),
+    'and it names the variable to check');
+
+  // The env override, so a workflow can be repointed without a deploy.
+  const { calls: over } = await run(req('POST', { image: B64, task: 'rooms' }),
+    { ROBOFLOW_ROOMS_WORKFLOW_URL: 'https://example.com/ws/workflows/mine' });
+  ok(over[0].url === 'https://example.com/ws/workflows/mine',
+    `ROBOFLOW_ROOMS_WORKFLOW_URL is honoured (got ${over[0].url})`);
+
+  // ...and it must not repoint the bed detector with it.
+  const { calls: fur } = await run(req('POST', { image: B64, provider: 'roboflow' }),
+    { ROBOFLOW_ROOMS_WORKFLOW_URL: 'https://example.com/ws/workflows/mine' });
+  ok(!/example\.com/.test(fur[0].url),
+    'the rooms URL does not leak into the furniture route');
+
+  // And the key never reaches the client, on this route as on the others.
+  const { res: echo } = await run(req('POST', { image: B64, task: 'rooms' }), {},
+    async (url, init) => ({
+      ok: false, status: 422,
+      text: async () => JSON.stringify({ error: 'bad request', echo: JSON.parse(init.body) }),
+    }));
+  ok(!echo.body.includes(KEY), 'an upstream that echoes the request back does not leak the key');
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 if (fails) { console.log(`${fails} FAILED`); process.exit(1); }

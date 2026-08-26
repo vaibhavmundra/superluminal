@@ -66,6 +66,42 @@ function runApp(dxfText, { unitOverride = null, pick = 1, fansPx = [], opt = {} 
   return { source, rooms, res, selectedRoom, region, geo, plan, chunking, pxPerFt, wallLayers };
 }
 
+/**
+ * App.jsx's PIXEL view model, verbatim, and the reason the exporter tests need
+ * it.
+ *
+ * The planner answers in the room's OWN feet, measured from that room's
+ * bounding box. The exporters no longer accept that — they take pixels and a
+ * scale, because pixels are the only space several rooms on one sheet share.
+ * Building it here rather than handing the exporter the planner's output keeps
+ * this test honest about the handoff: if App and the exporter ever disagree
+ * about which feet they are in, one of them has to disagree with this too.
+ */
+function toPxRoom(r, name = null) {
+  const { plan, geo, pxPerFt } = r;
+  const { origin } = geo;
+  const toPx = (p) => ({ x: p.x * pxPerFt + origin.x, y: p.y * pxPerFt + origin.y });
+  const rectToPx = (c) => ({ ...c,
+    x0: c.x0 * pxPerFt + origin.x, x1: c.x1 * pxPerFt + origin.x,
+    y0: c.y0 * pxPerFt + origin.y, y1: c.y1 * pxPerFt + origin.y });
+  return {
+    name,
+    plan: {
+      ...plan,
+      polygonPx: geo.polygonPx,
+      chunksPx: (plan.chunks || []).map((ch) => ({
+        ...rectToPx(ch),
+        xLines: ch.xLines.map((x) => x * pxPerFt + origin.x),
+        yLines: ch.yLines.map((y) => y * pxPerFt + origin.y),
+      })),
+      cellsPx: (plan.cells || []).map(rectToPx),
+      lightsPx: plan.lights.map((l) => ({ ...l, ...toPx(l) })),
+      zonesPx: [],
+      fansPx: geo.fansInRoom,
+    },
+  };
+}
+
 const flatText = ({ insunits = 4, scale = MM, extras = [] } = {}) => dxf({
   insunits,
   layers: ['A-WALL', 'A-TEXT', 'A-DOOR'],
@@ -215,21 +251,32 @@ section('room names carry through to the export');
   ok('the region carries the name through to the layout',
      picked.region.label === 'MASTER BEDROOM', String(picked.region.label));
   ok('and the area with it', near(picked.region.areaSqft, bedroom.areaSqft, 0.01));
-  const json = JSON.parse(toJSON({ ...r.plan, polygonFt: r.geo.polygonFt },
+  const json = JSON.parse(toJSON([toPxRoom(r, 'MASTER BEDROOM')],
                                  { pxPerFt: r.pxPerFt, mode: 'dxf' }));
   ok('JSON export states feet', json.units === 'feet');
-  ok('JSON export has the lights', json.lights.length === r.plan.lights.length);
-  ok('JSON export carries the room outline', json.room.polygon.length === r.geo.polygonFt.length);
+  ok('JSON export is a list of rooms', json.rooms.length === 1, `${json.rooms.length}`);
+  ok('JSON export carries the room name', json.rooms[0].name === 'MASTER BEDROOM',
+     String(json.rooms[0].name));
+  ok('JSON export has the lights', json.rooms[0].lights.length === r.plan.lights.length);
+  ok('JSON export totals agree with the room',
+     json.totals.lights === r.plan.lights.length, `${json.totals.lights}`);
+  ok('JSON export carries the room outline',
+     json.rooms[0].polygon.length === r.geo.polygonFt.length);
+  // The plan-wide space, not the room-local one: a room that does not start at
+  // the drawing's corner must not export as though it did.
+  const off = bbox(json.rooms[0].polygon);
+  ok('the exported polygon is in plan-wide feet, not room-local',
+     off.minX > 0.01 || off.minY > 0.01,
+     `${off.minX.toFixed(3)},${off.minY.toFixed(3)}`);
 }
 
 section('exported DXF reads back through our own parser');
 {
   const r = runApp(flatText());
-  // toDXF and toJSON read `polygonFt`, which planLights does not return — the
-  // app attaches it when it builds its view model. Replicate that here rather
-  // than pretend the planner result alone satisfies the exporter's contract.
-  const forExport = { ...r.plan, polygonFt: r.geo.polygonFt };
-  const out = toDXF(forExport, forExport.fansFt ?? []);
+  // An UNNAMED room, deliberately: that is the case that must still produce the
+  // plain ROOM / CHUNK / GRID layers, so an existing consumer's drawing does not
+  // have its layers renamed by a feature it is not using.
+  const out = toDXF([toPxRoom(r)], { pxPerFt: r.pxPerFt, heightPx: r.source.h });
   const reread = parseDXF(out);
   ok('the export parses', reread.ok === true, reread.reason);
   ok('it declares feet', reread.units.id === 'ft', `${reread.units.id}`);
@@ -272,9 +319,17 @@ section('switching rooms');
   ok('each layout uses its own origin, not the drawing\'s',
      plans.every((p) => near(bbox(p.geo.polygonFt).minX, 0, 1e-6)),
      plans.map((p) => bbox(p.geo.polygonFt).minX.toFixed(3)).join(','));
-  const csv = toCSV(plans[0].plan).split('\n');
-  ok('CSV export has a row per light', csv.length === plans[0].plan.lights.length + 1,
-     `${csv.length - 1} rows for ${plans[0].plan.lights.length} lights`);
+  // Every room in one file, which is what the app now exports.
+  const named = plans.map((pl, i) => toPxRoom(pl, `Room ${i + 1}`));
+  const csv = toCSV(named, { pxPerFt: plans[0].pxPerFt }).split('\n');
+  const lightsAll = plans.reduce((n, pl) => n + pl.plan.lights.length, 0);
+  ok('CSV export has a row per light in the whole plan',
+     csv.length === lightsAll + 1, `${csv.length - 1} rows for ${lightsAll} lights`);
+  ok('CSV export names the room in the first column',
+     csv[0].startsWith('room,') && csv[1].startsWith('Room '), csv[1]);
+  ok('every room appears in the CSV',
+     new Set(csv.slice(1).map((l) => l.split(',')[0])).size === plans.length,
+     `${new Set(csv.slice(1).map((l) => l.split(',')[0])).size} of ${plans.length}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
