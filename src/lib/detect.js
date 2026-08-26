@@ -1,12 +1,21 @@
 // ---------------------------------------------------------------------------
 // detect.js — pull the annotations out of an uploaded plan image.
-//   GREEN closed box/polyline -> area of interest
-//   RED dotted circle         -> ceiling fan
-// Works on hand-drawn or software-drawn marks; the green stroke need not be
-// perfectly closed (we morphologically seal small gaps first).
+//   RED dotted circle -> ceiling fan
+//
+// There used to be a second annotation: a GREEN closed loop round the area to
+// light, morphologically sealed and flood-filled to recover the region. It is
+// gone, and not because it did not work. It worked MOST of the time, which was
+// the problem — a loop with a gap that the sealing bridged in the wrong place
+// gave a region that looked perfectly plausible and was wrong, with nothing on
+// screen to say so. It also demanded a round trip through an image editor
+// before a plan could be uploaded at all. The outline is now traced in the app,
+// over the plan, with the cursor snapping as it goes (see OutlineTracer and
+// snap.js): less work than marking the image up was, and exact.
+//
+// The red circle stays. A fan is a fixture the layout has to work around AND a
+// standard-sized object, so one mark answers two questions at once — where the
+// fans are, and how many pixels there are to a foot.
 // ---------------------------------------------------------------------------
-
-import { rectifyPolygon, bbox, axisRect } from './geometry.js';
 
 const MAX_DIM = 1400; // analysis resolution; results are scaled back up
 
@@ -24,8 +33,7 @@ export function rgbToHsv(r, g, b) {
 }
 
 export const PRESETS = {
-  green: { hue: [70, 175], sat: 0.22, val: 0.15, label: 'green' },
-  red:   { hue: [-25, 20], sat: 0.30, val: 0.18, label: 'red' },
+  red: { hue: [-25, 20], sat: 0.30, val: 0.18, label: 'red' },
 };
 
 function inHue(h, range) {
@@ -79,45 +87,6 @@ function dilate(mask, w, h, r) {
   return cur;
 }
 
-function erode(mask, w, h, r) {
-  if (r <= 0) return mask;
-  let cur = mask;
-  for (let pass = 0; pass < r; pass++) {
-    const next = new Uint8Array(cur);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const p = y * w + x;
-        if (!cur[p]) continue;
-        if ((x === 0 || !cur[p - 1]) || (x === w - 1 || !cur[p + 1]) ||
-            (y === 0 || !cur[p - w]) || (y === h - 1 || !cur[p + w])) next[p] = 0;
-      }
-    }
-    cur = next;
-  }
-  return cur;
-}
-
-/** Everything not reachable from the image border == enclosed by the stroke. */
-function fillEnclosed(mask, w, h) {
-  const outside = new Uint8Array(w * h);
-  const stack = [];
-  const push = (x, y) => {
-    const p = y * w + x;
-    if (x < 0 || y < 0 || x >= w || y >= h || outside[p] || mask[p]) return;
-    outside[p] = 1; stack.push(p);
-  };
-  for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
-  for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
-  while (stack.length) {
-    const p = stack.pop();
-    const x = p % w, y = (p / w) | 0;
-    push(x - 1, y); push(x + 1, y); push(x, y - 1); push(x, y + 1);
-  }
-  const filled = new Uint8Array(w * h);
-  for (let p = 0; p < filled.length; p++) filled[p] = outside[p] ? 0 : 1;
-  return filled;
-}
-
 function components(mask, w, h, minSize = 1) {
   const seen = new Uint8Array(w * h);
   const out = [];
@@ -137,93 +106,6 @@ function components(mask, w, h, minSize = 1) {
   }
   return out.sort((a, b) => b.length - a.length);
 }
-function largestComponent(mask, w, h) {
-  const c = components(mask, w, h);
-  return c.length ? c[0] : [];
-}
-
-/** Moore-neighbour boundary trace of a filled binary blob. */
-function traceBoundary(mask, w, h) {
-  let start = -1;
-  for (let p = 0; p < mask.length; p++) if (mask[p]) { start = p; break; }
-  if (start < 0) return [];
-  const dirs = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
-  const at = (x, y) => (x >= 0 && y >= 0 && x < w && y < h) ? mask[y * w + x] : 0;
-  let cx = start % w, cy = (start / w) | 0;
-  const sx = cx, sy = cy;
-  let dir = 0;
-  const out = [];
-  const limit = w * h * 4;
-  let guard = 0;
-  do {
-    out.push({ x: cx, y: cy });
-    let moved = false;
-    for (let k = 0; k < 8; k++) {
-      const d = (dir + 6 + k) % 8;
-      const nx = cx + dirs[d][0], ny = cy + dirs[d][1];
-      if (at(nx, ny)) { cx = nx; cy = ny; dir = d; moved = true; break; }
-    }
-    if (!moved) break;
-  } while ((cx !== sx || cy !== sy) && guard++ < limit);
-  return out;
-}
-
-// --- public API -------------------------------------------------------------
-
-export function detectRegion(pix, tuning = {}) {
-  const seal = tuning.seal ?? 3;
-  const { mask, w, h, count } = colorMask(pix, PRESETS.green, tuning);
-  if (count < 40) return { ok: false, reason: 'No green outline found. Try lowering the colour threshold, or draw the box in a stronger green.' };
-
-  // How big SHOULD the enclosed area be? At least most of the green stroke's
-  // own bounding box. If it comes out far smaller, the outline has a gap and
-  // the fill has leaked — so retry with progressively stronger sealing.
-  let gx0 = Infinity, gy0 = Infinity, gx1 = -Infinity, gy1 = -Infinity;
-  for (let p = 0; p < mask.length; p++) {
-    if (!mask[p]) continue;
-    const x = p % w, y = (p / w) | 0;
-    if (x < gx0) gx0 = x; if (x > gx1) gx1 = x;
-    if (y < gy0) gy0 = y; if (y > gy1) gy1 = y;
-  }
-  const targetArea = Math.max(1, (gx1 - gx0) * (gy1 - gy0));
-
-  const ladder = [...new Set([seal, 6, 10, 16, 24, 34])].filter((v) => v >= seal).sort((a, b) => a - b);
-  let comp = [], usedSeal = seal, leaked = true;
-  for (const r of ladder) {
-    const sealed = erode(dilate(mask, w, h, r), w, h, Math.max(0, r - 1));
-    const cand = largestComponent(fillEnclosed(sealed, w, h), w, h);
-    usedSeal = r;
-    if (cand.length > comp.length) comp = cand;
-    if (comp.length >= targetArea * 0.62) { leaked = false; break; }
-  }
-  const areaFrac = comp.length / (w * h);
-  if (areaFrac < 0.004) {
-    return { ok: false, reason: 'The green mark does not enclose an area. Make sure the box is a closed loop.' };
-  }
-
-  const blob = new Uint8Array(w * h);
-  for (const p of comp) blob[p] = 1;
-  const raw = traceBoundary(blob, w, h);
-  if (raw.length < 8) return { ok: false, reason: 'Could not trace the green outline.' };
-
-  // Trace is at analysis resolution — scale back to original image pixels.
-  const inv = 1 / pix.scale;
-  const scaled = raw.map((p) => ({ x: p.x * inv, y: p.y * inv }));
-  const polygon = rectifyPolygon(scaled);
-  return {
-    ok: true,
-    polygon,
-    boundingRect: axisRect(bbox(scaled)),
-    rawTrace: scaled,
-    areaFrac,
-    pixelCount: count,
-    usedSeal,
-    warning: leaked
-      ? `The green outline looks broken — the enclosed area is only ${Math.round((comp.length / targetArea) * 100)}% of the marked box even after sealing ${usedSeal}px. Close the loop and re-upload.`
-      : null,
-  };
-}
-
 /**
  * Find every round red marker on the plan. A room can have several fans, so
  * this returns all of them — red text and dimension strings are still rejected

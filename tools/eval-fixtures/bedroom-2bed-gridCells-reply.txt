@@ -1,0 +1,32 @@
+# SYNTHETIC FIXTURE, not a real reply: the exact cells the beds occupy, so the score shown is the ARM CEILING rather than a model result.
+{
+ "beds": [
+  {
+   "colFrom": "B",
+   "colTo": "C",
+   "rowFrom": 2,
+   "rowTo": 3,
+   "confidence": 0.88,
+   "room": "MASTER BEDROOM",
+   "note": "two pillows, blanket line"
+  },
+  {
+   "colFrom": "B",
+   "colTo": "C",
+   "rowFrom": 7,
+   "rowTo": 8,
+   "confidence": 0.79,
+   "room": "BEDROOM 2",
+   "note": "single with pillow"
+  },
+  {
+   "colFrom": "D",
+   "colTo": "E",
+   "rowFrom": 7,
+   "rowTo": 8,
+   "confidence": 0.74,
+   "room": "BEDROOM 2",
+   "note": "second single"
+  }
+ ]
+}

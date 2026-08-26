@@ -17,7 +17,8 @@ const FILL = ['#6366F1', '#0EA5E9', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', 
 
 export default function ChunkPicker({
   options, recommendedId, initialId, onConfirm,
-  src, imgW, imgH, polygonPx, zonesPx = [], fansPx = [], toPx,
+  src, vector = null, wallLayers = null,
+  imgW, imgH, polygonPx, zonesPx = [], fansPx = [], toPx,
 }) {
   // Which card is highlighted is the picker's own business. Only CONFIRMING
   // leaves this screen — selecting has to be free, or you cannot compare two
@@ -41,12 +42,7 @@ export default function ChunkPicker({
     <div className="picker">
       <div className="picker-head">
         <h2>How should this space be cut up?</h2>
-        <p>
-          The room minus its no-light zones can be read
-          <b> {options.length} different ways</b>. Each chunk gets its own near-square
-          grid, so this choice decides how the finished layout reads from the floor.
-          Pick one, and the lights get placed inside it.
-        </p>
+        <p><b>{options.length} ways</b> to read it. Each chunk gets its own grid.</p>
       </div>
 
       <div className="picker-grid">
@@ -56,7 +52,8 @@ export default function ChunkPicker({
             selected={o.id === draft}
             onSelect={() => setDraft(o.id)}
             onConfirm={() => onConfirm(o.id)}
-            view={view} src={src} imgW={imgW} imgH={imgH}
+            view={view} src={src} vector={vector} wallLayers={wallLayers}
+            imgW={imgW} imgH={imgH}
             polygonPx={polygonPx} zonesPx={zonesPx} fansPx={fansPx} toPx={toPx} />
         ))}
       </div>
@@ -77,7 +74,7 @@ export default function ChunkPicker({
 
 function ChunkCard({
   option: o, recommended, selected, onSelect, onConfirm,
-  view, src, imgW, imgH, polygonPx, zonesPx, fansPx, toPx,
+  view, src, vector, wallLayers, imgW, imgH, polygonPx, zonesPx, fansPx, toPx,
 }) {
   const lw = Math.max(view.w, view.h) / 260;      // line weight that survives any plan size
   const fs = Math.max(view.w, view.h) / 34;       // legible label at card size
@@ -109,7 +106,16 @@ function ChunkCard({
           </pattern>
         </defs>
 
+        {/* The plan under the card. A raster plan is the image; a DXF is its own
+            line work, faint — either way the reading is shown OVER the drawing
+            it is a reading of, which is the entire point of these cards. */}
         {src && <image href={src} x="0" y="0" width={imgW} height={imgH} opacity="0.16" />}
+        {vector && (
+          <g fill="none" stroke="#0A0A0A" strokeWidth={lw * 1.2} opacity="0.3">
+            {vector.filter((l) => !wallLayers || wallLayers.has(l.layer))
+                   .map((l) => <path key={l.layer} d={l.path} />)}
+          </g>
+        )}
 
         {o.chunks.map((c, k) => {
           const r = rect(c);

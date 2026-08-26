@@ -2,3 +2,9 @@ node_modules
 dist
 shots
 .DS_Store
+.env
+.env.*
+!.env.example
+vite.config.js.timestamp-*
+.detect-debug
+.detect-eval

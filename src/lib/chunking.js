@@ -418,7 +418,7 @@ export function rankChunkings(options, weights = RANK_WEIGHTS) {
  * ceremony rather than a decision.
  */
 export function enumerateChunkings(polygon, zones = [], opt = {}, fans = []) {
-  const o = { targetArea: 50, minChunk: 1, fanClearance: 2, ...opt };
+  const o = { targetArea: 50, minChunk: 1.5, minChunkArea: 9, fanClearance: 2, ...opt };
   o.targetCell = idealSide(o);
   const grid = elementaryGrid(polygon, zones);
   if (grid.empty || grid.freeArea <= 0) {
@@ -436,8 +436,12 @@ export function enumerateChunkings(polygon, zones = [], opt = {}, fans = []) {
     rects = inReadingOrder(rects);
     // slivers are set aside, not lost: a chunk this thin does not deserve a
     // light, but the option is still judged on the area it gives up
+    // Two independent rules, because slivers fail in two ways: a long thin
+    // strip behind a duct is caught on its short side, and a small squarish
+    // notch beside a chimney breast passes that test and is caught on its area.
     const chunks = [], omitted = [];
-    for (const r of rects) (Math.min(r.w, r.h) > o.minChunk ? chunks : omitted).push(r);
+    const worthLighting = (r) => Math.min(r.w, r.h) >= o.minChunk && r.w * r.h >= o.minChunkArea;
+    for (const r of rects) (worthLighting(r) ? chunks : omitted).push(r);
     if (!chunks.length) continue;
 
     const key = signatureOf(chunks);
@@ -586,7 +590,8 @@ export function chunkingPayload(options, ctx = {}) {
     intent: {
       targetCellSqft: opt.targetArea ?? 50,
       targetCellFt: Math.round(idealSide(opt) * 100) / 100,
-      minChunkFt: opt.minChunk ?? 1,
+      minChunkFt: opt.minChunk ?? 1.5,
+      minChunkAreaSqft: opt.minChunkArea ?? 9,
       fanClearanceFt: opt.fanClearance ?? 2,
       minWallDistanceFt: opt.minWallDistance ?? 5,
     },

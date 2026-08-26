@@ -1,0 +1,8 @@
+# SYNTHETIC FIXTURE, not a real reply. Deliberately includes a low-confidence false positive in the living room so the guards get exercised.
+```json
+{"beds":[
+ {"x0":0.079,"y0":0.117,"x1":0.180,"y1":0.281,"confidence":0.86,"room":"MASTER BEDROOM","note":"double bed, two pillows"},
+ {"x0":0.086,"y0":0.575,"x1":0.146,"y1":0.735,"confidence":0.72,"room":"BEDROOM 2","note":"single"},
+ {"x0":0.207,"y0":0.575,"x1":0.266,"y1":0.735,"confidence":0.70,"room":"BEDROOM 2","note":"single"},
+ {"x0":0.418,"y0":0.140,"x1":0.535,"y1":0.230,"confidence":0.41,"room":"LIVING","note":"possibly a daybed"}
+]}

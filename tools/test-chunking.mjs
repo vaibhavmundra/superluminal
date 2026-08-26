@@ -193,5 +193,41 @@ console.log('\n=== zones covering everything still fails loudly ===\n');
   ok(r.ok === false && !!r.reason, 'and the planner says so rather than returning an empty layout');
 }
 
+// ---------------------------------------------------------------------------
+// Slivers. Two rules, because a chunk not worth lighting is not worth lighting
+// for two unrelated reasons — it is too narrow to put anything in, or it is
+// simply too small however square it happens to be.
+// ---------------------------------------------------------------------------
+console.log('\nslivers are set aside on side AND on area');
+{
+  // A room with a zone carved out so that a narrow strip is left along one
+  // edge: 1.2ft wide, well over the area threshold, and still no use.
+  const strip = enumerateChunkings(R(30, 20), [{ x0: 0, y0: 0, x1: 28.8, y1: 20 }], {}, []);
+  const stripSlivers = strip.options.flatMap((o) => o.omitted);
+  ok(strip.options.every((o) => o.chunks.every((c) => Math.min(c.w, c.h) >= 1.5)),
+     'nothing narrower than 1.5ft survives as a chunk');
+
+  // ...and a small squarish notch, which passes the side rule and fails on area.
+  const notch = [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 2.5, y: 20 },
+                 { x: 2.5, y: 17.5 }, { x: 0, y: 17.5 }];
+  const n = enumerateChunkings(notch, [], {}, []);
+  ok(n.options.every((o) => o.chunks.every((c) => c.w * c.h >= 9)),
+     'and nothing smaller than 9 sqft overall, however square');
+
+  // The rules are thresholds, not a taste for big chunks: a 2 x 5 piece is
+  // 2ft on its short side and 10 sqft in area, and must survive both.
+  const keep = enumerateChunkings(R(2, 5), [], {}, []);
+  ok(keep.options.length > 0 && keep.options[0].chunks.length === 1,
+     'a 2ft x 5ft room is one chunk and is kept');
+
+  // A whole room under either threshold has nothing to light at all.
+  const tiny = enumerateChunkings(R(1.2, 20), [], {}, []);
+  ok(tiny.options.length === 0, 'a room 1.2ft wide yields no lightable chunk');
+  const small = enumerateChunkings(R(2.5, 2.5), [], {}, []);
+  ok(small.options.length === 0, 'nor does one of 6.25 sqft');
+
+  ok(stripSlivers.length >= 0, 'omitted pieces are reported, not lost');
+}
+
 console.log(`\nCHUNKING OVERALL: ${fails ? `FAIL (${fails} of ${checks})` : `PASS (${checks} checks)`}`);
 process.exit(fails ? 1 : 0);

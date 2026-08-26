@@ -1,0 +1,2 @@
+# SYNTHETIC FIXTURE, not a real reply: derived from the truth file so that a replay proves the ARITHMETIC (fractions -> pixels -> zone), not the model. A live run will not score 1.00.
+{"beds":[{"x0":0.168,"y0":0.597,"x1":0.394,"y1":0.758,"confidence":0.91,"room":"BEDROOM","note":"two pillows and a turned-down duvet"}]}

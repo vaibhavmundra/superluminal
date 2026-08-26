@@ -11,7 +11,8 @@
 //                   and the choice arrives here as `chunkStrategy` (an id) or
 //                   `chunkPlan` (an explicit set of rectangles). With neither,
 //                   the heuristic recommendation is used so a headless call
-//                   still works. Chunks thinner than minChunk are omitted.
+//                   still works. Chunks thinner than minChunk, or smaller than
+//                   minChunkArea overall, are omitted.
 //   3. grid       — each chunk is divided into its own near-square grid.
 //                   There is nothing sacred about 6x6: the target cell is a
 //                   preference, and every chunk sizes its cells to suit its
@@ -82,7 +83,13 @@ export const DEFAULTS = {
   // resolveOptions. They are absent here on purpose: pinning them in the
   // defaults is what let the ideal side say 6 ft while the area said 50.
   minBand: 3.0,           // ft — a band thinner than this dissolves into its neighbour
-  minChunk: 1.0,          // ft — a chunk this thin (either dimension) is omitted entirely
+  minChunk: 1.5,          // ft — a chunk this thin (either dimension) is omitted entirely
+  minChunkArea: 9.0,      // sqft — ...and so is one this small overall, however
+                          //   square. Two rules rather than one because they
+                          //   fail differently: a 1.4ft x 20ft strip behind a
+                          //   duct is caught by the side rule, and a 2ft x 2ft
+                          //   notch beside a chimney breast passes that and is
+                          //   caught by this one. Neither deserves a light.
   chunkStrategy: 'auto',  // which of the enumerated decompositions to lay the
                           //   grid on: a strategy id from chunking.js, or
                           //   'auto' for the heuristic recommendation. The app

@@ -7,8 +7,10 @@ const C = {
 };
 
 const PlanCanvas = forwardRef(function PlanCanvas(
-  { src, width, height, plan, fansPx = [], pxPerFt, layers, zoom, measure, onCanvasClick, toPx,
-    zones = [], draftZone = null, zoneMode = false, onZoneDown, onZoneMove, onZoneUp },
+  { src, vector = null, wallLayers = null,
+    width, height, plan, fansPx = [], pxPerFt, layers, zoom, measure, onCanvasClick, toPx,
+    zones = [], draftZone = null, zoneMode = false, onZoneDown, onZoneMove, onZoneUp,
+    cursor = null },
   ref
 ) {
   const s = pxPerFt || 1;
@@ -39,7 +41,9 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       ref={ref}
       className="plan"
       viewBox={`0 0 ${width} ${height}`}
-      style={{ width: width * zoom, maxWidth: 'none', touchAction: zoneMode ? 'none' : undefined }}
+      style={{ width: width * zoom, maxWidth: 'none',
+               touchAction: zoneMode ? 'none' : undefined,
+               cursor: cursor || undefined }}
       onClick={onCanvasClick}
       onPointerDown={onZoneDown} onPointerMove={onZoneMove}
       onPointerUp={onZoneUp} onPointerCancel={onZoneUp}
@@ -56,7 +60,27 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         </pattern>
       </defs>
 
-      {layers.plan && <image href={src} x="0" y="0" width={width} height={height} opacity={layers.dim ? 0.42 : 1} />}
+      {/* The plan underneath. A raster plan is an image; a DXF is its own line
+          work, drawn one path per layer — the layers being read as walls in
+          black, everything else faint, so what the room outline was taken from
+          stays visible under the layout. */}
+      {layers.plan && (vector
+        ? <g opacity={layers.dim ? 0.5 : 1}>
+            <g fill="none" stroke="#9CA3AF" strokeWidth={lw * 1.1} opacity="0.45">
+              {vector.filter((l) => !wallLayers?.has(l.layer))
+                     .map((l) => <path key={l.layer} d={l.path} />)}
+            </g>
+            <g fill="none" stroke="#0A0A0A" strokeWidth={lw * 1.6} opacity="0.7">
+              {vector.filter((l) => wallLayers?.has(l.layer))
+                     .map((l) => <path key={l.layer} d={l.path} />)}
+            </g>
+            {vector.flatMap((l) => l.circles.map((c, k) => (
+              <circle key={l.layer + k} cx={c.cx} cy={c.cy} r={c.r}
+                fill="none" stroke="#9CA3AF" strokeWidth={lw} opacity="0.45" />
+            )))}
+          </g>
+        : <image href={src} x="0" y="0" width={width} height={height} opacity={layers.dim ? 0.42 : 1} />
+      )}
 
       {plan?.ok && (
         <>

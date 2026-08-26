@@ -1,25 +1,63 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PlanCanvas from './components/PlanCanvas.jsx';
 import ChunkPicker from './components/ChunkPicker.jsx';
-import { imageToPixels, detectRegion, detectFans } from './lib/detect.js';
-import { planLights, DEFAULTS, sidesForArea, resolveOptions } from './lib/planner.js';
+import OutlineTracer from './components/OutlineTracer.jsx';
+import { imageToPixels, detectFans } from './lib/detect.js';
+import { parseDXF, UNITS, classifyLayers } from './lib/dxf.js';
+import { vectorSource, rasterSource } from './lib/planSource.js';
+import { makeOutline, nextOutlineName, regionFromOutline, outlineStats } from './lib/outline.js';
+import { PLAN_OPTIONS, FITTING_LUMENS, WALL_WEIGHT_IN, OTHER_STROKE_PX, FAN_DETECT,
+         SIMPLIFY_ROOM_TO_RECTANGLE } from './lib/settings.js';
+import { planLights } from './lib/planner.js';
 import { enumerateChunkings, findChunking } from './lib/chunking.js';
-import { bbox } from './lib/geometry.js';
-import { REFERENCES, scaleFromFans, scaleFromReference, describeScale, estimateScaleWithAI } from './lib/scale.js';
+import { bbox, pointInPolygon } from './lib/geometry.js';
+import { REFERENCES, scaleFromFans, scaleFromReference } from './lib/scale.js';
+import { detectFurniture, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER } from './lib/furniture.js';
 import { download, toJSON, toCSV, toDXF, svgString, svgToPNG } from './lib/exporters.js';
 
 const LS = 'lightPlanner.v1';
 
+const ftin = (v) => {
+  const f = Math.floor(v), i = Math.round((v - f) * 12);
+  return i === 12 ? `${f + 1}'0"` : `${f}'${i}"`;
+};
+
 export default function App() {
-  const [img, setImg] = useState(null);          // {src, el, w, h, base64, mime, name}
+  // TWO WAYS IN, one pipeline — and since the outline became something you
+  // draw, the two have very nearly converged. BOTH kinds of plan are traced by
+  // hand over the drawing (see OutlineTracer); the only thing a DXF still does
+  // for you is state its own scale, where an image has to be measured first.
+  //
+  // The green-marker route is gone. It asked the user to mark up the plan in an
+  // image editor before uploading it, then guessed at the loop they had drawn —
+  // and a guess that is nearly right is the worst possible outcome, because
+  // nothing on screen says so. Drawing the outline in the app is less work than
+  // drawing it in Preview was, and it is exact.
+  const [img, setImg] = useState(null);          // raster: {src, el, w, h, base64, mime, name}
+  const [dxf, setDxf] = useState(null);          // vector: {drawing, name}
+  const [unitId, setUnitId] = useState(null);    // user override of the file's own units
+  // Outlines traced over the drawing, in RAW DRAWING UNITS — see toDu/fromDu in
+  // planSource. Several per drawing; one is lit at a time. This is the shape a
+  // whole-floor version needs: one layout per outline id.
+  const [outlines, setOutlines] = useState([]);
+  const [selectedOutlineId, setSelectedOutlineId] = useState(null);   // tracer highlight
+  const [litOutlineId, setLitOutlineId] = useState(null);             // the one being lit
+  const [fanMode, setFanMode] = useState(false);
+
   const [busy, setBusy] = useState('');
-  const [tuning, setTuning] = useState({ sat: 0.22, val: 0.15, seal: 3, redSat: 0.30, link: 8 });
-  const [region, setRegion] = useState(null);
   const [fans, setFans] = useState([]);
   const [fanReason, setFanReason] = useState('');
-  const [useBoundingRect, setUseBoundingRect] = useState(false);
 
   const [zones, setZones] = useState([]);        // no-light rects in image px {id,x0,y0,x1,y1}
+  // Furniture found on the plan. Deliberately NOT the same thing as a zone:
+  // a detection is a property of the IMAGE and is found once, whereas whether
+  // it is a no-light zone depends on which room is being lit. Keeping them
+  // apart is what lets the detection run before a boundary exists.
+  const [detections, setDetections] = useState([]);          // {id,cls,conf,rect} in image px
+  const [detectState, setDetectState] = useState({ status: 'idle' });
+  const [dismissed, setDismissed] = useState([]);            // detection ids the user rejected
+  const [detectNonce, setDetectNonce] = useState(0);         // bumping this re-runs detection
+  const [provider, setProvider] = useState(DEFAULT_PROVIDER);
   const [zoneMode, setZoneMode] = useState(false);
   const [draftZone, setDraftZone] = useState(null);
 
@@ -35,63 +73,145 @@ export default function App() {
   const [measure, setMeasure] = useState({ a: null, b: null });
   const [manualPx, setManualPx] = useState(20);
 
-  const [opt, setOpt] = useState(resolveOptions({ ...DEFAULTS }));
+  // Not state. Every dial that used to be a slider now lives in settings.js —
+  // see the header there for why.
+  const opt = PLAN_OPTIONS;
+  const useBoundingRect = SIMPLIFY_ROOM_TO_RECTANGLE;
   const [layers, setLayers] = useState({ plan: true, dim: true, region: true, grid: true, cells: true, lights: true, labels: false, fan: true, zones: true });
   const [zoom, setZoom] = useState(1);
-  const [apiKey, setApiKey] = useState('');
-  const [aiResult, setAiResult] = useState(null);
   const [over, setOver] = useState(false);
   const svgRef = useRef(null);
 
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(LS) || '{}');
-      if (saved.opt) setOpt((o) => ({ ...o, ...saved.opt }));
-      if (saved.apiKey) setApiKey(saved.apiKey);
+      if (saved.provider) setProvider(saved.provider);
       if (saved.fanSweep) setFanSweep(saved.fanSweep);
     } catch { /* first run */ }
   }, []);
   useEffect(() => {
-    try { localStorage.setItem(LS, JSON.stringify({ opt, apiKey, fanSweep })); } catch { /* private mode */ }
-  }, [opt, apiKey, fanSweep]);
+    try { localStorage.setItem(LS, JSON.stringify({ fanSweep, provider })); } catch { /* private mode */ }
+  }, [fanSweep, provider]);
 
   // --- load -----------------------------------------------------------------
+  const resetForNewPlan = useCallback(() => {
+    setMeasure({ a: null, b: null }); setZoom(1);
+    setZones([]); setZoneMode(false); setDraftZone(null); setChunkPick(null);
+    setDetections([]); setDetectState({ status: 'idle' }); setDismissed([]);
+    setFans([]); setFanReason(''); setFanMode(false);
+    setOutlines([]); setSelectedOutlineId(null); setLitOutlineId(null); setUnitId(null);
+  }, []);
+
   const loadFile = useCallback((file) => {
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file) return;
+    const isDxf = /\.dxf$/i.test(file.name) || file.type === 'application/dxf' || file.type === 'image/vnd.dxf';
+
+    if (isDxf) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setBusy('Reading the drawing…');
+        // Parsing is synchronous and can take a moment on a big drawing, so
+        // let the busy pill paint before we block on it.
+        setTimeout(() => {
+          try {
+            const drawing = parseDXF(String(reader.result));
+            if (!drawing.ok) { setDxf({ error: drawing.reason, name: file.name }); setImg(null); return; }
+            setImg(null);
+            setDxf({ drawing, name: file.name });
+            resetForNewPlan();
+          } finally { setBusy(''); }
+        }, 20);
+      };
+      reader.readAsText(file);
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) return;
     const reader = new FileReader();
     reader.onload = () => {
       const src = reader.result;
       const el = new Image();
       el.onload = () => {
+        setDxf(null);
         setImg({ src, el, w: el.naturalWidth, h: el.naturalHeight, name: file.name,
                  base64: String(src).split(',')[1], mime: file.type });
-        setMeasure({ a: null, b: null }); setAiResult(null); setZoom(1);
-        setZones([]); setZoneMode(false); setDraftZone(null); setChunkPick(null);
+        resetForNewPlan();
       };
       el.src = src;
     };
     reader.readAsDataURL(file);
+  }, [resetForNewPlan]);
+
+  // --- the plan source ------------------------------------------------------
+  // A DXF becomes a virtual image of exactly known scale, so the pixel-space
+  // pipeline below it does not need to know which kind of plan it is looking at.
+  const source = useMemo(() => {
+    if (dxf?.drawing) {
+      const chosen = unitId ? UNITS.find((u) => u.id === unitId) : null;
+      const drawing = chosen
+        ? { ...dxf.drawing, units: { ...chosen, source: 'chosen' } }
+        : dxf.drawing;
+      return vectorSource(drawing, { name: dxf.name });
+    }
+    if (img) return rasterSource(img);
+    return null;
+  }, [dxf, img, unitId]);
+  const isVector = source?.kind === 'vector';
+
+  // --- traced outlines ------------------------------------------------------
+  // Stored in the plan's own units and resolved into the current pixel space
+  // for use. On a DXF that indirection is load-bearing: correct the unit
+  // interpretation and the outline is reinterpreted exactly as the walls are,
+  // so it stays on its walls instead of sliding off them. On an image the pair
+  // is the identity — its pixels ARE its units — and the same code runs.
+  const outlinesPx = useMemo(() => {
+    if (!source) return [];
+    return outlines.map((o) => ({ ...o, pointsPx: o.pointsDu.map(source.fromDu) }));
+  }, [source, outlines]);
+
+  const litOutline = useMemo(
+    () => outlinesPx.find((o) => o.id === litOutlineId) || null,
+    [outlinesPx, litOutlineId]);
+
+  const commitOutline = useCallback((pointsPx) => {
+    if (!source) return;
+    const o = makeOutline(pointsPx, { name: nextOutlineName(outlines) });
+    const stored = { id: o.id, name: o.name, rectify: o.rectify,
+                     pointsDu: pointsPx.map(source.toDu) };
+    setOutlines((os) => [...os, stored]);
+    setSelectedOutlineId(stored.id);   // highlight it; confirming is a separate act
+  }, [source, outlines]);
+
+  const updateOutline = useCallback((id, patch) => {
+    setOutlines((os) => os.map((o) => (o.id === id ? { ...o, ...patch } : o)));
   }, []);
 
-  // --- detect ---------------------------------------------------------------
+  const deleteOutline = useCallback((id) => {
+    setOutlines((os) => os.filter((o) => o.id !== id));
+    setSelectedOutlineId((s) => (s === id ? null : s));
+    setLitOutlineId((s) => (s === id ? null : s));
+  }, []);
+
+  // --- fan markers (raster only: a DXF has its fans placed by hand) --------
   useEffect(() => {
     if (!img) return;
     let cancelled = false;
-    setBusy('Reading annotations…');
+    setBusy('Looking for fan markers…');
     const t = setTimeout(() => {
       try {
-        const pix = imageToPixels(img.el);
-        const r = detectRegion(pix, { sat: tuning.sat, val: tuning.val, seal: tuning.seal });
-        const f = detectFans(pix, { sat: tuning.redSat, link: tuning.link });
+        const f = detectFans(imageToPixels(img.el), { sat: FAN_DETECT.redSat, link: FAN_DETECT.link });
         if (cancelled) return;
-        setRegion(r); setFans(f.ok ? f.fans : []); setFanReason(f.ok ? '' : f.reason);
+        setFans(f.ok ? f.fans : []); setFanReason(f.ok ? '' : f.reason);
       } finally { if (!cancelled) setBusy(''); }
     }, 30);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [img, tuning]);
+  }, [img]);
 
   // --- scale ----------------------------------------------------------------
   const pxPerFt = useMemo(() => {
+    // A DXF states its own scale. There is nothing to measure and nothing to
+    // guess, so the scale controls are not offered at all.
+    if (isVector) return source.pxPerFt;
     if (scaleMode === 'manual') return manualPx > 0 ? manualPx : null;
     if (scaleMode === 'ref') {
       if (!measure.a || !measure.b) return null;
@@ -101,7 +221,41 @@ export default function App() {
     }
     const sweep = REFERENCES.find((r) => r.id === fanSweep)?.ft ?? 3.94;
     return fans.length ? scaleFromFans(fans, sweep) : null;
-  }, [scaleMode, manualPx, measure, refId, customFt, fans, fanSweep]);
+  }, [isVector, source, scaleMode, manualPx, measure, refId, customFt, fans, fanSweep]);
+
+  // ONE REGION, and now only one way of arriving at it: the outline the user
+  // traced. It sits below the scale rather than above it because on an image
+  // the scale is what turns a shape into a room — an outline with no px/ft has
+  // corners but no size, and there is nothing to lay a grid of lights against.
+  const region = litOutline && pxPerFt ? regionFromOutline(litOutline, pxPerFt) : null;
+
+  // Which detections are obstacles in THIS ceiling. A whole-floor plan has
+  // three bedrooms on it and only one of them is being lit, so a bed counts
+  // only once its centre falls inside the region. Before a boundary exists
+  // this is empty — the detections are held, not applied.
+  const detectedZones = useMemo(() => {
+    if (!source || !detections.length) return [];
+    const poly = region?.ok ? (useBoundingRect ? region.boundingRect : region.polygon) : null;
+    if (!poly) return [];
+    const live = detections.filter((d) => !dismissed.includes(d.id)
+      && pointInPolygon(rectCentre(d.rect), poly));
+    return zonesFromDetections(live, { image: { w: source.w, h: source.h }, pxPerFt })
+      .map((z, i) => ({ ...z, id: live[i].id }));
+  }, [detections, dismissed, region, useBoundingRect, source, pxPerFt]);
+
+  // What the planner and the canvas actually see. Hand-drawn zones and detected
+  // ones behave identically from here on — that was the point of making a
+  // detection produce a rectangle rather than a new kind of obstacle.
+  const zoneList = useMemo(() => [...zones, ...detectedZones], [zones, detectedZones]);
+  // Which layers are walls, for the detector's render. classifyLayers already
+  // works this out for room extraction; the same answer decides which lines get
+  // drawn heavy. On APT_01 it picks "KMBD Walls" out of a drawing whose other
+  // 1656 entities all sit on layer 0.
+  const wallLayerSet = useMemo(() => {
+    if (!isVector || !source?.drawing?.layers) return null;
+    const { wallLayers } = classifyLayers(source.drawing.layers);
+    return wallLayers.length ? new Set(wallLayers) : null;
+  }, [isVector, source]);
 
   // --- the space, in feet ---------------------------------------------------
   // Split out from the layout on purpose: the chunk choice sits between them.
@@ -114,24 +268,30 @@ export default function App() {
     const origin = { x: b.minX, y: b.minY };
     const toFt = (p) => ({ x: (p.x - origin.x) / pxPerFt, y: (p.y - origin.y) / pxPerFt });
     const toPx = (p) => ({ x: p.x * pxPerFt + origin.x, y: p.y * pxPerFt + origin.y });
+    // A whole-floor DXF carries fans for every room. Only the ones over THIS
+    // ceiling are obstacles in THIS layout — and the same is true of a marked-up
+    // image with several rooms circled on it.
+    const mine = fans.filter((f) => pointInPolygon({ x: f.x, y: f.y }, polygonPx));
     return {
       polygonPx, origin, toFt, toPx,
       polygonFt: polygonPx.map(toFt),
-      fixturesFt: fans.map((f) => ({ type: 'fan', ...toFt(f), r: f.r / pxPerFt })),
-      zonesFt: zones.map((z) => {
+      fansInRoom: mine,
+      fixturesFt: mine.map((f) => ({ type: 'fan', ...toFt(f), r: f.r / pxPerFt })),
+      zonesFt: zoneList.map((z) => {
         const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
         return { x0: a.x, y0: a.y, x1: c.x, y1: c.y };
       }),
     };
-  }, [region, pxPerFt, fans, useBoundingRect, zones]);
+  }, [region, pxPerFt, fans, useBoundingRect, zoneList]);
 
   // --- step one: how should the space be cut up? ----------------------------
   // Only the three settings that genuinely shape a decomposition are in this
   // dependency list, so moving an unrelated slider does not re-enumerate and
   // cannot invalidate a choice that is still perfectly valid.
   const chunkOpt = useMemo(
-    () => ({ targetArea: opt.targetArea, minChunk: opt.minChunk, fanClearance: opt.fanClearance }),
-    [opt.targetArea, opt.minChunk, opt.fanClearance]);
+    () => ({ targetArea: opt.targetArea, minChunk: opt.minChunk,
+             minChunkArea: opt.minChunkArea, fanClearance: opt.fanClearance }),
+    [opt.targetArea, opt.minChunk, opt.minChunkArea, opt.fanClearance]);
 
   const chunking = useMemo(
     () => (geo ? enumerateChunkings(geo.polygonFt, geo.zonesFt, chunkOpt, geo.fixturesFt) : null),
@@ -146,9 +306,13 @@ export default function App() {
     return findChunking(chunking.options, chunkPick)?.id ?? null;
   }, [chunking, chunkPick]);
 
-  const step = !img ? 'upload'
+  // An image reaches the tracer with no scale yet; the tracer is where it gets
+  // set, so `trace` covers both "measure this plan" and "draw the room on it".
+  const step = !source ? 'upload'
+    : !litOutline ? 'trace'
     : (chunking?.needsChoice && !chosenId) ? 'chunks'
     : 'plan';
+  const showTrace = step === 'trace';
   const showPicker = step === 'chunks' && !zoneMode && !!geo;
 
   // --- step two: the layout, inside the chosen configuration ----------------
@@ -184,18 +348,32 @@ export default function App() {
   // --- interactions ---------------------------------------------------------
   const svgPoint = (e) => {
     const r = svgRef.current.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * img.w, y: ((e.clientY - r.top) / r.height) * img.h };
+    return { x: ((e.clientX - r.left) / r.width) * source.w, y: ((e.clientY - r.top) / r.height) * source.h };
+  };
+
+  const fanRadiusPx = () => {
+    const sweep = REFERENCES.find((r) => r.id === fanSweep)?.ft ?? 3.94;
+    return ((pxPerFt || 20) * sweep) / 2;
   };
 
   const onCanvasClick = (e) => {
-    if (zoneMode || scaleMode !== 'ref' || !img) return;
+    if (zoneMode || !source) return;
+    // Placing a fan: a DXF has no red circle to find, so the fans are put where
+    // you click. The sweep comes from the same standard-size list the raster
+    // route uses as a ruler.
+    if (fanMode) {
+      const p = svgPoint(e);
+      setFans((fs) => [...fs, { id: Date.now() + Math.random(), x: p.x, y: p.y, r: fanRadiusPx() }]);
+      return;
+    }
+    if (scaleMode !== 'ref' || isVector) return;
     const p = svgPoint(e);
     setMeasure((m) => (!m.a || m.b ? { a: p, b: null } : { ...m, b: p }));
   };
 
   // no-light zones are drawn by dragging a rectangle on the plan
   const onZoneDown = (e) => {
-    if (!zoneMode || !img) return;
+    if (!zoneMode || !source) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture?.(e.pointerId);
     const p = svgPoint(e);
@@ -219,78 +397,191 @@ export default function App() {
     }
   };
 
-  const runAI = async () => {
-    if (!img) return;
-    setBusy('Asking Claude for the scale…'); setAiResult(null);
-    try {
-      const r = await estimateScaleWithAI({ apiKey, imageBase64: img.base64, mediaType: img.mime, width: img.w, height: img.h });
-      setAiResult(r);
-      if (r.pxPerFoot > 0) { setManualPx(+r.pxPerFoot.toFixed(3)); setScaleMode('manual'); }
-    } catch (err) { setAiResult({ error: String(err.message || err) }); }
-    finally { setBusy(''); }
-  };
+  // --- find the bed ---------------------------------------------------------
+  // A bed is the one piece of furniture whose position CHANGES THE CEILING: you
+  // do not put a downlight over it, because whoever is lying there looks
+  // straight up into the fitting.
+  //
+  // BOTH ROUTES IN COME THROUGH HERE. A photo is downscaled; a DXF is rendered
+  // to a plain black-on-white raster first. After that neither this effect nor
+  // anything downstream knows which it was looking at — same detector, same
+  // rectangles, same zones. A DXF *could* be read directly when it names its
+  // blocks, but across drawings from different offices it usually does not, so
+  // one path that always works beats two that each work sometimes.
+  //
+  // Fires on load, before any boundary exists: detection needs only the plan,
+  // so by the time there is a region to light the answer is already in. It is
+  // fire-and-forget — a detector being down must not stop anyone planning a
+  // room by hand.
+  useEffect(() => {
+    if (!source) return;
+    let alive = true;
+    const ctl = new AbortController();
 
-  const set = (k) => (e) => setOpt((o) => ({ ...o, [k]: parseFloat(e.target.value) }));
+    (async () => {
+      setDetectState({ status: 'running' });
+      const t0 = Date.now();
+      try {
+        const shot = await snapshotForDetection(source, img, {
+          stroke: OTHER_STROKE_PX,
+          // Two inches, always. See WALL_WEIGHT_IN in settings.js.
+          wallStroke: Math.max(1, (WALL_WEIGHT_IN / 12) * (source.pxPerFt || 20)),
+          wallLayers: wallLayerSet,
+        });
+        if (!alive) return;
+        console.log(`[detect] ${source.kind}: sending ${shot.w}x${shot.h} of ${source.w}x${source.h}`
+          + `${shot.layers ? ` (${shot.layers} layers)` : ''}`
+          + `${shot.wallLayerNames?.length ? `, walls@${shot.wallStroke}px on [${shot.wallLayerNames.join(', ')}]` : ''}`
+          + `, classes=${ZONE_CLASSES.join(',')}`);
+
+        const payload = await detectFurniture({
+          base64: shot.base64, mime: shot.mime, classes: ZONE_CLASSES, signal: ctl.signal,
+          // The size SENT, not the size of the original. The GPT route answers
+          // in fractions of the image it was given and needs this to resolve
+          // them; rescaleRect maps the result back afterwards as ever.
+          provider, w: shot.w, h: shot.h,
+        });
+        if (!alive) return;
+        if (payload?.meta) console.log('[detect] server:', payload.meta);
+
+        // No polygon here on purpose: find everything on the plan now, and let
+        // the room filter it later.
+        const image = { w: source.w, h: source.h };
+        const { kept, rejected } = detectionsToZones(payload, { image, polygon: null });
+        console.log(`[detect] kept ${kept.length}, rejected ${rejected.length}`, { kept, rejected });
+
+        setDetections(kept.map((k, i) => ({ ...k, id: `det-${i}-${Math.round(k.rect.x0)}-${Math.round(k.rect.y0)}` })));
+        setDetectState({
+          status: 'done', rejected, ms: Date.now() - t0,
+          meta: payload?.meta ?? null, count: kept.length, kind: source.kind,
+          provider,
+        });
+      } catch (err) {
+        if (!alive || err.name === 'AbortError') return;
+        console.warn('[detect] failed:', err);
+        setDetectState({ status: 'error', error: String(err.message || err), ms: Date.now() - t0 });
+      }
+    })();
+
+    return () => { alive = false; ctl.abort(); };
+    // `provider` is a dependency because switching provider is a deliberate act
+    // whose whole purpose is to see the other answer — waiting for a second
+    // click would just be a click. The nonce is the explicit re-run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, img, detectNonce, provider]);
+
   const toggle = (k) => () => setLayers((l) => ({ ...l, [k]: !l[k] }));
-  const base = img ? img.name.replace(/\.[^.]+$/, '') : 'plan';
 
-  const measureLen = measure.a && measure.b ? Math.hypot(measure.b.x - measure.a.x, measure.b.y - measure.a.y) : 0;
+  const roomStats = useMemo(
+    () => (litOutline && pxPerFt ? outlineStats(litOutline, pxPerFt) : null),
+    [litOutline, pxPerFt]);
+
+  /**
+   * The layout, in the one number a lighting drawing is actually judged on.
+   *
+   * Counting fittings says nothing on its own — twelve lights in a 400 sqft
+   * hall and twelve in a 90 sqft bedroom are different jobs. Lumens per square
+   * foot is the figure that travels: 15-20 reads as comfortable ambient light
+   * for a living space, 25+ as bright. What one fitting puts out is in
+   * settings.js.
+   */
+  const light = useMemo(() => {
+    if (!plan?.ok) return null;
+    const total = plan.stats.large * FITTING_LUMENS.large + plan.stats.small * FITTING_LUMENS.small;
+    return { total, perSqft: total / Math.max(1, plan.stats.areaSqft) };
+  }, [plan]);
+
+  /** One line, only when something actually went wrong. */
+  const trouble = useMemo(() => {
+    if (!plan?.ok) return '';
+    const s = plan.stats;
+    if (s.unserved > 0) return `${s.unserved} cell${s.unserved > 1 ? 's have' : ' has'} no light at all — that should not happen.`;
+    if (s.clashes > 0) return `${s.clashes} light${s.clashes > 1 ? 's sit' : ' sits'} inside a fan's clearance or a no-light zone, because the cell has nowhere else to go.`;
+    if (s.ceded > 0) return `${s.ceded} cell${s.ceded > 1 ? 's are' : ' is'} left to the fan — no light fits clear of the blades.`;
+    if (s.outsideBand > 0) return `${s.outsideBand} light${s.outsideBand > 1 ? 's sit' : ' sits'} off its cell centre.`;
+    return '';
+  }, [plan]);
+  const base = source ? source.name.replace(/\.[^.]+$/, '') : 'plan';
+  const roomTag = litOutline?.name ? litOutline.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
+  const exportBase = roomTag ? `${base}-${roomTag}` : base;
+
 
   return (
     <div className="app">
+      {/* Deliberately bare. This bar carried five status pills — outlines,
+          room, fans, scale, chunking — and every one of them duplicated
+          something in the panel on the right, so the eye had two places to look
+          and no reason to trust either. What is left is the name of the thing
+          and whether it is busy. */}
       <div className="topbar">
         <div className="brand">Light Planner <span>/ ambient layout</span></div>
-        <div className={'pill ' + (region?.ok ? 'ok' : region ? 'bad' : '')}>
-          {region?.ok ? `region · ${plan?.polygonFt?.length ?? region.polygon.length} corners` : region ? 'no region' : 'awaiting plan'}
-        </div>
-        <div className={'pill ' + (fans.length ? 'ok' : 'warn')} title={fanReason || ''}>
-          {fans.length ? `${fans.length} fan${fans.length > 1 ? 's' : ''} found` : 'no fan marker'}</div>
-        <div className={'pill ' + (pxPerFt ? 'ok' : 'bad')}>{pxPerFt ? describeScale(pxPerFt) : 'scale not set'}</div>
-        {chunking && chunking.options.length > 1 && (
-          <div className={'pill ' + (chosenId ? 'ok' : 'warn')}>
-            {chosenId
-              ? `chunks · ${plan?.chunking?.label ?? chosenId}`
-              : `${chunking.options.length} ways to chunk — pick one`}
-          </div>
-        )}
         <div className="spacer" />
         {busy && <div className="pill">{busy}</div>}
       </div>
 
-      <div className={'stage' + (img ? '' : ' empty') + (showPicker ? ' wide' : '')}
+      <div className={'stage' + (source ? '' : ' empty') + (showPicker || showTrace ? ' wide' : '')}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); loadFile(e.dataTransfer.files[0]); }}
       >
-        {!img ? (
+        {!source ? (
           <div className={'dropzone' + (over ? ' over' : '')}>
-            <h2>Drop a marked-up floor plan</h2>
-            <p>Draw a <b>solid green</b> box or polyline around the area you want lit, and a
-               <b> red dotted circle</b> on the ceiling fan. Then drop the image here.</p>
+            <h2>Drop a floor plan</h2>
+            <p>To start creating lighting schemes</p>
+            
             <label className="btn primary" style={{ display: 'inline-block' }}>
-              Choose image
-              <input type="file" accept="image/*" style={{ display: 'none' }}
+              Choose a DXF or an image
+              <input type="file" accept=".dxf,image/*" style={{ display: 'none' }}
                 onChange={(e) => loadFile(e.target.files[0])} />
             </label>
-            <div className="legend">
-              <div><span className="swatch g" /> area of interest</div>
-              <div><span className="swatch r" /> ceiling fan</div>
-            </div>
+            {dxf?.error && <p className="note warn" style={{ maxWidth: '42ch', margin: '14px auto 0' }}>{dxf.error}</p>}
           </div>
+        ) : showTrace ? (
+          <OutlineTracer
+            source={source}
+            pxPerFt={pxPerFt}
+            outlines={outlinesPx}
+            selectedId={selectedOutlineId}
+            onSelect={setSelectedOutlineId}
+            onCommit={commitOutline}
+            onUpdateOutline={updateOutline}
+            onDeleteOutline={deleteOutline}
+            onConfirm={(id) => { setSelectedOutlineId(id); setLitOutlineId(id); setChunkPick(null); }}
+            unitId={source.unitId}
+            unitCandidates={UNITS}
+            onUnitChange={(u) => { setUnitId(u); }}
+            fans={isVector ? [] : fans}
+            /* The scale controls live on the tracer screen for an image, but the
+               state stays here: it is the same scale the sidebar edits later,
+               and two copies of it would drift the moment either was touched. */
+            scale={isVector ? null : {
+              mode: scaleMode, setMode: setScaleMode,
+              fanSweep, setFanSweep, refId, setRefId,
+              customFt, setCustomFt, manualPx, setManualPx,
+              measure, setMeasure, fanReason,
+            }} />
         ) : showPicker ? (
           <ChunkPicker
             options={chunking.options}
             recommendedId={chunking.recommendedId}
             initialId={chunkPick}
             onConfirm={setChunkPick}
-            src={img.src} imgW={img.w} imgH={img.h}
-            polygonPx={geo.polygonPx} zonesPx={zones} fansPx={fans} toPx={geo.toPx} />
+            src={isVector ? null : source.src}
+            vector={isVector ? source.render : null}
+            wallLayers={null}
+            imgW={source.w} imgH={source.h}
+            polygonPx={geo.polygonPx} zonesPx={zoneList} fansPx={fans} toPx={geo.toPx} />
         ) : (
           <div className="canvas-wrap">
-            <PlanCanvas ref={svgRef} src={img.src} width={img.w} height={img.h}
+            <PlanCanvas ref={svgRef}
+              src={isVector ? null : source.src}
+              vector={isVector ? source.render : null}
+              wallLayers={null}
+              width={source.w} height={source.h}
               plan={plan} fansPx={fans} pxPerFt={pxPerFt} layers={layers} zoom={zoom}
               measure={measure} onCanvasClick={onCanvasClick}
-              zones={zones} draftZone={draftZone} zoneMode={zoneMode}
+              cursor={fanMode ? 'crosshair' : null}
+              zones={zoneList} draftZone={draftZone} zoneMode={zoneMode}
               onZoneDown={onZoneDown} onZoneMove={onZoneMove} onZoneUp={onZoneUp} />
           </div>
         )}
@@ -300,51 +591,98 @@ export default function App() {
         <div className="sec">
           <h3>Plan</h3>
           <div className="btnrow">
-            <label className="btn">Load image
-              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => loadFile(e.target.files[0])} />
+            <label className="btn">Load DXF or image
+              <input type="file" accept=".dxf,image/*" style={{ display: 'none' }} onChange={(e) => loadFile(e.target.files[0])} />
             </label>
-            {img && <button className="btn" onClick={() => { setImg(null); setRegion(null); setFans([]); setChunkPick(null); }}>Clear</button>}
+            {source && <button className="btn" onClick={() => {
+              setImg(null); setDxf(null); setFans([]); setChunkPick(null);
+              setOutlines([]); setSelectedOutlineId(null); setLitOutlineId(null); setUnitId(null);
+            }}>Clear</button>}
           </div>
-          {region && !region.ok && <p className="note warn">{region.reason}</p>}
-          {region?.ok && region.warning && <p className="note warn">{region.warning}</p>}
+          {source && (
+            <div className="kv" style={{ marginTop: 8 }}>
+              <span>{isVector ? 'Drawing' : 'Image'}</span>
+              <b title={source.name}>{source.name.length > 22 ? source.name.slice(0, 20) + '…' : source.name}</b>
+            </div>
+          )}
+          {dxf?.error && <p className="note warn">{dxf.error}</p>}
         </div>
 
-        {img && <>
+        {source && step !== 'trace' && <>
+          {/* --- the rooms traced on this plan ----------------------------- */}
           <div className="sec">
-            <h3>Detection</h3>
-            <Slider label="Green sensitivity" v={tuning.sat} min={0.08} max={0.6} step={0.01}
-              onChange={(v) => setTuning((t) => ({ ...t, sat: v }))} fmt={(v) => v.toFixed(2)} invert />
-            <Slider label="Seal gaps (min)" v={tuning.seal} min={0} max={30} step={1}
-              onChange={(v) => setTuning((t) => ({ ...t, seal: v }))} fmt={(v) => `${v} px`} />
-            <Slider label="Red sensitivity" v={tuning.redSat} min={0.1} max={0.7} step={0.01}
-              onChange={(v) => setTuning((t) => ({ ...t, redSat: v }))} fmt={(v) => v.toFixed(2)} invert />
-            <Slider label="Join fan dots" v={tuning.link} min={2} max={20} step={1}
-              onChange={(v) => setTuning((t) => ({ ...t, link: v }))} fmt={(v) => `${v} px`} />
-            <label className="check">
-              <input type="checkbox" checked={useBoundingRect} onChange={(e) => setUseBoundingRect(e.target.checked)} />
-              Simplify region to a rectangle
-            </label>
+            <h3>Room</h3>
+            {outlinesPx.length > 0 && (
+              <select value={litOutlineId || ''}
+                onChange={(e) => { setLitOutlineId(e.target.value); setSelectedOutlineId(e.target.value); setChunkPick(null); }}>
+                {outlinesPx.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            )}
+            {roomStats && <div style={{ marginTop: 8 }}>
+              <div className="kv"><span>Size</span>
+                <b>{ftin(roomStats.widthFt)} × {ftin(roomStats.heightFt)}</b></div>
+              <div className="kv"><span>Area</span><b>{Math.round(roomStats.areaSqft)} sq ft</b></div>
+              <div className="kv"><span>Corners</span><b>{roomStats.corners}</b></div>
+              <div className="kv"><span>Lights</span><b>{plan?.ok ? plan.lights.length : '—'}</b></div>
+            </div>}
+            <button className="btn" style={{ marginTop: 8, width: '100%' }}
+              onClick={() => { setLitOutlineId(null); setChunkPick(null); }}>
+              Trace another room
+            </button>
+            {region?.warning && <p className="note warn">{region.warning}</p>}
           </div>
 
+          {/* --- fans: an input, not a setting ---------------------------- */}
+          {isVector && (
+            <div className="sec">
+              <h3>Ceiling fans</h3>
+              <div className="btnrow">
+                <button className={'btn' + (fanMode ? ' accent' : '')}
+                  onClick={() => { setFanMode((v) => !v); setZoneMode(false); }}>
+                  {fanMode ? 'Done placing' : 'Place fans'}
+                </button>
+                {fans.length > 0 && <button className="btn" onClick={() => setFans([])}>Clear all</button>}
+              </div>
+              <select value={fanSweep} onChange={(e) => setFanSweep(e.target.value)} style={{ marginTop: 8 }}>
+                {REFERENCES.filter((r) => r.group === 'Fan').map((r) => (
+                  <option key={r.id} value={r.id}>{r.label}</option>
+                ))}
+              </select>
+              <div className="kv" style={{ marginTop: 8 }}><span>In this room</span>
+                <b>{geo?.fansInRoom?.length ?? 0} of {fans.length}</b></div>
+            </div>
+          )}
+
+          {!isVector && fans.length > 0 && (
+            <div className="sec">
+              <h3>Ceiling fans</h3>
+              <div className="kv"><span>Found on the plan</span><b>{fans.length}</b></div>
+              <div className="kv"><span>In this room</span><b>{geo?.fansInRoom?.length ?? 0}</b></div>
+            </div>
+          )}
+
+          {/* --- no-light zones ------------------------------------------- */}
           <div className="sec">
             <h3>No-light zones</h3>
             <div className="btnrow">
-              <button className={'btn' + (zoneMode ? ' accent' : '')} onClick={() => { setZoneMode((v) => !v); setDraftZone(null); }}>
+              <button className={'btn' + (zoneMode ? ' accent' : '')}
+                onClick={() => { setZoneMode((v) => !v); setDraftZone(null); setFanMode(false); }}>
                 {zoneMode ? 'Done drawing' : 'Draw zone'}
               </button>
               {zones.length > 0 && <button className="btn" onClick={() => setZones([])}>Clear all</button>}
             </div>
-            {zoneMode && (
-              <div className="hint" style={{ marginTop: 10 }}>
-                Drag a rectangle over anything that can't take a light — a beam, skylight,
-                duct or AC unit. The zone is cut out of the space, as if the outline changed,
-                and the rest re-chunks around it.
+
+            {detectedZones.map((z) => (
+              <div className="kv" key={z.id}>
+                <span>{z.cls === 'bed' ? 'Bed' : z.cls} <span style={{ opacity: 0.6 }}>· found</span></span>
+                <b>
+                  {pxPerFt ? `${((z.x1 - z.x0) / pxPerFt).toFixed(1)} × ${((z.y1 - z.y0) / pxPerFt).toFixed(1)} ft` : `${Math.round(z.x1 - z.x0)} × ${Math.round(z.y1 - z.y0)} px`}
+                  <button className="btn" style={{ marginLeft: 8, padding: '1px 7px', fontSize: 11 }}
+                    title="Not a bed — remove this zone"
+                    onClick={() => setDismissed((d) => [...d, z.id])}>×</button>
+                </b>
               </div>
-            )}
-            {!zoneMode && zones.length === 0 && (
-              <p className="note">Mark rectangles where lights can't go. They're subtracted from
-                the space; what remains is chunked into rectangles, and every chunk gets its own grid.</p>
-            )}
+            ))}
             {zones.map((z, i) => (
               <div className="kv" key={z.id}>
                 <span>Zone {i + 1}</span>
@@ -355,223 +693,54 @@ export default function App() {
                 </b>
               </div>
             ))}
+            {dismissed.length > 0 && (
+              <button className="btn" style={{ marginTop: 6 }} onClick={() => setDismissed([])}>
+                Restore {dismissed.length} dismissed
+              </button>
+            )}
+
+            {/* The bed detector, as three lines. It used to be a whole essay
+                plus a side-by-side of what was sent and what came back — a
+                debugging surface, useful once and in the way ever after. The
+                console still carries all of it. */}
+            <div className="kv" style={{ marginTop: 10 }}><span>Beds</span>
+              <b>{detectState.status === 'running' ? 'looking…'
+                : detectState.status === 'error' ? 'detector offline'
+                : detectState.status === 'done'
+                  ? `${detectState.count} on the plan, ${detectedZones.length} here`
+                  : '—'}</b></div>
+            <div className="kv"><span>Detector</span>
+              <select value={provider} onChange={(e) => setProvider(e.target.value)}
+                style={{ width: 'auto', padding: '2px 4px', fontSize: 11 }}>
+                {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select></div>
+            <button className="btn" style={{ marginTop: 6 }} disabled={!!busy}
+              onClick={() => setDetectNonce((n) => n + 1)}>Look again</button>
           </div>
 
-          {chunking && chunking.options.length > 0 && (
+          {/* --- chunking: one button ------------------------------------- */}
+          {/* Shown whenever there is a choice to make, including while it is
+              still outstanding — drawing a zone holds the picker off the screen,
+              and without this the panel simply ended and nothing said why. */}
+          {chunking?.needsChoice && (
             <div className="sec">
               <h3>Chunking</h3>
-              {!chunking.needsChoice ? (
-                <p className="note">
-                  {chunking.options[0].metrics.pieces === 1
-                    ? 'The space is a single rectangle, so there is nothing to decide.'
-                    : `Only one way to read this space — ${chunking.options[0].metrics.pieces} chunks — so there is nothing to decide.`}
-                </p>
-              ) : step === 'chunks' ? (
-                <p className="note">{chunking.options.length} configurations. Pick one on the plan and
-                  the lights get placed inside it. Nothing is placed until you do.</p>
-              ) : (<>
-                <div className="kv"><span>Reading</span><b>{plan?.chunking?.label ?? '—'}</b></div>
-                <div className="kv"><span>Chunks</span><b>{plan?.chunking?.metrics?.pieces ?? '—'}</b></div>
-                <div className="kv"><span>Chosen from</span><b>{chunking.options.length} options</b></div>
-                {plan?.chunking?.chosenBy === 'auto' && (
-                  <p className="note">Using the recommendation. Change it below if the space reads
-                    differently to you.</p>
-                )}
-                <button className="btn" style={{ marginTop: 6 }} onClick={() => setChunkPick(null)}>
-                  Change chunking
-                </button>
-                <p className="note">The target cell, the sliver threshold and the zones all re-read
-                  the space. Your choice is kept for as long as it still exists.</p>
-              </>)}
+              <button className="btn" style={{ width: '100%' }}
+                onClick={() => { setChunkPick(null); setZoneMode(false); }}>
+                {step === 'chunks' ? 'Pick a chunking' : 'Change chunking'}
+              </button>
             </div>
           )}
 
-          <div className="sec">
-            <h3>Scale</h3>
-            <div className="seg">
-              {[['fan', 'From fan'], ['ref', 'Measure'], ['manual', 'Manual']].map(([k, l]) => (
-                <button key={k} className={scaleMode === k ? 'on' : ''} onClick={() => setScaleMode(k)}>{l}</button>
-              ))}
-            </div>
-
-            {scaleMode === 'fan' && (<>
-              <div className="hint">You already drew the fan{fans.length > 1 ? 's' : ''} — and a fan is a standard
-                object, so it doubles as a ruler.{fans.length > 1 ? ' With several, the median is used.' : ''}</div>
-              <select value={fanSweep} onChange={(e) => setFanSweep(e.target.value)}>
-                {REFERENCES.filter((r) => r.group === 'Fan').map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-              </select>
-              {!fans.length && <p className="note warn">{fanReason} Raise the red sensitivity, or switch to Measure.</p>}
-              {fans.map((f, i) => (
-                <div className="kv" key={i} style={i === 0 ? { marginTop: 8 } : undefined}>
-                  <span>Fan {i + 1} sweep</span><b>{(f.r * 2).toFixed(0)} px</b></div>
-              ))}
-              {fans.length > 1 && (() => {
-                const d = fans.map((f) => f.r * 2);
-                const spread = (Math.max(...d) - Math.min(...d)) / (d.reduce((a, b) => a + b, 0) / d.length);
-                return spread > 0.15
-                  ? <p className="note warn">Those markers differ in size by {Math.round(spread * 100)}%. If they
-                      aren't the same fitting, set the scale by Measure instead.</p>
-                  : null;
-              })()}
-            </>)}
-
-            {scaleMode === 'ref' && (<>
-              <div className="hint">Click the two ends of something you can identify on the plan, then say what it is.</div>
-              <select value={refId} onChange={(e) => setRefId(e.target.value)}>
-                {['Door', 'Furniture', 'Sanitary', 'Kitchen', 'Fan', 'Other'].map((g) => (
-                  <optgroup key={g} label={g}>
-                    {REFERENCES.filter((r) => r.group === g).map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-                  </optgroup>
-                ))}
-              </select>
-              {refId === 'custom' && (
-                <div className="row" style={{ marginTop: 8 }}>
-                  <label>Real length (ft)</label>
-                  <input type="number" step="0.05" value={customFt} style={{ maxWidth: 90 }}
-                    onChange={(e) => setCustomFt(parseFloat(e.target.value) || 0)} />
-                </div>
-              )}
-              <div className="kv" style={{ marginTop: 8 }}>
-                <span>{!measure.a ? 'Click the first end' : !measure.b ? 'Click the other end' : 'Measured'}</span>
-                <b>{measureLen ? `${measureLen.toFixed(0)} px` : '—'}</b>
-              </div>
-              {measure.a && <button className="btn" style={{ marginTop: 6 }} onClick={() => setMeasure({ a: null, b: null })}>Reset measurement</button>}
-            </>)}
-
-            {scaleMode === 'manual' && (
-              <div className="row"><label>Pixels per foot</label>
-                <input type="number" step="0.01" value={manualPx} style={{ maxWidth: 100 }}
-                  onChange={(e) => setManualPx(parseFloat(e.target.value) || 0)} />
-              </div>
-            )}
-
-            <details style={{ marginTop: 10 }}>
-              <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11.5 }}>Let Claude find the scale</summary>
-              <p className="note">Sends the image to the Claude API and asks it to spot a door, fixture or dimension line. Your key stays in this browser.</p>
-              <input type="password" placeholder="sk-ant-…" value={apiKey} onChange={(e) => setApiKey(e.target.value)} style={{ marginTop: 6 }} />
-              <button className="btn accent" style={{ marginTop: 6 }} disabled={!apiKey || !!busy} onClick={runAI}>Estimate scale</button>
-              {aiResult && (aiResult.error
-                ? <p className="note warn">{aiResult.error}</p>
-                : <div style={{ marginTop: 8 }}>
-                    <div className="kv"><span>Reference</span><b>{aiResult.object}</b></div>
-                    <div className="kv"><span>px / ft</span><b>{Number(aiResult.pxPerFoot).toFixed(2)}</b></div>
-                    <div className="kv"><span>Confidence</span><b>{aiResult.confidence}</b></div>
-                    <p className="note">{aiResult.note}</p>
-                  </div>)}
-            </details>
-          </div>
-
-          <div className="sec">
-            <h3>Grid</h3>
-            <Slider label="Cell area" v={opt.targetArea} min={16} max={90} step={1}
-              onChange={(v) => setOpt((o) => ({ ...o, targetArea: v, ...sidesForArea(v) }))} fmt={(v) => `${v} sqft`} />
-            <Slider label="Area tolerance" v={opt.areaTol} min={0.05} max={0.5} step={0.05} onChange={(v) => setOpt((o) => ({ ...o, areaTol: v }))} fmt={(v) => `±${Math.round(v * 100)}%`} />
-            <p className="note">What one cell should cover — the whole brief, in the quantity that
-              actually matters. Anything from{' '}
-              <b>{(opt.targetArea * (1 - opt.areaTol)).toFixed(0)}</b> to{' '}
-              <b>{(opt.targetArea * (1 + opt.areaTol)).toFixed(0)} sqft</b> is acceptable, and inside that
-              band the grid takes the <b>biggest</b> cells it can — after it has settled where a lone
-              fan sits. The side lengths below follow from the area; move them and they stay put.</p>
-            <Slider label="Ideal cell side" v={opt.targetCell} min={3} max={12} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, targetCell: v }))} fmt={(v) => `${v} ft`} />
-            <Slider label="Min cell" v={opt.minCell} min={2} max={10} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, minCell: v }))} fmt={(v) => `${v} ft`} />
-            <Slider label="Max cell" v={opt.maxCell} min={5} max={16} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, maxCell: v }))} fmt={(v) => `${v} ft`} />
-            <Slider label="Prefer bigger cells" v={opt.sizeBias} min={0} max={3} step={0.1}
-              onChange={(v) => setOpt((o) => ({ ...o, sizeBias: v }))} fmt={(v) => v.toFixed(1)} />
-            <Slider label="Keep it square" v={opt.shapeWeight} min={0} max={4} step={0.1}
-              onChange={(v) => setOpt((o) => ({ ...o, shapeWeight: v }))} fmt={(v) => v.toFixed(1)} />
-            <Slider label="Fan on a line" v={opt.fanLineWeight} min={0} max={5} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, fanLineWeight: v }))} fmt={(v) => v.toFixed(2)} />
-            <Slider label="...on a corner" v={opt.fanCornerBonus} min={0} max={5} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, fanCornerBonus: v }))} fmt={(v) => v.toFixed(2)} />
-            <Slider label="Fan pull" v={opt.fanAnchorWeight} min={0} max={3} step={0.1} onChange={(v) => setOpt((o) => ({ ...o, fanAnchorWeight: v }))} fmt={(v) => v.toFixed(1)} />
-            <Slider label="Skip chunks under" v={opt.minChunk} min={0} max={4} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, minChunk: v }))} fmt={(v) => `${v} ft`} />
-            <p className="note">The space (minus no-light zones) is chopped into rectangular chunks,
-              and each chunk is gridded on its own. A chunk narrower than this in either direction
-              is left out entirely.</p>
-          </div>
-
-          {step !== 'chunks' && <>
-          <div className="sec">
-            <h3>Lights</h3>
-            <Slider label="Min wall distance" v={opt.minWallDistance} min={2} max={9} step={0.25}
-              onChange={(v) => setOpt((o) => ({ ...o, minWallDistance: v }))} fmt={(v) => `${v} ft`} />
-            <p className="note">A large light needs this much clear to the nearest wall in
-              every direction. Anything closer becomes a small light at the cell centre.</p>
-            <Slider label="Centre band" v={opt.centreBand} min={0.05} max={0.45} step={0.01}
-              onChange={(v) => setOpt((o) => ({ ...o, centreBand: v }))} fmt={(v) => `±${Math.round(v * 100)}%`} />
-            <label className="check">
-              <input type="checkbox" checked={opt.smallFirst}
-                onChange={(e) => setOpt((o) => ({ ...o, smallFirst: e.target.checked }))} />
-              Small lights first — large only where forced
-            </label>
-            {opt.smallFirst ? (
-              <>
-                <Slider label="Neighbour cost" v={opt.pairCostNormal} min={0} max={2} step={0.05}
-                  onChange={(v) => setOpt((o) => ({ ...o, pairCostNormal: v }))} fmt={(v) => v.toFixed(2)} />
-                <p className="note">Every cell gets a small light at its centre. A large light is used
-                  only where a fan's clearance covers a cell's centre band — it then serves that cell
-                  and a neighbour, and the neighbour gives up its own light. With no fan on the plan
-                  there are no large lights at all.</p>
-              </>
-            ) : (
-              <Slider label="Awkward-cell priority" v={opt.awkwardPriority} min={0} max={5} step={0.25}
-                onChange={(v) => setOpt((o) => ({ ...o, awkwardPriority: v }))} fmt={(v) => v.toFixed(2)} />
-            )}
-            <label className="check">
-              <input type="checkbox" checked={opt.allowEdgeSliding}
-                onChange={(e) => setOpt((o) => ({ ...o, allowEdgeSliding: e.target.checked }))} />
-              Large light may sit anywhere along its grid line
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={opt.allowChunkAxis}
-                onChange={(e) => setOpt((o) => ({ ...o, allowChunkAxis: e.target.checked }))} />
-              ...preferring the chunk's centre axis
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={opt.allowRoaming}
-                onChange={(e) => setOpt((o) => ({ ...o, allowRoaming: e.target.checked }))} />
-              ...or leave the grid line entirely, as a last resort
-            </label>
-            <Slider label="Alignment strictness" v={opt.misalignPenalty} min={0} max={5} step={0.25}
-              onChange={(v) => setOpt((o) => ({ ...o, misalignPenalty: v }))} fmt={(v) => v.toFixed(2)} />
-            <Slider label="Cost of roaming" v={opt.roamPenalty} min={0} max={5} step={0.25}
-              onChange={(v) => setOpt((o) => ({ ...o, roamPenalty: v }))} fmt={(v) => v.toFixed(2)} />
-            <Slider label="Vertex dead band" v={opt.vertexBand} min={0} max={2} step={0.05}
-              onChange={(v) => setOpt((o) => ({ ...o, vertexBand: v }))} fmt={(v) => `${v.toFixed(2)} ft`} />
-            <label className="check">
-              <input type="checkbox" checked={opt.allowGridEdgePositions}
-                onChange={(e) => setOpt((o) => ({ ...o, allowGridEdgePositions: e.target.checked }))} />
-              ...or to a grid crossing at the end of its line
-            </label>
-            <p className="note">A large light prefers the midpoint of the line it shares, then a chunk
-              centre axis or a vertex, then anywhere else along that line — and only as a last resort
-              does it leave the line, sliding along the row or column joining the two boxes instead.
-              Alignment strictness is what buys a tidy position at the price of a box or two; cost of
-              roaming is what keeps it on the grid until it really cannot be.</p>
-            <label className="check">
-              <input type="checkbox" checked={opt.omitAwkwardCells}
-                onChange={(e) => setOpt((o) => ({ ...o, omitAwkwardCells: e.target.checked }))} />
-              Leave a cell to the fan rather than place an off-centre light
-            </label>
-            <p className="note">A small light must sit within the centre band of its cell. A cell
-              that can't take one is paired with a neighbour and served by a large light instead.</p>
-            <Slider label="Align tolerance" v={opt.alignTol} min={0} max={3} step={0.05} onChange={(v) => setOpt((o) => ({ ...o, alignTol: v }))} fmt={(v) => `${v} ft`} />
-            <Slider label="Min light spacing" v={opt.minLightSpacing} min={0} max={8} step={0.1}
-              onChange={(v) => setOpt((o) => ({ ...o, minLightSpacing: v }))} fmt={(v) => `${v.toFixed(1)} ft`} />
-            <Slider label="Fan clearance" v={opt.fanClearance} min={0} max={6} step={0.25} onChange={(v) => setOpt((o) => ({ ...o, fanClearance: v }))} fmt={(v) => `${v} ft`} />
-            <label className="check">
-              <input type="checkbox" checked={opt.preferLongAxis} onChange={(e) => setOpt((o) => ({ ...o, preferLongAxis: e.target.checked }))} />
-              Bias pairs along the room's long axis
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={opt.uniformOrientation} onChange={(e) => setOpt((o) => ({ ...o, uniformOrientation: e.target.checked }))} />
-              Prefer one pairing direction (regular array)
-            </label>
-            <button className="btn" style={{ marginTop: 4 }} onClick={() => setOpt(resolveOptions({ ...DEFAULTS }))}>Reset to defaults</button>
-          </div>
-
+          {step !== 'chunks' && step !== 'trace' && <>
           <div className="sec">
             <h3>View</h3>
-            <Slider label="Zoom" v={zoom} min={0.25} max={3} step={0.05} onChange={setZoom} fmt={(v) => `${Math.round(v * 100)}%`} />
-            {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Region outline'], ['grid', 'Grid lines'],
+            <div className="btnrow" style={{ marginBottom: 6 }}>
+              <button className="btn" onClick={() => setZoom((z) => Math.max(0.25, +(z - 0.25).toFixed(2)))}>−</button>
+              <button className="btn" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
+              <button className="btn" onClick={() => setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)))}>+</button>
+            </div>
+            {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Room outline'], ['grid', 'Grid lines'],
               ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'], ['fan', 'Fan'],
               ['zones', 'No-light zones']].map(([k, l]) => (
               <label className="check" key={k}><input type="checkbox" checked={layers[k]} onChange={toggle(k)} />{l}</label>
@@ -582,72 +751,10 @@ export default function App() {
             <div className="sec">
               <h3>Result</h3>
               <div className="stats">
-                <div className="stat"><b>{plan.stats.large}</b><span>large</span></div>
-                <div className="stat"><b>{plan.stats.small}</b><span>small</span></div>
-                <div className="stat"><b>{plan.stats.cells}</b><span>cells</span></div>
-                <div className="stat"><b>{Math.round(plan.stats.areaSqft)}</b><span>sq ft</span></div>
+                <div className="stat"><b>{plan.lights.length}</b><span>lights</span></div>
+                <div className="stat"><b>{light?.perSqft.toFixed(0)}</b><span>lm / sq ft</span></div>
               </div>
-              <div style={{ marginTop: 10 }}>
-                <div className="kv"><span>Cells lit</span>
-                  <b style={{ color: plan.stats.unserved ? 'var(--danger)' : 'var(--success)' }}>
-                    {plan.stats.served} / {plan.stats.cells - plan.stats.ceded}</b></div>
-                {plan.stats.ceded > 0 && (
-                  <div className="kv"><span>Cells left to a fan</span><b>{plan.stats.ceded}</b></div>
-                )}
-                <div className="kv"><span>Chunks</span>
-                  <b>{plan.stats.chunks}{plan.stats.omittedChunks > 0 ? ` (+${plan.stats.omittedChunks} slivers skipped)` : ''}</b></div>
-                <div className="kv"><span>Average cell side</span><b>{plan.stats.avgCell.toFixed(2)} ft</b></div>
-                <div className="kv"><span>Sq ft per light</span><b>{(plan.stats.areaSqft / Math.max(1, plan.lights.length)).toFixed(0)}</b></div>
-                <div className="kv"><span>Distinct rows / cols</span>
-                  <b>{new Set(plan.lights.map((l) => l.y.toFixed(1))).size} / {new Set(plan.lights.map((l) => l.x.toFixed(1))).size}</b></div>
-                {plan.stats.fans > 1 && (
-                  <div className="kv"><span>Fans on the plan</span><b>{plan.stats.fans}</b></div>
-                )}
-                {plan.stats.nudged > 0 && (
-                  <div className="kv"><span>Moved clear of the fan</span><b>{plan.stats.nudged}</b></div>
-                )}
-                {plan.lights.filter((l) => l.follows && (l.follows.x || l.follows.y)).length > 0 && (
-                  <div className="kv"><span>Lined up with a moved light</span>
-                    <b>{plan.lights.filter((l) => l.follows && (l.follows.x || l.follows.y)).length}</b></div>
-                )}
-                {plan.lights.filter((l) => l.roaming).length > 0 && (
-                  <div className="kv"><span>Large lights off the grid line</span>
-                    <b>{plan.lights.filter((l) => l.roaming).length}</b></div>
-                )}
-                {plan.lights.filter((l) => l.kind === 'large' && l.cells.length === 4).length > 0 && (
-                  <div className="kv"><span>Lights covering 4 boxes</span>
-                    <b>{plan.lights.filter((l) => l.kind === 'large' && l.cells.length === 4).length}</b></div>
-                )}
-                {plan.lights.filter((l) => l.kind === 'large' && l.spot !== 'midpoint').length > 0 && (
-                  <div className="kv"><span>Large lights off the midpoint</span>
-                    <b>{plan.lights.filter((l) => l.kind === 'large' && l.spot !== 'midpoint').length}</b></div>
-                )}
-                {plan.stats.awkward > 0 && (
-                  <div className="kv"><span>Off-centre cells rescued</span>
-                    <b style={{ color: plan.stats.rescued === plan.stats.awkward ? 'var(--success)' : undefined }}>
-                      {plan.stats.rescued} / {plan.stats.awkward}</b></div>
-                )}
-              </div>
-              {plan.stats.unserved > 0 && (
-                <p className="note warn">{plan.stats.unserved} cell{plan.stats.unserved > 1 ? 's have' : ' has'} no
-                  light. That should never happen — please send me the plan.</p>
-              )}
-              {plan.stats.ceded > 0 && (
-                <p className="note">{plan.stats.ceded} cell{plan.stats.ceded > 1 ? 's have' : ' has'} no light
-                  of {plan.stats.ceded > 1 ? 'their' : 'its'} own — a fan sits too close to the centre for a
-                  small light, and no large light can reach {plan.stats.ceded > 1 ? 'them' : 'it'} either. The fan
-                  is the ceiling feature there. Lower the fan clearance if you want a light anyway.</p>
-              )}
-              {plan.stats.outsideBand > 0 && (
-                <p className="note warn">{plan.stats.outsideBand} small
-                  light{plan.stats.outsideBand > 1 ? 's sit' : ' sits'} outside the centre band. Switch on
-                  "leave a cell to the fan" to drop {plan.stats.outsideBand > 1 ? 'them' : 'it'} instead.</p>
-              )}
-              {plan.stats.clashes > 0 && (
-                <p className="note warn">{plan.stats.clashes} light{plan.stats.clashes > 1 ? 's sit' : ' sits'} inside
-                  the fan's clearance or a no-light zone because its cell has nowhere else to go.
-                  Lower the fan clearance, enlarge the zone so the whole cell is blocked, or move the grid.</p>
-              )}
+              {trouble && <p className="note warn">{trouble}</p>}
             </div>
           )}
           {plan && !plan.ok && <div className="sec"><p className="note warn">{plan.reason}</p></div>}
@@ -655,13 +762,12 @@ export default function App() {
           <div className="sec">
             <h3>Export</h3>
             <div className="btnrow">
-              <button className="btn" disabled={!plan?.ok} onClick={() => download(`${base}-lights.dxf`, toDXF(plan, plan.fansFt), 'application/dxf')}>DXF</button>
-              <button className="btn" disabled={!plan?.ok} onClick={() => download(`${base}-lights.csv`, toCSV(plan), 'text/csv')}>CSV</button>
-              <button className="btn" disabled={!plan?.ok} onClick={() => download(`${base}-lights.json`, toJSON(plan, { pxPerFt, mode: scaleMode }), 'application/json')}>JSON</button>
-              <button className="btn" disabled={!img} onClick={() => download(`${base}-lights.svg`, svgString(svgRef.current), 'image/svg+xml')}>SVG</button>
-              <button className="btn" disabled={!img} onClick={async () => download(`${base}-lights.png`, await svgToPNG(svgRef.current, img.w))}>PNG</button>
+              <button className="btn" disabled={!plan?.ok} onClick={() => download(`${exportBase}-lights.dxf`, toDXF(plan, plan.fansFt), 'application/dxf')}>DXF</button>
+              <button className="btn" disabled={!plan?.ok} onClick={() => download(`${exportBase}-lights.csv`, toCSV(plan), 'text/csv')}>CSV</button>
+              <button className="btn" disabled={!plan?.ok} onClick={() => download(`${exportBase}-lights.json`, toJSON(plan, { pxPerFt, mode: isVector ? 'dxf' : scaleMode, units: isVector ? source.unitLabel : null, room: litOutline ? { id: litOutline.id, name: litOutline.name, outline: 'traced', rightAngles: litOutline.rectify } : null }), 'application/json')}>JSON</button>
+              <button className="btn" disabled={!source} onClick={() => download(`${exportBase}-lights.svg`, svgString(svgRef.current), 'image/svg+xml')}>SVG</button>
+              <button className="btn" disabled={!source} onClick={async () => download(`${exportBase}-lights.png`, await svgToPNG(svgRef.current, source.w))}>PNG</button>
             </div>
-            <p className="note">DXF comes out in feet on layers ROOM / CHUNK / GRID / NO-LIGHT / LIGHT-LARGE / LIGHT-SMALL / FAN.</p>
           </div>
           </>}
         </>}
@@ -670,14 +776,3 @@ export default function App() {
   );
 }
 
-function Slider({ label, v, min, max, step, onChange, fmt, invert }) {
-  return (
-    <div className="row">
-      <label>{label}</label>
-      <input type="range" min={min} max={max} step={step}
-        value={invert ? min + max - v : v}
-        onChange={(e) => onChange(invert ? min + max - parseFloat(e.target.value) : parseFloat(e.target.value))} />
-      <span className="val">{fmt ? fmt(v) : v}</span>
-    </div>
-  );
-}

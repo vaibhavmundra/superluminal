@@ -7,11 +7,14 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tools/test-planner.mjs && node tools/test-chunking.mjs"
+    "test": "node tools/test-planner.mjs && node tools/test-chunking.mjs && node tools/test-rooms.mjs && node tools/test-dxf.mjs && node tools/test-snap.mjs && node tools/test-outline.mjs && node tools/test-vector-flow.mjs && node tools/test-furniture.mjs && node tools/test-detect-api.mjs && node tools/test-detect-flow.mjs && node tools/test-openai-detect.mjs"
   },
   "dependencies": {
+    "dxf-parser": "^1.1.2",
+    "konva": "^10.3.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-konva": "^18.2.16"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
