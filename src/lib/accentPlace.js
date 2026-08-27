@@ -184,7 +184,7 @@ export function placeZone(zone, polygon, opts = {}) {
   const wall = zone.type === 'strip'
     ? wallForRun(zone.rect, polygon)
     : nearestWall(zone.rect, polygon);
-  if (!wall) return { ...zone, rejected: 'This room has no usable wall to place against.' };
+  if (!wall) return { ...zone, rejected: 'This space has no usable wall to place against.' };
 
   const maxDist = scale * o.maxWallDistFrac;
   if (wall.dist > maxDist) {

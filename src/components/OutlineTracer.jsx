@@ -73,10 +73,19 @@ import { REFERENCES, describeScale } from '../lib/scale.js';
 // ---------------------------------------------------------------------------
 
 const SNAP_PX = 11;          // snap radius, in SCREEN pixels, at any zoom
+// EIGHT SPACES, EIGHT HUES — and this is the one place the black-and-white
+// palette is wrong. Everywhere else colour was saying a second time what a
+// symbol already said, so it went. Here there is no symbol: eight polygons
+// stacked edge to edge on a line drawing, and the ONLY thing distinguishing one
+// from the next is its fill. A ramp of eight greys was tried and it reads as
+// eight shades of the drawing rather than eight things on top of it — adjacent
+// spaces at 0.1 opacity are four greys apart and separated by about nothing.
+// Hue does in one glance what value could not, and the dot beside each name in
+// the panel is the same hue, which is what ties the list to the plan.
 const FILL = ['#6366F1', '#0EA5E9', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#14B8A6', '#DC2626'];
-const DRAFT = '#16A34A';
-const SNAPCOL = '#DC2626';
-const GUIDE = '#B45309';
+const DRAFT = '#0070F3';    // the outline being drawn IS the live thing
+const SNAPCOL = '#0070F3';  // ...and so is what it is snapping to
+const GUIDE = '#0070F3';
 
 // Outlines already traced are line work too — the only line work an image has.
 // They go into the snap index under their own layer name so the show/snap panel
@@ -85,7 +94,6 @@ const TRACED_LAYER = 'outlines traced';
 
 // Grid increments offered, in inches. Coarser than three inches and a grid
 // stops being a nicety and starts moving walls.
-const GRIDS = [[0, 'off'], [3, '3″'], [6, '6″'], [12, '1′']];
 
 const ftin = (v) => {
   const f = Math.floor(v), i = Math.round((v - f) * 12);
@@ -137,7 +145,6 @@ export default function OutlineTracer({
   const [snap, setSnap] = useState(null);
   const [orthoLock, setOrthoLock] = useState(true);
   const [alignOn, setAlignOn] = useState(true);
-  const [gridIn, setGridIn] = useState(0);
   const [shift, setShift] = useState(false);
   const [space, setSpace] = useState(false);
   const [visible, setVisible] = useState(() => new Set([...source.render.map((l) => l.layer), TRACED_LAYER]));
@@ -159,6 +166,13 @@ export default function OutlineTracer({
   // is the same gesture the layout canvas uses so the two screens behave alike.
   const [midPan, setMidPan] = useState(false);
   const panFrom = useRef(null);
+  // The door under the cursor. A door box is a button, and a button that does
+  // not answer the pointer leaves you clicking to find out whether it is one.
+  const [hoverDoor, setHoverDoor] = useState(null);
+  // ...and the space under it, for the same reason. These polygons are the
+  // things being edited on this screen; a shape that does not acknowledge the
+  // pointer reads as part of the drawing rather than as something you can grab.
+  const [hoverSpace, setHoverSpace] = useState(null);
 
   const ortho = orthoLock && !shift;
   const panMode = space;
@@ -173,6 +187,14 @@ export default function OutlineTracer({
   /** The door the user clicked, if it is still in the list. */
   const picked = (scaleUI?.doors || []).find((d) => d.id === scaleUI?.pick?.id) || null;
   const canTrace = hasScale && !measuring && !pickingDoor;
+  // THE DOOR SCREEN IS A SCREEN OF ITS OWN, and that is the point of this flag.
+  // Before the scale exists there is exactly one thing to do — name a door —
+  // and everything belonging to tracing is inert: the spaces cannot be drawn
+  // because their dimensions are unknown, the snapping options change nothing,
+  // the trace controls refuse the first click. A panel that offers six
+  // sections when five of them do nothing is a panel nobody reads, so they are
+  // put away until there is a ruler.
+  const doorScreen = isRaster && scaleUI?.mode === 'door' && !hasScale;
 
   // Every layer of a newly loaded plan starts visible. Held in state because
   // the user turns layers off to stop the cursor catching a sofa corner, and
@@ -185,6 +207,10 @@ export default function OutlineTracer({
   useEffect(() => {
     if (scaleUI?.mode !== 'ref') setMeasureDone(false);
   }, [scaleUI?.mode]);
+
+  // The last snap from before the door screen came up would otherwise sit there
+  // frozen on the plan, glyph and all.
+  useEffect(() => { if (doorScreen) setSnap(null); }, [doorScreen]);
 
   // The outlines as they look RIGHT NOW. Identical to the props except for the
   // one corner being dragged, which is local until the drag ends.
@@ -217,13 +243,15 @@ export default function OutlineTracer({
     return pts;
   }, [alignOn, draft, liveOutlines]);
 
-  // The grid is anchored on the FIRST CORNER PLACED, not on the plan's origin.
-  // Anchored to the plan it rounds coordinates, which is meaningless; anchored
-  // to the first corner it rounds DIMENSIONS, so the room comes out 12'6" and
-  // not 12'5.8". Which means there is no grid for the first corner — nothing to
-  // anchor it to yet, and no dimension to round.
-  const gridPx = gridIn > 0 && hasScale && draft.length ? (gridIn / 12) * pxPerFt : 0;
-  const gridOrigin = draft[0] || null;
+  // NO GRID. `snapPoint` still takes one — `src/lib/snap.js` implements it and
+  // `tools/test-snap.mjs` covers it — but nothing on this screen turns it on any
+  // more. It was a dimension rounder: anchored on the first corner placed, it
+  // made a space come out 12'6" instead of 12'5.8". The snap engine makes that
+  // moot. A corner lands on the wall it belongs to, and a wall in the drawing is
+  // where the building actually is; rounding it to the nearest three inches
+  // moves it OFF the wall to make a number tidier, which is a worse outline
+  // dressed as a neater one. Two rounding schemes competing for the same corner
+  // is also how a grip stops landing where the cursor says it will.
 
   /**
    * The snap index for a drag, with the dragged outline's OWN edges removed.
@@ -270,14 +298,21 @@ export default function OutlineTracer({
       ortho,
       layers: visible,
       alignTo,
-      gridPx,
-      gridOrigin,
+      gridPx: 0,
+      gridOrigin: null,
     });
     setSnap(s);
     return s;
   };
 
-  const onMouseMove = () => { if (!panMode && !midPan && !drag) recomputeSnap(); };
+  // NOT ON THE DOOR SCREEN. The snap engine exists to put a traced corner
+  // exactly on a wall; on the door screen there is no corner to place and
+  // nothing to measure, so every part of it is a lie about what a click does —
+  // the crosshair, the glyph under the cursor, the dotted alignment guides, and
+  // a pill reading "lined up with a corner" about a corner nobody is placing.
+  const onMouseMove = () => {
+    if (!panMode && !midPan && !drag && !doorScreen) recomputeSnap();
+  };
 
   /**
    * MIDDLE-BUTTON PAN.
@@ -515,18 +550,22 @@ export default function OutlineTracer({
   })();
 
   const headline = measuring ? 'Measure the plan'
+    : doorScreen ? 'Pick a door'
     : !hasScale ? 'Set the scale first'
     : tracing ? 'Tracing…'
     : outlines.length ? `${outlines.length} outline${outlines.length > 1 ? 's' : ''}`
-    : 'Trace the room';
+    : 'Trace the space';
 
   return (
     <div className="picker tracer">
       <div className="picker-head">
-        <h2>{headline}</h2>
+        <h2 classname="wordmark">{headline}</h2>
         <p>
           {measuring
             ? <>Click the two ends of something you can name, then say what it is.</>
+            : doorScreen
+              ? <>A door is a known width, so one of them gives the whole drawing
+                  its scale. Click one on the plan.</>
             : !hasScale
               ? <>Set the scale on the right first — an image does not say how big it is.</>
               : outlines.length
@@ -543,7 +582,12 @@ export default function OutlineTracer({
         <div className="rooms-plan tracer-plan" ref={wrapRef}
           onAuxClick={(e) => e.preventDefault()}
           style={{ cursor: midPan ? 'grabbing'
-            : panMode ? 'grab' : canTrace || measuring ? 'crosshair' : 'not-allowed' }}>
+            : panMode ? 'grab'
+            /* The doors are the only targets, and each one sets `pointer` for
+               itself. Plain default over the rest of the plan — `not-allowed`
+               reads as "this screen is broken" when it is simply waiting. */
+            : doorScreen ? 'default'
+            : canTrace || measuring ? 'crosshair' : 'not-allowed' }}>
           <Stage
             ref={stageRef}
             width={SW} height={SH}
@@ -573,25 +617,25 @@ export default function OutlineTracer({
                 ? source.el && <KImage image={source.el} width={source.w} height={source.h} />
                 : <>
                     {source.render.filter((l) => visible.has(l.layer)).map((l) => (
-                      <Path key={l.layer} data={l.path} stroke="#4B5563"
+                      <Path key={l.layer} data={l.path} stroke="#6E6E6E"
                         strokeWidth={1} strokeScaleEnabled={false} opacity={0.75} />
                     ))}
                     {source.circlesPx.filter((c) => visible.has(c.layer)).map((c, i) => (
-                      <Circle key={'c' + i} x={c.cx} y={c.cy} radius={c.r} stroke="#4B5563"
+                      <Circle key={'c' + i} x={c.cx} y={c.cy} radius={c.r} stroke="#6E6E6E"
                         strokeWidth={1} strokeScaleEnabled={false} opacity={0.6} />
                     ))}
                   </>}
               {/* Fan markers found on the image — the ruler, when the scale
                   comes off a fan, so it has to be visible while measuring. */}
               {isRaster && fans.map((f, i) => (
-                <Circle key={'f' + i} x={f.x} y={f.y} radius={f.r} stroke="#DC2626"
+                <Circle key={'f' + i} x={f.x} y={f.y} radius={f.r} stroke="#404040"
                   strokeWidth={1.4} strokeScaleEnabled={false} dash={[5, 4]} opacity={0.85} />
               ))}
             </Layer>
 
             {/* the outlines: traced by hand, or proposed by the detector */}
             <Layer listening={!tracing}>
-              {stats.map(({ o, st }, i) => {
+              {(doorScreen ? [] : stats).map(({ o, st }, i) => {
                 const col = FILL[i % FILL.length];
                 const on = o.id === selectedId;
                 // A proposal is drawn DASHED until it has been touched or
@@ -601,22 +645,24 @@ export default function OutlineTracer({
                 // the old green-marker route used to produce.
                 const provisional = o.detected && !o.reviewed;
                 return (
-                  <Group key={o.id} onClick={() => onSelect(o.id)} onTap={() => onSelect(o.id)}>
+                  <Group key={o.id} onClick={() => onSelect(o.id)} onTap={() => onSelect(o.id)}
+                    onMouseEnter={() => setHoverSpace(o.id)}
+                    onMouseLeave={() => setHoverSpace((h) => (h === o.id ? null : h))}>
                     {st.rectified && st.movedFt > 0.08 && (
                       <Line points={flat(st.rawPx)} closed stroke={col} dash={[4, 4]}
                         strokeWidth={1} strokeScaleEnabled={false} opacity={0.5} />
                     )}
+                    {/* HOVER THICKENS THE OUTLINE, and only the outline. The
+                        fill is already carrying identity — its hue is this
+                        space's hue — so brightening it on hover would read as a
+                        change of state rather than a change of cursor. */}
                     <Line points={flat(st.polygonPx)} closed
                       fill={col} opacity={on ? 0.26 : 0.1}
-                      stroke={col} strokeWidth={on ? 2.6 : 1.6}
+                      stroke={col}
+                      strokeWidth={(on ? 2.6 : 1.6)
+                        + (hoverSpace === o.id ? 1.2 : 0)}
                       dash={provisional ? [10, 6] : null}
                       strokeScaleEnabled={false} lineJoin="round" />
-                    <Text x={st.centroid.x} y={st.centroid.y}
-                      text={`${o.name || 'Room'}${provisional ? ' ·  found' : ''}\n${ftin(st.widthFt)} × ${ftin(st.heightFt)} · ${Math.round(st.areaSqft)} sqft`}
-                      fontSize={px(11)} fontFamily="JetBrains Mono, monospace"
-                      fill={col} align="center" lineHeight={1.35}
-                      offsetX={px(60)} offsetY={px(14)} width={px(120)}
-                      listening={false} />
                   </Group>
                 );
               })}
@@ -759,11 +805,11 @@ export default function OutlineTracer({
                   <Line points={[scaleUI.measure.a.x, scaleUI.measure.a.y,
                                  (scaleUI.measure.b || snap || scaleUI.measure.a).x,
                                  (scaleUI.measure.b || snap || scaleUI.measure.a).y]}
-                    stroke="#0EA5E9" strokeWidth={2} strokeScaleEnabled={false}
+                    stroke="#0070F3" strokeWidth={2} strokeScaleEnabled={false}
                     dash={scaleUI.measure.b ? null : [6, 4]} />
                   {[scaleUI.measure.a, scaleUI.measure.b].filter(Boolean).map((p, i) => (
                     <Line key={'t' + i} points={[p.x, p.y - px(7), p.x, p.y + px(7)]}
-                      stroke="#0EA5E9" strokeWidth={2} strokeScaleEnabled={false} />
+                      stroke="#0070F3" strokeWidth={2} strokeScaleEnabled={false} />
                   ))}
                 </Group>
               )}
@@ -773,7 +819,7 @@ export default function OutlineTracer({
               {draftFt != null && snap && (
                 <Text x={snap.x} y={snap.y} offsetX={px(-10)} offsetY={px(20)}
                   text={ftin(draftFt)} fontSize={px(11)}
-                  fontFamily="JetBrains Mono, monospace" fill="#0A0A0A" />
+                  fontFamily="Neue Montreal, sans-serif" fill="#000000" />
               )}
             </Layer>
 
@@ -806,13 +852,31 @@ export default function OutlineTracer({
                     <Rect key={d.id}
                       x={d.rect.x0} y={d.rect.y0}
                       width={d.rect.x1 - d.rect.x0} height={d.rect.y1 - d.rect.y0}
-                      fill={on ? 'rgba(97,97,245,0.42)' : 'rgba(97,97,245,0.20)'}
-                      stroke="#6161F5"
-                      strokeWidth={px(on ? 2.4 : d.typical ? 1.8 : 1.2)}
+                      /* THE ACCENT, and not the violet this shipped with. The
+                         palette went black-and-white-plus-#0070F3 and this fill
+                         was left behind at rgba(97,97,245) — near enough to the
+                         accent to look intentional and far enough to look like
+                         a second brand colour on a screen that has one thing
+                         on it. */
+                      fill={on ? 'rgba(0,112,243,0.42)' : 'rgba(0,112,243,0.20)'}
+                      stroke="#0070F3"
+                      /* HOVER THICKENS THE OUTLINE and leaves the fill alone.
+                         The stroke is the cheapest thing on this shape to
+                         change: the fill already carries "these are the doors",
+                         and a second fill value competing with the selected
+                         state would say the wrong thing. */
+                      strokeWidth={px((on ? 2.4 : d.typical ? 1.8 : 1.2)
+                        + (hoverDoor === d.id ? 1.4 : 0))}
                       dash={d.typical && !on ? [px(6), px(4)] : null}
                       listening
-                      onMouseEnter={(e) => { const st = e.target.getStage(); if (st) st.container().style.cursor = 'pointer'; }}
-                      onMouseLeave={(e) => { const st = e.target.getStage(); if (st) st.container().style.cursor = ''; }}
+                      onMouseEnter={(e) => {
+                        setHoverDoor(d.id);
+                        const st = e.target.getStage(); if (st) st.container().style.cursor = 'pointer';
+                      }}
+                      onMouseLeave={(e) => {
+                        setHoverDoor((h) => (h === d.id ? null : h));
+                        const st = e.target.getStage(); if (st) st.container().style.cursor = '';
+                      }}
                       onMouseDown={(e) => {
                         if (e.evt.button !== 0) return;   // middle is the pan
                         e.cancelBubble = true;
@@ -828,16 +892,17 @@ export default function OutlineTracer({
               was static text taking up a third of the bar. */}
           <div className="tracer-hud">
             {midPan && <span className="chip on">panning</span>}
+            {!doorScreen && <>
             {!ortho && <span className="chip">free angle</span>}
-            {gridIn > 0 && <span className="chip on">{gridIn === 12 ? '1′' : `${gridIn}″`} grid</span>}
             {drag && <span className="chip on">{shift ? 'nudging · square' : 'nudging · free'}</span>}
             {(drag?.snap || (!drag && snap)) && (
               <span className="chip snap">{(drag?.snap || snap).label}</span>
             )}
+            </>}
           </div>
         </div>
 
-        <div className="rooms-side">
+        <div className={'rooms-side' + (doorScreen ? ' door-only' : '')}>
           {/* --- the scale, on an image ------------------------------------ */}
           {isRaster && scaleUI && (
             <div className="sec">
@@ -867,11 +932,21 @@ export default function OutlineTracer({
                   </p>
                 )}
 
+                {/* TWO SENTENCES, CENTRED IN THE PANEL, and the second one is
+                    the escape hatch. The count of doors found and which of them
+                    is the most typical were facts about the detector, not
+                    instructions. And note size in the top-left corner of an
+                    otherwise empty panel reads as a caption on nothing: this is
+                    the only instruction on the screen, so it is set at display
+                    size and given the whole panel to sit in the middle of. */}
                 {!!scaleUI.doors.length && !picked && (
-                  <p className="note" style={{ marginTop: 8 }}>
-                    <b>{scaleUI.doors.length} door{scaleUI.doors.length === 1 ? '' : 's'}</b> found.
-                    {' '}Click one on the plan — the dashed one is the most typical.
-                  </p>
+                  <div className="door-ask">
+                    <p className="door-ask-h">Select a door whose dimension you know.</p>
+                    <p className="door-ask-p">
+                      If you wish to proceed with another dimension, click on the
+                      Measure tab above.
+                    </p>
+                  </div>
                 )}
 
                 {/* THE QUESTION, asked only once a door is clicked. Three
@@ -891,10 +966,6 @@ export default function OutlineTracer({
                         title={w.note}>{w.label}</button>
                     ))}
                   </div>
-                  <button className="btn" style={{ marginTop: 6, width: '100%' }}
-                    onClick={() => { scaleUI.onPickDoor(null); scaleUI.setMode('ref'); }}>
-                    None of these — measure instead
-                  </button>
                   {scaleUI.pick?.mm && (
                     <button className="btn" style={{ marginTop: 6, width: '100%' }}
                       onClick={() => scaleUI.onPickDoor(null)}>Pick a different door</button>
@@ -955,28 +1026,36 @@ export default function OutlineTracer({
                 )}
               </>)}
 
-              <div className="kv" style={{ marginTop: 10 }}>
-                <span>Scale</span><b>{hasScale ? describeScale(pxPerFt) : 'not set'}</b></div>
+              {!doorScreen && (
+                <div className="kv" style={{ marginTop: 10 }}>
+                  <span>Scale</span><b>{hasScale ? describeScale(pxPerFt) : 'not set'}</b></div>
+              )}
               {hasScale && (
                 <div className="kv"><span>Plan measures</span>
                   <b>{ftin(widthFt)} × {ftin(heightFt)}</b></div>
               )}
-              {hasScale && <p className="note">Does that overall size look right?</p>}
             </div>
           )}
 
-          {/* --- what the detector proposed -------------------------------- */}
-          {detectState && (
+          {/* --- 4. EVERY SPACE ON THE PLAN, IN ONE SECTION ---------------
+              The detector's tally and the list of what it produced were two
+              sections with three sections of unrelated controls between them —
+              "Spaces on the plan: proposed 4" at the top, and the four spaces
+              themselves at the bottom under a heading called "Outlines". One
+              subject, one place. It also renders now without a detectState,
+              which the tally-only version could not: a plan traced entirely by
+              hand still has spaces to list. */}
+          {(detectState || stats.length > 0) && !doorScreen && (
             <div className="sec">
-              <h3>Rooms on the plan</h3>
-              {detectState.status === 'running' && (
-                <p className="note">Reading the plan for rooms…</p>
+              <h3>Spaces on the plan</h3>
+              {detectState?.status === 'running' && (
+                <p className="note">Reading the plan for spaces…</p>
               )}
-              {detectState.status === 'error' && (
-                <p className="note warn">The room detector is not answering
+              {detectState?.status === 'error' && (
+                <p className="note err">The space detector is not answering
                   ({detectState.error}). Trace by hand — everything below still works.</p>
               )}
-              {detectState.status === 'done' && (
+              {detectState?.status === 'done' && (
                 detectState.proposed > 0 ? (<>
                   <div className="kv"><span>Proposed</span><b>{detectState.proposed}</b></div>
                   {detectState.dropped > 0 && (
@@ -986,13 +1065,71 @@ export default function OutlineTracer({
                     grip snaps like the cursor does. A dashed outline is one
                     nobody has looked at yet.</p>
                 </>) : detectState.returned > 0 ? (
-                  <p className="note">Nothing new — the {detectState.returned} room
+                  <p className="note">Nothing new — the {detectState.returned} space
                     {detectState.returned > 1 ? 's' : ''} it found {detectState.returned > 1 ? 'are' : 'is'}
                     {' '}already on the plan.</p>
                 ) : (
-                  <p className="note warn">No rooms found on this plan. Trace them
+                  <p className="note warn">No spaces found on this plan. Trace them
                     by hand — click the corners.</p>
                 )
+              )}
+              {stats.length > 0 && (
+                <div className="space-list">
+                {stats.map(({ o, st }, i) => (
+                  <div key={o.id} className={'outline-row' + (o.id === selectedId ? ' on' : '')}>
+                    <button className="outline-pick" onClick={() => onSelect(o.id)}
+                      onDoubleClick={() => onConfirm(o.id)}>
+                      <span className="room-dot" style={{ background: FILL[i % FILL.length] }} />
+                      {renaming === o.id ? (
+                        <input autoFocus defaultValue={o.name || ''}
+                          onClick={(e) => e.stopPropagation()}
+                          onBlur={(e) => { onUpdateOutline(o.id, { name: e.target.value.trim() || o.name }); setRenaming(null); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setRenaming(null); }}
+                          style={{ fontSize: 11, padding: '1px 4px' }} />
+                      ) : (
+                        <span className="outline-name" onDoubleClick={(e) => { e.stopPropagation(); setRenaming(o.id); }}>
+                          {o.name || `Space ${i + 1}`}
+                        </span>
+                      )}
+                      <span className="layer-count">
+                        {o.detected && !o.reviewed ? 'found · ' : ''}{Math.round(st.areaSqft)} sqft
+                      </span>
+                    </button>
+                    <div className="outline-meta">
+                      <span>{ftin(st.widthFt)} × {ftin(st.heightFt)} · {st.corners} cnr</span>
+                      <span>
+                        <label className="mini" title="Force right angles on this outline">
+                          <input type="checkbox" checked={o.rectify}
+                            onChange={(e) => onUpdateOutline(o.id, { rectify: e.target.checked })} />
+                          square
+                        </label>
+                        <button className="btn tiny" title="Rename"
+                          onClick={() => setRenaming(o.id)}>✎</button>
+                        <button className="btn tiny" title="Delete this outline"
+                          onClick={() => onDeleteOutline(o.id)}>×</button>
+                      </span>
+                    </div>
+                    {o.enclosingPx?.length > 0 && (
+                      <p className="note warn" style={{ margin: '2px 0 0' }}>
+                        {o.enclosingPx.length} space{o.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly
+                        inside this one, so it cannot be subtracted — the inner
+                        {o.enclosingPx.length > 1 ? ' spaces are' : ' space is'} held out of this
+                        ceiling instead. Drag a corner of the inner space out to a wall and it
+                        will be subtracted properly.
+                      </p>
+                    )}
+                    {o.note && !o.enclosingPx?.length && (
+                      <p className="note" style={{ margin: '2px 0 0' }}>{o.note}</p>
+                    )}
+                    {o.rectify && st.movedFt > 0.08 && (
+                      <p className="note" style={{ margin: '2px 0 0' }}>
+                        Squaring moved a corner {(st.movedFt * 12).toFixed(0)}″ — the dashed
+                        line on the plan is what you clicked.
+                      </p>
+                    )}
+                  </div>
+                ))}
+                </div>
               )}
               <label className="check">
                 <input type="checkbox" checked={showGrips}
@@ -1001,13 +1138,14 @@ export default function OutlineTracer({
               </label>
               {onRedetect && (
                 <button className="btn" style={{ marginTop: 6, width: '100%' }}
-                  disabled={detectState.status === 'running'}
+                  disabled={detectState?.status === 'running'}
                   onClick={onRedetect}>Look again</button>
               )}
             </div>
           )}
 
           {/* --- tracing --------------------------------------------------- */}
+          {!doorScreen && (<>
           <div className="sec">
             <h3>{tracing ? `Tracing — ${draft.length} corner${draft.length > 1 ? 's' : ''}` : 'Trace'}</h3>
             {tracing ? (
@@ -1028,7 +1166,7 @@ export default function OutlineTracer({
                 ? <>Press <b>Use this measurement</b> to go back to tracing.</>
                 : <>Click the two ends of your reference on the plan.</>}</p>
             ) : (
-              <p className="note">Trace the <b>inner face</b> of the walls.</p>
+              <p className="note">Start tracing with cursor to add another space</p>
             )}
             {problem && <p className="note warn">{problem}</p>}
           </div>
@@ -1046,16 +1184,26 @@ export default function OutlineTracer({
                 onChange={(e) => setAlignOn(e.target.checked)} />
               Line up with corners already placed
             </label>
-            <div className="row" style={{ marginTop: 8 }}>
-              <label>Grid</label>
-              <select value={gridIn} onChange={(e) => setGridIn(parseInt(e.target.value, 10))}
-                disabled={!hasScale} style={{ maxWidth: 90 }}>
-                {GRIDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </div>
-            <p className="note">The grid is measured from the first corner you place,
-              so it rounds the room's dimensions rather than its position.</p>
+            {/* --- 3. SNAPPING TO WHAT IS ALREADY TRACED belongs here, not in
+                    a section of its own. It is a snap target, it is a
+                    checkbox, and it sat under a heading called "Snap to" one
+                    section below a heading called "Snapping" — two names for
+                    one idea, and the second one appeared and vanished with the
+                    first outline, so the panel reshuffled itself as you
+                    worked. */}
+            {isRaster && tracedSegs.length > 0 && (
+              <label className="check">
+                <input type="checkbox" checked={visible.has(TRACED_LAYER)}
+                  onChange={() => setVisible((v) => {
+                    const n = new Set(v);
+                    if (n.has(TRACED_LAYER)) n.delete(TRACED_LAYER); else n.add(TRACED_LAYER);
+                    return n;
+                  })} />
+                Outlines already traced ({tracedSegs.length} edges)
+              </label>
+            )}
           </div>
+          </>)}
 
           {/* --- the file, on a DXF ---------------------------------------- */}
           {!isRaster && (
@@ -1116,82 +1264,6 @@ export default function OutlineTracer({
             </div>
           )}
 
-          {/* --- snap to outlines already traced, on an image -------------- */}
-          {isRaster && tracedSegs.length > 0 && (
-            <div className="sec">
-              <h3>Snap to</h3>
-              <label className={'check' + (visible.has(TRACED_LAYER) ? ' on' : '')}>
-                <input type="checkbox" checked={visible.has(TRACED_LAYER)}
-                  onChange={() => setVisible((v) => {
-                    const n = new Set(v);
-                    if (n.has(TRACED_LAYER)) n.delete(TRACED_LAYER); else n.add(TRACED_LAYER);
-                    return n;
-                  })} />
-                Outlines already traced ({tracedSegs.length} edges)
-              </label>
-
-            </div>
-          )}
-
-          {stats.length > 0 && (
-            <div className="sec">
-              <h3>Outlines</h3>
-              {stats.map(({ o, st }, i) => (
-                <div key={o.id} className={'outline-row' + (o.id === selectedId ? ' on' : '')}>
-                  <button className="outline-pick" onClick={() => onSelect(o.id)}
-                    onDoubleClick={() => onConfirm(o.id)}>
-                    <span className="room-dot" style={{ background: FILL[i % FILL.length] }} />
-                    {renaming === o.id ? (
-                      <input autoFocus defaultValue={o.name || ''}
-                        onClick={(e) => e.stopPropagation()}
-                        onBlur={(e) => { onUpdateOutline(o.id, { name: e.target.value.trim() || o.name }); setRenaming(null); }}
-                        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setRenaming(null); }}
-                        style={{ fontSize: 11, padding: '1px 4px' }} />
-                    ) : (
-                      <span className="outline-name" onDoubleClick={(e) => { e.stopPropagation(); setRenaming(o.id); }}>
-                        {o.name || `Room ${i + 1}`}
-                      </span>
-                    )}
-                    <span className="layer-count">
-                      {o.detected && !o.reviewed ? 'found · ' : ''}{Math.round(st.areaSqft)} sqft
-                    </span>
-                  </button>
-                  <div className="outline-meta">
-                    <span>{ftin(st.widthFt)} × {ftin(st.heightFt)} · {st.corners} cnr</span>
-                    <span>
-                      <label className="mini" title="Force right angles on this outline">
-                        <input type="checkbox" checked={o.rectify}
-                          onChange={(e) => onUpdateOutline(o.id, { rectify: e.target.checked })} />
-                        square
-                      </label>
-                      <button className="btn tiny" title="Rename"
-                        onClick={() => setRenaming(o.id)}>✎</button>
-                      <button className="btn tiny" title="Delete this outline"
-                        onClick={() => onDeleteOutline(o.id)}>×</button>
-                    </span>
-                  </div>
-                  {o.enclosingPx?.length > 0 && (
-                    <p className="note warn" style={{ margin: '2px 0 0' }}>
-                      {o.enclosingPx.length} room{o.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly
-                      inside this one, so it cannot be subtracted — the inner
-                      {o.enclosingPx.length > 1 ? ' rooms are' : ' room is'} held out of this
-                      ceiling instead. Drag a corner of the inner room out to a wall and it
-                      will be subtracted properly.
-                    </p>
-                  )}
-                  {o.note && !o.enclosingPx?.length && (
-                    <p className="note" style={{ margin: '2px 0 0' }}>{o.note}</p>
-                  )}
-                  {o.rectify && st.movedFt > 0.08 && (
-                    <p className="note" style={{ margin: '2px 0 0' }}>
-                      Squaring moved a corner {(st.movedFt * 12).toFixed(0)}″ — the dashed
-                      line on the plan is what you clicked.
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
@@ -1205,6 +1277,10 @@ export default function OutlineTracer({
                   : scaleUI?.measure?.a
                     ? <>Now click the other end.</>
                     : <>Click one end of something you can name on the plan.</>}</>
+            : doorScreen
+            ? <>{picked
+                  ? <>Now say how wide that door is.</>
+                  : <>Click a door on the plan to set the scale.</>}</>
             : !hasScale
             ? <>The scale is not set, so nothing can be traced yet.</>
             : tracing
@@ -1213,7 +1289,7 @@ export default function OutlineTracer({
               : drag
                 ? <>Nudging a corner. {drag.snap ? <>Holding on to <b>{drag.snap.label}</b>.</> : <>Nothing under it.</>}</>
                 : chosen
-                  ? <><b>{chosen.o.name || 'Room'}</b> — {ftin(chosen.st.widthFt)} × {ftin(chosen.st.heightFt)},
+                  ? <><b>{chosen.o.name || 'Space'}</b> — {ftin(chosen.st.widthFt)} × {ftin(chosen.st.heightFt)},
                       {' '}{Math.round(chosen.st.areaSqft)} sq ft, {chosen.st.corners} corners.
                       {' '}Drag a corner to move it, right-click one to delete it.</>
                   : outlines.length
@@ -1226,7 +1302,7 @@ export default function OutlineTracer({
             onClick={() => setMeasureDone(true)}>
             Use this measurement →
           </button>
-        ) : (
+        ) : !hasScale ? null : (
           /* THE WHOLE PLAN IS THE PRIMARY ACT. A floor plan is a floor plan —
              the rooms come as a set, the detector proposes the set, and lighting
              them one at a time was an artefact of there having been only ever
@@ -1236,7 +1312,7 @@ export default function OutlineTracer({
             {chosen && outlines.length > 1 && (
               <button className="btn" disabled={tracing}
                 onClick={() => onConfirm(chosen.o.id)}>
-                Just this room
+                Just this space
               </button>
             )}
             <button className="btn primary" disabled={!outlines.length || tracing}
@@ -1244,8 +1320,8 @@ export default function OutlineTracer({
                 ? onProceed?.()
                 : onConfirm(chosen.o.id))}>
               {!outlines.length ? 'Trace an outline'
-                : outlines.length === 1 ? 'Light this room →'
-                : `Light all ${outlines.length} rooms →`}
+                : outlines.length === 1 ? 'Light this space →'
+                : `Light all ${outlines.length} spaces →`}
             </button>
           </div>
         )}

@@ -17,7 +17,7 @@ import { fmtWatts, fmtBeam } from '../lib/boq.js';
 
 // A number, rounded, in the mono face. `dp` DEFAULTS TO ZERO AND IS HONOURED AT
 // ZERO — the obvious `dp ? v.toFixed(dp) : v` treats 0 as "no rounding" and
-// printed a room area as 125.53257067756813.
+// printed a space area as 125.53257067756813.
 const N = ({ v, dp = 0 }) => (
   <span className="boq-n">{v == null ? '—' : Number(v).toFixed(dp)}</span>
 );
@@ -29,7 +29,7 @@ export default function BOQView({ boq, planName }) {
         <div className="boq-empty">
           <h2>Nothing to schedule yet</h2>
           <p className="note">
-            Light at least one room and the fittings will be counted here.
+            Light at least one space and the fittings will be counted here.
           </p>
         </div>
       </div>
@@ -46,7 +46,7 @@ export default function BOQView({ boq, planName }) {
             <h1>Lighting schedule</h1>
             <p className="note">
               {planName ? <><b>{planName}</b> · </> : null}
-              {boq.rooms.length} room{boq.rooms.length === 1 ? '' : 's'} ·{' '}
+              {boq.rooms.length} space{boq.rooms.length === 1 ? '' : 's'} ·{' '}
               {t.areaSqft ?? '—'} sqft
               {boq.scaled ? null : <> · <b>no scale set</b></>}
             </p>
@@ -156,7 +156,7 @@ export default function BOQView({ boq, planName }) {
         </>)}
 
         {boq.rooms.length > 0 && (<>
-          <h2 className="boq-h2">Room breakdown</h2>
+          <h2 className="boq-h2">Space breakdown</h2>
           <p className="note boq-sub">
             How a site is wired and how a contractor prices it. These add up to
             the totals above.
@@ -170,7 +170,7 @@ export default function BOQView({ boq, planName }) {
             </colgroup>
             <thead>
               <tr>
-                <th>Room</th>
+                <th>Space</th>
                 <th className="boq-r">Area</th>
                 <th className="boq-r">Small</th>
                 <th className="boq-r">Large</th>

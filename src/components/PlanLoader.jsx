@@ -42,9 +42,9 @@ import React from 'react';
  * crisp over the top of its own glow.
  */
 const PULSE = [
-  { len: 0.26, back: 0.225, opacity: 0.16, width: 3.4, colour: '#6161f5' },
-  { len: 0.13, back: 0.095, opacity: 0.42, width: 2.9, colour: '#6161f5' },
-  { len: 0.045, back: 0,    opacity: 1,    width: 2.4, colour: '#8f8ff8' },
+  { len: 0.26, back: 0.225, opacity: 0.16, width: 3.4, colour: '#0070F3' },
+  { len: 0.13, back: 0.095, opacity: 0.42, width: 2.9, colour: '#0070F3' },
+  { len: 0.045, back: 0,    opacity: 1,    width: 2.4, colour: '#66AEFF' },
 ];
 
 const perimeter = (pts) => {
@@ -68,9 +68,9 @@ export default function PlanLoader({
           preserveAspectRatio="xMidYMid meet">
           <defs>
             <linearGradient id="sl-fill" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#6161f5" stopOpacity="0.04" />
-              <stop offset="0.5" stopColor="#6161f5" stopOpacity="0.14" />
-              <stop offset="1" stopColor="#6161f5" stopOpacity="0.04" />
+              <stop offset="0" stopColor="#0070F3" stopOpacity="0.04" />
+              <stop offset="0.5" stopColor="#0070F3" stopOpacity="0.14" />
+              <stop offset="1" stopColor="#0070F3" stopOpacity="0.04" />
             </linearGradient>
           </defs>
 
@@ -82,7 +82,7 @@ export default function PlanLoader({
               <g key={r.id}>
                 <polygon points={pts}
                   fill={r.state === 'done' ? 'url(#sl-fill)' : 'rgba(97,97,245,0.045)'}
-                  stroke="#DDE1FF" strokeWidth={lw} />
+                  stroke="#E0E0E0" strokeWidth={lw} />
                 {r.state === 'busy' && PULSE.map((seg, k) => (
                   <polygon key={k} points={pts} fill="none"
                     stroke={seg.colour} strokeOpacity={seg.opacity}
@@ -98,14 +98,14 @@ export default function PlanLoader({
                     }} />
                 ))}
                 {r.state === 'done' && (
-                  <polygon points={pts} fill="none" stroke="#6161f5"
+                  <polygon points={pts} fill="none" stroke="#0070F3"
                     strokeWidth={lw * 1.6} strokeLinejoin="round" opacity="0.85" />
                 )}
                 {r.label && (
                   <text x={r.centre.x} y={r.centre.y} textAnchor="middle"
                     fontSize={Math.max(width, height) / 78}
-                    fontFamily="JetBrains Mono, monospace"
-                    fill={r.state === 'done' ? '#4B4BD8' : '#A9A9C9'}>
+                    fontFamily="Neue Montreal, sans-serif"
+                    fill={r.state === 'done' ? '#000000' : '#A8A8A8'}>
                     {r.label}
                   </text>
                 )}

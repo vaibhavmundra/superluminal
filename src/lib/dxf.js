@@ -372,7 +372,7 @@ export function parseDXF(text) {
   for (const s of segments) { grow(s.x1, s.y1); grow(s.x2, s.y2); }
   for (const c of circles) { grow(c.cx - c.r, c.cy - c.r); grow(c.cx + c.r, c.cy + c.r); }
   if (!Number.isFinite(minX)) {
-    return { ok: false, reason: 'That DXF has no line work in it — nothing to find rooms in.' };
+    return { ok: false, reason: 'That DXF has no line work in it — nothing to find spaces in.' };
   }
 
   const bbox = { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };

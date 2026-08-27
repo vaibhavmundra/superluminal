@@ -30,10 +30,10 @@ export function makeOutline(pointsPx, { name = null } = {}) {
 export function nextOutlineName(existing = []) {
   const used = new Set(existing.map((o) => o.name).filter(Boolean));
   for (let i = 1; i < 500; i++) {
-    const n = `Room ${i}`;
+    const n = `Space ${i}`;
     if (!used.has(n)) return n;
   }
-  return 'Room';
+  return 'Space';
 }
 
 /**

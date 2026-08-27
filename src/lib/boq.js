@@ -61,7 +61,9 @@ export const FIXTURES = [
     watts: 12, beam: 60, lumens: FITTING_LUMENS.large,
     note: 'ambient grid, serves a pair of cells' },
   { id: 'spot',   label: 'Directional spot', unit: 'nos',
-    watts: 5,  beam: 30, lumens: null,
+    // 450 lm at 5 W is the ordinary efficacy of a narrow-beam COB, and it is
+    // STATED here for the same reason the wattage is: a drawing cannot know it.
+    watts: 5,  beam: 30, lumens: 450,
     note: 'aimed at a task surface' },
   { id: 'sconce', label: 'Wall sconce', unit: 'nos',
     // NULL, NOT ZERO, and the difference matters downstream: zero would sum
@@ -70,7 +72,9 @@ export const FIXTURES = [
     watts: null, beam: null, lumens: null,
     note: 'accent — wattage by fitting selection' },
   { id: 'strip',  label: 'LED strip', unit: 'm',
-    watts: null, wattsPerM: 9.6, beam: null, lumens: null,
+    // PER METRE, both of them, because that is how a strip is bought and how it
+    // is specified. A total for "the strip" is meaningless without a length.
+    watts: null, wattsPerM: 9.6, beam: null, lumens: null, lumensPerM: 850,
     note: 'accent — concealed cove / under-cabinet' },
 ];
 
@@ -121,7 +125,7 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
 
     return {
       id: r.id,
-      name: r.outline?.name || 'Room',
+      name: r.outline?.name || 'Space',
       areaSqft: r.plan.stats?.areaSqft ?? null,
       qty: q,
       // Strips counted as PIECES as well as metres: a contractor buys metres and
@@ -212,6 +216,39 @@ export function runMetres(zone, pxPerFt) {
   return (zone.runLength / pxPerFt) * M_PER_FT;
 }
 
+/**
+ * WHAT A FITTING IS, for the card that comes up under the cursor.
+ *
+ * Reads the catalogue above and nothing else. The point of routing the tooltip
+ * through here rather than writing the numbers into the canvas is that the
+ * schedule and the tooltip then cannot disagree: a 7 W downlight is 7 W in both
+ * places because there is one 7 in the codebase. A tooltip that says 9 W over a
+ * fitting the BOQ bills at 7 is worse than no tooltip.
+ *
+ * `metres` is passed for a strip, which is the one fitting whose specification
+ * depends on how long the run happens to be.
+ */
+export function specsFor(kind, { metres = null } = {}) {
+  const f = FIXTURE_BY_ID[kind];
+  if (!f) return null;
+  const rows = [];
+  if (f.unit === 'm') {
+    rows.push(['Run', metres != null ? `${metres.toFixed(2)} m` : 'no scale']);
+    if (f.wattsPerM != null) rows.push(['Rating', `${f.wattsPerM} W/m`]);
+    if (f.wattsPerM != null && metres != null) {
+      rows.push(['Load', `${round(metres * f.wattsPerM, 1)} W`]);
+    }
+    if (f.lumensPerM != null) rows.push(['Output', `${f.lumensPerM} lm/m`]);
+  } else {
+    // "set by fitting" and not a dash: a sconce has a wattage, it is simply not
+    // ours to state, and a dash reads as "nobody filled this in".
+    rows.push(['Wattage', f.watts != null ? `${f.watts} W` : 'set by fitting']);
+    if (f.beam != null) rows.push(['Beam angle', `${f.beam}°`]);
+    if (f.lumens != null) rows.push(['Output', `${f.lumens} lm`]);
+  }
+  return { id: f.id, label: f.label, note: f.note, rows };
+}
+
 export function round(n, dp = 0) {
   if (!Number.isFinite(n)) return null;
   const k = 10 ** dp;
@@ -296,8 +333,8 @@ export function boqTable(boq, { perRoom = true } = {}) {
 
   if (perRoom && boq.rooms.length) {
     rows.push([]);
-    rows.push(['ROOM BREAKDOWN']);
-    rows.push(['Room', 'Area (sqft)', 'Small', 'Large', 'Spots', 'Sconces', 'Strip (m)', '']);
+    rows.push(['SPACE BREAKDOWN']);
+    rows.push(['Space', 'Area (sqft)', 'Small', 'Large', 'Spots', 'Sconces', 'Strip (m)', '']);
     for (const r of boq.rooms) {
       rows.push([
         r.name,
@@ -356,7 +393,7 @@ export function colLetter(i) {
 }
 
 export const SHEET_SCHEDULE = 'Schedule';
-export const SHEET_ROOMS = 'By room';
+export const SHEET_ROOMS = 'By space';
 
 export function boqSheets(boq) {
   // --- sheet 1: the schedule
@@ -491,11 +528,11 @@ export function boqSheets(boq) {
   // --- sheet 2: the room breakdown, which checks itself
   const rrows = [];
   const rat = () => rrows.length + 1;
-  rrows.push([txt('BY ROOM', 'title')]);
+  rrows.push([txt('BY SPACE', 'title')]);
   rrows.push([txt('How a site is wired and how a contractor prices it.', 'sub')]);
   rrows.push(gap());
   const rHead = rat();
-  rrows.push([txt('Room', 'h'), txt('Area', 'hr'), txt('Small', 'hr'), txt('Large', 'hr'),
+  rrows.push([txt('Space', 'h'), txt('Area', 'hr'), txt('Small', 'hr'), txt('Large', 'hr'),
               txt('Spots', 'hr'), txt('Sconces', 'hr'), txt('Strip', 'hr')]);
   const rFirst = rat();
   for (const r of boq.rooms) {

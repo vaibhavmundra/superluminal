@@ -209,7 +209,7 @@ const rows = boqTable(boq);
 {
   ok(rows.some((r) => r[0] === 'Item'), 'there is a header row');
   ok(rows.some((r) => r[1] === 'Total fittings'), 'and a totals row');
-  ok(rows.some((r) => r[0] === 'ROOM BREAKDOWN'), 'and the room breakdown');
+  ok(rows.some((r) => r[0] === 'SPACE BREAKDOWN'), 'and the space breakdown');
   ok(rows.some((r) => String(r[0]).startsWith('CEILING ITEMS')), 'and the coordination block');
   ok(rows.some((r) => String(r[2]).includes('excludes') || String(r[1]) === 'Load excludes'),
     'and the exclusion is on the face of it');
@@ -255,7 +255,7 @@ console.log('\n-- XLSX, unzipped and read back --');
   const s1 = part('xl/worksheets/sheet1.xml');
   const s2 = part('xl/worksheets/sheet2.xml');
 
-  ok(/name="Schedule"/.test(wb) && /name="By room"/.test(wb), 'two named sheets');
+  ok(/name="Schedule"/.test(wb) && /name="By space"/.test(wb), 'two named sheets');
   ok(/<relationships?[\s\S]*styles\.xml/i.test(part('xl/_rels/workbook.xml.rels')),
     'and the stylesheet is related to the workbook, or Excel ignores every format');
   ok(/fullCalcOnLoad="1"/.test(wb),

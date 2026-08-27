@@ -39,16 +39,16 @@ export { DEFAULT_MODEL };
  * side table out of the dining category.
  */
 export const SURFACE_TYPES = [
-  { id: 'coffee_table', label: 'Coffee table', colour: '#0EA5E9',
+  { id: 'coffee_table', label: 'Coffee table', colour: '#8F8F8F',
     context: 'must be the low table OUT IN FRONT of a sofa. A side or end table beside the sofa arm is NOT one',
     plan: 'a rectangle, oval or circle sitting in the open floor a couple of feet IN FRONT of a sofa, facing its long side, and roughly half to two-thirds the sofa\'s length. Its size is the tell: a coffee table is a piece of furniture you could put a tray on, several times the area of a side table.' },
-  { id: 'dining_table', label: 'Dining table', colour: '#F59E0B',
+  { id: 'dining_table', label: 'Dining table', colour: '#8F8F8F',
     context: 'in a dining area or the dining end of a living room',
     plan: 'a rectangle, oval or circle ringed by four to eight chair blocks, drawn as small squares or curved shapes evenly spaced around its edge. The chairs are the giveaway.' },
-  { id: 'conference_table', label: 'Conference table', colour: '#8B5CF6',
+  { id: 'conference_table', label: 'Conference table', colour: '#8F8F8F',
     context: 'in an office — a meeting or board room, usually a room of its own',
     plan: 'like a dining table but longer and with more chairs — eight or more — in a room that is clearly not a home. Often the only thing in its room.' },
-  { id: 'executive_desk', label: 'Executive desk', colour: '#10B981',
+  { id: 'executive_desk', label: 'Executive desk', colour: '#8F8F8F',
     context: 'in a private office or cabin',
     plan: 'an L or a rectangle against or near one wall with a single chair on one side and often two visitor chairs opposite. One person sits at it, which is what separates it from a conference table.' },
 ];

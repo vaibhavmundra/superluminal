@@ -39,13 +39,13 @@ const MM = 1 / 304.8;
  * "900 or 1200" is the whole of the choice a person makes about a fan.
  */
 export const CEILING_TYPES = [
-  { id: 'fan',        kind: 'fan',        label: 'Fan',        colour: '#DC2626',
+  { id: 'fan',        kind: 'fan',        label: 'Fan',        colour: '#404040',
     diaFt: 1200 * MM, sweepsMm: [900, 1200] },
-  { id: 'chandelier', kind: 'chandelier', label: 'Chandelier', colour: '#B45309',
+  { id: 'chandelier', kind: 'chandelier', label: 'Chandelier', colour: '#404040',
     diaFt: 900 * MM },
-  { id: 'ac',         kind: 'ac',         label: 'AC unit',    colour: '#0F766E',
+  { id: 'ac',         kind: 'ac',         label: 'AC unit',    colour: '#404040',
     wFt: 900 * MM, hFt: 900 * MM },
-  { id: 'trapdoor',   kind: 'trapdoor',   label: 'Trap door',  colour: '#6D28D9',
+  { id: 'trapdoor',   kind: 'trapdoor',   label: 'Trap door',  colour: '#404040',
     wFt: 600 * MM, hFt: 600 * MM },
 ];
 

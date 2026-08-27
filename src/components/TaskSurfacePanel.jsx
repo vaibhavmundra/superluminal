@@ -29,12 +29,12 @@ export default function TaskSurfacePanel({
       <h3>Task surfaces</h3>
 
       {!rooms.length ? (
-        <p className="note">Light the plan first — surfaces are found on a room that
+        <p className="note">Light the plan first — surfaces are found on a space that
           already has its ambient layout.</p>
       ) : <>
         <select value={roomId ?? ''} onChange={(e) => onRoomChange(e.target.value)}>
           {rooms.map((r) => (
-            <option key={r.id} value={r.id}>{r.outline.name || 'Room'}</option>
+            <option key={r.id} value={r.id}>{r.outline.name || 'Space'}</option>
           ))}
         </select>
 
@@ -60,7 +60,7 @@ export default function TaskSurfacePanel({
         </details>
 
         {state.status === 'error' && (
-          <p className="note warn" style={{ marginTop: 8 }}>{state.error}</p>
+          <p className="note err" style={{ marginTop: 8 }}>{state.error}</p>
         )}
 
         {result && (

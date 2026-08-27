@@ -118,7 +118,7 @@ export function toJSON(rooms, meta = {}) {
 }
 
 export function toCSV(rooms, { pxPerFt } = {}) {
-  const rows = [['room', 'id', 'type', 'x_ft', 'y_ft', 'x_ft_in', 'y_ft_in']];
+  const rows = [['space', 'id', 'type', 'x_ft', 'y_ft', 'x_ft_in', 'y_ft_in']];
   const ftin = (v) => {
     const f = Math.floor(v); const i = Math.round((v - f) * 12);
     return i === 12 ? `${f + 1}'-0"` : `${f}'-${i}"`;
@@ -128,7 +128,7 @@ export function toCSV(rooms, { pxPerFt } = {}) {
   const q = (v) => (/[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v);
   for (const r of laidOut(rooms, pxPerFt)) {
     for (const l of r.lights) {
-      rows.push([q(r.name || 'Room'), l.id, l.kind, l.x.toFixed(3), l.y.toFixed(3), ftin(l.x), ftin(l.y)]);
+      rows.push([q(r.name || 'Space'), l.id, l.kind, l.x.toFixed(3), l.y.toFixed(3), ftin(l.x), ftin(l.y)]);
     }
   }
   return rows.map((r) => r.join(',')).join('\n');

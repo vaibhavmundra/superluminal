@@ -57,3 +57,45 @@ export const FAN_DETECT = { redSat: 0.30, link: 8 };
  * useful for a sanity check on an L-shaped room; the outline is the point.
  */
 export const SIMPLIFY_ROOM_TO_RECTANGLE = false;
+
+/**
+ * HOW AN LED STRIP IS DRAWN. Every number is a MULTIPLE OF THE SHEET'S LINE
+ * WEIGHT, not a pixel count, and that is the whole reason this is tunable
+ * safely: the line weight is `max(width, height) / 1500`, so a strip drawn at
+ * `stroke: 2.4` looks the same on a 900px sketch and a 6000px survey. Put a
+ * pixel value in here and it will look right on one plan and wrong on the next.
+ *
+ * `pulseMs` is the exception — it is a duration in milliseconds.
+ *
+ * Reload after changing anything here; nothing caches these.
+ */
+export const STRIP_STYLE = {
+  /** The dotted run itself. 2.4 reads as tape; much past 4 and it is a duct. */
+  stroke: 2.4,
+  /** One dot, along the run. */
+  dash: 3.2,
+  /** The gap between dots. Roughly equal to `dash` gives an even tape. */
+  gap: 5.0,
+
+  /** How long one breath takes. A strip pulsates the way a spot does — the glow
+   *  under it swells and fades — so this is the same kind of number as the
+   *  downlights' 2.8s cycle, and matching them is the point. */
+  pulseMs: 3000,
+
+  /** The soft glow under the run — width, and how far the blur spreads. */
+  glow: 9,
+  glowBlur: 2.2,
+  glowOpacity: 0.5,
+  /** How far the glow swells and shrinks as it breathes, as a fraction of
+   *  `glow`. 0.3 means it runs between 70% and 130% of its width. This is the
+   *  strip's equivalent of a downlight halo scaling: the band gets fatter and
+   *  thinner, never longer. */
+  glowSwell: 0.3,
+
+  /** The square end caps. Small: they mark the run's extent, they are not
+   *  handles, and at grip size they were mistaken for handles. */
+  cap: 3.4,
+
+  /** Added to `stroke` and `glow` while the pointer is on the run. */
+  hoverBoost: 0.6,
+};

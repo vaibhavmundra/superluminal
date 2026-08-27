@@ -3,10 +3,21 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Light Planner — ambient layout from a floor plan</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <title>Super Luminal — lighting layouts from a floor plan</title>
+    <meta name="description" content="Reads a floor plan and lays out the lighting: ambient grid, accents, task spots, and the schedule that comes with them." />
+
+    <!-- NO GOOGLE FONTS. The faces are ours, they live in src/fonts, and the
+         bundler emits them — so the app never waits on a third-party stylesheet
+         to draw a word, and it works with no network at all, which matters for a
+         tool somebody runs against drawings on a site-office laptop.
+
+         NO PRELOAD LINK EITHER. It pointed at a hand-written /fonts/... path,
+         which is exactly the thing that broke: the bundler hashes these files,
+         so their real URLs are not knowable here. A stale preload is a wasted
+         request at best and a misleading 404 in the network panel at worst. -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <meta name="theme-color" content="#ffffff" />
   </head>
   <body>
     <div id="root"></div>

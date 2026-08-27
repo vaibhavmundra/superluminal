@@ -620,7 +620,7 @@ function cellIsAwkward(cell, fans, opt) {
 export function planLights(polygon, fixtures = [], options = {}, noLightZones = []) {
   const opt = resolveOptions({ ...DEFAULTS, ...options });
   if (!polygon || polygon.length < 4) {
-    return { ok: false, reason: 'No usable room outline.', chunks: [], cells: [], lights: [] };
+    return { ok: false, reason: 'No usable space outline.', chunks: [], cells: [], lights: [] };
   }
 
   const fans = fixtures.filter((f) => f.type === 'fan');
@@ -642,7 +642,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   if (!chunks.length) {
     const reason = zones.length
       ? 'No-light zones cover the whole region — nowhere left to put a light.'
-      : 'Room is smaller than one grid cell.';
+      : 'Space is smaller than one grid cell.';
     return { ok: false, reason, chunks: [], omittedChunks: omitted, zones, cells: [], lights: [],
              chunking: chunkingReport(chosen) };
   }

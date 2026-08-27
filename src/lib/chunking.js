@@ -280,7 +280,7 @@ export const CHUNK_STRATEGIES = [
   {
     id: 'largest-first',
     label: 'Largest first',
-    blurb: 'Claim the biggest rectangle that fits, then the next biggest. The main body of the room stays whole and the leftovers fall where they fall.',
+    blurb: 'Claim the biggest rectangle that fits, then the next biggest. The main body of the space stays whole and the leftovers fall where they fall.',
     build: (g) => greedyDecompose(g, (r) => r.area),
   },
   {

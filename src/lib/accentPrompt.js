@@ -45,13 +45,15 @@ import { extractJson, DEFAULT_MODEL } from './openaiDetect.js';
 export { DEFAULT_MODEL };
 
 export const ACCENT_TYPES = [
-  // The same indigo the ambient downlights use (C.small in PlanCanvas). A
-  // sconce IS a light, and on a lighting drawing the colour should say what a
-  // thing is rather than which pass placed it — the shape already says that.
+  // INK, LIKE EVERY OTHER FITTING. A sconce is a crosshair standing off a wall
+  // and a strip is a run with end caps — two symbols nobody could confuse, and
+  // they were also being given two hues. The accent on this canvas now means
+  // "selected", so a fitting that is permanently blue was spending the one
+  // signal that had to stay free. See the header of PlanCanvas.
   { id: 'sconce', label: 'Wall sconce', short: 'sconce', role: 'fixture',
-    mounts: 'wall',   colour: '#6366F1' },
+    mounts: 'wall',   colour: '#000000' },
   { id: 'strip',  label: 'LED strip',   short: 'strip',  role: 'target',
-    mounts: 'object', colour: '#DC2626' },
+    mounts: 'object', colour: '#000000' },
 ];
 
 export const ACCENT_IDS = ACCENT_TYPES.map((t) => t.id);
@@ -69,15 +71,15 @@ export const TYPE_BY_ID = Object.fromEntries(ACCENT_TYPES.map((t) => [t.id, t]))
  * same idea and the reason that detector works at all.
  */
 export const FURNITURE_TYPES = [
-  { id: 'bed', label: 'Bed', colour: '#7C3AED',
+  { id: 'bed', label: 'Bed', colour: '#000000',
     plan: 'a plain rectangle with pillows drawn as one or two smaller rectangles or ovals along one short edge, often with a turned-down corner or a blanket line across it. The pillow edge is the HEAD, and it is nearly always against a wall.' },
-  { id: 'wardrobe', label: 'Wardrobe', colour: '#DC2626',
+  { id: 'wardrobe', label: 'Wardrobe', colour: '#3D3D3D',
     plan: 'a long, shallow rectangle flat against a wall — much wider than it is deep — often subdivided into shutter bays, sometimes with a diagonal line or an arc showing a door swing, or a thin line inside it for the hanging rail. Usually in a bedroom, sometimes in a dressing area.' },
-  { id: 'tv_unit', label: 'TV unit', colour: '#EA580C',
+  { id: 'tv_unit', label: 'TV unit', colour: '#5C5C5C',
     plan: 'a shallow rectangle against a wall, like a wardrobe but slimmer and shorter, usually DIRECTLY OPPOSITE a bed or a sofa. Often drawn with a thin rectangle on the wall behind it for the screen itself.' },
-  { id: 'basin', label: 'Basin / vanity', colour: '#0891B2',
+  { id: 'basin', label: 'Basin / vanity', colour: '#7A7A7A',
     plan: 'in a bathroom: a counter rectangle against a wall with an oval or a rounded square drawn inside it for the bowl, and often a tap mark on the wall side. The WC and the shower tray are not this.' },
-  { id: 'sofa', label: 'Sofa', colour: '#6B7280',
+  { id: 'sofa', label: 'Sofa', colour: '#9E9E9E',
     plan: 'a rectangle with a thicker band along one long edge for the back and smaller blocks at the ends for the arms, usually facing a TV or a coffee table. It is not a bed: no pillows along a short edge.' },
 ];
 

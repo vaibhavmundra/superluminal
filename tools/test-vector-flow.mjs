@@ -320,13 +320,13 @@ section('switching rooms');
      plans.every((p) => near(bbox(p.geo.polygonFt).minX, 0, 1e-6)),
      plans.map((p) => bbox(p.geo.polygonFt).minX.toFixed(3)).join(','));
   // Every room in one file, which is what the app now exports.
-  const named = plans.map((pl, i) => toPxRoom(pl, `Room ${i + 1}`));
+  const named = plans.map((pl, i) => toPxRoom(pl, `Space ${i + 1}`));
   const csv = toCSV(named, { pxPerFt: plans[0].pxPerFt }).split('\n');
   const lightsAll = plans.reduce((n, pl) => n + pl.plan.lights.length, 0);
   ok('CSV export has a row per light in the whole plan',
      csv.length === lightsAll + 1, `${csv.length - 1} rows for ${lightsAll} lights`);
-  ok('CSV export names the room in the first column',
-     csv[0].startsWith('room,') && csv[1].startsWith('Room '), csv[1]);
+  ok('CSV export names the space in the first column',
+     csv[0].startsWith('space,') && csv[1].startsWith('Space '), csv[1]);
   ok('every room appears in the CSV',
      new Set(csv.slice(1).map((l) => l.split(',')[0])).size === plans.length,
      `${new Set(csv.slice(1).map((l) => l.split(',')[0])).size} of ${plans.length}`);

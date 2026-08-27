@@ -167,7 +167,7 @@ export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
 
   const reasons = new Set();
   const legal = (p) => {
-    if (!pointInPolygon(p, polygon)) { reasons.add('outside the room'); return false; }
+    if (!pointInPolygon(p, polygon)) { reasons.add('outside the space'); return false; }
     for (const z of zones) {
       if (p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1) {
         reasons.add('inside a no-light zone'); return false;

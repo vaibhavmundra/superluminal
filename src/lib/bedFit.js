@@ -76,6 +76,12 @@ export const BED_SOURCES = [
   { id: 'openai',   letter: 'B', label: 'GPT' },
 ];
 
+// NOT PART OF THE UI PALETTE, and left red on purpose while everything else in
+// this app went black and white. This colour is never shown to a person: it is
+// the ink drawn on the two crops sent to the bed judge, and the only property
+// that matters is that both images use the SAME one — see BED_SOURCES above. A
+// restyle here is a change to a model input, with none of the reasons a restyle
+// usually has.
 export const BOX_COLOUR = '#DC2626';
 
 export const BEDFIT_DEFAULTS = {

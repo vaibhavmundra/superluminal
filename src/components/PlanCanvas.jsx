@@ -1,6 +1,8 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useState } from 'react';
 import { guideLine } from '../lib/snapGuides.js';
 import { CEILING_BY_ID, isRect } from '../lib/ceilingObjects.js';
+import { specsFor, runMetres } from '../lib/boq.js';
+import { STRIP_STYLE } from '../lib/settings.js';
 
 // ---------------------------------------------------------------------------
 // PlanCanvas — the finished drawing. EVERY room on it, not one.
@@ -14,16 +16,57 @@ import { CEILING_BY_ID, isRect } from '../lib/ceilingObjects.js';
 // it. Hence roomclip-<index>.
 // ---------------------------------------------------------------------------
 
+// THE DRAWING IS INK. THE ACCENT IS STATE.
+//
+// This was seven hues — indigo grid, green outline, red fans, amber zones, a
+// magenta guide — and each of them was saying a second time what the symbol
+// already said. A downlight is a circle, a large light is a bigger circle with
+// a ring, a sconce is a crosshair on a wall, a spot has an arrow, a strip is a
+// run with end caps, a fan is a blade circle. None of that needs a colour to be
+// read, and spending the palette on it left nothing to say the one thing shape
+// cannot: WHICH OF THESE AM I TOUCHING.
+//
+// So the drawing is an ink scale — the plan underneath in grey, our own line
+// work in black, structure and annotation in between — and #0070F3 belongs to
+// selection, hover, grips and guides. A blue element on this canvas is always a
+// statement about state, never about type.
 const C = {
-  region: '#16A34A', grid: '#6366F1', cell: '#6366F1',
-  large: '#0A0A0A', small: '#6366F1', fan: '#DC2626', measure: '#B45309',
-  zone: '#B45309',
+  // our line work, heaviest to lightest
+  ink: '#000000',
+  region: '#000000',      // the space outline: the strongest thing we draw
+  // THE FITTINGS ARE THE ACCENT, and this is the second considered exception to
+  // "blue is state" — the first being the space fills on the tracer.
+  //
+  // The rule was written for a screen where the accent had one job and every
+  // symbol could speak for itself. It still holds for the plan: walls, outlines
+  // and dimensions are ink. But this drawing has a SUBJECT, and it is the
+  // lights. On a finished layout the plan is the ground and the fittings are
+  // the figure, and rendering the figure in the same black as the ground meant
+  // forty downlights disappearing into somebody else's line work — the one
+  // thing on the sheet the reader came for, drawn as if it were part of the
+  // furniture. Blue on this canvas now means "this is ours and it emits light";
+  // selection and guides are still blue too, and they are told apart by
+  // behaviour — a grip is a handle you can grab, a fitting is a symbol.
+  lit: '#0070F3',
+  // The travelling pulse. LIGHTER, not brighter: the band sits under the dots,
+  // so it has to read as the tape glowing rather than as a second line crossing
+  // the first.
+  pulse: '#7FB9FF',
+  large: '#0070F3',
+  small: '#0070F3',
+  grid: '#C8C8C8',        // the grid is scaffolding, not drawing
+  cell: '#D8D8D8',
+  fan: '#404040',         // an obstacle is somebody else's object
+  zone: '#737373',        // ...and so is a no-light zone
+  measure: '#000000',
+  faint: '#B8B8B8',       // debug overlays, the secondary grid
   // Controls are not drawing. Selection frames, grips and alignment guides are
   // UI that happens to be rendered in the drawing's coordinate space, so they
-  // take the colour every editor uses for exactly that and never the colour of
-  // the object they are attached to — which would read as part of it.
-  grip: '#0D99FF',
-  guide: '#F0308C',
+  // take the accent — and now that nothing else on the canvas is blue, the
+  // accent means exactly one thing.
+  grip: '#0070F3',
+  guide: '#0070F3',
+  sel: '#0070F3',
 };
 
 const PlanCanvas = forwardRef(function PlanCanvas(
@@ -34,9 +77,32 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     accents = [], objMode = false, selObjId = null, onObjPointerDown,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [],
-    cursor = null },
+    onFixture = null, draftRun = null,
+    placeSnap = null, sconceGhost = null, cursor = null },
   ref
 ) {
+  // WHICH FITTING IS WARM. Local, because nothing outside this file needs to
+  // know — the tooltip is told separately through `onFixture`, and what it
+  // needs is a screen position this component would otherwise have to invent.
+  const [hot, setHot] = useState(null);
+  /**
+   * The hover contract for one fitting: warm its stroke and hand the tooltip
+   * enough to draw itself. Enter and leave only — following the pointer with
+   * mousemove made the card jitter under the cursor and told nobody anything
+   * they did not already have.
+   */
+  const feel = (id, spec) => ({
+    onMouseEnter: (e) => {
+      setHot(id);
+      if (spec) onFixture?.({ ...spec, x: e.clientX, y: e.clientY });
+    },
+    onMouseLeave: () => {
+      setHot((h) => (h === id ? null : h));
+      onFixture?.(null);
+    },
+    style: { cursor: 'pointer' },
+  });
+
   const s = pxPerFt || 1;
   // THIN AND CRISP. This was /900 and everything on the drawing is a multiple
   // of it, so the one number sets the weight of the whole sheet. A lighting
@@ -86,6 +152,52 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2={lw * 9} stroke={C.zone} strokeWidth={lw * 1.6} opacity="0.45" />
         </pattern>
+
+        {/* THE GLOW UNDER A FITTING, AS A GRADIENT AND NOT A BLUR.
+            A feGaussianBlur over a solid disc is the literal reading of "a
+            blurred circle", and it is the wrong tool three times over: the blur
+            radius is in user units so it needs a different filter for a small
+            and a large downlight, filters are re-rasterised on every frame of
+            an animation and there are forty of these on a plan, and a blurred
+            disc still has a solid core with a soft rim — which reads as a
+            smudge rather than as light. A radial gradient falls off from the
+            middle the whole way out, costs nothing to animate, and is what a
+            pool of light actually looks like from above. */}
+        {/* THE GLOW UNDER A STRIP. A run is a line, so the downlights' radial
+            gradient is the wrong shape for it — what a strip throws is a band,
+            brightest on the tape and falling off to either side. A real
+            Gaussian blur on a thick line gives exactly that, and the objection
+            that killed the idea for the downlights does not apply here: the
+            blur radius is in user units, and there is one line weight per
+            sheet, so one filter serves every strip on the plan. There are also
+            a handful of strips rather than forty downlights, which is the
+            difference between a filter being affordable and not. */}
+        {/* userSpaceOnUse, AND THAT IS A BUG FIX, NOT A PREFERENCE.
+            A filter region given in percentages is relative to the filtered
+            element's OWN BOUNDING BOX, and a horizontal or vertical line has a
+            bounding box with zero height or zero width. `height="900%"` of zero
+            is zero, so the region collapses and the renderer improvises: the
+            blurred band came out with a one-tile-wide white notch in it that
+            MOVED as the stroke width animated, which looks exactly like a
+            deliberate spark travelling down the run and is nothing of the sort.
+            It only appeared while the glow was animating, which is what made it
+            look like our own animation misbehaving rather than a filter region
+            being degenerate.
+            An explicit region in user space cannot collapse. The plan's own
+            extent plus a margin for the blur covers every strip on the sheet,
+            and one filter serves them all because there is one line weight per
+            drawing. */}
+        <filter id="lp-strip-glow" filterUnits="userSpaceOnUse"
+          x={-lw * 60} y={-lw * 60}
+          width={width + lw * 120} height={height + lw * 120}>
+          <feGaussianBlur stdDeviation={lw * STRIP_STYLE.glowBlur} />
+        </filter>
+
+        <radialGradient id="lp-glow">
+          <stop offset="0%" stopColor={C.lit} stopOpacity="0.42" />
+          <stop offset="45%" stopColor={C.lit} stopOpacity="0.20" />
+          <stop offset="100%" stopColor={C.lit} stopOpacity="0" />
+        </radialGradient>
       </defs>
 
       {/* The plan underneath. A raster plan is an image; a DXF is its own line
@@ -94,17 +206,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           stays visible under the layout. */}
       {layers.plan && (vector
         ? <g opacity={layers.dim ? 0.5 : 1}>
-            <g fill="none" stroke="#9CA3AF" strokeWidth={lw * 1.1} opacity="0.45">
+            <g fill="none" stroke="#9E9E9E" strokeWidth={lw * 1.1} opacity="0.5">
               {vector.filter((l) => !wallLayers?.has(l.layer))
                      .map((l) => <path key={l.layer} d={l.path} />)}
             </g>
-            <g fill="none" stroke="#0A0A0A" strokeWidth={lw * 1.6} opacity="0.7">
+            <g fill="none" stroke="#4A4A4A" strokeWidth={lw * 1.6} opacity="0.85">
               {vector.filter((l) => wallLayers?.has(l.layer))
                      .map((l) => <path key={l.layer} d={l.path} />)}
             </g>
             {vector.flatMap((l) => l.circles.map((c, k) => (
               <circle key={l.layer + k} cx={c.cx} cy={c.cy} r={c.r}
-                fill="none" stroke="#9CA3AF" strokeWidth={lw} opacity="0.45" />
+                fill="none" stroke="#9E9E9E" strokeWidth={lw} opacity="0.5" />
             )))}
           </g>
         : <image href={src} x="0" y="0" width={width} height={height} opacity={layers.dim ? 0.42 : 1} />
@@ -122,7 +234,6 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               ))}
             </g>
           )}
-          {layers.grid && <g clipPath={`url(#roomclip-${i})`}>{gridPath(r.plan)}</g>}
           {layers.region && (
             <polygon points={points(r.plan.polygonPx)}
               fill="none" stroke={C.region}
@@ -177,9 +288,19 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               onPointerDown: (e) => onObjPointerDown(e, f.id, mode),
               style: { cursor: mode === 'move' ? 'move' : 'grab' } }
           : {});
-        const col = f.kind === 'chandelier' ? '#B45309'
-          : f.kind === 'ac' ? '#0F766E'
-          : f.kind === 'trapdoor' ? '#6D28D9' : C.fan;
+        // ALL ONE INK. A fan is a blade circle, a chandelier is a rosette, an
+        // AC unit is a louvred rectangle and a trap door is a hatched square —
+        // four unmistakable symbols that were also being given four hues.
+        // THE ACCENT, HELD BACK. A fan, a cassette and a trap door are things
+        // in this ceiling that are not ours, and they used to be drawn in a
+        // dark grey that competed with the fittings for attention. They belong
+        // to the same family as the lights — objects on the ceiling plane — so
+        // they take the same hue, and then they are pulled back with opacity so
+        // a downlight sitting near a fan still reads as the brighter mark. The
+        // group's own opacity does it rather than a lighter colour, because a
+        // washed-out blue on a white plan and a washed-out blue over the fan's
+        // dashed clearance circle are two different colours if you fake it.
+        const col = C.lit;
         const R = f.r || 0;
         // The BODY's radius, which is NOT the clearance radius: on a rectangle
         // the clearance circle is circumscribed and larger. The selection frame
@@ -190,7 +311,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const CL = clearanceFt * (pxPerFt || 0);
         const R0 = rect ? 0 : R;
         return (
-          <g key={f.id ?? 'fan' + i} opacity={objMode && !sel && f.source === 'placed' ? 0.75 : 1}>
+          <g key={f.id ?? 'fan' + i}
+            opacity={(objMode && !sel && f.source === 'placed' ? 0.75 : 1) * (sel ? 1 : 0.55)}>
             {/* WHAT IS ACTUALLY RESERVED, and it is not always a circle.
                 Clearance is measured to the object's own FACE, so the set of
                 points exactly `fanClearance` away from a rectangle is that
@@ -310,7 +432,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {sel && objDragMode && (
               <text x={f.x} y={f.y - (rect ? f.h / 2 : R0) - HS * 5}
                 textAnchor="middle" fontSize={HS * 1.1}
-                fontFamily="JetBrains Mono, monospace" fill={C.grip}>
+                fontFamily="Neue Montreal, sans-serif" fill={C.grip}>
                 {objDragMode === 'rotate'
                   ? `${Math.round(((f.rot || 0) * 180) / Math.PI)}\u00B0`
                   : rect
@@ -321,7 +443,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
 
             {fansPx.length > 1 && layers.labels && (
               <text x={f.x + (rect ? f.w / 2 : R0) + CL + lw * 3} y={f.y - (rect ? f.h / 2 : R0) * 0.6} fontSize={(pxPerFt || 12) * 0.5}
-                fontFamily="JetBrains Mono, monospace" fill={col} opacity="0.8">
+                fontFamily="Neue Montreal, sans-serif" fill={col} opacity="0.8">
                 {(f.kind || 'fan').slice(0, 1).toUpperCase()}{i + 1}
               </text>
             )}
@@ -335,16 +457,37 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           from. */}
       {layers.lights && laid.map((r) => (
         <g key={'l' + r.id}>
-          {r.plan.lightsPx.map((l) => {
+          {r.plan.lightsPx.map((l, li) => {
             const R = (l.kind === 'large' ? 0.52 : 0.3) * s;
             const col = l.kind === 'large' ? C.large : C.small;
+            const warm = hot === l.id;
             return (
-              <g key={l.id}>
+              <g key={l.id} {...feel(l.id, specsFor(l.kind))}>
+                {/* THE POOL OF LIGHT. Under the symbol, wider than it, and
+                    breathing. The stagger is deliberate and it is the whole
+                    difference between a lit ceiling and a blinking one: forty
+                    discs pulsing on the same beat read as a single flashing
+                    element, and forty on their own beats read as forty lamps.
+                    A prime-ish multiplier keeps the pattern from settling into
+                    rows, since the lights are laid out on a grid. */}
+                <circle cx={l.x} cy={l.y} r={R * 2.6} fill="url(#lp-glow)"
+                  className="lp-pulse" pointerEvents="none"
+                  style={{ animationDelay: `${((li * 137) % 1000) / 1000 * -2.8}s` }} />
                 {l.kind === 'large' && (
                   <circle cx={l.x} cy={l.y} r={R * 1.9} fill={col} opacity="0.07" />
                 )}
-                <circle cx={l.x} cy={l.y} r={R} fill={l.kind === 'large' ? col : '#fff'}
-                  stroke={col} strokeWidth={lw * 1.7} />
+                {/* `.hit` ON THE CIRCLE, NOT ON THE GROUP. Everything inside
+                    `.plan` is inert by default — see the note in styles.css,
+                    and the three bugs that earned it — and each shape carries
+                    its own `pointer-events:none` from an element rule. An
+                    inherited `all` from a `.hit` group loses to that, so the
+                    class goes on the shape the pointer is meant to find. The
+                    glow keeps its inline `none`: it is 2.6× the fitting's
+                    radius, and making that live would have one downlight
+                    swallowing the clicks meant for its neighbours. */}
+                <circle className="hit" cx={l.x} cy={l.y} r={R}
+                  fill={l.kind === 'large' ? col : '#fff'}
+                  stroke={col} strokeWidth={lw * (warm ? 3.1 : 1.7)} />
                 {l.kind === 'small' && <circle cx={l.x} cy={l.y} r={R * 0.42} fill={col} />}
                 {l.kind === 'large' && (
                   <line
@@ -369,7 +512,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 )}
                 {layers.labels && (
                   <text x={l.x + R * 1.6} y={l.y - R * 1.2} fontSize={s * 0.5}
-                    fontFamily="JetBrains Mono, monospace" fill={col} opacity="0.75">
+                    fontFamily="Neue Montreal, sans-serif" fill={col} opacity="0.75">
                     {laid.length > 1 && r.name ? `${r.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 4)}-` : ''}{l.id}
                   </text>
                 )}
@@ -392,10 +535,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           disagree — a run half the length of the wardrobe, a sconce snapped to
           the wrong wall — that disagreement is the bug, and it is invisible if
           only one of the two is drawn. */}
-      {layers.accents && accents.map((a) => {
+      {layers.accents && accents.map((a, ai) => {
         const w = a.rect.x1 - a.rect.x0, h = a.rect.y1 - a.rect.y0;
         const dim = a.rejected ? 0.35 : 1;
         const accSel = a.id === selAccId;
+        // ONE COLOUR FOR EVERYTHING THAT EMITS. `a.colour` was set per accent
+        // type back when a strip was red and a sconce amber; the type is
+        // already in the symbol — a run with end caps, a crosshair on a wall —
+        // so the hue was spare, and it is spent on "this is a light" instead.
+        const acol = C.lit;
         // Constant on screen, like every other control. See the ceiling-object
         // handles for the argument.
         const AH = (Math.max(width, height) / 155) / (zoom || 1);
@@ -416,24 +564,28 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           };
         })() : null;
         return (
-          <g key={a.id} opacity={dim}>
-            {/* The box behind the fitting is the working, and it is worth seeing
-                — a run half the length of the wardrobe is a bug you can only
-                catch by looking at both. But a rule-derived sconce's box is
-                NOMINAL: it was synthesised round a point that came from the
-                bed's geometry, so drawing it claims an extent the fitting does
-                not have, straddling the wall. Shown for a strip, whose box is
-                the real furniture; hidden for a sconce that came from a rule. */}
+          <g key={a.id} opacity={dim}
+            {...feel(a.id, a.type === 'strip'
+              ? specsFor('strip', { metres: runMetres(a, pxPerFt) })
+              : specsFor('sconce'))}>
             {accSel && a.run && (
               <line x1={a.run[0].x} y1={a.run[0].y} x2={a.run[1].x} y2={a.run[1].y}
                 stroke={C.grip} strokeWidth={AFW * 5} strokeLinecap="round" opacity="0.28" />
             )}
-            {!(a.type === 'sconce' && a.side) && (
-              <rect x={a.rect.x0} y={a.rect.y0} width={w} height={h}
-                fill={a.colour} fillOpacity={a.rejected ? 0.05 : 0.07}
-                stroke={a.colour} strokeWidth={lw * 1.4} strokeOpacity={a.rejected ? 0.8 : 0.4}
-                strokeDasharray={`${lw * 4} ${lw * 4}`} rx={lw * 2} />
-            )}
+            {/* THE MODEL'S BOX IS NOT ON THE DRAWING ANY MORE.
+                It was the region the accent detector marked — the wardrobe, the
+                TV unit — drawn dashed behind the fitting so that what the model
+                said and what the geometry did with it were both visible. That
+                is a debugging view, and the right one while the placer was
+                being written: a run half the length of the wardrobe is a bug
+                you can only catch by looking at both.
+                On a sheet somebody is handed it is a dashed rectangle round a
+                piece of furniture, in the lights' own colour, beside the strip
+                it produced — three marks where the drawing needs one. Same
+                argument as the task-surface boxes and the same answer: the
+                FITTING is the visible consequence, the region is working, and
+                the region is still on the zone for anything that wants it.
+                Only the lights show. */}
 
             {/* the run: a strip, with the ends the object gave it */}
             {a.run && (() => {
@@ -443,14 +595,78 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               // a definite start and stop rather than fading into the wall.
               const nx = -(p1.y - p0.y) / L, ny = (p1.x - p0.x) / L;
               const t = lw * 4;
+              // A DOTTED RUN THAT PULSATES, THE WAY A SPOT DOES.
+              //
+              // THREE VERSIONS OF A TRAVELLING PULSE WENT IN THE BIN BEFORE
+              // THIS, and the reason they all failed is worth keeping. First:
+              // walk the dots themselves by one dash cycle — seven pixels over
+              // two seconds, which moved and could not be seen, and was
+              // conceptually wrong anyway because the dots ARE the emitters and
+              // emitters do not slide along their own tape. Second: a band of
+              // lighter blue underneath, which at 3.8× the line weight was
+              // invisible under 2.4× dots and at 7× read as the tape swelling
+              // rather than as anything travelling. Third: one dot of white at
+              // the run's own weight, shooting along in 900ms — legible,
+              // correct on its own terms, and still wrong on the drawing,
+              // because a white mark racing down a line is an ANIMATION and
+              // everything else on this sheet is a fitting quietly breathing.
+              //
+              // So a strip does what a spot does: the glow under it swells and
+              // fades on the same 2.8-second cycle, and the dots hold still.
+              // One idiom for "this is on" across every fitting on the plan,
+              // which is the thing the drawing was missing while the strips had
+              // an idiom of their own. The stagger is the same trick the
+              // downlights use — a per-fitting phase offset, so a plan reads as
+              // several lamps rather than one blinking element.
+              //
+              // Every dimension comes from STRIP_STYLE in settings.js, and each
+              // is a multiple of the sheet's line weight so the same numbers
+              // describe this strip on a 900px sketch and a 6000px survey.
+              const S = STRIP_STYLE;
+              const boost = hot === a.id ? S.hoverBoost : 0;
+              const dot = lw * S.dash, gapl = lw * S.gap;
               return (
                 <g>
+                  {/* THE GLOW BREATHES BY GETTING FATTER, NOT BY FADING.
+                      Opacity alone was the first go at this and it did not read
+                      as pulsating at all — a blurred band at 38% and the same
+                      band at 62% look like the same band, because the blur has
+                      already thrown most of its contrast away. A downlight's
+                      halo works because it SCALES, and the strip's equivalent
+                      of scaling is stroke-width: a line grows perpendicular to
+                      its own axis, so the band gets wider and stays exactly as
+                      long. `butt` caps rather than `round` for the same reason
+                      — a round cap adds half the stroke width at each end, so a
+                      breathing run with round caps would creep past its own end
+                      caps twice a cycle. The two widths go in as custom
+                      properties because they are multiples of the sheet's line
+                      weight, which the stylesheet cannot know. */}
                   <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
-                    stroke={a.colour} strokeWidth={lw * 4.5} strokeLinecap="round" />
-                  {[p0, p1].map((p, i) => (
-                    <line key={i} x1={p.x - nx * t} y1={p.y - ny * t}
-                      x2={p.x + nx * t} y2={p.y + ny * t}
-                      stroke={a.colour} strokeWidth={lw * 1.8} strokeLinecap="round" />
+                    stroke={acol} strokeWidth={lw * (S.glow + boost * 2)}
+                    strokeLinecap="butt" opacity={S.glowOpacity}
+                    filter="url(#lp-strip-glow)" pointerEvents="none"
+                    className="lp-breathe"
+                    style={{ '--lp-glow-o': S.glowOpacity,
+                             '--lp-w0': `${lw * (S.glow + boost * 2) * (1 - S.glowSwell)}px`,
+                             '--lp-w1': `${lw * (S.glow + boost * 2) * (1 + S.glowSwell)}px`,
+                             animationDuration: `${S.pulseMs}ms`,
+                             animationDelay: `${((ai * 137) % 1000) / 1000 * -S.pulseMs}ms`,
+                             animationPlayState: hot === a.id ? 'paused' : 'running' }} />
+                  <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
+                    stroke={acol} strokeWidth={lw * (S.stroke + boost)}
+                    strokeLinecap="round"
+                    strokeDasharray={`${dot} ${gapl}`}
+                    className="lp-flow hit" />
+                  {/* SMALL SQUARE END CAPS. They were perpendicular ticks at
+                      grip size, which is precisely what a grip looks like — so
+                      people tried to drag them. A small square says "the run
+                      stops here" and says nothing about being draggable; the
+                      actual handles are bigger, white-filled and appear on
+                      hover or selection. */}
+                  {[p0, p1].map((q, i) => (
+                    <rect key={i} x={q.x - lw * S.cap / 2} y={q.y - lw * S.cap / 2}
+                      width={lw * S.cap} height={lw * S.cap}
+                      fill={acol} pointerEvents="none" />
                   ))}
                 </g>
               );
@@ -472,7 +688,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               return (
                 <g>
                   <circle cx={cx} cy={cy} r={R} fill="#fff" />
-                  <g stroke={a.colour} strokeWidth={lw * 1.8} strokeLinecap="round">
+                  <g stroke={acol} strokeWidth={lw * 1.8} strokeLinecap="round">
                     {/* the stem: from the wall, through the circle, out the far side */}
                     <line x1={a.point.x} y1={a.point.y}
                       x2={cx + ix * arm} y2={cy + iy * arm} />
@@ -480,8 +696,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     <line x1={cx - ux * arm} y1={cy - uy * arm}
                       x2={cx + ux * arm} y2={cy + uy * arm} />
                   </g>
-                  <circle cx={cx} cy={cy} r={R} fill="none"
-                    stroke={a.colour} strokeWidth={lw * 2.1} />
+                  <circle className="hit" cx={cx} cy={cy} r={R} fill="none"
+                    stroke={acol} strokeWidth={lw * (hot === a.id ? 3.4 : 2.1)} />
                 </g>
               );
             })()}
@@ -506,7 +722,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   stroke="transparent" strokeWidth={AH * 1.6} strokeLinecap="round"
                   className="hit" style={{ cursor: 'move' }}
                   onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'move')} />
-                {accSel && a.run.map((q, k) => (
+                {/* ON HOVER AS WELL AS ON SELECTION. A run you can drag but
+                    whose handles only appear once you have already clicked it
+                    is a run that looks fixed until you guess otherwise. The
+                    pointer being on it is enough of a question to answer. */}
+                {(accSel || hot === a.id) && a.run.map((q, k) => (
                   <rect key={k} x={q.x - AH / 2} y={q.y - AH / 2} width={AH} height={AH}
                     rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
                     className="hit" style={{ cursor: 'move' }}
@@ -570,58 +790,29 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const cy = poly.reduce((a, p) => a + p.y, 0) / poly.length;
         return (
           <text key={'n' + r.id} x={cx} y={cy} textAnchor="middle"
-            fontSize={s * 0.8} fontFamily="JetBrains Mono, monospace"
-            fill={C.region} opacity="0.65">{r.name || 'Room'}</text>
+            fontSize={s * 0.8} fontFamily="Neue Montreal, sans-serif"
+            fill={C.region} opacity="0.65">{r.name || 'Space'}</text>
         );
       })}
 
-      {/* --- task surfaces ---------------------------------------------------
-          FOUND, NOT LIT. Nothing has been placed on these — they are a reading
-          of the plan, drawn so the reading can be judged before anything is
-          built on it. So they are a plain box with corner ticks and no fitting
-          symbol of any kind: the drawing should not imply a decision that has
-          not been taken.
+      {/* --- task surfaces: FOUND, AND NO LONGER DRAWN -----------------------
+          They were a dashed box with corner ticks — a reading of the plan, put
+          on screen so the reading could be judged before anything was built on
+          it. That was the right call while the surface detector was the thing
+          being debugged. On a finished layout it is a box around a dining table
+          saying "we noticed the dining table", drawn over the drawing that
+          already shows one, and the fitting it justifies is three feet away
+          with its own arrow pointing at it. The spot IS the visible consequence
+          of the surface; the surface itself is working, and working belongs in
+          the console. `surfaces` is still a prop and still feeds the spots. */}
 
-          Under the accent layer and under the lights, because it is the layer
-          with the least committed to it. */}
-      {layers.surfaces && surfaces.map((sf) => {
-        const w = sf.rect.x1 - sf.rect.x0, h = sf.rect.y1 - sf.rect.y0;
-        const tick = Math.min(w, h) * 0.24;
-        const { x0, y0, x1, y1 } = sf.rect;
-        return (
-          <g key={sf.id} opacity={0.5 + 0.5 * (sf.confidence ?? 0.7)}>
-            <rect x={x0} y={y0} width={w} height={h} rx={lw * 2}
-              fill={sf.colour} fillOpacity="0.09"
-              stroke={sf.colour} strokeWidth={lw * 1.4}
-              strokeDasharray={`${lw * 5} ${lw * 4}`} />
-            <g stroke={sf.colour} strokeWidth={lw * 2.4} fill="none" strokeLinecap="round">
-              <path d={`M${x0},${y0 + tick} L${x0},${y0} L${x0 + tick},${y0}`} />
-              <path d={`M${x1 - tick},${y0} L${x1},${y0} L${x1},${y0 + tick}`} />
-              <path d={`M${x1},${y1 - tick} L${x1},${y1} L${x1 - tick},${y1}`} />
-              <path d={`M${x0 + tick},${y1} L${x0},${y1} L${x0},${y1 - tick}`} />
-            </g>
-          </g>
-        );
-      })}
-
-      {/* --- the secondary grid ----------------------------------------------
-          INVISIBLE BY DEFAULT, and off in the layer list. It is not a thing on
-          the drawing — it is the reasoning behind where a spot went, which is
-          worth being able to switch on when a spot lands somewhere surprising
-          and worth being absent the rest of the time. */}
-      {layers.secondary && taskSpots.map((sp) => sp.grid && (
-        <g key={'sg' + sp.id} opacity="0.5">
-          {sp.grid.lines.map((l, i) => (
-            <line key={i} x1={l.a.x} y1={l.a.y} x2={l.b.x} y2={l.b.y}
-              stroke="#0A0A0A" strokeWidth={lw * 0.8} opacity="0.55" />
-          ))}
-          {sp.segment && (
-            <line x1={sp.segment.a.x} y1={sp.segment.a.y}
-              x2={sp.segment.b.x} y2={sp.segment.b.y}
-              stroke={C.small} strokeWidth={lw * 3} opacity="0.35" strokeLinecap="round" />
-          )}
-        </g>
-      ))}
+      {/* --- the secondary grid: REASONING, AND NOT ON THE DRAWING -----------
+          The lines a spot was placed on. It was already off by default and in
+          the layer list for the times a spot lands somewhere surprising; with
+          the surfaces themselves gone from the canvas it is the last piece of
+          the spot placer's working still able to appear on a client's sheet, so
+          it goes the same way. `sp.grid` is still computed and still in the
+          console, which is where working belongs. */}
 
       {/* --- directional spots -----------------------------------------------
           THE SAME BLUE AS THE AMBIENT DOWNLIGHTS, because it is the same kind
@@ -643,10 +834,35 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const x1 = sp.x + ux * R * 3.5, y1 = sp.y + uy * R * 3.5;
         const head = R * 1.05;
         const nx = -uy, ny = ux;
+        // WHAT IT IS LIGHTING, ON HOVER. The task surfaces came off the drawing
+        // because a dashed box round a dining table is working, not design —
+        // but the question "why is this spot here, and aimed at what" is a fair
+        // one to ask of any fitting, and the arrow alone answers only half of
+        // it. Under the pointer is the right moment: it is asked about one
+        // fitting at a time, and it costs the sheet nothing the rest of the
+        // time.
+        const surf = hot === sp.id ? surfaces.find((sf) => sf.id === sp.surfaceId) : null;
         return (
-          <g key={sp.id}>
-            <circle cx={sp.x} cy={sp.y} r={R} fill="#fff"
-              stroke={C.small} strokeWidth={lw * 2} />
+          <g key={sp.id} {...feel(sp.id, specsFor('spot'))}>
+            {surf && (
+              <g pointerEvents="none">
+                <rect x={surf.rect.x0} y={surf.rect.y0}
+                  width={surf.rect.x1 - surf.rect.x0} height={surf.rect.y1 - surf.rect.y0}
+                  rx={lw * 2} fill={C.lit} fillOpacity="0.10"
+                  stroke={C.lit} strokeWidth={lw * 1.4} strokeOpacity="0.55"
+                  strokeDasharray={`${lw * 5} ${lw * 4}`} />
+                {/* The line from the fitting to what it is for. The arrow
+                    already points this way; the tether says how far. */}
+                <line x1={sp.x} y1={sp.y} x2={sp.target.x} y2={sp.target.y}
+                  stroke={C.lit} strokeWidth={lw} strokeOpacity="0.4"
+                  strokeDasharray={`${lw * 2} ${lw * 3}`} />
+              </g>
+            )}
+            <circle cx={sp.x} cy={sp.y} r={R * 2.4} fill="url(#lp-glow)"
+              className="lp-pulse" pointerEvents="none"
+              style={{ animationDelay: `${((sp.x | 0) % 1000) / 1000 * -2.8}s` }} />
+            <circle className="hit" cx={sp.x} cy={sp.y} r={R} fill="#fff"
+              stroke={C.small} strokeWidth={lw * (hot === sp.id ? 3.4 : 2)} />
             <circle cx={sp.x} cy={sp.y} r={R * 0.4} fill={C.small} />
             <line x1={x0} y1={y0} x2={x1} y2={y1}
               stroke={C.small} strokeWidth={lw * 1.9} strokeLinecap="round" />
@@ -676,7 +892,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               <text x={g.axis === 'x' ? g.value + lw * 4 : l.x1 + lw * 4}
                 y={g.axis === 'x' ? l.y1 + lw * 10 : g.value - lw * 4}
                 fontSize={Math.max(width, height) / 130}
-                fontFamily="JetBrains Mono, monospace" fill={C.guide} opacity="0.85">
+                fontFamily="Neue Montreal, sans-serif" fill={C.guide} opacity="0.85">
                 {g.label}
               </text>
             )}
@@ -717,6 +933,109 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               stroke={col} strokeWidth={lw} />
             <line x1={ghost.x} y1={ghost.y - r * 0.3} x2={ghost.x} y2={ghost.y + r * 0.3}
               stroke={col} strokeWidth={lw} />
+          </g>
+        );
+      })()}
+
+      {/* THE RUN BEING SPANNED. Between the strip tool's first click and its
+          second there is a fitting that has a start and no end, and the only
+          place that fact can live is on the drawing. Drawn in the strip's own
+          dotted idiom rather than as a plain rubber band, so what you are
+          dragging out looks like what you will get — and with the length beside
+          it, because "is that long enough for the wardrobe" is the question
+          being answered in that second. */}
+      {draftRun && (() => {
+        const [a, b] = draftRun;
+        const L = Math.hypot(b.x - a.x, b.y - a.y);
+        return (
+          <g pointerEvents="none">
+            <line x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+              stroke={C.lit} strokeWidth={lw * 4.8} strokeLinecap="round"
+              strokeDasharray={`${lw * 3.2} ${lw * 3.4}`} opacity="0.75" />
+            <circle cx={a.x} cy={a.y} r={lw * 3.4} fill={C.lit} />
+            {pxPerFt > 0 && L > lw * 8 && (
+              <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - lw * 8}
+                fontSize={Math.max(width, height) / 120} textAnchor="middle"
+                fontFamily="Neue Montreal, sans-serif" fill={C.lit}>
+                {(L / pxPerFt).toFixed(1)} ft
+              </text>
+            )}
+          </g>
+        );
+      })()}
+
+      {/* --- WHAT A CLICK WOULD DO, while a fitting is being placed ---------
+          Drawn last, over everything, because it is the answer to a question
+          being asked right now and it stops existing the moment it is answered.
+
+          THE SNAP INDICATOR IS THE SAME PROMISE THE TRACER MAKES. A run placed
+          a hair off the wall it is concealed behind is as wrong as an outline
+          corner placed a hair off, so the cursor holds on to the same geometry
+          — and having caught something, it has to SAY so, or a click that
+          quietly moved four inches looks like a misclick. */}
+      {placeSnap && placeSnap.kind && placeSnap.kind !== 'free' && (() => {
+        const R = Math.max(width, height) / 190;
+        return (
+          <g pointerEvents="none">
+            {placeSnap.guide && (
+              <line
+                x1={placeSnap.guide.from.x} y1={placeSnap.guide.from.y}
+                x2={placeSnap.guide.axis === 'x' ? placeSnap.x : placeSnap.guide.from.x}
+                y2={placeSnap.guide.axis === 'x' ? placeSnap.guide.from.y : placeSnap.y}
+                stroke={C.guide} strokeWidth={lw} opacity="0.9"
+                strokeDasharray={`${lw * 3} ${lw * 3}`} />
+            )}
+            {/* A DIAMOND FOR AN EDGE, A SQUARE FOR AN END, A RING OTHERWISE —
+                the tracer's alphabet, because "it snapped" is not the useful
+                information and WHAT it snapped to is. */}
+            {placeSnap.kind === 'edge' ? (
+              /* A diamond: the square offset onto its own centre, then turned
+                 about that same point. Rotating about the rect's x/y instead
+                 swings it a half-width off the snap it is supposed to mark. */
+              <rect x={placeSnap.x - R / 2} y={placeSnap.y - R / 2} width={R} height={R}
+                transform={`rotate(45 ${placeSnap.x} ${placeSnap.y})`}
+                fill="#fff" stroke={C.guide} strokeWidth={lw * 1.6} />
+            ) : (placeSnap.kind === 'end' || placeSnap.kind === 'vertex') ? (
+              <rect x={placeSnap.x - R / 2} y={placeSnap.y - R / 2} width={R} height={R}
+                fill="#fff" stroke={C.guide} strokeWidth={lw * 1.6} />
+            ) : (
+              <circle cx={placeSnap.x} cy={placeSnap.y} r={R * 0.6}
+                fill="#fff" stroke={C.guide} strokeWidth={lw * 1.6} />
+            )}
+          </g>
+        );
+      })()}
+
+      {/* THE SCONCE, BEFORE IT IS PLACED. Not a marker at the cursor: the whole
+          point of this fitting is that it seats itself on a wall, so a preview
+          at the pointer would show something that is never what lands. This is
+          the output of `placeZone` — the same function the click runs — drawn
+          faint, so what you see move along the wall as the pointer moves IS the
+          fitting. */}
+      {sconceGhost && (() => {
+        const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
+        const { x: ix, y: iy } = sconceGhost.inward;
+        const ux = sconceGhost.along?.x ?? -iy, uy = sconceGhost.along?.y ?? ix;
+        const cx = sconceGhost.point.x + ix * R * 2.6;
+        const cy = sconceGhost.point.y + iy * R * 2.6;
+        const arm = R * 1.7;
+        return (
+          <g pointerEvents="none" opacity="0.55">
+            {sconceGhost.wall && (
+              <line x1={sconceGhost.wall.a.x} y1={sconceGhost.wall.a.y}
+                x2={sconceGhost.wall.b.x} y2={sconceGhost.wall.b.y}
+                stroke={C.guide} strokeWidth={lw} opacity="0.7"
+                strokeDasharray={`${lw * 4} ${lw * 4}`} />
+            )}
+            <circle cx={cx} cy={cy} r={R} fill="#fff" />
+            <g stroke={C.lit} strokeWidth={lw * 1.8} strokeLinecap="round">
+              <line x1={sconceGhost.point.x} y1={sconceGhost.point.y}
+                x2={cx + ix * arm} y2={cy + iy * arm} />
+              <line x1={cx - ux * arm} y1={cy - uy * arm}
+                x2={cx + ux * arm} y2={cy + uy * arm} />
+            </g>
+            <circle cx={cx} cy={cy} r={R} fill="none"
+              stroke={C.lit} strokeWidth={lw * 2.1} />
           </g>
         );
       })()}

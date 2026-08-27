@@ -53,7 +53,7 @@ export function collectTargets({ rooms = [], objects = [], exclude = null } = {}
     if (!poly?.length) continue;
     const b = bboxOf(poly);
     const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
-    const name = r.name || 'room';
+    const name = r.name || 'space';
     out.push({ axis: 'x', value: cx, span: [b.y0, b.y1], kind: 'room-centre',
                label: `${name} centre` });
     out.push({ axis: 'y', value: cy, span: [b.x0, b.x1], kind: 'room-centre',

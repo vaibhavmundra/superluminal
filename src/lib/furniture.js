@@ -199,7 +199,7 @@ export function detectionsToZones(payload, { image, polygon = null, classes = ZO
     if (conf < opt.minConfidence) { why(`confidence ${conf.toFixed(2)} below ${opt.minConfidence}`); continue; }
     if (frac > opt.maxAreaFrac) { why(`covers ${Math.round(frac * 100)}% of the plan`); continue; }
     if (frac < opt.minAreaFrac) { why('too small to be furniture'); continue; }
-    if (polygon && !pointInPolygon(rectCentre(r), polygon)) { why('outside the room being lit'); continue; }
+    if (polygon && !pointInPolygon(rectCentre(r), polygon)) { why('outside the space being lit'); continue; }
 
     kept.push({ cls, conf, rect: r });
   }
@@ -257,7 +257,7 @@ export const PROVIDERS = [
   { id: 'openai',   label: 'GPT',      note: 'reads the plan like a person; one call for the bounds, we do the maths' },
   { id: 'both',     label: 'Both',     note: 'two calls, both answers — overlapping boxes are de-duplicated' },
   { id: 'judge',    label: 'Both, judged',
-    note: 'two calls, then a third that looks at the two answers drawn on the room and picks the one on the bed' },
+    note: 'two calls, then a third that looks at the two answers drawn on the space and picks the one on the bed' },
 ];
 
 /**

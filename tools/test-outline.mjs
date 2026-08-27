@@ -105,12 +105,12 @@ sec('handing the outline to the rest of the app');
 
 sec('naming');
 {
-  ok('first is Room 1', nextOutlineName([]) === 'Room 1');
+  ok('first is Space 1', nextOutlineName([]) === 'Space 1');
   ok('skips names in use',
-     nextOutlineName([{ name: 'Room 1' }, { name: 'Room 2' }]) === 'Room 3');
-  ok('ignores unnamed ones', nextOutlineName([{ name: null }]) === 'Room 1');
+     nextOutlineName([{ name: 'Space 1' }, { name: 'Space 2' }]) === 'Space 3');
+  ok('ignores unnamed ones', nextOutlineName([{ name: null }]) === 'Space 1');
   ok('works around a custom name',
-     nextOutlineName([{ name: 'KITCHEN' }, { name: 'Room 1' }]) === 'Room 2');
+     nextOutlineName([{ name: 'KITCHEN' }, { name: 'Space 1' }]) === 'Space 2');
   const a = makeOutline(box(10, 10)), b = makeOutline(box(10, 10));
   ok('ids are distinct', a.id !== b.id, `${a.id} ${b.id}`);
 }

@@ -16,7 +16,9 @@
 //     and clicking one did nothing. Same family as the sconce whose grab area
 //     was painted under its own symbol.
 //   * clicking one asks the width, and picking 900mm produces a plausible px/ft
-//   * the scale panel offers exactly two methods
+//   * the scale panel offers exactly two methods, and on the door screen says
+//     ONLY what to click and where to go instead — no door count, no empty
+//     scale row, and none of the tracing controls that cannot work yet
 //
 // The workflow response is stubbed, verbatim in shape — a top-level array with
 // predictions.predictions and the model's own image size — so this needs no key
@@ -99,13 +101,69 @@ const t0 = await side();
 ok(/Doors/.test(t0) && /Measure/.test(t0), 'the scale offers exactly Doors and Measure');
 ok(!/From fan/.test(t0), 'From fan is gone');
 ok(!/Pixels per foot/i.test(t0), 'and so is the pixels-per-foot box');
-ok(/4 doors.*found/is.test(t0), `it reports what it found: "${t0.match(/\d+ doors? found[^\n]*/i)?.[0]}"`);
-ok(/not set/.test(t0), 'and there is no scale yet');
+// THE DOOR SCREEN IS ONE INSTRUCTION AND ONE ESCAPE HATCH. Everything that
+// belongs to tracing is inert before there is a ruler, so it is not on screen:
+// the count of doors found, the scale row reading "not set", the spaces the
+// detector proposed, the trace and snapping controls.
+ok(/Select a door whose dimension you know/i.test(t0),
+   `it says what to do: "${t0.match(/Select a door[^\n]*/i)?.[0]}"`);
+ok(/If you wish to proceed with another dimension, click on the\s+Measure tab above/is.test(t0),
+   'and where to go for another dimension');
+ok(!/doors? found/i.test(t0), 'the count of doors found is gone');
+ok(!/not set/.test(t0), 'and so is the empty scale row');
+for (const gone of ['Spaces on the plan', 'Trace', 'Snapping', 'Snap to', 'Outlines']) {
+  ok(!new RegExp(gone, 'i').test(t0), `no "${gone}" section on the door screen`);
+}
+ok(!/Light (all|this)/i.test(await pg.locator('.picker-foot').innerText()),
+   'and no Light button before there is a scale');
+
+// THE INSTRUCTION IS THE SCREEN. Bigger than a note, centred in a panel as tall
+// as the plan beside it, with the escape hatch under it.
+const geom = await pg.evaluate(() => {
+  const plan = document.querySelector('.tracer-plan').getBoundingClientRect();
+  const side = document.querySelector('.rooms-side').getBoundingClientRect();
+  const h = document.querySelector('.door-ask-h'), q = document.querySelector('.door-ask-p');
+  if (!h || !q) return null;
+  const hb = h.getBoundingClientRect(), qb = q.getBoundingClientRect();
+  const cs = getComputedStyle(h);
+  return {
+    dPlanH: Math.abs(plan.height - side.height), dPlanTop: Math.abs(plan.top - side.top),
+    size: parseFloat(cs.fontSize), align: cs.textAlign,
+    dMidX: Math.abs((hb.left + hb.width / 2) - (side.left + side.width / 2)),
+    dMidY: Math.abs((hb.top + hb.height / 2) - (side.top + side.height / 2)),
+    below: qb.top >= hb.bottom - 1, qSize: parseFloat(getComputedStyle(q).fontSize),
+  };
+});
+ok(!!geom, 'the instruction is its own block, not a note');
+ok(geom && geom.dPlanH <= 2 && geom.dPlanTop <= 2,
+   `the panel is as tall as the plan and aligned with it: ${geom && geom.dPlanH}px / ${geom && geom.dPlanTop}px out`);
+ok(geom && geom.size >= 16, `set larger than a note: ${geom && geom.size}px`);
+ok(geom && geom.align === 'center' && geom.dMidX <= 3 && geom.dMidY <= 12,
+   `centred in the panel both ways: ${geom && Math.round(geom.dMidX)}px / ${geom && Math.round(geom.dMidY)}px off centre`);
+ok(geom && geom.below && geom.qSize < geom.size, 'with the supporting sentence beneath it, smaller');
+
+// NOTHING SNAPS ON THIS SCREEN. Move the cursor across the plan and the snap
+// engine must stay silent — no glyph, no dotted guides, no pill naming a corner
+// nobody is placing, and no crosshair claiming a click would draw something.
+const cbox = await pg.locator('.tracer-plan canvas').first().boundingBox();
+await pg.mouse.move(cbox.x + cbox.width * 0.55, cbox.y + cbox.height * 0.55);
+await pg.waitForTimeout(200);
+await pg.mouse.move(cbox.x + cbox.width * 0.52, cbox.y + cbox.height * 0.48);
+await pg.waitForTimeout(300);
+const hud = (await pg.locator('.tracer-hud').innerText()).trim();
+ok(hud === '', `the HUD is empty on the door screen: "${hud.replace(/\n/g, ' | ')}"`);
+const drawn = await pg.evaluate(() => {
+  const st = window.Konva.stages[0];
+  return { lines: st.find('Line').length, texts: st.find('Text').length };
+});
+ok(drawn.lines === 0 && drawn.texts === 0,
+   `no snap glyph, guide or label drawn: ${JSON.stringify(drawn)}`);
+ok(await pg.evaluate(() => getComputedStyle(document.querySelector('.tracer-plan')).cursor) === 'default',
+   'and the cursor is default over the plan, not a crosshair or not-allowed');
 
 // CLICK A DOOR on the plan. The boxes are in plan pixels; find one on screen by
 // walking the Konva stage's own transform.
-const canvas = pg.locator('.tracer-plan canvas').first();
-const box = await canvas.boundingBox();
+const box = cbox;
 
 // FIND THE DOOR RECTS ON THE STAGE ITSELF. The plan is drawn into a Konva
 // canvas, not an <img>, so there is no DOM element to measure and no way to
@@ -116,10 +174,28 @@ const rects = await pg.evaluate(() => {
   const st = window.Konva?.stages?.[0];
   if (!st) return [];
   return st.find('Rect')
-    .filter((n) => String(n.fill() || '').includes('97,97,245'))
-    .map((n) => { const r = n.getClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+    .filter((n) => String(n.fill() || '').includes('0,112,243'))
+    .map((n) => { const r = n.getClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height, sw: n.strokeWidth() }; });
 });
 ok(rects.length === 4, `the four doors are drawn on the stage in the primary colour: ${rects.length}`);
+// HOVER ANSWERS THE POINTER. A door box is a button; thickening its outline is
+// the confirmation, and it must be the hovered one only.
+{
+  const idle = rects.map((r, i) => ({ i, sw: r.sw }));
+  const j = 1;
+  await pg.mouse.move(cbox.x + rects[j].x + rects[j].w / 2, cbox.y + rects[j].y + rects[j].h / 2);
+  await pg.waitForTimeout(250);
+  const hot = await pg.evaluate(() => window.Konva.stages[0].find('Rect')
+    .filter((n) => String(n.fill() || '').includes('0,112,243')).map((n) => n.strokeWidth()));
+  ok(hot[j] > idle[j].sw + 0.5,
+     `hovering thickens that door's outline: ${idle[j].sw.toFixed(2)} -> ${hot[j].toFixed(2)}`);
+  ok(idle.every((d) => d.i === j || Math.abs(hot[d.i] - d.sw) < 0.01),
+     'and leaves the others alone');
+  await pg.mouse.move(cbox.x + 4, cbox.y + 4);
+  await pg.waitForTimeout(200);
+}
+
 const target = rects[0];
 const cx = box.x + target.x + target.w / 2;
 const cy = box.y + target.y + target.h / 2;
@@ -129,7 +205,7 @@ await pg.waitForTimeout(400);
 const t1 = await side();
 ok(/How wide is this door/i.test(t1), `clicking a door asks its width: "${t1.match(/How wide[^\n]*/i)?.[0] ?? t1.slice(0,120)}"`);
 ok(/750mm/.test(t1) && /900mm/.test(t1) && /1200mm/.test(t1), 'with 750 / 900 / 1200 offered');
-ok(/measure instead/i.test(t1), 'and a way out to measuring');
+ok(!/measure instead/i.test(t1), 'and no in-tab measure escape — that is the Measure tab');
 
 await pg.getByRole('button', { name: '900mm' }).click();
 await pg.waitForTimeout(500);
@@ -140,6 +216,18 @@ const pxft = m ? parseFloat(m[1]) : 0;
 const plan = t2.match(/Plan measures[\s\S]{0,40}/)?.[0]?.replace(/\n/g,' ');
 console.log('  ..  ' + plan);
 ok(pxft > 10 && pxft < 200, `and it is a plausible px/ft: ${pxft}`);
+
+// AND ONCE THERE IS A SCALE the screen becomes the tracer again. Case-
+// insensitively: the section headings are uppercased in CSS, so innerText reads
+// TRACE and SNAPPING.
+const t3 = await side();
+ok(/trace/i.test(t3) && /snapping/i.test(t3),
+   'the trace and snapping controls come back with the scale');
+const foot = await pg.locator('.picker-foot').innerText();
+ok(!/\broom/i.test(foot + t3),
+   `nothing calls it a room any more: "${(foot+t3).match(/[^\n]*\broom[^\n]*/i)?.[0] ?? ''}"`);
+ok(/Light (all \d+ spaces|this space)/i.test(foot) || /Trace an outline/i.test(foot),
+   `the button speaks of spaces: "${foot.match(/Light[^\n]*/i)?.[0] ?? foot.split('\n').pop()}"`);
 
 ok(errs.length===0, `no page errors: ${errs.join(' | ')||'none'}`);
 await br.close(); srv.close();

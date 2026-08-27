@@ -480,7 +480,7 @@ export function boqToPDF(boq, { title = 'Lighting schedule' } = {}) {
   let section = 'meta';
   const sectionFor = (row) => {
     if (row[0] === 'Item') { section = 'fittings'; return section; }
-    if (row[0] === 'Room') { section = 'rooms'; return section; }
+    if (row[0] === 'Space') { section = 'rooms'; return section; }
     if (row.length === 1) return 'title';
     return section;
   };
@@ -495,7 +495,7 @@ export function boqToPDF(boq, { title = 'Lighting schedule' } = {}) {
 
     for (const row of page) {
       const kind = sectionFor(row);
-      const isHead = row[0] === 'Item' || row[0] === 'Room';
+      const isHead = row[0] === 'Item' || row[0] === 'Space';
       const isTitle = kind === 'title' && row[0];
       const font = isHead || isTitle ? '/F2' : '/F1';
       const cols = columnLayout(kind);
@@ -544,7 +544,7 @@ export function boqToPDF(boq, { title = 'Lighting schedule' } = {}) {
 const LAYOUTS = {
   //         Item  Description Qty   Unit  Wattage Beam  Load  Notes
   fittings: { share: [0.05, 0.25, 0.07, 0.07, 0.09, 0.06, 0.08, 0.33], right: [2, 6] },
-  //         Room  Area  Small Large Spots Sconce Strip
+  //         Space Area  Small Large Spots Sconce Strip
   rooms:    { share: [0.24, 0.12, 0.10, 0.10, 0.10, 0.11, 0.12, 0.11], right: [1, 2, 3, 4, 5, 6] },
   // Loose facts across the top, and the "Total …" rows, which sit under the
   // fitting grid and are laid out with it.

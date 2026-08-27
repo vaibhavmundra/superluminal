@@ -42,13 +42,13 @@ export default function AccentPanel({
       <h3>Accent lighting</h3>
 
       {!rooms.length ? (
-        <p className="note">Light the plan first — accent zones are marked out on a room
+        <p className="note">Light the plan first — accent zones are marked out on a space
           that already has its ambient layout.</p>
       ) : <>
         <select value={roomId ?? ''} onChange={(e) => onRoomChange(e.target.value)}>
           {rooms.map((r) => (
             <option key={r.id} value={r.id}>
-              {r.outline.name || 'Room'}
+              {r.outline.name || 'Space'}
               {r.plan?.ok ? ` · ${r.plan.lights.length} lights` : ' · no layout'}
             </option>
           ))}
@@ -65,16 +65,16 @@ export default function AccentPanel({
         </div>
 
         {/* THE IMAGE AS THE MODEL WILL SEE IT. Not a flourish: a crop that
-            landed on the wrong room, or a mask that erased the wrong side,
+            landed on the wrong space, or a mask that erased the wrong side,
             produces a confident answer about somewhere else, and there is
             nothing in a list of zones that could tell you so. */}
         {sent && (
           <div className="render-strip">
             <div className="render-thumb plan" title={`What gets sent — ${sent.w}x${sent.h}`}>
-              <img src={sent.dataUrl} alt="the room as sent" />
+              <img src={sent.dataUrl} alt="the space as sent" />
             </div>
             <p className="note" style={{ margin: 0, flex: 1, minWidth: 120 }}>
-              This is what gets sent — everything but this room erased.
+              This is what gets sent — everything but this space erased.
             </p>
           </div>
         )}
@@ -82,7 +82,7 @@ export default function AccentPanel({
         <button className="btn primary" style={{ marginTop: 10, width: '100%' }}
           disabled={!room || !room.plan?.ok || running}
           onClick={onRun}>
-          {running ? 'Reading the room…' : zones.length ? 'Ask again' : 'Find accent zones'}
+          {running ? 'Reading the space…' : zones.length ? 'Ask again' : 'Find accent zones'}
         </button>
 
         <details className="accent-rules">
@@ -97,7 +97,7 @@ export default function AccentPanel({
         </details>
 
         {state.status === 'error' && (
-          <p className="note warn" style={{ marginTop: 8 }}>{state.error}</p>
+          <p className="note err" style={{ marginTop: 8 }}>{state.error}</p>
         )}
 
         {result && (
@@ -126,8 +126,8 @@ export default function AccentPanel({
 
             {!result.furniture?.length && state.status === 'done' && (
               <p className="note warn" style={{ marginTop: 6 }}>
-                It found no bed, wardrobe, TV unit, basin or sofa in this room. If
-                there is one on the plan, check the crop above is the right room —
+                It found no bed, wardrobe, TV unit, basin or sofa in this space. If
+                there is one on the plan, check the crop above is the right space —
                 the console carries the model's own words.
               </p>
             )}

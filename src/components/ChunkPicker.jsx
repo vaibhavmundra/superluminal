@@ -13,7 +13,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 // evidence a person sees here, not a parallel summary that can drift.
 // ---------------------------------------------------------------------------
 
-const FILL = ['#6366F1', '#0EA5E9', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#14B8A6', '#DC2626'];
+// The same value ramp the tracer uses — see the note there.
+const FILL = ['#111111', '#8A8A8A', '#3D3D3D', '#B0B0B0', '#5C5C5C', '#9E9E9E', '#262626', '#767676'];
 
 export default function ChunkPicker({
   options, recommendedId, initialId, onConfirm, onCancel = null,
@@ -106,11 +107,11 @@ function ChunkCard({
         <defs>
           <pattern id={`pk-nlz-${o.id}`} width={lw * 8} height={lw * 8}
             patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2={lw * 8} stroke="#B45309" strokeWidth={lw * 1.6} opacity="0.5" />
+            <line x1="0" y1="0" x2="0" y2={lw * 8} stroke="#404040" strokeWidth={lw * 1.6} opacity="0.5" />
           </pattern>
           <pattern id={`pk-slv-${o.id}`} width={lw * 6} height={lw * 6}
             patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
-            <line x1="0" y1="0" x2="0" y2={lw * 6} stroke="#9CA3AF" strokeWidth={lw * 1.4} opacity="0.7" />
+            <line x1="0" y1="0" x2="0" y2={lw * 6} stroke="#A8A8A8" strokeWidth={lw * 1.4} opacity="0.7" />
           </pattern>
         </defs>
 
@@ -119,7 +120,7 @@ function ChunkCard({
             it is a reading of, which is the entire point of these cards. */}
         {src && <image href={src} x="0" y="0" width={imgW} height={imgH} opacity="0.16" />}
         {vector && (
-          <g fill="none" stroke="#0A0A0A" strokeWidth={lw * 1.2} opacity="0.3">
+          <g fill="none" stroke="#000000" strokeWidth={lw * 1.2} opacity="0.3">
             {vector.filter((l) => !wallLayers || wallLayers.has(l.layer))
                    .map((l) => <path key={l.layer} d={l.path} />)}
           </g>
@@ -135,23 +136,23 @@ function ChunkCard({
         {o.omitted.map((c, k) => {
           const r = rect(c);
           return <rect key={'s' + k} x={r.x} y={r.y} width={r.w} height={r.h}
-            fill={`url(#pk-slv-${o.id})`} stroke="#9CA3AF" strokeWidth={lw} opacity="0.85" />;
+            fill={`url(#pk-slv-${o.id})`} stroke="#A8A8A8" strokeWidth={lw} opacity="0.85" />;
         })}
 
         {zonesPx.map((z) => (
           <rect key={z.id} x={z.x0} y={z.y0} width={z.x1 - z.x0} height={z.y1 - z.y0}
-            fill={`url(#pk-nlz-${o.id})`} stroke="#B45309" strokeWidth={lw * 1.6}
+            fill={`url(#pk-nlz-${o.id})`} stroke="#404040" strokeWidth={lw * 1.6}
             strokeDasharray={`${lw * 4} ${lw * 3}`} />
         ))}
 
         <polygon points={polygonPx.map((p) => `${p.x},${p.y}`).join(' ')}
-          fill="none" stroke="#16A34A" strokeWidth={lw * 2.4} strokeLinejoin="round" />
+          fill="none" stroke="#000000" strokeWidth={lw * 2.4} strokeLinejoin="round" />
 
         {fansPx.map((f, k) => (
           <g key={'f' + k}>
-            <circle cx={f.x} cy={f.y} r={f.r} fill="none" stroke="#DC2626"
+            <circle cx={f.x} cy={f.y} r={f.r} fill="none" stroke="#404040"
               strokeWidth={lw * 1.6} strokeDasharray={`${lw * 4} ${lw * 4}`} opacity="0.9" />
-            <circle cx={f.x} cy={f.y} r={lw * 3} fill="#DC2626" />
+            <circle cx={f.x} cy={f.y} r={lw * 3} fill="#404040" />
           </g>
         ))}
 
@@ -162,7 +163,7 @@ function ChunkCard({
           if (Math.min(r.w, r.h) < fs * 2.4) return null;
           return (
             <text key={'t' + k} x={r.x + r.w / 2} y={r.y + r.h / 2} fontSize={fs}
-              fontFamily="JetBrains Mono, monospace" fill={FILL[k % FILL.length]}
+              fontFamily="Neue Montreal, sans-serif" fill={FILL[k % FILL.length]}
               stroke="#FAFAFA" strokeWidth={lw * 3.4} paintOrder="stroke"
               textAnchor="middle" dominantBaseline="central">
               {c.w.toFixed(1)}×{c.h.toFixed(1)}

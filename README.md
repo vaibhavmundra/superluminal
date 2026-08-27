@@ -1,7 +1,8 @@
-# Light Planner
+# Super Luminal
 
-Takes a floor plan and produces an ambient lighting layout — grid, large
-lights, small lights — that you can export to DXF, CSV, JSON, SVG or PNG.
+Takes a floor plan and produces a lighting layout — the ambient grid, the
+accents, the task spots and the schedule that comes with them — which you can
+export to DXF, XLSX, CSV, PDF, JSON, SVG or PNG.
 
 Two ways in:
 
@@ -31,6 +32,308 @@ cursor has real line work to hold on to. On an image it holds on to the geometry
 > seal the gaps and flood-fill it. That is removed — see
 > [Why the green marker went](#why-the-green-marker-went). Red fan circles are
 > still read.
+
+## The design language
+
+**Black, white, and one blue.** #0070F3 for the accent, an ink scale for
+everything else, and one red that appears nowhere except a failure.
+
+The interesting part is what that did to the drawing. There were seven hues on
+the canvas — indigo grid, green outline, red fans, amber zones, teal AC units, a
+magenta guide — and every one of them was saying a second time what the symbol
+already said. A downlight is a circle; a large light is a bigger circle with a
+ring; a sconce is a crosshair standing off a wall; a spot has an arrow; a strip
+is a run with end caps; a fan is a blade circle. None of that needs a colour to
+be read, and spending the palette on it left nothing to say the one thing shape
+cannot: **which of these am I touching.**
+
+So the drawing is ink — the plan underneath in grey, our own line work in black,
+scaffolding and annotation in between — and the accent belongs to selection,
+hover, focus, grips and guides. A blue element on this canvas is always a
+statement about state, never about type.
+
+**The layout screen is the second exception, and it is a bigger one.** Every
+fitting on a finished plan — downlights, sconces, strips, spots — is now drawn
+in #0070F3, and the ceiling objects with it at reduced opacity. The rule this
+breaks was written for a screen where the accent had one job. It still holds for
+the *plan*: walls, outlines and dimensions are ink. But a lighting layout has a
+SUBJECT, and it is the lights. Drawing them in the same black as somebody else's
+line work meant forty downlights disappearing into the furniture — the one thing
+on the sheet the reader came for, rendered as if it were part of the ground. So
+on this canvas blue means "ours, and it emits light", and the drawing underneath
+is grey. Selection and guides are still blue too; they are told apart by
+behaviour, because a grip is something you grab and a fitting is something you
+read.
+
+**And they are lit rather than merely drawn.** Under every fitting is a radial
+gradient in the accent, wider than the symbol, breathing on a 2.8-second cycle
+with a per-fitting phase offset. Strips are dotted runs whose glow swells and
+fades on the same cycle — one idiom for "this is on" across every fitting. Both are the symbol saying what kind
+of thing it is rather than decoration on top of it: a downlight throws a pool of
+light and the pool is what the room actually gets; a strip is a line of emitters
+on a tape, and a solid line drew it as a wire. The offset is load-bearing — forty
+discs pulsing on the same beat read as one flashing element, and forty on their
+own beats read as forty lamps.
+
+*The strip took four attempts, and the three failures are the instructive half.*
+All three tried to make something TRAVEL along the run, on the reasoning that a
+strip is a line of emitters with current passing through it — which is true, and
+turned out not to be the point.
+
+**One:** walk the dots themselves, one dash cycle per iteration. Seven pixels
+over two seconds. It moved and could not be seen — and it was wrong anyway,
+because the dots ARE the emitters and emitters do not slide along their own tape.
+
+**Two:** hold the dots still and slide a band of lighter blue underneath. The
+first cut was wrong by a hair's breadth exactly: a band at 3.8× the sheet's line
+weight under dots at 2.4× leaves 0.7× showing on each side, well under a pixel.
+Measured across two frames the run moved by a mean of one greyscale level and no
+column of pixels changed by more than twelve — the same failure as attempt one
+in a different disguise. Widening it to 7× made it visible and made it wrong in
+a new way: seven line weights of pale blue under a two-weight run reads as the
+tape SWELLING, not as anything travelling through it.
+
+**Three:** one dot's worth of white at the run's own stroke weight, shooting end
+to end in 900ms. Legible, honest about the physics, and *still* wrong on the
+drawing — because a white mark racing down a line is an ANIMATION, and
+everything else on this sheet is a fitting quietly breathing. It made the strips
+the loudest thing in the room and they are not the most important thing in it.
+
+**Four, which is the one that stayed:** a strip pulsates the way a spot does.
+The glow under it swells and fades on the same cycle, with the same staggered
+per-fitting phase, and the dots hold still. The lesson is not about strips. It
+is that a drawing wants ONE way of saying "this is on", and a cleverer idiom for
+one fitting type costs more than it buys. **A strip breathes by getting FATTER, and opacity alone was not enough.** The
+first version of this animated the glow's opacity between 38% and 62% and did
+not read as pulsating at all: a blurred band at 38% and the same band at 62%
+look like the same band, because the blur has already spent most of the
+contrast. What reads is WIDTH. `stroke-width` grows a line perpendicular to its
+own axis, so the band swells and stays exactly as long — which is the strip's
+equivalent of a halo scaling, and the reason the run's own caps are `butt` and
+not `round`: a round cap adds half the stroke width at each end, so a breathing
+run would creep past its end markers twice a cycle. `STRIP_STYLE.glowSwell`
+sets how far it swells.
+
+> **The moving white notch, which was not our animation.** With the width
+> animating, a small white gap appeared in the dotted run and TRAVELLED along
+> it — indistinguishable from the spark that had just been deleted, and only
+> visible while the glow was breathing, which made it look like the new
+> animation misbehaving. It was the filter. A filter region given in percentages
+> is relative to the filtered element's own bounding box, and a horizontal or
+> vertical line has a bounding box with zero height or zero width: `height="900%"`
+> of zero is zero, the region collapses, and the renderer improvises a tile seam
+> that shifts as the stroke width changes. `filterUnits="userSpaceOnUse"` with
+> the plan's own extent cannot collapse. Worth remembering for any filter ever
+> applied to a straight line.
+
+**And every dimension of a strip is now a dial.** `STRIP_STYLE` in
+`settings.js` holds the run's stroke weight, the dash and gap, the spark's
+length and speed, the glow's width, blur and opacity, and the end-cap size.
+Every one is a MULTIPLE OF THE SHEET'S LINE WEIGHT rather than a pixel count,
+which is what makes them safe to hand over: the line weight is
+`max(width, height) / 1500`, so `stroke: 2.4` looks the same on a 900px sketch
+and a 6000px survey, where a tuned pixel value would be right on one and wrong
+on the next. The glow's breathing keyframes read `glowOpacity` through a custom
+property rather than hard-coding a value, so the dial stays in charge of its own
+setting.
+
+**The end caps became small squares, and the grips come out on hover.** The caps
+were perpendicular ticks at grip size, which is exactly what a grip looks like,
+so people tried to drag them. A small filled square says "the run stops here"
+and nothing about being draggable. The real handles — bigger, white-filled,
+accent-stroked — now appear when the pointer is on the run rather than only
+after a click, because a run you can drag whose handles are invisible until you
+have already clicked it is a run that looks fixed.
+
+**The accent detector's own regions came off the drawing too.** They were the
+box the model marked — the wardrobe, the TV unit — drawn dashed behind the
+fitting so that what the model said and what the geometry did with it were both
+visible. Debugging, and the right view while the placer was being written: a run
+half the length of the wardrobe is a bug you can only catch by looking at both.
+On a sheet somebody is handed it is a dashed rectangle round a piece of
+furniture, in the lights' own colour, beside the strip it produced — three marks
+where the drawing needs one. Only the lights show.
+
+*A blur was the literal reading and the wrong tool three times over*: the radius
+is in user units so a small and a large downlight need different filters, filters
+re-rasterise on every animation frame and there are forty of these, and a blurred
+disc still has a solid core with a soft rim — a smudge, not light. A gradient
+falls off the whole way out, costs one compositor pass, and survives being
+exported because it is geometry. The animations are CSS on `transform`, `opacity`
+and `stroke-dashoffset` only, so the SVG and PNG exports are stills: the class
+names ride along and mean nothing without the stylesheet.
+
+**The working came off the sheet at the same time.** The ambient grid, the
+task-surface boxes and the secondary grid were all reasoning — how a layout was
+arrived at, drawn over the layout. That is exactly right while the chunker and
+the surface detector are being built and exactly wrong on a drawing somebody
+hands to a client: a dashed box round a dining table saying "we noticed the
+dining table", three feet from the spot that already points at it. The spot IS
+the visible consequence of the surface. The bed's no-light zones went the same
+way and for a sharper reason — they are the visible half of a pipeline that runs
+two detectors and a judge before anyone sees the plan, and drawing them asks
+somebody to audit a decision they did not know was being made. `drawnZones` is
+now deliberately a different set from the zones the planner obeys: the beds still
+move the fittings, they just stop arguing about it.
+
+**What a fitting is, under the cursor.** Hovering any fitting thickens its stroke
+and raises a frosted card — `backdrop-filter`, which is why it is an HTML element
+positioned in viewport coordinates rather than anything inside the `<svg>` — with
+the watts, beam angle and lumens on it. Those numbers come from `specsFor()` in
+`boq.js`, the same catalogue the schedule bills from, because a tooltip that says
+9 W over a fitting the BOQ prices at 7 is worse than no tooltip. Hovering a strip
+also stops its flow, which is the small courtesy of holding still while being
+read.
+
+> **The bug that cost an afternoon, and the rule that caused it.** Everything
+> inside `.plan` is `pointer-events: none` by deliberate rule — three separate
+> bugs where one layer swallowed another's controls earned it, and the fix was
+> to make the whole drawing inert and have genuine controls opt back in with
+> `.hit`. So the hover handlers silently never fired. Worse: putting `.hit` on
+> the fitting's *group* does not work either, because `.plan circle` sets
+> `pointer-events` on each shape directly and a direct rule beats an inherited
+> one. The class has to go on the shape the pointer is meant to find. The glow
+> keeps its inline `none`, since it is 2.6× the fitting's radius and a live one
+> would have each downlight eating its neighbours' clicks.
+
+**The one exception is the space fills, and it was earned the hard way.** They
+went to eight values of one grey with everything else, on the argument that a
+value ramp separates adjacent spaces as well as a rainbow without competing with
+the line work. It does not. Every other colour that went had a symbol standing
+behind it — a downlight is still a circle in ink — and these have none: a space
+is a translucent polygon, and its fill is the *only* thing that distinguishes it
+from the polygon sharing its wall. At the 0.1 opacity these are drawn at, two
+greys four steps apart are separated by almost nothing, and eight of them read as
+eight shades of the drawing rather than eight things on top of it. So the eight
+hues are back, and the swatch beside each name in the panel is its polygon's own
+hue, which is the entire link between the list and the plan. The rule the rest of
+the palette follows still holds: colour is spent where shape cannot speak.
+
+**One red, and only for failure.** Vercel keeps a red for the same reason: "this
+did not work" has to survive being glanced at. It was also the fix for a real
+problem — twenty-odd `.note.warn`s were all rendering in red, most of them
+guidance rather than alarms ("set the scale first", "no doors found, measure
+instead"), which spent the loud colour on sentences that are not loud and made
+the two genuine failures invisible among them. `.note.warn` is now quiet ink with
+a rule down the left; `.note.err` is the red one.
+
+> **One colour deliberately did not change.** `BOX_COLOUR` in `bedFit.js` is
+> still red, because it is never shown to a person — it is the ink drawn on the
+> two crops sent to the bed judge, and the only property that matters is that
+> both images use the same one. Restyling it would be a change to a model input
+> with none of the reasons a restyle usually has.
+
+### Type
+
+**Neue Montreal throughout: four static woff2 cuts — 400, 500, 600, 700 — in
+`src/fonts`.** 260KB for all five faces including Lunar, converted from the
+supplied TrueType (235KB each down to 59KB).
+
+> **They started in `public/fonts`, referenced as `url('/fonts/...')`, and they
+> did not load at all.** The cause is one line in `vite.config.js`: `base: './'`.
+> With a relative base, Vite rewrites an absolute `/fonts/...` in a stylesheet
+> into `../fonts/...`, which then resolves against wherever the stylesheet
+> happens to be — and in dev the CSS is injected as a `<style>` element, so
+> "wherever the stylesheet is" is the document rather than `/assets/`. The URL
+> came out somewhere with no font on it, silently, and the app fell back to the
+> next family in the stack and looked thin.
+>
+> **Files under `src/` are the bundler's problem, and that is the fix.** A
+> relative `url('./fonts/...')` from a file inside `src/` gets resolved, hashed
+> and emitted by Vite, which writes whatever URL is correct for the base, the dev
+> server and the build. There is nothing left for a base setting to get wrong,
+> and the `<link rel=preload>` went too — it named a hand-written path, which is
+> the exact thing that broke, and the real URLs are hashed and not knowable in
+> `index.html`.
+>
+> The old declaration had two further defects worth writing down. It said
+> `format('woff2-variations')`, which is not a standard format token. And it
+> declared `font-weight: 100 900` for a face whose `wght` axis actually runs
+> **200 to 800** — with a **default instance of 200**. So any browser that loaded
+> the file but did not apply the variation rendered the entire app in Thin: a
+> failure with no visible cause, and not worth the 100KB the variable file saves.
+> Four static cuts cannot do that, because each one is the weight it says it is.
+>
+> Verified in a real browser three ways: all four weights measure differently
+> from each other and from the fallback; the dev server returns `200 font/woff2`
+> for each face; and it behaves identically served from the root and from a deep
+> subpath, which is the case the old URL could not survive.
+
+**`public/fonts` still holds the original TTFs and the variable file, and nothing
+references them any more** — so they are about 1.5MB of dead weight in every
+build. Moving them out of `public/` (anywhere else in the repo is fine) slims the
+deploy without losing the originals.
+
+**Weight is stated once, in `:root`, and it used to be stated nowhere.** `body`
+set the family, the size, the line-height and the tracking — and no weight — so
+every unstyled string in the app was the browser's default 400. Neue Montreal's
+Regular at 13px is a light-looking Regular, and the app read as thin because of
+it. Four tokens now:
+
+| | | |
+|---|---|---|
+| `--w-body` | 500 | the default. Medium, not Regular. |
+| `--w-strong` | 600 | emphasis inside a sentence, and a value |
+| `--w-head` | 550 | small caps and column heads: small, letterspaced, grey |
+| `--w-display` | 500 | headings, where the size is doing the work |
+
+The rule choosing between them is optical, and it runs **opposite to the type
+size**: small text needs more weight, not less. A 10px letterspaced grey section
+head is the thinnest thing on any screen here and needs 550 to hold up; a 20px
+heading has all the presence it needs at 500 and looks clumsy heavier.
+
+> **`-webkit-font-smoothing: antialiased` was doing real damage**, and it is
+> gone. On macOS that switch turns off subpixel rendering and the result is
+> visibly *lighter* strokes — call it a third of a weight step. Stacked on an
+> unstated 400 it is most of why the app looked thin. The default renderer is
+> heavier and sharper, which is what this face wants at UI sizes. The two
+> secondary greys came up at the same time (#666 → #525252, #8F8F8F → #7A7A7A):
+> small grey text reads as thin whatever its weight.
+
+**And no monospace.** There was one for the numeric columns, and it was buying
+alignment the app face already provides: Neue Montreal's `tnum` figures are
+real, which was measured rather than assumed (`1111` and `0000` come out the same
+width under `tabular-nums`). Its *proportional* figures are very uneven by
+comparison — a `1` is half the width of a `0` — so tabular figures are not a
+nicety anywhere a column of numbers is read downward, and the rule that turns
+them on is stated once in `styles.css` rather than per component.
+
+**Lunar, for the wordmark only.** It is a display face with one job.
+
+### The mark
+
+The favicon is a lit aperture — a bright disc in a dark field, with the glow in
+the gap between them — and the mark in the top bar is that, **drawn in CSS**
+rather than loaded. Two radial stops do the falloff, which is smaller than the
+PNG, sharp at any pixel density, and inverts cleanly if this ever gets a dark
+mode. `public/superluminal_logo.png` is still there for anywhere the app is not
+what is doing the rendering.
+
+**Neither typeface comes off a CDN.** The cuts the app loads are in `src/fonts`,
+so the bundler owns their URLs and the app no longer waits on a third-party stylesheet before it can draw a word, and it works
+with no network at all — which matters for a tool somebody runs against drawings
+on a site-office laptop.
+
+### Words
+
+**A traced region is a SPACE, not a room.** The app is pointed at flats, offices,
+hotels and restaurants, and in three of those four the thing being lit is
+routinely not a room: a workspace, a lobby, a dining area, the open half of a
+living-dining. Calling all of them rooms made the interface argue with the
+drawing — "Light all 4 rooms" over a plan whose four regions include a corridor
+and a balcony is a sentence that is wrong twice. So every string the user reads
+says space: `Space 1`, **Spaces on the plan**, **Light all N spaces**, the BOQ's
+space breakdown, the CSV's first column.
+
+**The code still says `room`, and that is deliberate.** `roomTypes`,
+`roomsDetect.js`, `task: 'rooms'`, the `room` key in every model request — the
+identifiers, the API contract and the prompts are untouched, because the models
+are being asked a question in the vocabulary they were trained on and a rename
+there is a behaviour change dressed as a tidy-up. The split is one-way and easy
+to hold: **`room` is what the code and the models call it, `space` is what the
+person reads.** The one place they meet is the space-TYPE list, where the names
+are proper nouns and stay as they are — Bedroom, Pooja room, Conference room,
+Server room, Guest room.
 
 ## Running it
 
@@ -120,7 +423,7 @@ unchanged. Same shape as `registerChunkSelector`.
 On upload, before there is anything to light, the plan goes to a trained
 segmentation workflow and comes back with one polygon per room. Those become
 outlines with a **grip on every corner**, drawn dashed until someone has looked
-at them. You drag what is wrong and press **Light all N rooms**.
+at them. You drag what is wrong and press **Light all N spaces**.
 
 ```
 upload ──► snapshot ──► /api/detect (task: rooms) ──► roomsFromPayload
@@ -657,6 +960,62 @@ row/column arrays. Polyline **bulges** are converted properly: a curved wall in
 a polyline is not stored as an arc but as `tan(θ/4)` hung on the preceding
 vertex, negative if the arc runs clockwise, and getting the sign wrong turns a
 curved wall silently straight. Binary DXF is not supported — re-save as ASCII.
+
+### The panel while the plan is being worked out
+
+The loader over the drawing carries the phase, the space being worked on, and the
+checklist that gives them context. The panel used to carry the phase, the space,
+a done-of-total count and two buttons — three inches to the right of all of it.
+
+**That is not twice the information.** It is the same information asking to be
+reconciled: the eye goes back and forth checking the two agree, instead of
+watching the plan light up. So the panel says the one thing the loader does not
+— that this is a wait with an end — in a sentence you can read from across a
+desk, vertically centred, with the way out under it.
+
+**And one way out rather than two.** `Stop` on its own kept whatever had
+finished, which is genuinely useful and genuinely hard to explain in a panel
+with nothing else in it: it left you on a half-lit plan with no account of which
+half. A wait either finishes or is abandoned. `tools/check-loading.mjs` slows the
+model route to four seconds so the state is observable at all, and then mostly
+checks ABSENCE — which is the kind of thing that creeps back one line at a time.
+
+### Zooming the layout, and why it is done twice
+
+Both drawing screens zoom on the wheel, anchored on the pointer, and they get
+there by completely different routes — which is worth a paragraph, because the
+obvious reaction is that one of them should be rewritten to match the other.
+
+**The tracer is a Konva stage and owns its own transform**, so anchoring is
+arithmetic: work out where the pointer is in stage space, change the scale, and
+put the offset back. Nothing else is involved.
+
+**The layout screen is an ordinary scroll container** — `overflow: auto`, with
+the SVG sized by `zoom` — and that is deliberate. It is the screen you pan
+around most, and a scroll container already solves clamping, scrollbars, the
+keyboard and the "where am I" problem that a hand-rolled translate would have to
+solve again. The cost is that zooming has to be done in two halves, because the
+element's new size is not known until React has laid it out: on the wheel, record
+WHICH PLAN POINT is under the cursor and where the cursor was; in a layout
+effect, ask the SVG where that point ended up and scroll by the difference.
+
+**Measuring rather than predicting is the whole trick.** The stage has padding,
+the wrapper has padding, and `justify-content: safe center` moves the drawing
+around inside the scroll box as it changes size. Any formula that tried to
+account for those would be wrong the first time one of them changed. Reading the
+element's live rect before and after is exact and knows about none of it — the
+anchoring holds the point under the cursor to within a fifth of a pixel.
+
+**One thing it cannot do, and it is the container's nature rather than a bug.**
+While the drawing still fits inside the stage the browser centres it, and a
+centred box has nowhere to scroll — so a point cannot be held still until there
+is overflow to take up. The buttons anchor on the middle of the view rather than
+the pointer, for the plain reason that a button has no pointer; stepping the
+number alone kept the drawing's top-left corner still, which meant whatever you
+were looking at slid off the bottom-right every time you pressed +.
+
+`F` fits, `0` is actual size, `+`/`−` step, and middle-drag pans — the same keys
+as the tracer, so the two screens do not have to be learned separately.
 
 ## Marking up a plan
 
@@ -1277,9 +1636,74 @@ of the same wait, because by then they have started clicking. It is skipped
 entirely on a DXF: the file states its own units, and asking a detector would be
 asking a worse source than the one already in the file.
 
-**Failure is survivable, and that is why Measure still exists.** No doors, a
-detector that is down, or four boxes that are all obviously wrong all end in the
-same place: measure something by hand, which is what the app did before this.
+**The door screen shows the doors and nothing else.** Before there is a scale,
+every other control on that screen is inert — the spaces cannot be drawn because
+their dimensions are unknown, the snap options change nothing, the trace refuses
+the first click, and **Light all N spaces** has nothing to light. They used to be
+on screen anyway, greyed or empty, and the panel opened with a fact about the
+detector ("4 doors found") rather than an instruction. So `doorScreen` in
+`OutlineTracer.jsx` puts all of it away and the panel says two sentences: what to
+click, and where to go if none of these doors is one you can name. Six sections
+of which five do nothing is a panel that gets skimmed, and skimming this screen
+is how a plan ends up scaled off the wrong door.
+
+**The snap engine is off, not merely unused.** It kept running under the cursor
+on this screen: a crosshair, a glyph under the pointer, dotted alignment guides
+across the plan, and a pill in the corner reading *"lined up with a corner"* —
+about a corner nobody was placing. Every one of those is a statement that a
+click here draws something, and here a click picks a door. `recomputeSnap` is
+skipped while `doorScreen` holds, the last snap is cleared when it comes up, the
+HUD keeps only the pan chip, and the cursor is plain `default` rather than
+`not-allowed`, which reads as "this screen is broken" when it is simply waiting.
+
+**The tracer screen went the same way as the door screen, for the same reason.**
+The name, size and area of every space were drawn across the plan *and* listed in
+the panel — the same four facts twice, the copy on the plan sitting over the
+drawing they describe. The plan keeps the polygons; the panel keeps the words.
+The panel itself had one subject spread over two sections with three unrelated
+ones between them — a tally under "Spaces on the plan" at the top and the spaces
+themselves under "Outlines" at the bottom — so they are one section now, and it
+renders without a detectState, which the tally-only version could not: a plan
+traced entirely by hand still has spaces to list. Snapping to what is already
+traced was a section called "Snap to" one below a section called "Snapping": two
+names for one idea, and the second appeared and vanished with the first outline,
+so the panel reshuffled itself as you worked. It is a checkbox in "Snapping" now.
+**And hovering any space thickens its outline** — the fill is left alone, because
+the fill is carrying identity and brightening it would read as a change of state.
+All of it is pinned by `tools/check-tracer.mjs`, which traces two spaces in a
+real browser and then reads the hues off both the panel swatches and the Konva
+polygons, counts the `Text` nodes drawn over the plan (zero), and moves the
+pointer onto each space in turn to watch one stroke width change and the others
+not.
+
+**The grid is gone, and it was the snap engine that made it redundant.** It
+rounded a traced dimension to the nearest 3″, 6″ or foot, anchored on the first
+corner placed so it rounded the space's SIZE rather than its position — which was
+the right design for the grid. But a corner that snaps lands on the wall it
+belongs to, and a wall in the drawing is where the building actually is; rounding
+it afterwards moves the corner OFF that wall to make a number tidier, which is a
+worse outline dressed as a neater one. Two rounding schemes competing for one
+corner is also how a grip stops landing where the cursor said it would.
+`snapPoint` still takes `gridPx` and `tools/test-snap.mjs` still covers it —
+nothing on this screen turns it on.
+
+**The instruction is the screen, so it is sized like one.** It was a note in the
+top-left corner of a panel with nothing else in it, which reads as a caption on
+emptiness. The panel is now as tall as the plan beside it (`.rooms-side.door-only`
+matches `.tracer-plan`'s height so the two line up top and bottom) and the
+sentence sits in the middle of it at display size, with the escape hatch under it
+in body size. **And hovering a door thickens its outline** — the fill is left
+alone, because the fill already says "these are the doors" and a second fill
+value would compete with the selected state. A button that does not answer the
+pointer leaves you clicking to find out whether it is one.
+
+**Failure is survivable, and that is why Measure still exists — as a tab, not as
+a button.** No doors, a detector that is down, or four boxes that are all
+obviously wrong all end in the same place: measure something by hand, which is
+what the app did before this. That escape used to be a *"None of these — measure
+instead"* button inside the door panel, which meant two doors to the same room:
+the tab and the button. The tab is the one that survives, because it is where a
+user who never clicked a door would look.
 
 > **The bug this shipped with, for one build.** The door boxes went into the
 > tracer's annotation layer, which is `listening={false}` — correctly, because
@@ -2240,6 +2664,87 @@ it exists to avoid.
 > hall get the same absolute dash and the effect reads completely differently on
 > each. Each room's animation is delayed by its index, so six rooms do not pulse
 > in lockstep like a Christmas light. `prefers-reduced-motion` stops it dead.
+
+## Additional lighting: three tools, and the detectors underneath
+
+The accent panel and the task-surface panel are gone, and what replaced them is
+three armed tools in the ceiling-object idiom: **LED strip** (click the two ends
+of the run), **sconce** (click a wall and it seats itself), **directional spot**
+(drag a box round what it should light).
+
+Both panels were *reports*. One listed what the accent detector had found in the
+selected space with a button to ask it again; the other did the same for task
+surfaces. That was the right shape while those detectors were the thing being
+built, and the wrong shape on a finished layout — two dropdowns, two model
+buttons and a scrolling list of zones nobody edits, sitting where the obvious
+question is "how do I run a strip along that wardrobe".
+
+**The detectors still run.** They are part of the pipeline that lays the plan out
+before anyone sees it, exactly like the bed pass. What went is their reporting,
+and with it the assumption that a fitting exists only because a model proposed
+one.
+
+**And the tools do not make a fourth kind of thing.** A hand-placed strip is an
+accent zone, identical in shape to one the detector proposes. A hand-drawn spot
+box is a *task surface* — which is why the spot tool is a surface tool
+underneath: the fitting is then placed by the same secondary-grid code that
+serves every detected surface, so a hand-placed spot still lands on a line with
+the ambient layout instead of wherever the pointer happened to be. `surfacesPx`
+and `accentZonesPx` each merge two sources into one list, and nothing downstream
+— canvas, schedule, exports, drag handles — knows or needs to know which source a
+fitting came from.
+
+The sconce is the clearest case: the click says which wall and roughly where
+along it, and `placeZone` — the same function the detector's output goes through
+— finds the wall, projects the point onto it, works out which way is into the
+room, and returns a fitting in exactly the shape everything else expects.
+
+### Every tool says what the click will do, before it is spent
+
+**The strip snaps on the tracer's own engine.** Placing a run by eye and placing
+an outline corner by eye are the same problem — a strip a hair off the wall it is
+concealed behind is as wrong as a corner that is — so `snapAt` from `snap.js`
+gets pointed at this screen's geometry rather than a second, weaker snapper being
+written for it. The segments are the SPACE OUTLINES: on an image they are the
+only geometry there is, and they are the walls anyway, since an outline is traced
+on the inner face. On a DXF the drawing's own line work joins them, so a run can
+catch the edge of a wardrobe the outline knows nothing about. Ortho is on and
+Shift releases it, which is the tracer's convention and the opposite of this
+screen's convention for resizing a ceiling object — deliberately, because the
+reference for this gesture is drawing a line on a plan, and a run along a wall is
+axis-aligned far more often than not. Having caught something, the cursor says
+so: a diamond for an edge, a square for an end, the tracer's alphabet, because
+"it snapped" is not the useful information and WHAT it snapped to is.
+
+**The sconce is previewed by running the real placer.** Not a marker at the
+cursor — the whole point of this fitting is that the wall decides where it goes,
+so a preview under the pointer would show something that never lands. What is
+drawn is the output of `placeZone`, the same function the click will run, at
+0.55 opacity with the wall it chose dashed behind it. What you watch slide along
+the wall as the pointer moves IS the fitting. It is O(the polygon's edges) per
+mouse move, and a room has a dozen.
+
+**A strip's run is the exception that proves the rule.** Its two points are
+exactly where they were clicked, with no wall projection, because somebody
+placing a strip by hand is looking at the drawing — snapping their second click
+onto a wall they did not click is the tool disagreeing with them. The snap
+engine offers, the click decides.
+
+> **The bug all three shared.** None of them changed the cursor. `overRoom` —
+> the flag that decides between a crosshair and a pointer — was maintained only
+> inside the ceiling-object branch of the move handler, so for these three tools
+> it held whatever it had last been told and the cursor sat there claiming a
+> click would do nothing. The tell was that arming a tool and then arming a fan
+> made the crosshair appear.
+
+### A spot says what it is aimed at
+
+The task-surface boxes came off the drawing because a dashed rectangle round a
+dining table is working, not design. But "why is this fitting here, and aimed at
+what" is a fair question to ask of any spot, and the arrow answers only half of
+it. So hovering one ghosts its surface and tethers the fitting to it. Under the
+pointer is the right moment for it: asked about one fitting at a time, and
+costing the sheet nothing the rest of the time.
 
 ## Accent lighting: the model marks the region, the code places the fitting
 

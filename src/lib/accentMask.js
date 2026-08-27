@@ -150,7 +150,7 @@ function loadImage(url) {
 export async function roomSnapshot({ source, img, polygonPx, lightsPx = [], wallLayers = null,
                                      boxes = [], badge = null, opts = {} } = {}) {
   const o = { ...MASK_DEFAULTS, ...opts };
-  if (!source || !polygonPx?.length) throw new Error('No room to look at.');
+  if (!source || !polygonPx?.length) throw new Error('No space to look at.');
 
   const crop = cropFor(polygonPx, { w: source.w, h: source.h }, o);
   const cw = crop.x1 - crop.x0, ch = crop.y1 - crop.y0;
