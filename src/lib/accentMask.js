@@ -255,6 +255,7 @@ export function toPlanRect(rect, crop, sent) {
 // --- the call ---------------------------------------------------------------
 
 export async function requestAccents({ plan, room = null, ceilingFt = null,
+                                       task = 'furniture',
                                        endpoint = '/api/accents', signal } = {}) {
   if (!plan?.base64) throw new Error('No plan image to send.');
   const res = await fetch(endpoint, {
@@ -262,7 +263,7 @@ export async function requestAccents({ plan, room = null, ceilingFt = null,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       plan: { image: plan.base64, mime: plan.mime, w: plan.w, h: plan.h },
-      room, ceilingFt,
+      room, ceilingFt, task,
     }),
     signal,
   });

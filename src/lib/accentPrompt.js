@@ -179,17 +179,25 @@ export function buildAccentRequest({ plan, room = null, ceilingFt = null,
 // --- the reply --------------------------------------------------------------
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
-const num = (v) => (isNum(v) ? v
+export const num = (v) => (isNum(v) ? v
   : (typeof v === 'string' && v.trim() !== '' && Number.isFinite(+v) ? +v : null));
 
-/** Whichever key it used for the list. Told "furniture"; forgiving of the rest.
+/**
+ * EXPORTED FOR REUSE. itemList, rectFromEntry, toPixels and describe are the
+ * machinery for reading a "here is a list of things with boxes on the image I
+ * sent" reply, and that is not specific to furniture — the task-surface pass
+ * asks the same shape of question about a different vocabulary. Sharing them
+ * rather than copying is what stops the two parsers drifting on the units
+ * question, which is the one that costs a day when it goes wrong.
+ *
+ * Whichever key it used for the list. Told "furniture"; forgiving of the rest.
  *  'beds' is in here because extractJson() — shared with the bed route —
  *  normalises a bare top-level array to { beds: [...] }, so without it a reply
  *  that is just an array parses to nothing and reports nothing dropped. */
-function itemList(obj) {
+export function itemList(obj) {
   if (Array.isArray(obj)) return obj;
   if (!obj || typeof obj !== 'object') return [];
-  for (const k of ['furniture', 'items', 'objects', 'predictions', 'detections', 'zones', 'beds']) {
+  for (const k of ['furniture', 'surfaces', 'items', 'objects', 'predictions', 'detections', 'zones', 'beds']) {
     if (Array.isArray(obj[k])) return obj[k];
   }
   return [];
@@ -249,7 +257,7 @@ export function rectFromEntry(z) {
  * would reinterpret the whole box as PIXELS and produce a 0.4px-wide zone that
  * the area floor throws away. The zone vanishes and the UI blames the model.
  */
-function toPixels(r, w, h) {
+export function toPixels(r, w, h) {
   const hi = Math.max(...[r.x0, r.y0, r.x1, r.y1].map(Math.abs));
   const clamp01 = (v) => Math.min(1, Math.max(0, v));
   if (hi <= 1.05) {
@@ -265,7 +273,7 @@ function toPixels(r, w, h) {
 }
 
 /** A rejected entry as a STRING. Never as an object — see openaiDetect.js. */
-const describe = (v) => {
+export const describe = (v) => {
   try { return JSON.stringify(v).slice(0, 200); } catch { return String(v).slice(0, 200); }
 };
 

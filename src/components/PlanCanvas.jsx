@@ -33,7 +33,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     zones = [], draftZone = null, zoneMode = false, onZoneDown, onZoneMove, onZoneUp,
     accents = [], objMode = false, selObjId = null, onObjPointerDown,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
-    selAccId = null, onAccPointerDown, cursor = null },
+    selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [],
+    cursor = null },
   ref
 ) {
   const s = pxPerFt || 1;
@@ -168,8 +169,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // at 40% and a dinner plate at 300%.
         const HS = (Math.max(width, height) / 145) / (zoom || 1);
         const FW = (Math.max(width, height) / 1500) / (zoom || 1);
+        // `.hit` is what makes an element a CONTROL rather than drawing — see
+        // the hit-test rule in styles.css. Without it the element is inert and
+        // the click falls through to the canvas.
         const grab = (mode) => (f.source === 'placed' && onObjPointerDown
-          ? { onPointerDown: (e) => onObjPointerDown(e, f.id, mode),
+          ? { className: 'hit',
+              onPointerDown: (e) => onObjPointerDown(e, f.id, mode),
               style: { cursor: mode === 'move' ? 'move' : 'grab' } }
           : {});
         const col = f.kind === 'chandelier' ? '#B45309'
@@ -291,7 +296,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   {[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy], k) => (
                     <rect key={k}
                       x={f.x + sx * hw - HS / 2} y={f.y + sy * hh - HS / 2}
-                      width={HS} height={HS} rx={HS * 0.18}
+                      width={HS} height={HS} rx={HS * 0.18} className="hit"
                       fill="#fff" stroke={C.grip} strokeWidth={FW * 1.6}
                       style={{ cursor: sx * sy > 0 ? 'nwse-resize' : 'nesw-resize' }}
                       onPointerDown={(e) => onObjPointerDown?.(e, f.id, 'resize', { sx, sy })} />
@@ -439,7 +444,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               const nx = -(p1.y - p0.y) / L, ny = (p1.x - p0.x) / L;
               const t = lw * 4;
               return (
-                <g style={{ pointerEvents: 'none' }}>
+                <g>
                   <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
                     stroke={a.colour} strokeWidth={lw * 4.5} strokeLinecap="round" />
                   {[p0, p1].map((p, i) => (
@@ -465,7 +470,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {SG && (() => {
               const { R, arm, ix, iy, ux, uy, cx, cy } = SG;
               return (
-                <g style={{ pointerEvents: 'none' }}>
+                <g>
                   <circle cx={cx} cy={cy} r={R} fill="#fff" />
                   <g stroke={a.colour} strokeWidth={lw * 1.8} strokeLinecap="round">
                     {/* the stem: from the wall, through the circle, out the far side */}
@@ -496,12 +501,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               <g>
                 <line x1={a.run[0].x} y1={a.run[0].y} x2={a.run[1].x} y2={a.run[1].y}
                   stroke="transparent" strokeWidth={AH * 1.6} strokeLinecap="round"
-                  style={{ cursor: 'pointer' }}
+                  className="hit" style={{ cursor: 'pointer' }}
                   onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'select')} />
                 {accSel && a.run.map((q, k) => (
                   <rect key={k} x={q.x - AH / 2} y={q.y - AH / 2} width={AH} height={AH}
                     rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
-                    style={{ cursor: 'move' }}
+                    className="hit" style={{ cursor: 'move' }}
                     onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, k === 0 ? 'end0' : 'end1')} />
                 ))}
               </g>
@@ -512,18 +517,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  rather than discovered. */
               <line x1={a.wall.a.x} y1={a.wall.a.y} x2={a.wall.b.x} y2={a.wall.b.y}
                 stroke={C.grip} strokeWidth={AFW} strokeDasharray={`${AFW * 4} ${AFW * 4}`}
-                opacity="0.7" style={{ pointerEvents: 'none' }} />
+                opacity="0.7" />
             )}
             {SG && onAccPointerDown && !a.rejected && (
               <circle cx={SG.cx} cy={SG.cy}
                 r={Math.max(SG.R * 1.7, AH * 1.1)} fill="transparent"
-                style={{ cursor: 'move' }}
+                className="hit" style={{ cursor: 'move' }}
                 onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'slide')} />
             )}
             {SG && accSel && (
               <rect x={SG.cx - AH / 2} y={SG.cy - AH / 2} width={AH} height={AH}
                 rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
-                style={{ cursor: 'move' }}
+                className="hit" style={{ cursor: 'move' }}
                 onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'slide')} />
             )}
 
@@ -547,6 +552,88 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           <text key={'n' + r.id} x={cx} y={cy} textAnchor="middle"
             fontSize={s * 0.8} fontFamily="JetBrains Mono, monospace"
             fill={C.region} opacity="0.65">{r.name || 'Room'}</text>
+        );
+      })}
+
+      {/* --- task surfaces ---------------------------------------------------
+          FOUND, NOT LIT. Nothing has been placed on these — they are a reading
+          of the plan, drawn so the reading can be judged before anything is
+          built on it. So they are a plain box with corner ticks and no fitting
+          symbol of any kind: the drawing should not imply a decision that has
+          not been taken.
+
+          Under the accent layer and under the lights, because it is the layer
+          with the least committed to it. */}
+      {layers.surfaces && surfaces.map((sf) => {
+        const w = sf.rect.x1 - sf.rect.x0, h = sf.rect.y1 - sf.rect.y0;
+        const tick = Math.min(w, h) * 0.24;
+        const { x0, y0, x1, y1 } = sf.rect;
+        return (
+          <g key={sf.id} opacity={0.5 + 0.5 * (sf.confidence ?? 0.7)}>
+            <rect x={x0} y={y0} width={w} height={h} rx={lw * 2}
+              fill={sf.colour} fillOpacity="0.09"
+              stroke={sf.colour} strokeWidth={lw * 1.4}
+              strokeDasharray={`${lw * 5} ${lw * 4}`} />
+            <g stroke={sf.colour} strokeWidth={lw * 2.4} fill="none" strokeLinecap="round">
+              <path d={`M${x0},${y0 + tick} L${x0},${y0} L${x0 + tick},${y0}`} />
+              <path d={`M${x1 - tick},${y0} L${x1},${y0} L${x1},${y0 + tick}`} />
+              <path d={`M${x1},${y1 - tick} L${x1},${y1} L${x1 - tick},${y1}`} />
+              <path d={`M${x0 + tick},${y1} L${x0},${y1} L${x0},${y1 - tick}`} />
+            </g>
+          </g>
+        );
+      })}
+
+      {/* --- the secondary grid ----------------------------------------------
+          INVISIBLE BY DEFAULT, and off in the layer list. It is not a thing on
+          the drawing — it is the reasoning behind where a spot went, which is
+          worth being able to switch on when a spot lands somewhere surprising
+          and worth being absent the rest of the time. */}
+      {layers.secondary && taskSpots.map((sp) => sp.grid && (
+        <g key={'sg' + sp.id} opacity="0.5">
+          {sp.grid.lines.map((l, i) => (
+            <line key={i} x1={l.a.x} y1={l.a.y} x2={l.b.x} y2={l.b.y}
+              stroke="#0A0A0A" strokeWidth={lw * 0.8} opacity="0.55" />
+          ))}
+          {sp.segment && (
+            <line x1={sp.segment.a.x} y1={sp.segment.a.y}
+              x2={sp.segment.b.x} y2={sp.segment.b.y}
+              stroke={C.small} strokeWidth={lw * 3} opacity="0.35" strokeLinecap="round" />
+          )}
+        </g>
+      ))}
+
+      {/* --- directional spots -----------------------------------------------
+          THE SAME BLUE AS THE AMBIENT DOWNLIGHTS, because it is the same kind
+          of thing: a fitting in this ceiling. What makes it a task light is
+          that it is AIMED, and the arrow is the whole of that — it points at
+          the centre of the surface the spot was placed for, so the drawing says
+          not just where the fitting goes but what it is for.
+
+          Drawn above the surfaces and below nothing, since it is the one mark
+          on this layer that somebody will order a fitting from. */}
+      {layers.spots && taskSpots.map((sp) => {
+        if (sp.rejected) return null;
+        const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
+        const ux = Math.cos(sp.angle), uy = Math.sin(sp.angle);
+        // The arrow starts at the rim, not the centre, so the body of the
+        // fitting stays a clean circle and the tail cannot be mistaken for a
+        // conduit run back to it.
+        const x0 = sp.x + ux * R * 1.15, y0 = sp.y + uy * R * 1.15;
+        const x1 = sp.x + ux * R * 3.5, y1 = sp.y + uy * R * 3.5;
+        const head = R * 1.05;
+        const nx = -uy, ny = ux;
+        return (
+          <g key={sp.id}>
+            <circle cx={sp.x} cy={sp.y} r={R} fill="#fff"
+              stroke={C.small} strokeWidth={lw * 2} />
+            <circle cx={sp.x} cy={sp.y} r={R * 0.4} fill={C.small} />
+            <line x1={x0} y1={y0} x2={x1} y2={y1}
+              stroke={C.small} strokeWidth={lw * 1.9} strokeLinecap="round" />
+            <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * 0.55},${y1 - uy * head + ny * head * 0.55}`
+                   + ` L${x1 - ux * head - nx * head * 0.55},${y1 - uy * head - ny * head * 0.55} Z`}
+              fill={C.small} />
+          </g>
         );
       })}
 

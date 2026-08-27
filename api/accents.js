@@ -20,6 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import { buildAccentRequest, furnitureFromReply, DEFAULT_MODEL } from '../src/lib/accentPrompt.js';
+import { buildSurfaceRequest, surfacesFromReply } from '../src/lib/taskSurfaces.js';
 import { textFromResponse } from '../src/lib/openaiDetect.js';
 
 const log = (id, arrow, msg) => console.log(`[accents ${id}] ${arrow} ${msg}`);
@@ -95,6 +96,12 @@ export default async function handler(req, res) {
   // unhandled throw inside the prompt builder rather than a 400.
   const numOrNull = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
   const rb = body.room && typeof body.room === 'object' && !Array.isArray(body.room) ? body.room : null;
+  // WHICH QUESTION about the same picture. Both passes send an identical crop
+  // of one room and both get back a list of things with boxes on it; only the
+  // vocabulary differs. A third endpoint for that would be a third copy of the
+  // key handling, the scrubbing, the size guard and the logging.
+  const task = body.task === 'surfaces' ? 'surfaces' : 'furniture';
+
   const room = rb ? {
     name: typeof rb.name === 'string' ? rb.name.slice(0, 60) : null,
     widthFt: numOrNull(rb.widthFt),
@@ -104,12 +111,12 @@ export default async function handler(req, res) {
   const ceilingFt = Number(body.ceilingFt) > 0 ? Number(body.ceilingFt) : null;
 
   log(id, '->', `${(bytes / 1024).toFixed(0)}KB — room ${w}x${h}`
-    + `, room="${room?.name ?? '?'}", ${model}`);
+    + `, task=${task}, room="${room?.name ?? '?'}", ${model}`);
 
-  const request = buildAccentRequest({
-    plan: { base64: planB64, mime: body?.plan?.mime || 'image/jpeg' },
-    room, ceilingFt, model,
-  });
+  const plan = { base64: planB64, mime: body?.plan?.mime || 'image/jpeg' };
+  const request = task === 'surfaces'
+    ? buildSurfaceRequest({ plan, room, model })
+    : buildAccentRequest({ plan, room, ceilingFt, model });
 
   const t0 = Date.now();
   let upstream;
@@ -146,14 +153,17 @@ export default async function handler(req, res) {
   catch { return send(502, { error: 'OpenAI returned non-JSON.', ms, id }); }
 
   const reply = textFromResponse(json);
-  const payload = furnitureFromReply(reply, { w, h });
+  const payload = task === 'surfaces'
+    ? surfacesFromReply(reply, { w, h })
+    : furnitureFromReply(reply, { w, h });
+  const found = payload.furniture ?? payload.surfaces;
 
   // The model's own words. A refusal, a hedge, or "none of the rules apply to
   // this room" is the single most useful thing on the wire when a run comes
   // back empty, and it is invisible in the parsed payload.
-  log(id, '==', payload.furniture.length
-    ? `${payload.furniture.length}: ${payload.furniture.map((f) => `${f.type} ${f.confidence.toFixed(2)}`).join(', ')}`
-    : `no furniture. reply: ${reply.slice(0, 300)}`);
+  log(id, '==', found.length
+    ? `${found.length}: ${found.map((f) => `${f.type} ${f.confidence.toFixed(2)}`).join(', ')}`
+    : `nothing found. reply: ${reply.slice(0, 300)}`);
   if (payload.skipped.length) {
     log(id, '??', `${payload.skipped.length} dropped: ${payload.skipped.map((s) => s.reason).join('; ').slice(0, 240)}`);
   }
@@ -161,7 +171,7 @@ export default async function handler(req, res) {
   return send(200, {
     meta: {
       id, model, ms, bytes,
-      furniture: payload.furniture.length,
+      task, found: found.length,
       skipped: payload.skipped.length,
       usage: json.usage ?? null,
       reply: reply.slice(0, 900),

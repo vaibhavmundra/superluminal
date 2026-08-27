@@ -17,6 +17,9 @@ import { detectFurniture, detectionsToZones, zonesFromDetections, snapshotForDet
 import { download, toJSON, toCSV, toDXF, svgString, svgToPNG } from './lib/exporters.js';
 import AccentPanel from './components/AccentPanel.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
+import TaskSurfacePanel from './components/TaskSurfacePanel.jsx';
+import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
+import { planTaskSpots, chunkFor } from './lib/taskSpots.js';
 import { roomSnapshot, requestAccents, toPlanRect } from './lib/accentMask.js';
 import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
 import { zonesFromFurniture, slideSconceTo, setRunEnd } from './lib/accentPlace.js';
@@ -148,6 +151,16 @@ export default function App() {
   const [accentShot, setAccentShot] = useState(null);
   // Editing what the model proposed. A fitting is a starting point, not a
   // verdict — see the note in accentPlace.js.
+  // --- task surfaces --------------------------------------------------------
+  // The third layer. Ambient covers the ceiling, accent picks out a surface for
+  // the look of it, and a TASK surface is a plane somebody works at. This pass
+  // only FINDS them — same order the accent pass was built in, and the order
+  // that made its one real failure obvious instead of mysterious.
+  const [surfaceRoomId, setSurfaceRoomId] = useState(null);
+  const [surfaceResults, setSurfaceResults] = useState({});
+  const [surfaceState, setSurfaceState] = useState({ status: 'idle', roomId: null });
+  const [surfaceDismissed, setSurfaceDismissed] = useState([]);
+
   const [selAccId, setSelAccId] = useState(null);
   const [accDrag, setAccDrag] = useState(null);   // {roomId, id, mode}
   // Not on the plan, and every mounting height and throw distance depends on
@@ -165,7 +178,7 @@ export default function App() {
   // see the header there for why.
   const opt = PLAN_OPTIONS;
   const useBoundingRect = SIMPLIFY_ROOM_TO_RECTANGLE;
-  const [layers, setLayers] = useState({ plan: true, dim: true, region: true, grid: true, cells: true, lights: true, labels: false, fan: true, zones: true, accents: true, objects: true });
+  const [layers, setLayers] = useState({ plan: true, dim: true, region: true, grid: true, cells: true, lights: true, labels: false, fan: true, zones: true, accents: true, objects: true, surfaces: true, spots: true, secondary: false });
   const [zoom, setZoom] = useState(1);
   const [over, setOver] = useState(false);
   const svgRef = useRef(null);
@@ -191,6 +204,8 @@ export default function App() {
     setAccentRoomId(null); setAccentResults({});
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
     setSelAccId(null); setAccDrag(null);
+    setSurfaceRoomId(null); setSurfaceResults({});
+    setSurfaceState({ status: 'idle', roomId: null }); setSurfaceDismissed([]);
     setFans([]); setFanReason(''); setFanMode(false);
     setCeilingObjs([]); setObjMode(false); setSelObjId(null); setObjDrag(null);
     setArmed(null); setGuides([]); setGhost(null);
@@ -511,7 +526,11 @@ export default function App() {
         // without a shape stays the circle it always was, which is every fan
         // the detector ever found.
         fixturesFt: mine.map((f) => ({
-          type: 'fan', ...toFt(f), r: f.r / pxPerFt,
+          // `type` stays 'fan' because that is what the planner filters on and
+          // every obstacle is one as far as it is concerned. `kind` rides along
+          // for everyone else: the chandelier veto on a task spot has to know
+          // which of these is a chandelier, and nothing else can tell it.
+          type: 'fan', kind: f.kind ?? 'fan', ...toFt(f), r: f.r / pxPerFt,
           ...(f.shape === 'rect'
             ? { shape: 'rect', w: f.w / pxPerFt, h: f.h / pxPerFt, rot: f.rot || 0 }
             : { shape: 'circle' }),
@@ -720,6 +739,152 @@ export default function App() {
       setAccentState({ status: 'error', roomId: r.id, error: String(err.message || err), ms: Date.now() - t0 });
     }
   }, [accentRoom, accentShot, source, img, wallLayerSet, pxPerFt, ceilingFt]);
+
+  const surfaceRoom = useMemo(
+    () => rooms.find((r) => r.id === surfaceRoomId) || rooms[0] || null,
+    [rooms, surfaceRoomId]);
+
+  /**
+   * Find the task surfaces in one room.
+   *
+   * The SAME masked crop the accent pass sends, built the same way, because it
+   * is the same picture of the same room — only the question over the wire
+   * differs. Nothing here is cached: this runs once per press, and a crop is
+   * cheap next to the call it precedes.
+   */
+  const runSurfaces = useCallback(async () => {
+    if (!surfaceRoom?.plan?.ok || !source) return;
+    const r = surfaceRoom;
+    setSurfaceState({ status: 'running', roomId: r.id });
+    const t0 = Date.now();
+    try {
+      const shot = await roomSnapshot({
+        source, img, polygonPx: r.plan.polygonPx,
+        lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
+      });
+      const payload = await requestAccents({
+        plan: shot,
+        task: 'surfaces',
+        room: {
+          name: r.outline.name || null,
+          widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
+        },
+      });
+      const res = payload.result;
+      const surfaces = res.surfaces.map((sf, i) => {
+        const rect = toPlanRect(sf.rect, shot.crop, res.image);
+        const t = SURFACE_BY_ID[sf.type];
+        return {
+          ...sf,
+          id: `surf-${r.id}-${i}`,
+          roomId: r.id,
+          rect,
+          colour: t?.colour || '#666',
+          label: t?.label || sf.type,
+          widthFt: pxPerFt ? (rect.x1 - rect.x0) / pxPerFt : null,
+          heightFt: pxPerFt ? (rect.y1 - rect.y0) / pxPerFt : null,
+        };
+      });
+      console.log(`[surfaces] ${r.outline.name || 'room'}: ${surfaces.length}`,
+        { sent: shot.dataUrl, meta: payload.meta, surfaces });
+      // A fresh run replaces this room's list, so its dismissals go with it —
+      // the ids are positional and would otherwise land on different surfaces.
+      setSurfaceDismissed((d) => d.filter((x) => !x.startsWith(`surf-${r.id}-`)));
+      setSurfaceResults((m) => ({ ...m, [r.id]: { ...res, surfaces } }));
+      setSurfaceState({ status: 'done', roomId: r.id, ms: Date.now() - t0 });
+    } catch (err) {
+      console.warn('[surfaces] failed:', err);
+      setSurfaceState({ status: 'error', roomId: r.id,
+                        error: String(err.message || err), ms: Date.now() - t0 });
+    }
+  }, [surfaceRoom, source, img, wallLayerSet, pxPerFt]);
+
+  /** What the canvas draws: every surface still standing, in plan pixels. */
+  const surfacesPx = useMemo(() => {
+    const out = [];
+    for (const r of rooms) {
+      const res = surfaceResults[r.id];
+      if (!res?.surfaces) continue;
+      for (const sf of res.surfaces) if (!surfaceDismissed.includes(sf.id)) out.push(sf);
+    }
+    return out;
+  }, [rooms, surfaceResults, surfaceDismissed]);
+
+  /**
+   * A DIRECTIONAL SPOT FOR EVERY TASK SURFACE, on the secondary grid.
+   *
+   * Derived, not stored. The spot is a function of the surface, the ambient
+   * layout and the obstacles, and all three of those move — nudge a fan and the
+   * segment the spot was standing on can become illegal. Holding it in state
+   * would mean a spot that is right when it is computed and quietly wrong ever
+   * after; recomputing means it is always the answer to the layout as it
+   * actually is.
+   *
+   * Everything crosses into the room's own FEET here, because that is the space
+   * the chunks, the lights and the clearance rules all already live in, and
+   * back out to plan pixels for the canvas.
+   */
+  const taskSpotsPx = useMemo(() => {
+    const out = [];
+    for (const r of rooms) {
+      if (!r.plan?.ok) continue;
+      const mine = surfacesPx.filter((sf) => sf.roomId === r.id);
+      if (!mine.length) continue;
+      const { toFt, toPx } = r.geo;
+      // ALL OF THIS ROOM'S SURFACES AT ONCE, not one at a time, because the
+      // rule that one spot lights one surface is a rule ABOUT THE SET: a
+      // segment can only be spent once, and that cannot be decided by a
+      // function looking at a single surface.
+      const inFt = mine.map((sf) => {
+        const a = toFt({ x: sf.rect.x0, y: sf.rect.y0 });
+        const b = toFt({ x: sf.rect.x1, y: sf.rect.y1 });
+        return { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y),
+                 x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
+      });
+      // Chunk taken from the FIRST surface's centre. Every surface in one room
+      // is placed against one chunk's grid, which is right for the common case
+      // and is the known limit for a room cut into several.
+      const chunk = chunkFor(
+        { x: (inFt[0].x0 + inFt[0].x1) / 2, y: (inFt[0].y0 + inFt[0].y1) / 2 },
+        r.plan.chunks);
+      if (!chunk) continue;
+
+      const placed = planTaskSpots(inFt, {
+        chunk,
+        lights: r.plan.lights,
+        polygon: r.plan.polygonFt,
+        fixtures: r.geo.fixturesFt,
+        chandeliers: r.geo.fixturesFt.filter((f) => f.kind === 'chandelier'),
+        zones: r.plan.zones ?? [],
+        opt,
+      });
+
+      mine.forEach((sf, k) => {
+        const res = placed[k];
+        if (!res?.spot) {
+          out.push({ id: `spot-${sf.id}`, surfaceId: sf.id, colour: sf.colour,
+                     rejected: res?.rejected, skipped: res?.skipped });
+          return;
+        }
+        const p = toPx(res.spot);
+        const t = toPx(res.spot.target);
+        out.push({
+          id: `spot-${sf.id}`, surfaceId: sf.id, roomId: r.id,
+          x: p.x, y: p.y,
+          target: t,
+          angle: Math.atan2(t.y - p.y, t.x - p.x),
+          via: res.spot.via,
+          // The segment it is standing on, in pixels, so the drawing can show
+          // its working when the secondary grid is switched on.
+          segment: { a: toPx(res.spot.segment.a), b: toPx(res.spot.segment.b) },
+          grid: res.grid ? {
+            lines: res.grid.lines.map((l) => ({ ...l, a: toPx(l.a), b: toPx(l.b) })),
+          } : null,
+        });
+      });
+    }
+    return out;
+  }, [rooms, surfacesPx, opt]);
 
   /** What the canvas draws: every accent zone still standing, in plan pixels. */
   const accentZonesPx = useMemo(() => {
@@ -1393,6 +1558,7 @@ export default function App() {
               objDragMode={objDrag?.moved ? objDrag.mode : null}
               guides={guides} ghost={ghost} clearanceFt={opt.fanClearance}
               selAccId={selAccId} onAccPointerDown={accPointerDown}
+              surfaces={surfacesPx} taskSpots={taskSpotsPx}
               measure={null} onCanvasClick={onCanvasClick}
               /* Crosshair only where a click would actually do something. Off
                  the ceiling it reverts to a pointer, which is the cursor's job:
@@ -1686,6 +1852,24 @@ export default function App() {
             selId={selAccId}
             onSelect={(id) => { setSelAccId(id); setSelObjId(null); setArmed(null); }} />
 
+          <TaskSurfacePanel
+            rooms={rooms}
+            roomId={surfaceRoom?.id ?? null}
+            onRoomChange={setSurfaceRoomId}
+            state={surfaceState.roomId === surfaceRoom?.id ? surfaceState : { status: 'idle' }}
+            result={surfaceResults[surfaceRoom?.id] || null}
+            dismissed={surfaceDismissed}
+            onToggle={(id) => setSurfaceDismissed((d) =>
+              d.includes(id) ? d.filter((x) => x !== id) : [...d, id])}
+            onClear={() => {
+              const rid = surfaceRoom?.id;
+              setSurfaceResults((m) => { const n = { ...m }; delete n[rid]; return n; });
+              setSurfaceDismissed((d) => d.filter((x) => !x.startsWith(`surf-${rid}-`)));
+              setSurfaceState({ status: 'idle', roomId: null });
+            }}
+            onRun={runSurfaces}
+            spots={taskSpotsPx} />
+
           <div className="sec">
             <h3>View</h3>
             <div className="btnrow" style={{ marginBottom: 6 }}>
@@ -1695,7 +1879,9 @@ export default function App() {
             </div>
             {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Room outline'], ['grid', 'Grid lines'],
               ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'], ['fan', 'Ceiling objects'],
-              ['zones', 'No-light zones'], ['accents', 'Accent zones']].map(([k, l]) => (
+              ['zones', 'No-light zones'], ['accents', 'Accent zones'],
+              ['surfaces', 'Task surfaces'], ['spots', 'Task spots'],
+              ['secondary', 'Secondary grid']].map(([k, l]) => (
               <label className="check" key={k}><input type="checkbox" checked={layers[k]} onChange={toggle(k)} />{l}</label>
             ))}
           </div>

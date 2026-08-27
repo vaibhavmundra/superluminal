@@ -303,3 +303,20 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
 }
 .sweep button.on{border-color:var(--text);background:var(--input-bg);color:var(--text)}
 .accent-row.on{border-color:#0D99FF;box-shadow:0 0 0 1px #0D99FF inset}
+
+/* ---------- the plan is drawing; controls opt in ---------- */
+/* THE HIT-TEST RULE, in one place instead of thirty.
+   SVG paints in document order and hit-tests the topmost painted thing under
+   the pointer — and "painted" includes a fill of 9% opacity. So any annotation
+   layer that happens to be drawn after a control silently eats its clicks: the
+   task-surface box swallowed the grab area of a fan sitting inside it, and the
+   accent symbols swallowed their own handles before that. Two bugs, one cause.
+   Marking each offender as it turns up is a losing game, because the next layer
+   added will do it again.
+   So: everything inside the plan is inert by default, and the handful of
+   elements that are genuinely CONTROLS re-enable themselves with .hit.
+   pointer-events inherits, so a .hit inside an inert group works. */
+.plan{pointer-events:auto}
+.plan g,.plan rect,.plan circle,.plan line,.plan path,.plan polygon,
+.plan text,.plan image,.plan polyline{pointer-events:none}
+.plan .hit{pointer-events:all}

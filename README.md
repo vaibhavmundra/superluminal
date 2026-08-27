@@ -1453,6 +1453,190 @@ and columns, lights covering four boxes, large lights off the midpoint — was
 instrumentation for tuning the planner, and the planner is no longer tuned from
 the screen. It is all still in the JSON export and in `plan.stats`.
 
+## Task surfaces: the third layer
+
+Ambient light covers a ceiling evenly. Accent light picks out a surface for the
+look of it. A **task surface** is neither: it is a horizontal plane somebody
+actually does something at — eats, meets, writes, sets a cup down — and it wants
+its own light at its own level.
+
+**Task surfaces** in the right-hand panel finds them, one room at a time. Four
+things, and each is defined as much by its context as by its shape:
+
+| | only if |
+|---|---|
+| **Coffee table** | the low table **out in front** of a sofa — not an end table |
+| **Dining table** | in a dining area, ringed by four to eight chairs |
+| **Conference table** | in an office — eight or more chairs, usually a room of its own |
+| **Executive desk** | in a private office or cabin, one person at it |
+
+**The qualifier is half the definition**, and stating it is what stops the pass
+finding console tables in corridors. A rectangle is only a coffee table because
+of where it sits relative to a sofa; the same rectangle alone is a console. The
+prompt asks for the *relationship*, not just the object, and says why.
+
+> **End tables are refused by name**, and they were the noisiest false positive
+> the pass had — a pair of small circles flanking a sofa's two arms came back as
+> two coffee tables. They are small tables next to seating, which sounds exactly
+> like the coffee-table rule, so the prompt has to distinguish them explicitly:
+> a coffee table sits out in FRONT of the sofa's long side and is several times
+> the area, and a matching pair flanking the arms is a giveaway that neither is
+> one. Size is given as the tell rather than position alone, because position is
+> what the two have in common.
+
+The box is **the surface, not the arrangement** — the table top is what will
+eventually be lit, and the chairs are only how you recognised it. A box round
+the whole group is a box round the wrong thing.
+
+### It only finds them
+
+Nothing is placed, nothing is recommended, and the drawing says so: a task
+surface is a plain box with corner ticks and no fitting symbol of any kind,
+under every other layer. What a surface should get — a pendant, a downlight over
+it, a level of its own — is the next decision, and the drawing should not imply
+one that has not been taken.
+
+That is deliberately the same order the accent pass was built in: see whether it
+can *see* the thing before deciding what to do about it. Building it the other
+way round is what made the accent pass's one real failure look like a mystery
+instead of a missing wardrobe.
+
+### One route, two questions
+
+`/api/accents` takes a `task` — `furniture` or `surfaces`. Both send an
+**identical** masked crop of one room and both get back a list of things with
+boxes on it; only the vocabulary differs. A third endpoint would have been a
+third copy of the key handling, the scrubbing, the size guard and the logging.
+
+The parser is shared for a sharper reason. `itemList`, `rectFromEntry`,
+`toPixels` and `describe` are the machinery for reading "here is a list of
+things with boxes on the image I sent", which is not specific to furniture — and
+[the units question](#the-strip-problem-and-why-the-model-boxes-the-furniture)
+(fractions? percent? pixels? a box hanging a hair off the left edge?) is the one
+that costs a day when two parsers quietly disagree about it. There is now
+exactly one place it is answered.
+
+## The secondary grid, and the spot on it
+
+A task surface is found; something has to light it. That something is a
+**directional spot**, and where it goes is decided by a second grid laid over
+the first.
+
+### What the secondary grid is
+
+The ambient layer already put a light at the centre of every cell, and those
+lights fall into rows and columns. Draw a line through every one of them,
+horizontally and vertically, run each line out until it meets the **chunk's**
+own outline, and that is the secondary grid.
+
+It is not really a new grid — it is the ambient grid's skeleton made explicit —
+and that is exactly why a spot belongs on it. A spot dropped at whatever point
+happens to be nearest the coffee table sits at some arbitrary offset from
+everything else on the ceiling and reads as a mistake. A spot on the line
+between two downlights reads as part of the layout, because it *is* on the
+layout's own geometry.
+
+It is **invisible**. There is a *Secondary grid* switch under View, off by
+default: the lines are not a thing on the drawing, they are the reasoning behind
+where a spot went — worth switching on when a spot lands somewhere surprising
+and worth being absent the rest of the time. With it on, the segment the spot
+actually chose is highlighted.
+
+### Where on it the spot goes
+
+Two classes of segment, tried strictly in this order:
+
+1. between two **adjacent lights** on the same line — the midpoint of whichever
+   one's centre is nearest the task surface
+2. between the **outermost light** on a line and the chunk's outline, same rule
+
+The order is the rule and not a tie-break: **a poor pair beats a good edge every
+time.** The edge class exists for a surface out at the margin of a room, where
+there is no pair of lights on the near side of it, and `tools/test-spots.mjs`
+asserts that a surface hard against a wall still takes the light-to-light
+segment when one is legal.
+
+Only *adjacent* lights on a line make a pair — a segment that skips over a light
+in between is not a segment.
+
+### One spot lights one surface
+
+A segment is spent once. Placed independently, two surfaces either side of the
+same pair of downlights would both take that pair's midpoint, and the drawing
+would show one fitting apparently aimed at two things. So the whole room's
+surfaces are planned together — the rule is about the *set*, and cannot be
+decided by a function looking at one surface.
+
+**First pick goes to the largest surface**, which is a real choice rather than an
+accident of the order the model happened to list them in. A dining table and a
+coffee table competing for one segment resolve in favour of the dining table: it
+is the bigger commitment, it is harder to light from somewhere else, and a
+compromise on the coffee table costs less. Equal areas fall back to list order,
+so the same input always produces the same drawing.
+
+### A chandelier already lighting it
+
+A chandelier within **3 ft of the surface's outline** means no spot is added. A
+chandelier over a dining table *is* the task light for it, and specifying a spot
+beside one is specifying a fitting nobody will install.
+
+Measured from the chandelier's own **body**, not its centre — a five-foot
+fitting reaches further than its centre suggests, which is the whole reason it
+counts as lighting the table underneath it.
+
+The surface is **skipped, not refused**, and the panel says so differently: a
+refusal is a problem to solve, a skip is a decision the chandelier already made.
+A skipped surface also does not consume its segment, so another surface may
+still use it.
+
+`SPOT_DEFAULTS.chandelierNear` is the dial.
+
+### The ambient rules apply to it
+
+A spot is a fitting in the same ceiling, and the reasons those rules exist do
+not care what the fitting is for. A candidate midpoint has to be inside the
+room, clear of every ceiling object's clearance, out of the no-light zones, and
+far enough from a wall.
+
+**The wall figure is 2 ft, not the ambient layer's 5**, and this is why it was
+made a separate dial in the first place. 5 ft is what a *large light* keeps,
+because its cone lands on the wall and scallops it. A spot is a narrow beam
+aimed at a table and pointed away from the wall; the wall behind it is not in
+the picture.
+
+Inheriting 5 ft was actively wrong rather than merely conservative. In a 13 × 10
+living room it refused **every** segment — both coffee tables came back "closer
+than 5 ft to a wall" and got no spot at all — and in a larger room it did the
+quieter version of the same thing, pushing the spot off the near segment onto one
+further away. Both are asserted in `tools/test-spots.mjs`. Inheriting a number
+without inheriting its reasoning is how a constant ends up load-bearing
+somewhere nobody meant it to be.
+
+One rule is the spot's own: **it may not stand on its own surface.** A spot over
+the centre of the table has no direction to point in, and the arrow is half the
+drawing.
+
+Every refusal is a sentence on the surface's row in the panel — *"every segment
+near this surface is inside a ceiling object's clearance"* — because "no spot
+appeared" is not something anyone can act on.
+
+### The symbol
+
+**The same blue as the ambient downlights**, because it is the same kind of
+thing: a fitting in this ceiling. What makes it a task light is that it is
+*aimed*, and the arrow is the whole of that — it starts at the rim rather than
+the centre, so the body stays a clean circle and the tail cannot be read as a
+conduit run, and it points at the centre of the surface the spot was placed for.
+The drawing says not just where the fitting goes but what it is for.
+
+### Derived, never stored
+
+A spot is a function of the surface, the ambient layout and the obstacles, and
+all three of those move — nudge a fan and the segment a spot was standing on can
+become illegal. Holding it in state would mean a spot that was right when it was
+computed and quietly wrong ever after. It is recomputed, so it is always the
+answer to the layout as it actually is.
+
 ## Ceiling objects: a chandelier is a fan with a different drawing
 
 The right-hand panel places four things on the ceiling for the grid to work
@@ -1507,6 +1691,41 @@ found behaves exactly as it did.
 Rotation is now real geometry rather than documentation: turning a 1200 × 600
 trap door genuinely moves which side of it a light can sit on, and the offset
 outline turns with it.
+
+### The hit-test rule
+
+SVG paints in document order and hit-tests the **topmost painted thing** under
+the pointer — and "painted" includes a fill at 9% opacity. So any annotation
+layer drawn after a control silently eats its clicks. This bit twice:
+
+- the accent symbols' white ground covered their own handles, so clicking a
+  sconce *deselected* it
+- the task-surface box swallowed the grab area of a fan sitting inside it, so
+  the fan stopped showing a move cursor and could not be picked up
+
+Two bugs, one cause, and marking each offender as it turns up is a losing game
+because the next layer added does it again. So the rule lives in one place, in
+`styles.css`:
+
+```css
+.plan{pointer-events:auto}
+.plan g,.plan rect,.plan circle,.plan line,.plan path,
+.plan polygon,.plan text,.plan image{pointer-events:none}
+.plan .hit{pointer-events:all}
+```
+
+**Everything inside the plan is inert; the handful of elements that are genuinely
+controls re-enable themselves with `.hit`.** `pointer-events` inherits, so a
+`.hit` nested inside an inert group works, and a click on anything else falls
+through to the canvas — which is what the empty-ceiling and outside-the-room
+behaviour wants anyway.
+
+> Verified with real clicks in a headless browser rather than by reading the
+> code: a control under a 9% fill, a handle under an opaque symbol, and — as a
+> control on the experiment — the same structure *without* the rule, which does
+> steal the click. `elementFromPoint` agreeing also means the CURSOR resolves to
+> the control, which was the visible symptom. The harness needs Playwright so it
+> is not in `npm test`, which stays dependency-free.
 
 ### Outside a room, nothing is active
 
@@ -1995,6 +2214,25 @@ model's own words, which is invisible in the parsed payload.
   room replaces its whole list; there is no merge that keeps what you moved.
 - Capped at 8 zones in the parser. The model is told to be restrained and is
   otherwise ungoverned.
+- **A task surface gets exactly one spot.** A long conference table wants two or
+  three along its length; nothing says so.
+- **Every surface in a room is placed against ONE chunk's grid** — the chunk
+  holding the first surface's centre. Right for the common case, wrong for a room
+  cut into several chunks with surfaces in more than one of them.
+- **Only a chandelier vetoes a spot.** A pendant is not a ceiling-object type, so
+  a dining table under one still gets a spot beside it.
+- **The spot is not editable and not exported.** It is derived on every render,
+  so there is nowhere to put a hand-moved position yet, and the DXF, CSV and
+  JSON still carry the ambient layout only.
+- **The secondary grid has no intersection nodes.** A segment runs light to
+  light or light to chunk edge; where a perpendicular grid line crosses it in
+  between is not treated as a stop, so a spot can land on a crossing rather than
+  in a clear span.
+- **Task surfaces are otherwise found and nothing more.** No edit handles, and a
+  re-run replaces the room's list. The qualifier ("only if there
+  is a sofa") is asked of the model and not checked against anything — the
+  furniture pass is sitting right there and knows where the sofas are, and the
+  two do not talk to each other.
 
 ### Known limits of the room detector
 
