@@ -41,6 +41,12 @@ body{
 /* ---------- canvas ---------- */
 .stage{position:relative;overflow:auto;padding:68px 18px 24px;display:flex;justify-content:safe center;align-items:flex-start}
 .stage.empty{align-items:center;justify-content:center;padding:18px}
+/* MID-PAN. `grabbing` on the container wins over the crosshair the plan sets on
+   itself, and `user-select:none` stops a drag that starts over a label from
+   selecting text all the way across the sheet. The cursor is on the class and
+   not on the element's style so it applies to every child without each of them
+   having to opt in. */
+.stage.panning,.stage.panning *{cursor:grabbing!important;user-select:none}
 .dropzone{
   width:min(560px,92%);border:2px dashed var(--border);border-radius:14px;background:var(--surface);
   padding:44px 32px;text-align:center;transition:border-color .15s,background .15s;
@@ -345,6 +351,21 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
 .proj-btn span{font-size:10.5px;color:var(--text-subtle);line-height:1.3}
 .proj-btn:hover{border-color:#6161f5;background:var(--accent-soft)}
 .proj-btn:active{transform:translateY(1px)}
+/* The dialog while it is looking for doors. Same box, same size — it is the
+   same moment, not a new screen — so the modal must not jump when the grid is
+   replaced by one line. */
+.modal-busy{display:flex;align-items:center;gap:14px;padding:10px 2px;min-height:74px}
+.modal-busy b{font-size:14px;font-weight:550;display:block}
+.modal-spin{
+  width:22px;height:22px;flex:0 0 auto;border-radius:50%;
+  border:2.5px solid var(--accent-soft);border-top-color:#6161f5;
+  animation:sl-spin .7s linear infinite;
+}
+@keyframes sl-spin{to{transform:rotate(360deg)}}
+/* The three door widths. A row of equal buttons, because they are one question
+   with three answers and a dropdown would hide two of them behind a click. */
+.door-widths{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.door-widths .btn{width:100%;padding:7px 4px;text-align:center}
 
 /* ---------- the pipeline loader ---------- */
 .loader-wrap{

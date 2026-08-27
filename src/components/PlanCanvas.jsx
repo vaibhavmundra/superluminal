@@ -494,15 +494,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 handler, bubbles to the canvas, and deselects instead of
                 selecting. Which is exactly what it did.
 
-                Both gestures are ONE-DIMENSIONAL: a sconce slides along its
-                wall, a strip's ends slide along its run. Neither can leave the
-                surface it is fixed to. */}
+                A SCONCE is one-dimensional — it is fixed to a wall and slides
+                along it. A STRIP IS NOT, any more: its ends go where you put
+                them and the body drags whole, because the case that needed
+                fixing was a run on the wrong wall, and no amount of sliding
+                along the wrong wall gets you off it. The old constraint is
+                still there as a snap, and on Shift as a hard axis lock. */}
             {a.run && onAccPointerDown && !a.rejected && (
               <g>
                 <line x1={a.run[0].x} y1={a.run[0].y} x2={a.run[1].x} y2={a.run[1].y}
                   stroke="transparent" strokeWidth={AH * 1.6} strokeLinecap="round"
-                  className="hit" style={{ cursor: 'pointer' }}
-                  onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'select')} />
+                  className="hit" style={{ cursor: 'move' }}
+                  onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'move')} />
                 {accSel && a.run.map((q, k) => (
                   <rect key={k} x={q.x - AH / 2} y={q.y - AH / 2} width={AH} height={AH}
                     rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
@@ -512,9 +515,26 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               </g>
             )}
 
+            {/* THE SNAP THAT FIRED, drawn only while it is firing. A strip that
+                has landed on a wall or stayed collinear looks identical to one
+                that is a hair off, and the difference is the whole reason the
+                drag feels precise or feels vague. Extended past both ends so it
+                reads as a line the run is ON rather than as the run itself. */}
+            {a.run && a.snap && (() => {
+              const [p0, p1] = a.run;
+              const dx = p1.x - p0.x, dy = p1.y - p0.y;
+              const L = Math.hypot(dx, dy) || 1;
+              const ex = (dx / L) * AH * 3, ey = (dy / L) * AH * 3;
+              return (
+                <line x1={p0.x - ex} y1={p0.y - ey} x2={p1.x + ex} y2={p1.y + ey}
+                  stroke={C.guide} strokeWidth={AFW} opacity="0.9"
+                  strokeDasharray={`${AFW * 5} ${AFW * 3}`} />
+              );
+            })()}
+
             {SG && accSel && a.wall && (
-              /* The wall it may slide along, so the constraint is visible
-                 rather than discovered. */
+              /* The wall it was taken off. Not a constraint any more — a
+                 reference, and the thing the run snaps back onto. */
               <line x1={a.wall.a.x} y1={a.wall.a.y} x2={a.wall.b.x} y2={a.wall.b.y}
                 stroke={C.grip} strokeWidth={AFW} strokeDasharray={`${AFW * 4} ${AFW * 4}`}
                 opacity="0.7" />

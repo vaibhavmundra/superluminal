@@ -46,6 +46,12 @@ const DEFAULT_URL = 'https://serverless.roboflow.com/baibhav-mundra/workflows/ge
 // turns those into the outlines the user nudges.
 const DEFAULT_ROOMS_URL = 'https://serverless.roboflow.com/baibhav-mundra/workflows/detect-and-count-objects-in-image';
 
+// The DOOR workflow. A third trained model answering the third question — not
+// "where is the bed" and not "where are the rooms" but "where are the doors" —
+// because a door is the one object on a plan whose real size is standard enough
+// to be a RULER. See src/lib/doors.js for what is done with the boxes.
+const DEFAULT_DOORS_URL = 'https://serverless.roboflow.com/baibhav-mundra/workflows/detect-and-count-objects-in-image-2';
+
 // Roboflow has published two shapes for this route over time. If the
 // configured one 404s we try the other before believing the workflow is gone,
 // because "wrong URL shape" and "no such workflow" are the same status code
@@ -141,6 +147,32 @@ function shapeOf(node, depth = 0) {
  */
 function redactBlobs(text) {
   return text.replace(/"[A-Za-z0-9+/=]{200,}"/g, (m) => `"<blob ${m.length} chars>"`);
+}
+
+/**
+ * Drop the annotated picture a workflow renders for its own preview.
+ *
+ * It is a base64 JPEG of the plan with the boxes drawn on — genuinely useful in
+ * Roboflow's console and pure weight here, because the browser already has the
+ * plan and draws its own boxes over it. A megabyte of it per response also puts
+ * a four-door answer within sight of the body limits for no reason.
+ */
+function stripImages(node, depth = 0) {
+  if (depth > 8) return node;
+  if (Array.isArray(node)) return node.map((n) => stripImages(n, depth + 1));
+  if (node && typeof node === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(node)) {
+      if (/^(output_image|visualization|annotated_image|image_base64)$/i.test(k)) continue;
+      // An `image` that is {width,height} is the model's own coordinate space and
+      // MUST survive — rescaleRect needs it. An `image` that is a string is a
+      // blob wearing the same key.
+      if (k === 'image' && typeof v === 'string') continue;
+      out[k] = stripImages(v, depth + 1);
+    }
+    return out;
+  }
+  return node;
 }
 
 async function readBody(req) {
@@ -392,9 +424,10 @@ export default async function handler(req, res) {
   // rooms, so an outline can be proposed instead of traced by hand. They are
   // different workflows and different models; the only thing they share is
   // this endpoint, the key and the scrubbing.
-  const task = body.task === 'rooms' ? 'rooms' : 'furniture';
+  const task = ['rooms', 'doors'].includes(body.task) ? body.task : 'furniture';
   const furnitureUrl = process.env.ROBOFLOW_WORKFLOW_URL || DEFAULT_URL;
   const roomsUrl = process.env.ROBOFLOW_ROOMS_WORKFLOW_URL || DEFAULT_ROOMS_URL;
+  const doorsUrl = process.env.ROBOFLOW_DOORS_WORKFLOW_URL || DEFAULT_DOORS_URL;
 
   const provider = ['roboflow', 'openai', 'both'].includes(body.provider) ? body.provider : 'roboflow';
   // The arm is NOT taken from the body. The two grid arms need a measuring grid
@@ -425,7 +458,7 @@ export default async function handler(req, res) {
   }
 
   log(id, '->', `${(bytes / 1024).toFixed(0)}KB ${body.mime || 'image'}, task=${task}`
-    + (task === 'rooms' ? '' : `, classes="${classes}", provider=${provider}`
+    + (task !== 'furniture' ? '' : `, classes="${classes}", provider=${provider}`
         + `${provider !== 'roboflow' ? ` (${model}, ${arm})` : ''}`));
 
   // --- rooms ---------------------------------------------------------------
@@ -452,6 +485,36 @@ export default async function handler(req, res) {
     });
     if (rf.error) return send(rf.code ?? 502, { ...rf.body, id });
     return send(200, { meta: { id, task: 'rooms', ...rf.meta, bytes }, result: rf.payload });
+  }
+
+  // --- doors ---------------------------------------------------------------
+  //
+  // THE SCALE COMES FROM A DOOR, so this runs before anything else and its
+  // failure is survivable: with no doors the user measures something by hand,
+  // which is what they did before this existed.
+  //
+  // Same shape of workflow as the rooms one, so the same two input variants and
+  // the same URL-shape retry. What comes back is a top-level ARRAY holding
+  // `count_objects`, an annotated `output_image` we do not want, and
+  // `predictions.predictions` — three levels of nesting that nothing here has to
+  // know about, because collectPredictions() in furniture.js walks for geometry
+  // rather than for a key. The `output_image` is a base64 blob and is dropped on
+  // the way out: it is a megabyte of picture the browser already has, and
+  // logging or forwarding it buries the four numbers that matter.
+  if (task === 'doors') {
+    if (!key) return send(500, { error: 'ROBOFLOW_INFERENCE_KEY is not set on the server.' });
+    const rf = await callRoboflow({
+      id, b64, key, classes, url: doorsUrl, tag: 'doors',
+      variants: [
+        { image: { type: 'base64', value: b64 } },
+        { image: { type: 'base64', value: b64 }, classes },
+      ],
+    });
+    if (rf.error) return send(rf.code ?? 502, { ...rf.body, id });
+    return send(200, {
+      meta: { id, task: 'doors', ...rf.meta, bytes },
+      result: stripImages(rf.payload),
+    });
   }
 
   // --- openai only ---------------------------------------------------------

@@ -11,9 +11,10 @@ import { PLAN_OPTIONS, FITTING_LUMENS, WALL_WEIGHT_IN, OTHER_STROKE_PX, FAN_DETE
 import { planLights } from './lib/planner.js';
 import { enumerateChunkings, findChunking } from './lib/chunking.js';
 import { bbox, pointInPolygon } from './lib/geometry.js';
-import { REFERENCES, scaleFromFans, scaleFromReference } from './lib/scale.js';
+import { REFERENCES, scaleFromReference } from './lib/scale.js';
+import { detectDoors, doorsFromPayload, scaleFromDoor, DOOR_WIDTHS } from './lib/doors.js';
 import { proposeOutlines } from './lib/outlineSources.js';
-import { detectFurniture, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER, wireProvider } from './lib/furniture.js';
+import { detectFurniture, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER, wireProvider } from './lib/furniture.js';
 import { download, toJSON, toCSV, toDXF, toSuperluminalDXF, svgString, svgToPNG } from './lib/exporters.js';
 import AccentPanel from './components/AccentPanel.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
@@ -27,7 +28,7 @@ import { roomSnapshot, requestAccents, toPlanRect } from './lib/accentMask.js';
 import { BED_SOURCES, splitByProvider, label as labelBeds, bedsIn, contestFor,
          applyVerdict } from './lib/bedFit.js';
 import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
-import { zonesFromFurniture, slideSconceTo, setRunEnd } from './lib/accentPlace.js';
+import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, RUN_EDIT } from './lib/accentPlace.js';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
          sizeLabel, radiusFt, clampFt, resizeFromCorner, rotateTo, isRect,
          halfExtents, isUniform, applyResize, FAN_SWEEPS, sweepMm, withSweep }
@@ -190,12 +191,30 @@ export default function App() {
   // it. One field, and load-bearing — see the header of accentPrompt.js.
   const [ceilingFt, setCeilingFt] = useState(10);
 
-  const [scaleMode, setScaleMode] = useState('fan');   // fan | ref | manual
-  const [fanSweep, setFanSweep] = useState('fan1200');
+  // TWO WAYS TO SET THE SCALE, and there used to be four.
+  //
+  //   'door'  click a detected door, say how wide it is. The default, because it
+  //           is the only one that asks the user to RECOGNISE rather than to
+  //           measure, and recognising a bathroom door is something anyone
+  //           looking at a plan can do without a steady hand.
+  //   'ref'   drag a line across something and name it. The fallback, and the
+  //           only thing that works on a plan with no legible doors.
+  //
+  // Gone: a px/ft box, which asked the user to know a number nobody knows about
+  // their own drawing; and the fan-sweep scale, which needed red markers drawn
+  // on the plan first and was strictly worse than a door once doors could be
+  // found. Fans are still detected and still become ceiling obstacles — they
+  // have simply stopped being a ruler.
+  const [scaleMode, setScaleMode] = useState('door');   // door | ref
   const [refId, setRefId] = useState('door900');
   const [customFt, setCustomFt] = useState(3);
   const [measure, setMeasure] = useState({ a: null, b: null });
-  const [manualPx, setManualPx] = useState(20);
+
+  // The doors found on upload, and the one the user picked as the ruler.
+  const [doors, setDoors] = useState([]);
+  const [doorState, setDoorState] = useState({ status: 'idle' });
+  const [doorPick, setDoorPick] = useState(null);   // {id, mm} | {id, mm:null} while choosing
+  const [doorNonce, setDoorNonce] = useState(0);    // bumping this looks again
 
   // Not state. Every dial that used to be a slider now lives in settings.js —
   // see the header there for why.
@@ -203,6 +222,10 @@ export default function App() {
   const useBoundingRect = SIMPLIFY_ROOM_TO_RECTANGLE;
   const [layers, setLayers] = useState({ plan: true, dim: true, region: true, grid: true, cells: true, lights: true, labels: false, fan: true, zones: true, accents: true, objects: true, surfaces: true, spots: true, secondary: false });
   const [zoom, setZoom] = useState(1);
+  // How far the pointer must travel before a press becomes a drag, in SCREEN
+  // pixels — divided by the zoom at the point of use, so it is the same
+  // distance under the hand at 40% and at 300%.
+  const DRAG_SLOP_PX = 3;
   const [over, setOver] = useState(false);
   const svgRef = useRef(null);
 
@@ -210,12 +233,11 @@ export default function App() {
     try {
       const saved = JSON.parse(localStorage.getItem(LS) || '{}');
       if (saved.provider) setProvider(saved.provider);
-      if (saved.fanSweep) setFanSweep(saved.fanSweep);
     } catch { /* first run */ }
   }, []);
   useEffect(() => {
-    try { localStorage.setItem(LS, JSON.stringify({ fanSweep, provider })); } catch { /* private mode */ }
-  }, [fanSweep, provider]);
+    try { localStorage.setItem(LS, JSON.stringify({ provider })); } catch { /* private mode */ }
+  }, [provider]);
 
   // --- load -----------------------------------------------------------------
   const resetForNewPlan = useCallback(() => {
@@ -228,6 +250,7 @@ export default function App() {
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
     setSelAccId(null); setAccDrag(null);
     setProjectId(null); setRoomTypes({}); setPrep(null); cancelPrep.current = false;
+    setDoors([]); setDoorPick(null); setDoorState({ status: 'idle' });
     setSurfaceRoomId(null); setSurfaceResults({});
     setSurfaceState({ status: 'idle', roomId: null }); setSurfaceDismissed([]);
     setFans([]); setFanReason(''); setFanMode(false);
@@ -426,16 +449,18 @@ export default function App() {
     // A DXF states its own scale. There is nothing to measure and nothing to
     // guess, so the scale controls are not offered at all.
     if (isVector) return source.pxPerFt;
-    if (scaleMode === 'manual') return manualPx > 0 ? manualPx : null;
     if (scaleMode === 'ref') {
       if (!measure.a || !measure.b) return null;
       const len = Math.hypot(measure.b.x - measure.a.x, measure.b.y - measure.a.y);
       const ref = REFERENCES.find((r) => r.id === refId);
       return scaleFromReference(len, ref?.ft ?? customFt);
     }
-    const sweep = REFERENCES.find((r) => r.id === fanSweep)?.ft ?? 3.94;
-    return fans.length ? scaleFromFans(fans, sweep) : null;
-  }, [isVector, source, scaleMode, manualPx, measure, refId, customFt, fans, fanSweep]);
+    // A door picked and named. Until BOTH have happened there is no scale —
+    // a clicked door with no width yet is a question, not an answer.
+    if (!doorPick?.id || !doorPick.mm) return null;
+    const d = doors.find((q) => q.id === doorPick.id);
+    return d ? scaleFromDoor(d.rect, doorPick.mm) : null;
+  }, [isVector, source, scaleMode, measure, refId, customFt, doors, doorPick]);
 
   /**
    * EVERY OBSTACLE ON THE CEILING, in plan pixels, whoever put it there.
@@ -1359,10 +1384,10 @@ export default function App() {
     return { x: ((e.clientX - r.left) / r.width) * source.w, y: ((e.clientY - r.top) / r.height) * source.h };
   };
 
-  const fanRadiusPx = () => {
-    const sweep = REFERENCES.find((r) => r.id === fanSweep)?.ft ?? 3.94;
-    return ((pxPerFt || 20) * sweep) / 2;
-  };
+  // A fan drawn on the plan, in pixels. 1200mm is the default sweep almost
+  // everywhere, and this is only the size of a symbol the user can resize —
+  // it stopped being the drawing's ruler when the door scale arrived.
+  const fanRadiusPx = () => ((pxPerFt || 20) * 3.94) / 2;
 
   /**
    * Direct manipulation of a ceiling object.
@@ -1422,6 +1447,7 @@ export default function App() {
   };
 
   const objPointerDown = (e, id, mode, corner = null) => {
+    if (e.button != null && e.button !== 0) return;   // middle button is the pan
     if (!pxPerFt) return;
     e.stopPropagation();
     e.preventDefault();
@@ -1496,33 +1522,92 @@ export default function App() {
    * add two roundings to every drag.
    */
   const accPointerDown = (e, roomId, id, mode) => {
+    if (e.button != null && e.button !== 0) return;   // middle button is the pan
     e.stopPropagation();
     e.preventDefault();
     svgRef.current?.setPointerCapture?.(e.pointerId);
     setSelAccId(id);
     setSelObjId(null);
     setArmed(null);
-    setAccDrag({ roomId, id, mode, pointerId: e.pointerId });
+    // WHERE THE GESTURE STARTED, twice over. `from` advances with the pointer,
+    // because a run must move by the DELTA and not jump to centre itself under
+    // the cursor — grab a strip near one end and it stays grabbed near that end.
+    // `origin` does not, because it is what the drag threshold is measured from.
+    const at = svgPoint(e);
+    setAccDrag({ roomId, id, mode, pointerId: e.pointerId, from: at, origin: at, live: false });
+  };
+
+  /**
+   * The tolerances, converted once per drag.
+   *
+   * accentPlace quotes them in feet — a snap should be the same size on a site
+   * plan at 6 px/ft as on a flat at 40 — and everything here is in plan pixels,
+   * so this is the one place the two meet.
+   */
+  const runOpts = (roomId, e) => {
+    const r = rooms.find((q) => q.id === roomId);
+    return {
+      polygon: r?.plan?.polygonPx ?? null,
+      snap: RUN_EDIT.snapFt * (pxPerFt || 1),
+      minLen: RUN_EDIT.minLenFt * (pxPerFt || 1),
+      // Shift pins the end to the run's existing axis: the old wall-slide
+      // behaviour, on demand rather than as the only option.
+      constrain: !!e?.shiftKey,
+    };
   };
 
   const accPointerMove = (e) => {
     if (!accDrag) return;
     const p = svgPoint(e);
+
+    // A CLICK IS NOT A DRAG. Pointerdown on a strip's body both selects it and
+    // arms the move, because needing one click to select and a second to drag
+    // is the thing that makes a canvas feel slow. The cost of that is that
+    // every plain click would otherwise translate the run by whatever fraction
+    // of a pixel the hand wobbled, and mark it `edited` for it — a fitting
+    // claiming to have been moved by hand when nobody moved it.
+    //
+    // So the move does not begin until the pointer has genuinely travelled.
+    // Measured from the ORIGIN, not from the last frame, so a slow drag still
+    // crosses it.
+    if (accDrag.mode === 'move' && !accDrag.live) {
+      const slop = Math.max(2, DRAG_SLOP_PX / (zoom || 1));
+      if (Math.hypot(p.x - accDrag.origin.x, p.y - accDrag.origin.y) < slop) return;
+      setAccDrag((d) => (d ? { ...d, live: true, from: d.origin } : d));
+    }
+
+    const o = runOpts(accDrag.roomId, e);
     setAccentResults((m) => {
       const res = m[accDrag.roomId];
       if (!res?.zones) return m;
       const zones = res.zones.map((z) => {
         if (z.id !== accDrag.id) return z;
         if (accDrag.mode === 'slide') return slideSconceTo(z, p);
-        if (accDrag.mode === 'end0') return setRunEnd(z, 0, p);
-        if (accDrag.mode === 'end1') return setRunEnd(z, 1, p);
+        if (accDrag.mode === 'end0') return setRunEnd(z, 0, p, o);
+        if (accDrag.mode === 'end1') return setRunEnd(z, 1, p, o);
+        if (accDrag.mode === 'move') return moveRun(z, p, accDrag.from, o);
         return z;
       });
       return { ...m, [accDrag.roomId]: { ...res, zones } };
     });
+    // The body drag is relative, so the origin advances with the pointer.
+    if (accDrag.mode === 'move') setAccDrag((d) => (d ? { ...d, from: p } : d));
   };
 
-  const accPointerUp = () => { if (accDrag) setAccDrag(null); };
+  const accPointerUp = () => {
+    if (!accDrag) return;
+    // The snap indicator is a property of the GESTURE, not of the fitting, so
+    // it goes when the gesture does. Left on the zone it would draw a guide
+    // line through a strip nobody is touching.
+    const { roomId, id } = accDrag;
+    setAccentResults((m) => {
+      const res = m[roomId];
+      if (!res?.zones) return m;
+      return { ...m, [roomId]: { ...res,
+        zones: res.zones.map((z) => (z.id === id && z.snap ? { ...z, snap: null } : z)) } };
+    });
+    setAccDrag(null);
+  };
 
   /** Escape backs out, Delete removes. The two keys every editor answers to. */
   useEffect(() => {
@@ -1572,7 +1657,72 @@ export default function App() {
   };
 
   // no-light zones are drawn by dragging a rectangle on the plan
+  /**
+   * PANNING WITH THE MIDDLE BUTTON.
+   *
+   * The stage is an ordinary scroll container — `overflow: auto` with the plan
+   * sized by the zoom — so panning is scrolling it, and that is deliberately
+   * the whole implementation. The alternative is a translate on the SVG, which
+   * means owning the clamping, the scrollbars, the wheel, the keyboard and the
+   * "where am I" problem that a scroll container already solves. Nothing else in
+   * this file needs to know a pan happened, because as far as it is concerned
+   * nothing did: the drawing's own coordinates are untouched.
+   *
+   * It is the MIDDLE button and not space-drag because the left button is spoken
+   * for at every level here — tracing, dragging a grip, sliding a strip, boxing
+   * a no-light zone — and a modifier that has to be held before the gesture
+   * starts is a modifier you have to remember. The middle button is free.
+   *
+   * `preventDefault` on the mousedown is not optional: without it Chrome and
+   * Firefox on Windows and Linux start their own autoscroll on a middle press,
+   * which then fights this for the same drag.
+   */
+  const stageRef = useRef(null);
+  const [panning, setPanning] = useState(false);
+  const panFrom = useRef(null);
+
+  const stageMouseDown = (e) => {
+    if (e.button !== 1) return;
+    const el = stageRef.current;
+    if (!el) return;
+    e.preventDefault();
+    panFrom.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
+    setPanning(true);
+  };
+
+  useEffect(() => {
+    if (!panning) return;
+    // ON THE WINDOW, not on the element. A pan that ends when the pointer
+    // leaves the stage is a pan that ends every time you reach the edge of the
+    // thing you were trying to pan away from.
+    const move = (e) => {
+      const el = stageRef.current, f = panFrom.current;
+      if (!el || !f) return;
+      el.scrollLeft = f.left - (e.clientX - f.x);
+      el.scrollTop = f.top - (e.clientY - f.y);
+    };
+    const up = (e) => { if (e.button === 1 || e.type !== 'mouseup') stop(); };
+    const stop = () => { panFrom.current = null; setPanning(false); };
+    // Middle-click emits `auxclick` after the drag; swallowed so a pan that
+    // ended over a link or a button does not also activate it.
+    const aux = (e) => { if (e.button === 1) { e.preventDefault(); e.stopPropagation(); } };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    window.addEventListener('auxclick', aux, true);
+    window.addEventListener('blur', stop);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      window.removeEventListener('auxclick', aux, true);
+      window.removeEventListener('blur', stop);
+    };
+  }, [panning]);
+
   const onZoneDown = (e) => {
+    // NOT THE MIDDLE BUTTON. It is the pan, and every gesture on this canvas
+    // has to say so — a middle press that reaches a drag handler starts a drag
+    // that no mouseup will ever finish, because the pan swallows the release.
+    if (e.button != null && e.button !== 0) return;
     // A ceiling-object gesture that started on an object stopped this event
     // before it got here, so reaching this point means the EMPTY ceiling was
     // hit. Armed: drop one, and disarm — the way a shape tool returns to the
@@ -1778,6 +1928,64 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, roomNonce]);
 
+  // --- find the doors -------------------------------------------------------
+  //
+  // THE SCALE COMES FIRST AND FROM A DOOR. Everything downstream is stated in
+  // feet, so px/ft is the first number this app needs, and a door is the only
+  // object on a floor plan whose real width is standard enough to read it off:
+  // 750 to a bathroom, 900 to a room, 1200 to a hall. See src/lib/doors.js.
+  //
+  // GATED ON THE PROJECT TYPE, which is not an arbitrary place to hang it. The
+  // dialog is a moment the user is already spending, the search takes a couple
+  // of seconds, and its answer has to be on screen before the tracer is useful
+  // — landing them on an empty tracer and popping doors in underneath them a
+  // beat later is the worse version of the same wait, because by then they have
+  // started clicking.
+  //
+  // NOT ON A DXF. A drawing states its own scale in its own units; there is
+  // nothing to measure and nothing to guess, and asking a detector would be
+  // asking a worse source than the one already in the file.
+  useEffect(() => {
+    if (!source || isVector || !projectId) return;
+    if (!img?.el) return;
+    let alive = true;
+    const ctl = new AbortController();
+
+    (async () => {
+      setDoorState({ status: 'running' });
+      const t0 = Date.now();
+      try {
+        const shot = downscaleForDetection(img.el);
+        const payload = await detectDoors({
+          base64: shot.base64, mime: shot.mime, signal: ctl.signal });
+        if (!alive) return;
+        // Against the ORIGINAL image, not the downscaled one that was sent. The
+        // response declares the space it answered in and doorsFromPayload maps
+        // back — get this wrong and every door is out by the downscale ratio,
+        // which is not a wonky box, it is the whole drawing at the wrong scale,
+        // silently, because a wrong scale still looks like a plan.
+        const { doors: found, rejected, medianPx } = doorsFromPayload(payload,
+          { image: { w: source.w, h: source.h } });
+        console.log(`[doors] ${found.length} found, ${rejected.length} rejected`
+          + `, median opening ${medianPx ? medianPx.toFixed(0) : '—'}px`, { found, rejected });
+        setDoors(found);
+        setDoorState({ status: 'done', count: found.length, rejected,
+                       ms: Date.now() - t0, meta: payload?.meta ?? null });
+      } catch (err) {
+        if (!alive || err.name === 'AbortError') return;
+        // SURVIVABLE, and that is the whole reason the fallback still exists.
+        // No doors means the user measures something by hand, which is what
+        // they did before this feature.
+        console.warn('[doors] failed:', err);
+        setDoors([]);
+        setDoorState({ status: 'error', error: String(err.message || err), ms: Date.now() - t0 });
+      }
+    })();
+
+    return () => { alive = false; ctl.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, img, isVector, projectId, doorNonce]);
+
   // --- find the bed ---------------------------------------------------------
   // A bed is the one piece of furniture whose position CHANGES THE CEILING: you
   // do not put a downlight over it, because whoever is lying there looks
@@ -1903,8 +2111,10 @@ export default function App() {
     <div className="app">
       {/* ONE QUESTION, BEFORE ANYTHING ELSE. Shown the moment a plan is
           readable and dismissed only by answering — see ProjectTypeDialog. */}
-      {source && !projectId && (
-        <ProjectTypeDialog planName={source.name} onPick={setProjectId} />
+      {source && (!projectId || doorState.status === 'running') && (
+        <ProjectTypeDialog planName={source.name} onPick={setProjectId}
+          busy={doorState.status === 'running' ? 'Looking for doors…' : null}
+          note="A door is a standard width, so one of them is the drawing's ruler." />
       )}
       {/* Deliberately bare. This bar carried five status pills — outlines,
           room, fans, scale, chunking — and every one of them duplicated
@@ -1917,7 +2127,10 @@ export default function App() {
         {busy && <div className="pill">{busy}</div>}
       </div>
 
-      <div className={'stage' + (source ? '' : ' empty') + (showPicker || showTrace ? ' wide' : '')}
+      <div ref={stageRef}
+        className={'stage' + (source ? '' : ' empty') + (showPicker || showTrace ? ' wide' : '')
+          + (panning ? ' panning' : '')}
+        onMouseDown={stageMouseDown}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); loadFile(e.dataTransfer.files[0]); }}
@@ -1960,9 +2173,13 @@ export default function App() {
                and two copies of it would drift the moment either was touched. */
             scale={isVector ? null : {
               mode: scaleMode, setMode: setScaleMode,
-              fanSweep, setFanSweep, refId, setRefId,
-              customFt, setCustomFt, manualPx, setManualPx,
-              measure, setMeasure, fanReason,
+              refId, setRefId, customFt, setCustomFt,
+              measure, setMeasure,
+              doors, doorState, pick: doorPick,
+              onPickDoor: (id) => setDoorPick(id ? { id, mm: null } : null),
+              onSetWidth: (mm) => setDoorPick((d) => (d ? { ...d, mm } : d)),
+              onRetryDoors: () => setDoorNonce((n) => n + 1),
+              widths: DOOR_WIDTHS,
             }} />
         ) : showPicker ? (
           <ChunkPicker

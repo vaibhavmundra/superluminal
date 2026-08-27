@@ -350,5 +350,63 @@ console.log('detect api — the rooms task');
   ok(!echo.body.includes(KEY), 'an upstream that echoes the request back does not leak the key');
 }
 
+
+// --- doors ------------------------------------------------------------------
+//
+// The third workflow on this route. Everything about it is the rooms route
+// again — one image, two input variants, the same retry — except the one thing
+// that is new: the workflow renders an annotated picture of the plan and puts it
+// in the response, and that must not be forwarded.
+{
+  console.log('\ndoors — a third workflow, and a blob that must not travel');
+
+  const { res, calls } = await run(req('POST', { image: B64, task: 'doors' }));
+  ok(calls.length === 1, `one call, image alone first (${calls.length})`);
+  ok(/detect-and-count-objects-in-image-2/.test(calls[0].url),
+    `it goes to the door workflow: ${calls[0].url}`);
+  ok(res.statusCode === 200 && res.json().meta.task === 'doors', 'and comes back as a doors answer');
+
+  // THE ANNOTATED IMAGE IS DROPPED. It is a megabyte of the plan with the boxes
+  // drawn on — useful in Roboflow's console, pure weight here, because the
+  // browser already has the plan and draws its own boxes. Left in, a four-door
+  // answer is within sight of the body limits for no reason.
+  const BLOB = 'A'.repeat(5000);
+  const { res: withBlob } = await run(req('POST', { image: B64, task: 'doors' }), {},
+    async () => ({ ok: true, status: 200, text: async () => JSON.stringify([{
+      count_objects: 2,
+      output_image: BLOB,
+      predictions: { image: { width: 1042, height: 1642 }, predictions: [
+        { x: 753, y: 181.5, width: 150, height: 193, confidence: 0.99, class: 'door' }] },
+    }]) }));
+  ok(!withBlob.body.includes(BLOB), 'output_image does not reach the client');
+  const out = withBlob.json().result;
+  ok(JSON.stringify(out).includes('"width":150'), '...while the predictions do');
+  // The `image` that is {width,height} is the model's COORDINATE SPACE and must
+  // survive — rescaleRect needs it, and dropping it would silently scale every
+  // door by the downscale ratio.
+  ok(JSON.stringify(out).includes('1642'), 'and so does the image size the boxes are measured in');
+
+  // Repointable without a deploy, like the other two, and without disturbing them.
+  const { calls: over } = await run(req('POST', { image: B64, task: 'doors' }),
+    { ROBOFLOW_DOORS_WORKFLOW_URL: 'https://example.com/ws/workflows/doors' });
+  ok(over[0].url === 'https://example.com/ws/workflows/doors',
+    `ROBOFLOW_DOORS_WORKFLOW_URL is honoured (got ${over[0].url})`);
+  const { calls: rooms2 } = await run(req('POST', { image: B64, task: 'rooms' }),
+    { ROBOFLOW_DOORS_WORKFLOW_URL: 'https://example.com/ws/workflows/doors' });
+  ok(!/example\.com/.test(rooms2[0].url), 'the doors URL does not leak into the rooms route');
+
+  const { res: nokey } = await run(req('POST', { image: B64, task: 'doors' }),
+    { ROBOFLOW_INFERENCE_KEY: null });
+  ok(nokey.statusCode === 500 && /ROBOFLOW_INFERENCE_KEY/.test(nokey.json().error),
+    'no key is a named 500, not a silent empty answer');
+
+  const { res: echo } = await run(req('POST', { image: B64, task: 'doors' }), {},
+    async (url, init) => ({
+      ok: false, status: 422,
+      text: async () => JSON.stringify({ error: 'bad', echo: JSON.parse(init.body) }),
+    }));
+  ok(!echo.body.includes(KEY), 'and an echoing upstream still does not leak the key');
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 if (fails) { console.log(`${fails} FAILED`); process.exit(1); }

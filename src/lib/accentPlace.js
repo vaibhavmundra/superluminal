@@ -461,37 +461,242 @@ export function slideSconceTo(zone, p) {
 }
 
 /**
- * Move one end of a strip run.
+ * How a dragged strip end decides where it has actually landed.
  *
- * `which` is 0 or 1. The end slides along the run's own line, so the run stays
- * straight and stays on its wall while its EXTENT becomes whatever you say —
- * which is the point: the derived length came off the furniture's footprint,
- * and the footprint is a guess at where the joinery actually ends.
+ * FREE FIRST, then snapped — never constrained. The old rule projected the
+ * pointer onto the wall the placement pass had chosen and kept the run's
+ * perpendicular offset, so an end could only ever slide along one line. That is
+ * the right gesture when the run is on the right wall and merely the wrong
+ * length, and it is useless in the case people actually hit: the run is on the
+ * WRONG wall, or standing off it, because the furniture box it was derived from
+ * was off. Sliding an end along a line that is itself in the wrong place cannot
+ * fix a run that is in the wrong place.
  *
- * The two ends may not cross. Dragging one through the other pins it a hair
- * short instead, because a run of negative length is not a thing and a run that
- * silently flips its own direction is worse.
+ * So the end goes where the pointer is, and the constraints come back as SNAPS —
+ * which give the old behaviour for free whenever it was the one you wanted:
+ *
+ *   axis   the line through the OTHER end along the run's current direction.
+ *          This is the "just make it longer" gesture, and it is first because
+ *          it is the common one: a run stays collinear unless you mean it not
+ *          to.
+ *   wall   any wall of the room, not only the one the strip was placed on. A
+ *          strip is concealed joinery and joinery is against something, so
+ *          landing near a wall should mean landing ON it.
+ *   ortho  horizontal or vertical through the other end. The fallback for a run
+ *          being taken off the walls entirely — a cove around a false-ceiling
+ *          island — where it should still come out straight.
+ *
+ * THE TOLERANCES ARE QUOTED IN FEET AND USED IN THE CALLER'S UNITS. An accent
+ * fitting lives in PLAN PIXELS — it was derived from a box on a crop and
+ * projected onto a wall that is itself in pixels — so App.jsx passes these
+ * multiplied by px/ft. Quoting them in feet is what makes a snap the same size
+ * on a site plan at 6 px/ft and a single flat at 40; hard-coding a pixel figure
+ * is how a tolerance ends up generous on one drawing and unusable on the next.
  */
-export function setRunEnd(zone, which, p, { minLen = 0.35 } = {}) {
-  if (!zone?.wall || zone.rejected || !zone.run) return zone;
-  const { t, L, u } = alongWallAt(zone.wall, p);
-  const other = alongWallAt(zone.wall, zone.run[which === 0 ? 1 : 0]).t;
-  let tc = Math.max(0, Math.min(L, t));
-  if (which === 0) tc = Math.min(tc, other - minLen);
-  else tc = Math.max(tc, other + minLen);
-  tc = Math.max(0, Math.min(L, tc));
+export const RUN_EDIT = {
+  // Within this of a candidate line, the point lands on it. Roughly a hand's
+  // width at any sensible zoom; wide enough to be easy to hit, tight enough
+  // that a deliberate 1 ft standoff off a wall survives.
+  snapFt: 0.45,
+  // The shortest run worth drawing. Below this it is a dot, and a dot exports
+  // as a degenerate polyline that CAD will not select.
+  minLenFt: 0.35,
+};
 
-  // Keep the run on the same offset off the wall it was placed at, so dragging
-  // an end cannot quietly walk the tape off the joinery face it is concealed in.
-  const off = zone.run[which];
-  const base = alongWallAt(zone.wall, off);
-  const perp = sub(off, add(zone.wall.a, mul(base.u, base.t)));
+/** Tolerances in the caller's own units. Feet unless it says otherwise. */
+const tol = (o) => ({
+  snap: Number.isFinite(o?.snap) ? o.snap : RUN_EDIT.snapFt,
+  minLen: Number.isFinite(o?.minLen) ? o.minLen : RUN_EDIT.minLenFt,
+});
 
-  const moved = add(add(zone.wall.a, mul(u, tc)), perp);
-  const run = which === 0 ? [moved, zone.run[1]] : [zone.run[0], moved];
+/** Foot of the perpendicular from p to the infinite line through a and b. */
+function footOnLine(a, b, p) {
+  const d = sub(b, a), L2 = dot(d, d);
+  if (L2 < 1e-12) return { point: { ...a }, dist: len(sub(p, a)), t: 0, L: 0 };
+  const t = dot(sub(p, a), d) / L2;
+  const point = add(a, mul(d, t));
+  return { point, dist: len(sub(p, point)), t: t * Math.sqrt(L2), L: Math.sqrt(L2) };
+}
+
+/** The same, but the point may not leave the segment. */
+function footOnSegment(a, b, p) {
+  const f = footOnLine(a, b, p);
+  if (!f.L) return f;
+  const t = Math.max(0, Math.min(f.L, f.t));
+  const u = mul(sub(b, a), 1 / f.L);
+  const point = add(a, mul(u, t));
+  return { point, dist: len(sub(p, point)), t, L: f.L };
+}
+
+/**
+ * Every line a dragged end may land on, nearest first, with the name of each
+ * so the canvas can say which one fired.
+ *
+ * `anchor` is the end that is NOT moving: an axis or an orthogonal is a line
+ * through it, because those constraints are about the run's own shape.
+ */
+export function runSnaps(p, anchor, dir, polygon, opt = {}) {
+  const { snap } = tol(opt);
+  const out = [];
+  const far = 1e4;
+
+  if (dir && len(dir) > 1e-9) {
+    const u = mul(dir, 1 / len(dir));
+    const f = footOnLine(sub(anchor, mul(u, far)), add(anchor, mul(u, far)), p);
+    out.push({ kind: 'axis', ...f });
+  }
+  for (const [a, b] of edges(polygon || [])) {
+    if (len(sub(b, a)) < 1e-9) continue;
+    out.push({ kind: 'wall', wall: { a, b }, ...footOnSegment(a, b, p) });
+  }
+  out.push({ kind: 'ortho', ...footOnLine({ x: anchor.x - far, y: anchor.y }, { x: anchor.x + far, y: anchor.y }, p) });
+  out.push({ kind: 'ortho', ...footOnLine({ x: anchor.x, y: anchor.y - far }, { x: anchor.x, y: anchor.y + far }, p) });
+
+  return out.filter((c) => c.dist <= snap)
+    // Nearest wins, but a tie goes to the axis: a run that was collinear stays
+    // collinear rather than flickering onto a wall that happens to be the same
+    // distance away.
+    .sort((a, b) => a.dist - b.dist || (a.kind === 'axis' ? -1 : b.kind === 'axis' ? 1 : 0));
+}
+
+/**
+ * Move one end of a strip run. `which` is 0 or 1.
+ *
+ * The end goes where you put it. `polygon` (the room, in the same space) turns
+ * on wall snapping; without it you get the axis and the orthogonals only.
+ * `constrain: true` — Shift — pins the end to the run's existing axis, which is
+ * the old wall-slide behaviour on demand rather than by default.
+ *
+ * The two ends may still not meet. Dragging one onto the other stops it
+ * `minLen` short, because a run of zero length is not a thing.
+ */
+export function setRunEnd(zone, which, p, opt = {}) {
+  // A REFUSED FITTING IS NOT EDITABLE GEOMETRY — same rule as a sconce. It was
+  // declined by the placement pass and a drag must not resurrect it.
+  if (!zone || zone.rejected || !zone.run) return zone;
+  const o = { ...opt, ...tol(opt) };
+  const anchor = zone.run[which === 0 ? 1 : 0];
+  const dir = sub(zone.run[which], anchor);
+
+  let landed = { x: p.x, y: p.y };
+  let snap = null;
+
+  if (o.constrain) {
+    // Shift: the axis and nothing else, however far off it the pointer is.
+    if (len(dir) > 1e-9) {
+      const u = mul(dir, 1 / len(dir));
+      landed = footOnLine(sub(anchor, mul(u, 1e4)), add(anchor, mul(u, 1e4)), p).point;
+      snap = 'axis';
+    }
+  } else {
+    const [best] = runSnaps(p, anchor, dir, o.polygon ?? null, o);
+    if (best) { landed = best.point; snap = best.kind; }
+  }
+
+  // The no-collapse rule, applied LAST and radially. The old version compared
+  // two positions along one wall, which only means anything while both ends are
+  // on that wall; a distance from the anchor means the same thing wherever the
+  // end has been dragged to.
+  const away = sub(landed, anchor);
+  const d = len(away);
+  if (d < o.minLen) {
+    const u = d > 1e-9 ? mul(away, 1 / d)
+      : (len(dir) > 1e-9 ? mul(dir, 1 / len(dir)) : { x: 1, y: 0 });
+    landed = add(anchor, mul(u, o.minLen));
+    snap = snap === 'axis' ? 'axis' : null;
+  }
+
+  const run = which === 0 ? [landed, zone.run[1]] : [zone.run[0], landed];
+  return { ...zone, ...reseat(zone, run, o.polygon ?? null, o.snap), edited: true, snap };
+}
+
+/**
+ * Move the WHOLE run, keeping its length and direction.
+ *
+ * The end handles cannot rescue a strip that is on the wrong wall: you would be
+ * dragging one end across the room, watching the run swing round like a compass
+ * needle, then chasing the other. This is the gesture for "not here, there",
+ * and it is the one the reported problem — "the location comes pretty off" —
+ * actually calls for.
+ *
+ * `p` and `from` are pointer positions, so the run moves by the delta between
+ * them and does not jump to centre itself under the cursor.
+ */
+export function moveRun(zone, p, from, opt = {}) {
+  if (!zone || zone.rejected || !zone.run) return zone;
+  const o = { ...opt, ...tol(opt) };
+  const d = sub(p, from);
+  let run = zone.run.map((q) => add(q, d));
+  let snap = null;
+
+  // THE WHOLE RUN SNAPS, NOT ITS ENDS. Snapping each end to its own nearest
+  // wall independently would shear the run — one end on one wall, the other on
+  // the next — and a strip is a straight rigid thing. So a wall is offered only
+  // when the run is already parallel to it, and then the whole run is
+  // translated onto it as a unit.
+  if (!o.constrain && o.polygon?.length) {
+    const dir = sub(run[1], run[0]);
+    const L = len(dir);
+    if (L > 1e-9) {
+      const u = mul(dir, 1 / L);
+      let best = null;
+      for (const [a, b] of edges(o.polygon)) {
+        const wl = len(sub(b, a));
+        if (wl < 1e-9) continue;
+        const w = mul(sub(b, a), 1 / wl);
+        const parallel = Math.abs(dot(u, w)) > 0.999;   // within ~2.5 degrees
+        if (!parallel) continue;
+        const f0 = footOnLine(a, b, run[0]), f1 = footOnLine(a, b, run[1]);
+        const gap = (f0.dist + f1.dist) / 2;
+        if (gap <= o.snap && (!best || gap < best.gap)) {
+          best = { gap, shift: sub(f0.point, run[0]) };
+        }
+      }
+      if (best) { run = run.map((q) => add(q, best.shift)); snap = 'wall'; }
+    }
+  }
+
+  return { ...zone, ...reseat(zone, run, o.polygon ?? null, o.snap), edited: true, snap };
+}
+
+/**
+ * The bookkeeping every run edit shares: the new geometry, its length, and
+ * WHICH WALL IT NOW BELONGS TO.
+ *
+ * Re-deriving the wall matters because `zone.wall` is what the canvas draws as
+ * the run's reference line and what a later pass would reason from. Leave it
+ * pointing at the wall the model originally chose and a run dragged across the
+ * room keeps claiming a wall it is nowhere near — which is exactly the stale
+ * state that made the old constrained drag feel broken.
+ *
+ * `alongWall` is kept only while the run really is on its wall. A free run has
+ * no meaningful position along one, and a number that means nothing is worse
+ * than an absent one.
+ */
+function reseat(zone, run, polygon, snap = RUN_EDIT.snapFt) {
+  const runLength = len(sub(run[1], run[0]));
+  const mid = mul(add(run[0], run[1]), 0.5);
+
+  let wall = zone.wall ?? null;
+  if (polygon?.length) {
+    let best = null;
+    for (const [a, b] of edges(polygon)) {
+      if (len(sub(b, a)) < 1e-9) continue;
+      const d = (footOnSegment(a, b, run[0]).dist + footOnSegment(a, b, run[1]).dist) / 2;
+      if (!best || d < best.d) best = { d, wall: { a, b } };
+    }
+    if (best) wall = best.wall;
+  }
+
+  const onWall = !!wall
+    && footOnSegment(wall.a, wall.b, run[0]).dist <= snap
+    && footOnSegment(wall.a, wall.b, run[1]).dist <= snap;
+
   return {
-    ...zone, run, edited: true,
-    runLength: Math.abs(alongWallAt(zone.wall, run[1]).t - alongWallAt(zone.wall, run[0]).t),
-    alongWall: { t0: Math.min(tc, other), t1: Math.max(tc, other) },
+    run, runLength, wall, mid, free: !onWall,
+    alongWall: onWall
+      ? { t0: Math.min(alongWallAt(wall, run[0]).t, alongWallAt(wall, run[1]).t),
+          t1: Math.max(alongWallAt(wall, run[0]).t, alongWallAt(wall, run[1]).t) }
+      : null,
   };
 }

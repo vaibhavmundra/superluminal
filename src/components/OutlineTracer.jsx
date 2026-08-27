@@ -1,6 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Stage, Layer, Path, Line, Circle, Rect, RegularPolygon, Text, Group,
          Image as KImage } from 'react-konva';
+import Konva from 'konva';
+
+// THE MIDDLE BUTTON DRAGS NOTHING BUT THE VIEW.
+//
+// Konva's default `dragButtons` is [0, 1] — left AND middle — so a middle press
+// on a grip starts dragging that grip. With the middle button now meaning
+// "pan", that is a corner of the outline quietly moving every time somebody
+// pans with the cursor over a vertex, which is most of the time, because the
+// vertices are what you are looking at. One global line, set before any node
+// exists, and middle-drag can only ever mean the view.
+Konva.dragButtons = [0];
 import { buildSnapIndex, snapAt } from '../lib/snap.js';
 import { outlineStats, validateOutline } from '../lib/outline.js';
 import { REFERENCES, describeScale } from '../lib/scale.js';
@@ -143,13 +154,25 @@ export default function OutlineTracer({
   // cursor is snapping against.
   const [drag, setDrag] = useState(null);
   const [showGrips, setShowGrips] = useState(true);
+  // Panning with the middle button held. Space-drag already existed and stays;
+  // this is the version you do not have to reach for the keyboard for, and it
+  // is the same gesture the layout canvas uses so the two screens behave alike.
+  const [midPan, setMidPan] = useState(false);
+  const panFrom = useRef(null);
 
   const ortho = orthoLock && !shift;
   const panMode = space;
   const tracing = draft.length > 0;
   // On an image, clicking the plan sets the measuring line rather than a corner.
   const measuring = isRaster && scaleUI?.mode === 'ref' && !panMode && !measureDone;
-  const canTrace = hasScale && !measuring;
+  // The doors are live targets only while the door mode is the one being used
+  // AND the scale is not settled — once it is, they are twelve blue rectangles
+  // sitting on top of the drawing you are trying to trace.
+  const pickingDoor = isRaster && scaleUI?.mode === 'door' && !panMode
+    && !!(scaleUI.doors || []).length && !hasScale;
+  /** The door the user clicked, if it is still in the list. */
+  const picked = (scaleUI?.doors || []).find((d) => d.id === scaleUI?.pick?.id) || null;
+  const canTrace = hasScale && !measuring && !pickingDoor;
 
   // Every layer of a newly loaded plan starts visible. Held in state because
   // the user turns layers off to stop the cursor catching a sofa corner, and
@@ -254,7 +277,54 @@ export default function OutlineTracer({
     return s;
   };
 
-  const onMouseMove = () => { if (!panMode && !drag) recomputeSnap(); };
+  const onMouseMove = () => { if (!panMode && !midPan && !drag) recomputeSnap(); };
+
+  /**
+   * MIDDLE-BUTTON PAN.
+   *
+   * Returns true if it took the event, so the caller can stop. `pos` is the
+   * Stage's offset in SCREEN pixels — it is not scaled — so the pointer's delta
+   * is the offset's delta, with no zoom arithmetic in between.
+   *
+   * `preventDefault` is load-bearing: without it Chrome and Firefox on Windows
+   * and Linux start their own autoscroll on a middle press and then fight this
+   * for the same drag.
+   */
+  const startMidPan = (e) => {
+    const ev = e?.evt ?? e;
+    if (!ev || ev.button !== 1) return false;
+    ev.preventDefault();
+    panFrom.current = { x: ev.clientX, y: ev.clientY, pos: { ...pos } };
+    setMidPan(true);
+    return true;
+  };
+
+  useEffect(() => {
+    if (!midPan) return;
+    // ON THE WINDOW. A pan that ends when the pointer leaves the canvas is a pan
+    // that ends every time you reach the edge of the thing you are panning away
+    // from — which is the only reason anyone pans.
+    const move = (ev) => {
+      const f = panFrom.current;
+      if (!f) return;
+      setPos({ x: f.pos.x + (ev.clientX - f.x), y: f.pos.y + (ev.clientY - f.y) });
+    };
+    const stop = () => { panFrom.current = null; setMidPan(false); };
+    const up = (ev) => { if (ev.button === 1) stop(); };
+    // The `auxclick` a middle release fires is swallowed, so a pan that happens
+    // to end over a button does not also press it.
+    const aux = (ev) => { if (ev.button === 1) { ev.preventDefault(); ev.stopPropagation(); } };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    window.addEventListener('auxclick', aux, true);
+    window.addEventListener('blur', stop);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      window.removeEventListener('auxclick', aux, true);
+      window.removeEventListener('blur', stop);
+    };
+  }, [midPan]);
 
   /**
    * Where a dragged corner lands. The same engine as a click while tracing,
@@ -318,6 +388,10 @@ export default function OutlineTracer({
   const isDragging = (id, k) => !!drag && drag.id === id && drag.index === k;
 
   const onMouseDown = (e) => {
+    // Before the button guard, and before the grip check: a middle press
+    // anywhere on this canvas is a pan, including one that lands on a grip or
+    // on a finished outline.
+    if (startMidPan(e)) return;
     if (panMode || e.evt.button !== 0) return;
     // A mousedown on a grip is the start of a drag, not a corner being placed.
     // The click handler cancels bubbling; mousedown is a separate event and has
@@ -467,7 +541,9 @@ export default function OutlineTracer({
 
       <div className="rooms-layout">
         <div className="rooms-plan tracer-plan" ref={wrapRef}
-          style={{ cursor: panMode ? 'grab' : canTrace || measuring ? 'crosshair' : 'not-allowed' }}>
+          onAuxClick={(e) => e.preventDefault()}
+          style={{ cursor: midPan ? 'grabbing'
+            : panMode ? 'grab' : canTrace || measuring ? 'crosshair' : 'not-allowed' }}>
           <Stage
             ref={stageRef}
             width={SW} height={SH}
@@ -700,12 +776,58 @@ export default function OutlineTracer({
                   fontFamily="JetBrains Mono, monospace" fill="#0A0A0A" />
               )}
             </Layer>
+
+            {/* THE DOORS GET THEIR OWN LISTENING LAYER, and that is the whole
+                reason this is not folded into the layer above it. Everything
+                drawn on top of the plan here lives in `listening={false}`
+                layers, because it is annotation — a snap glyph, a guide, the
+                measuring line — and annotation must never eat a click meant for
+                the drawing underneath.
+
+                A door box is not annotation. It is a BUTTON, and a button in a
+                layer that does not listen is a button that cannot be pressed:
+                the boxes drew perfectly, the cursor never changed, and clicking
+                one did nothing at all. Same family as the sconce whose grab area
+                was painted under its own symbol — a control that looks right and
+                is not reachable. Last inside the Stage, so it also paints on
+                top. */}
+            <Layer listening={pickingDoor}>
+                {/* THE DOORS, offered as things to click.
+                    Filled with the primary colour rather than merely outlined —
+                    an outline on a drawing that is already all outlines is one
+                    more rectangle to be squinted at, and these are not annotation,
+                    they are BUTTONS. The one closest to the median opening is
+                    marked as the suggestion, because the user is about to pick a
+                    ruler for the whole drawing and the most typical door is the
+                    safest thing to measure. */}
+                {pickingDoor && (scaleUI.doors || []).map((d) => {
+                  const on = scaleUI.pick?.id === d.id;
+                  return (
+                    <Rect key={d.id}
+                      x={d.rect.x0} y={d.rect.y0}
+                      width={d.rect.x1 - d.rect.x0} height={d.rect.y1 - d.rect.y0}
+                      fill={on ? 'rgba(97,97,245,0.42)' : 'rgba(97,97,245,0.20)'}
+                      stroke="#6161F5"
+                      strokeWidth={px(on ? 2.4 : d.typical ? 1.8 : 1.2)}
+                      dash={d.typical && !on ? [px(6), px(4)] : null}
+                      listening
+                      onMouseEnter={(e) => { const st = e.target.getStage(); if (st) st.container().style.cursor = 'pointer'; }}
+                      onMouseLeave={(e) => { const st = e.target.getStage(); if (st) st.container().style.cursor = ''; }}
+                      onMouseDown={(e) => {
+                        if (e.evt.button !== 0) return;   // middle is the pan
+                        e.cancelBubble = true;
+                        scaleUI.onPickDoor(d.id);
+                      }} />
+                  );
+                })}
+            </Layer>
           </Stage>
 
           {/* Only what changes as you work. The keyboard reference that used to
-              live here — scroll to zoom, space to pan, F to fit — was static text
-              taking up a third of the bar. */}
+              live here — scroll to zoom, middle-drag or space to pan, F to fit —
+              was static text taking up a third of the bar. */}
           <div className="tracer-hud">
+            {midPan && <span className="chip on">panning</span>}
             {!ortho && <span className="chip">free angle</span>}
             {gridIn > 0 && <span className="chip on">{gridIn === 12 ? '1′' : `${gridIn}″`} grid</span>}
             {drag && <span className="chip on">{shift ? 'nudging · square' : 'nudging · free'}</span>}
@@ -721,25 +843,81 @@ export default function OutlineTracer({
             <div className="sec">
               <h3>Scale{hasScale ? '' : ' — needed first'}</h3>
               <div className="seg">
-                {[['fan', 'From fan'], ['ref', 'Measure'], ['manual', 'Manual']].map(([k, l]) => (
+                {[['door', 'Doors'], ['ref', 'Measure']].map(([k, l]) => (
                   <button key={k} className={scaleUI.mode === k ? 'on' : ''}
                     onClick={() => scaleUI.setMode(k)}>{l}</button>
                 ))}
               </div>
 
-              {scaleUI.mode === 'fan' && (<>
-                <select value={scaleUI.fanSweep} onChange={(e) => scaleUI.setFanSweep(e.target.value)}>
-                  {REFERENCES.filter((r) => r.group === 'Fan').map((r) => (
-                    <option key={r.id} value={r.id}>{r.label}</option>
-                  ))}
-                </select>
-                {fans.length
-                  ? fans.map((f, i) => (
-                      <div className="kv" key={i} style={i === 0 ? { marginTop: 8 } : undefined}>
-                        <span>Fan {i + 1} sweep</span><b>{(f.r * 2).toFixed(0)} px</b></div>
-                    ))
-                  : <p className="note warn">{scaleUI.fanReason || 'No red fan marker found.'}
-                      {' '}Measure something instead, or type the scale in.</p>}
+              {/* --- from a door ------------------------------------------- */}
+              {scaleUI.mode === 'door' && (<>
+                {scaleUI.doorState?.status === 'running' && (
+                  <p className="note" style={{ marginTop: 8 }}>Looking for doors…</p>
+                )}
+
+                {scaleUI.doorState?.status === 'error' && (
+                  <p className="note warn" style={{ marginTop: 8 }}>
+                    The door detector could not be reached. Measure something instead.
+                  </p>
+                )}
+
+                {scaleUI.doorState?.status === 'done' && !scaleUI.doors.length && (
+                  <p className="note warn" style={{ marginTop: 8 }}>
+                    No doors found on this plan. Measure something instead.
+                  </p>
+                )}
+
+                {!!scaleUI.doors.length && !picked && (
+                  <p className="note" style={{ marginTop: 8 }}>
+                    <b>{scaleUI.doors.length} door{scaleUI.doors.length === 1 ? '' : 's'}</b> found.
+                    {' '}Click one on the plan — the dashed one is the most typical.
+                  </p>
+                )}
+
+                {/* THE QUESTION, asked only once a door is clicked. Three
+                    buttons and not a dropdown: they are the whole vocabulary of
+                    door widths, they are short, and a dropdown would hide two
+                    of the three behind a click. */}
+                {picked && (<>
+                  <p className="note" style={{ marginTop: 8, marginBottom: 6 }}>
+                    How wide is this door? Its opening measures{' '}
+                    <b>{picked.openingPx.toFixed(0)} px</b>.
+                  </p>
+                  <div className="door-widths">
+                    {scaleUI.widths.map((w) => (
+                      <button key={w.mm}
+                        className={'btn' + (scaleUI.pick?.mm === w.mm ? ' primary' : '')}
+                        onClick={() => scaleUI.onSetWidth(w.mm)}
+                        title={w.note}>{w.label}</button>
+                    ))}
+                  </div>
+                  <button className="btn" style={{ marginTop: 6, width: '100%' }}
+                    onClick={() => { scaleUI.onPickDoor(null); scaleUI.setMode('ref'); }}>
+                    None of these — measure instead
+                  </button>
+                  {scaleUI.pick?.mm && (
+                    <button className="btn" style={{ marginTop: 6, width: '100%' }}
+                      onClick={() => scaleUI.onPickDoor(null)}>Pick a different door</button>
+                  )}
+                </>)}
+
+                {/* WHAT THE OTHER DOORS WOULD MEASURE at the chosen scale. The
+                    one way this can go wrong is naming the wrong door — a 750
+                    called a 1200 — and the tell is that every other door on the
+                    plan then comes out an implausible width. Cheap to show,
+                    and it is the only check available without a dimension
+                    string on the drawing. */}
+                {hasScale && scaleUI.doors.length > 1 && (
+                  <div className="kv" style={{ marginTop: 8, alignItems: 'flex-start' }}>
+                    <span>Other doors</span>
+                    <b style={{ textAlign: 'right', fontWeight: 500 }}>
+                      {scaleUI.doors.filter((d) => d.id !== scaleUI.pick?.id)
+                        .slice(0, 4)
+                        .map((d) => `${Math.round(d.openingPx / pxPerFt * 304.8 / 25) * 25}`)
+                        .join(' · ')} mm
+                    </b>
+                  </div>
+                )}
               </>)}
 
               {scaleUI.mode === 'ref' && (<>
@@ -776,13 +954,6 @@ export default function OutlineTracer({
                     Measure again</button>
                 )}
               </>)}
-
-              {scaleUI.mode === 'manual' && (
-                <div className="row"><label>Pixels per foot</label>
-                  <input type="number" step="0.01" value={scaleUI.manualPx} style={{ maxWidth: 100 }}
-                    onChange={(e) => scaleUI.setManualPx(parseFloat(e.target.value) || 0)} />
-                </div>
-              )}
 
               <div className="kv" style={{ marginTop: 10 }}>
                 <span>Scale</span><b>{hasScale ? describeScale(pxPerFt) : 'not set'}</b></div>

@@ -136,9 +136,10 @@ The workflow is set in one place and overridable without a code change:
 # .env.local — server-side only, never VITE_ prefixed
 ROBOFLOW_INFERENCE_KEY=...
 ROBOFLOW_ROOMS_WORKFLOW_URL=https://serverless.roboflow.com/<workspace>/workflows/<id>
+ROBOFLOW_DOORS_WORKFLOW_URL=https://serverless.roboflow.com/<workspace>/workflows/<id>
 ```
 
-**It is one endpoint and two questions.** `/api/detect` already held the key for
+**It is one endpoint and three questions.** `/api/detect` already held the key for
 the bed detector, so the room detector goes through the same function with
 `task: 'rooms'` in the body rather than a second function with a second copy of
 the key handling, the error scrubbing and the two-URL-shape retry. The two run in
@@ -453,17 +454,20 @@ keys, same right-angle rectification, same several-outlines-one-lit model.
 ### Scale comes first, on an image
 
 An outline with no pixels-per-foot has a shape but no size, and there is nothing
-to lay a grid of lights against — so on an image the scale panel is on the
-tracer screen and the plan does not take corners until it is set. Three ways, in
-the order you will want them: off a **red fan marker** (a fan is a standard
-object, so the mark you drew for the layout doubles as the ruler), by
-**measuring** something you can name, or by typing **pixels per foot** outright.
+to lay a grid of lights against — so on an image the scale panel is on the tracer
+screen and the plan does not take corners until it is set. Two ways: click one of
+the **detected doors** and say how wide it is, or **measure** something you can
+name. See [the scale comes off a door](#the-scale-comes-off-a-door).
 
-Measuring happens on the tracer canvas, with snapping still live — a door leaf
-measured jamb to jamb off a real point beats one measured by eye, and the scale
-of everything downstream rests on it. The panel then reports the overall size of
-the plan, which is the cheapest check there is: if a two-bedroom flat reads as
-90 ft across, the reference was wrong.
+By the time the tracer opens the doors are already found and drawn on the plan,
+filled in the primary colour — the search happened inside the project-type
+dialog, in a moment that was going to be spent anyway. Clicking one asks 750 /
+900 / 1200mm, and that is the whole interaction.
+
+Measuring happens on the same canvas, with snapping still live — a door leaf
+measured jamb to jamb off a real point beats one measured by eye. Either way the
+panel then reports the overall size of the plan, which is the cheapest check
+there is: if a two-bedroom flat reads as 90 ft across, the reference was wrong.
 
 ### Right angles
 
@@ -1200,27 +1204,93 @@ exact and the controls are not offered. Everything below is the image route.
 
 On an image the scale is asked for **before anything can be traced**, on the
 tracer screen itself — see [Scale comes first, on an
-image](#scale-comes-first-on-an-image). The same three controls stay in the
-sidebar afterwards, so a scale can be corrected without re-tracing: outlines are
-stored in image pixels, so correcting the scale corrects every room's size and
-leaves every room where it was drawn.
+image](#scale-comes-first-on-an-image). The controls stay in the sidebar
+afterwards, so a scale can be corrected without re-tracing: outlines are stored
+in image pixels, so correcting the scale corrects every room's size and leaves
+every room where it was drawn.
 
-Three routes, in the order you'll actually want them:
+**Two routes, and there used to be four.**
 
-1. **From fan** (default). If you drew a red fan circle, a fan is a standard
-   object — 1200mm sweep unless you pick otherwise. Zero extra input. With
-   several fans the **median** of the per-fan scales is used, so one sloppily
-   drawn circle doesn't skew the result; the panel lists each detected sweep
-   and warns if they disagree by more than 15%.
+1. **Doors** (default). A door is detected for you; you click one and say how
+   wide it is. See below.
 2. **Measure.** Click the two ends of something identifiable (door leaf, sofa,
    WC, bed, car bay) and pick what it is from the list. On the tracer screen the
    cursor still snaps while you do it, which is worth having: the accuracy of
    every dimension in the drawing comes off these two clicks.
-3. **Manual.** Type pixels-per-foot directly.
 
-There's also an optional "Let Claude find the scale" panel — it sends the image
-to the Claude API and asks it to spot a door, fixture or dimension line. Needs
-your own API key, which stays in this browser's local storage.
+Gone: **a pixels-per-foot box**, which asked the user for a number nobody knows
+about their own drawing — it was a debugging control that had been left in the
+product. And **From fan**, which read the scale off red fan markers: it needed
+something drawn on the plan before it could work at all, and a door needs
+nothing. Fans are still detected and still become ceiling obstacles; they have
+simply stopped being a ruler.
+
+### The scale comes off a door
+
+Everything downstream of this number is stated in feet — the 50 sqft cell, the
+5 ft wall rule, the fan clearance, every fitting position, every export. It is
+the most load-bearing number in the app, and a px/ft that is 30% out does not
+produce a visibly broken drawing. It produces a plausible one, for the wrong
+building.
+
+**A door is the ruler that is already on the plan.** Its real width is one of
+three or four values in the entire built world: 750mm to a bathroom, 900mm to a
+room, 1200mm to a hall or a double leaf. Nothing else on a floor plan is that
+standard — a sofa is anything from 1500 to 2400, a bed is a choice, a wall is 4
+inches or 9 or 12. And it asks the user to **recognise** rather than to measure,
+which is the real win: anyone looking at a plan can tell a bathroom door from a
+room door, and nobody can hold a two-click measurement to a pixel.
+
+**Which side of the box.** A door in plan is a leaf plus a quarter-circle swing,
+and the swing's radius *is* the leaf length — so both sides of a clean detection
+box equal the door's clear width. They are never exactly equal, because the box
+also encloses whatever frame and wall the leaf is hinged into, and that lands on
+one axis and not the other. So the **shorter side** is taken as the opening: the
+longer one is the one carrying the wall. On the sample plan the boxes come back
+150×193, 120×115, 120×145 and 105×95 — close to square, anisotropic by up to a
+quarter, and consistent with exactly that reading.
+
+**The model never states a length.** It draws a box, the person names the door,
+and the arithmetic happens in `src/lib/doors.js`. Same division of labour as
+everywhere else here, and it is what keeps a detector that is 20% wrong about a
+box from being 20% wrong about the scale of a whole building — because a person
+looking at the result can see that a flat has come out 90 ft wide.
+
+**The order the doors are offered in is the offer.** They are ranked not by
+confidence but by **how close each is to the median opening**, and the first is
+marked with a dashed outline as the suggestion. The user is picking a ruler for
+the entire drawing: a confident detection of the one odd door on the sheet is a
+worse ruler than an ordinary one, and the door that agrees with the most other
+doors is the safest thing to measure.
+
+**And the panel shows what the other doors would then measure.** The one way
+this feature goes wrong is naming the wrong door — a 750 called a 1200 — and the
+tell is that every other door on the plan comes out an implausible width. That
+line, and the existing "Plan measures 26'9" × 42'2"", are the only checks
+available without a dimension string on the drawing, and they are both cheap.
+
+**It runs inside the project-type dialog.** Picking a project category turns that
+same dialog into a loading state — *"Looking for doors…"* — and the user arrives
+at a tracer that is finished. The alternative is landing them on an empty tracer
+and popping the doors in underneath them a beat later, which is the worse version
+of the same wait, because by then they have started clicking. It is skipped
+entirely on a DXF: the file states its own units, and asking a detector would be
+asking a worse source than the one already in the file.
+
+**Failure is survivable, and that is why Measure still exists.** No doors, a
+detector that is down, or four boxes that are all obviously wrong all end in the
+same place: measure something by hand, which is what the app did before this.
+
+> **The bug this shipped with, for one build.** The door boxes went into the
+> tracer's annotation layer, which is `listening={false}` — correctly, because
+> everything else in it is a snap glyph or a guide and annotation must never eat
+> a click meant for the drawing underneath. A door box is not annotation, it is a
+> **button**. They drew perfectly, the cursor never changed, and clicking one did
+> nothing at all. Same family as [the sconce whose grab area was painted under
+> its own symbol](#everything-the-model-proposes-is-editable): a control that
+> looks right and is not reachable. They have their own listening layer now, last
+> inside the Stage so it paints on top too, and `tools/check-doors.mjs` clicks a
+> real one in a real browser.
 
 ## How the layout is computed
 
@@ -1842,6 +1912,55 @@ there disarms the palette and clears the selection, and does nothing else. The
 cursor reverts from a crosshair to a pointer as you cross the boundary, which is
 the cursor's job — saying what a click will do before it is spent.
 
+### Panning: the middle button, on every canvas
+
+Hold the **middle mouse button** and drag. It works on the layout screen and on
+the tracer, which are two completely different canvases, and the point of using
+one button for both is that a view control should not depend on which step you
+are standing in.
+
+**It is the middle button because the left one is spoken for at every level
+here** — tracing a corner, dragging a grip, sliding a strip's end, boxing a
+no-light zone. The tracer's space-drag still works and is unchanged, but a
+modifier you have to hold *before* the gesture starts is a modifier you have to
+remember; the middle button is free everywhere.
+
+**Two canvases, two implementations, and that is right rather than lazy.**
+
+- The **layout** SVG lives in a scroll container — `overflow: auto` with the
+  plan sized by the zoom — so panning is *scrolling it*, and that is the whole
+  implementation. Translating the SVG instead would mean owning the clamping,
+  the scrollbars, the wheel and the keyboard that a scroll container already
+  does correctly. Nothing else in `App.jsx` learns that a pan happened, because
+  as far as the drawing is concerned nothing did: its own coordinates never move.
+- The **tracer** is Konva with an explicit `pos`, so the pan sets `pos` from the
+  pointer's delta. `pos` is in screen pixels and is not scaled, so there is no
+  zoom arithmetic in between.
+
+**Three things that are easy to get wrong, all of them found by pointing a real
+browser at it** (`tools/check-pan.mjs`):
+
+1. **`preventDefault` on the mousedown is not optional.** Chrome and Firefox on
+   Windows and Linux start their own autoscroll on a middle press, which then
+   fights the pan for the same drag.
+2. **The move and up listeners go on the WINDOW, not the canvas.** A pan that
+   ends when the pointer leaves the canvas ends every time you reach the edge of
+   the thing you were panning away from — which is the only reason anyone pans.
+   The `auxclick` a middle release fires is swallowed too, so a pan that happens
+   to finish over a button does not also press it.
+3. **`Konva.dragButtons` defaults to `[0, 1]` — left *and middle*.** So on the
+   tracer a middle press on a grip started dragging that grip. Panning with the
+   cursor over a vertex is most of the time, because the vertices are what you
+   are looking at, which made this a corner of the outline quietly moving on
+   almost every pan. One global line — `Konva.dragButtons = [0]` — set before any
+   node exists.
+
+Every gesture on the layout canvas now checks `e.button === 0` before acting.
+A middle press reaching a drag handler starts a drag that no mouseup will ever
+finish, because the pan swallows the release — the same class of bug as [the copy
+bug](#direct-manipulation-and-the-copy-bug), one event arriving somewhere that
+was only ever written for another.
+
 ### The palette, and momentary alignment
 
 Four symbols in a row, not a dropdown. A dropdown asks you to read four words
@@ -2295,16 +2414,67 @@ the drawing can see — the wardrobe runs behind a beam, the bedside table is no
 where the plan says — so every fitting can be moved by hand.
 
 - a **sconce** slides along its wall
-- a **strip's two ends** slide along its run, independently
+- a **strip's two ends** go wherever you put them, independently
+- a **strip's body** drags whole, keeping its length and direction
 
-**Both gestures are one-dimensional, and that is the design.** A sconce mounts
-on a wall and a strip runs along one; neither can leave its wall without
-becoming a different thing. So a drag projects onto the wall's own line: the
-fitting cannot be pulled into the middle of the room, cannot go crooked, and
-cannot come off the surface it is fixed to. You get exactly the freedom the real
-fitting has and no more. A strip's ends cannot cross either — dragging one
-through the other pins it a hair short, because a run of negative length is not
-a thing and one that silently flips direction is worse.
+**A sconce is one-dimensional and that is still the design.** It mounts on a
+wall; it cannot leave one without becoming a different thing, so the drag
+projects onto the wall's own line and clamps at its ends.
+
+**A strip used to be one-dimensional too, and that was wrong.** Its ends were
+projected onto the wall the placement pass had chosen, with the run's offset off
+that wall preserved. That is the right gesture for a run on the right wall at
+the wrong length — and it is no use at all in the case people actually hit,
+which is the run being on the **wrong wall**, or standing off it, because the
+furniture box it was derived from was off. Sliding an end along a line that is
+itself in the wrong place cannot fix a run that is in the wrong place.
+
+So the end goes where the pointer goes, and every old constraint comes back as a
+**snap** — which hands the old behaviour back for free whenever it is the one
+you wanted:
+
+| snap | what it is | why it is there |
+|---|---|---|
+| **axis** | the line through the other end, along the run's current direction | "just make it longer". First, because a run stays collinear unless you mean it not to |
+| **wall** | any wall of the room, not only the one it was placed on | a strip is concealed joinery, and joinery is against something |
+| **ortho** | horizontal or vertical through the other end | for a run taken off the walls entirely — a cove round a false-ceiling island — which should still come out straight |
+
+Tolerance is **0.45 ft**, quoted in feet and multiplied by px/ft at the call
+site. An accent fitting lives in plan pixels, and a hard-coded pixel tolerance is
+generous on a site plan at 6 px/ft and unusable on a flat at 40.
+
+**Shift is a hard axis lock** — the end may only move along the run's existing
+line, however far off it the pointer is. That is the old constrained drag,
+available on demand rather than as the only option. On the body drag, Shift
+turns wall snapping off, for placing a cove deliberately clear of a wall.
+
+**The run's wall is re-derived on every edit.** Left pointing at the wall the
+model originally chose, a run dragged across the room keeps claiming a wall it is
+nowhere near — which is the stale state that made the constrained drag feel
+broken in the first place. A run that is no longer on any wall is marked `free`
+and drops its `alongWall` position rather than reporting a number that means
+nothing.
+
+**The whole run drags because two end handles cannot rescue a wrong wall.** You
+would drag one end across the room, watch the run swing round like a compass
+needle, then chase the other. The body gesture is "not here, there", and it moves
+by the pointer's delta so a strip grabbed near one end stays grabbed near that
+end. Snapping applies to the run as a **unit**: a wall is only offered when the
+run is already parallel to it (within ~2.5°), because snapping each end to its
+own nearest wall would shear a rigid thing across a corner.
+
+**A press is not a drag.** Pointerdown on the body both selects and arms the
+move — needing one click to select and a second to drag is what makes a canvas
+feel slow — so the move does not begin until the pointer has travelled 3 screen
+pixels, measured from the origin rather than from the last frame so a slow drag
+still crosses it. Without that, every plain click would translate the run by
+whatever fraction of a pixel the hand wobbled and mark it `edited` for it: a
+fitting claiming to have been moved by hand when nobody moved it.
+
+**A run still may not collapse.** Dragged onto its other end it stops
+`minLen` (0.35 ft) short. The clamp is **radial** now rather than a comparison of
+two positions along one wall — that only meant anything while both ends were
+still on that wall, which is exactly the assumption this change removes.
 
 > **Two bugs worth writing down**, because both are the same mistake in
 > different clothes and SVG invites it. The grab area for a sconce was placed at
@@ -2502,6 +2672,16 @@ to prove the origin is far enough out that a 0,0 bug would fail the test.
 - **`minWallDistance` is backwards in a kitchen.** It keeps a large light 5 ft
   off the wall because its cone scallops the wall. In a kitchen the wall is
   cabinet fronts and scalloping it is the goal.
+- **The door scale trusts one door.** The other doors' implied widths are shown
+  as a check, but nothing cross-checks them automatically, and nothing reads a
+  dimension string off the drawing — which is the one source on a plan that is
+  better than a standard-width assumption. A plan drawn to no consistent scale,
+  or one with a 825mm door nobody expected, comes out wrong and looks right.
+- **A freed strip can be put somewhere silly.** Its ends no longer have to be on
+  a wall, which is the point, but nothing checks that the result is a run a
+  fitter could install — it may cross a wall, sit outside the room, or run
+  diagonally across a ceiling. The snaps make the sensible thing easy rather than
+  the daft thing impossible, and there is no room-polygon clamp.
 - **The bed judge only ever picks a whole answer.** It chooses between two
   detectors' readings of a room, not between individual boxes: a room where
   Roboflow got the first bed right and GPT got the second one right has no
