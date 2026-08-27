@@ -2642,6 +2642,188 @@ to prove the origin is far enough out that a 0,0 bug would fail the test.
 > fixture has to be a realistic size or every length assertion in it is off by a
 > factor of ten for a reason that has nothing to do with what is being tested.
 
+## The BOQ: the drawing, counted
+
+A lighting layout leaves the studio twice — once as a drawing, and once as a list
+of things to buy. **Design** and **BOQ** in the top bar are those two halves, and
+the BOQ **replaces** the canvas rather than sitting beside it: a schedule is read
+at a different moment, by a different person, and squeezing it into a corner of
+the drawing screen makes both worse.
+
+The reason to generate it rather than type it is that a person counting fittings
+off a screen miscounts, and then orders 34 downlights for a job that needs 37.
+
+### What is on it
+
+| | | | |
+|---|---|---|---|
+| Recessed downlight — small | 7 W | 36° | the ambient grid's ordinary cell |
+| Recessed downlight — large | 12 W | 60° | serves a pair of cells |
+| Directional spot | 5 W | 30° | aimed at a task surface |
+| Wall sconce | — | — | accent; wattage by fitting selection |
+| LED strip | 9.6 W/m | — | accent; billed in **metres**, and also reported as runs |
+
+**A sconce states no wattage, and that is not zero.** Zero would sum into the
+connected load as a fitting that draws nothing, which is a claim about a lamp
+nobody has chosen yet. The load figure therefore says what it excludes —
+*"excludes 6 × wall sconce — wattage not specified"* — on the face of the table
+and in all three files. A connected load that quietly omits eight sconces is
+worse than no load at all, because the reader cannot tell it is incomplete. The
+strip gets its W/m for the opposite reason: tape is bought by the metre at a
+stated output, so 9.6 W/m is a default that can be *true*.
+
+**Strip is counted twice, in metres and in runs.** A contractor buys metres and
+installs runs, and the number of runs is what tells him how many drivers and end
+caps. With no scale set the runs are counted and the metres are left at zero
+rather than invented.
+
+**Fans, chandeliers, AC units and trap doors are listed and not billed.** They
+are on the drawing because they occupy ceiling — they are *why* the lights are
+where they are — but a lighting BOQ that quotes an air conditioner is a lighting
+BOQ nobody trusts. A chandelier is the awkward one and it goes here rather than
+above: it is a light, but a specified, chosen object whose lamping is not ours,
+so counting it and stopping is the only honest thing to do with it.
+
+**And there is a per-room breakdown**, because that is how a site is wired and
+how a contractor prices it. The room rows add up to the totals, and
+`tools/test-boq.mjs` asserts it — a BOQ whose breakdown disagrees with its total
+is worthless.
+
+**It is derived, not stored.** `buildBOQ()` is a memo over the same sources the
+canvas draws from, so "the schedule matches the drawing" is a property of the
+code rather than something to remember. Lights move constantly — a fan is
+dropped, a chunking re-picked, a strip dragged — and a schedule held in state
+would drift from the first of those.
+
+> **One cached number was left in, and it did exactly that.** App.jsx used to
+> stamp a `runFt` field onto each accent zone when the pass placed it, and
+> `runMetres` preferred it over measuring the geometry — a length already in feet
+> looked like the better source. It is the worse source. A strip's end is dragged
+> in **plan pixels** and the edit cannot know the scale, so it updates `run` and
+> `runLength` and leaves `runFt` untouched. A strip stretched from 3 ft to 12 ft
+> therefore went on reporting 3 ft, in the schedule *and* in the accent panel,
+> for the rest of the session — with nothing to hint that the drawing and the
+> list disagreed.
+>
+> `runLength` in plan pixels plus the live px/ft is the only pair that cannot go
+> stale, because neither half is a copy of anything. The field is gone, feet are
+> computed where they are shown, and `tools/test-boq.mjs` now drags a strip
+> through `setRunEnd` and asserts the metres follow it — lengthened, trimmed, and
+> unchanged by a whole-run move.
+>
+> The lesson is the one this file keeps arriving at from different directions: the
+> moment a value is stored beside the thing it was computed from, there is a
+> version of the app where the two disagree.
+
+### Three files, one table
+
+`boqTable()` produces a rectangular grid of strings and the three exporters only
+know how to write a grid. That is the whole architecture, and it is why the CSV,
+the spreadsheet and the PDF cannot disagree about a total: there is nowhere for
+them to disagree.
+
+**The sheet is A4 portrait** — 794 × 1123 at 96dpi, with about 15mm of margin —
+and that is not decoration. The PDF export is A4 portrait, so a sheet with the
+same proportions on screen is a *preview of the thing that prints* rather than a
+differently-shaped cousin of it. It grows past one page the way the PDF does, by
+carrying on; below the page width it stops pretending and the wide tables scroll,
+rather than crushing eight columns into three characters each.
+
+**No dependencies**, which is a choice and not a stunt. This repo already
+hand-writes DXF and the same reasoning applies twice over: jsPDF is ~350KB to
+draw eight columns of Helvetica, and SheetJS's free build **cannot write styles
+at all** — formatting is its paid tier — so the library everyone reaches for
+would not have got us the formatted sheet either. ExcelJS would, at about a
+megabyte. An XLSX is a ZIP of a few small XML files and a PDF is a handful of
+objects plus a byte-offset table; both are written in `src/lib/boqExport.js`.
+
+### The spreadsheet is a spreadsheet, not a printout
+
+The first version wrote every cell as text. It opened, and it was useless: a
+schedule whose totals are typed-in strings is something the reader has to redo
+before they can price it.
+
+**The units had to leave the cell text**, and that one change is what made the
+rest possible. `"7 W"` in a cell cannot be multiplied by anything. `7` with a
+number format of `0" W"` looks identical on screen and can. So the number goes in
+the cell and the unit goes in the format — `0" W"`, `0"°"`, `0.00" m"`,
+`0.0" W/m"`, `#,##0" sqft"` — which is how a real schedule is built.
+
+**And then the totals become formulas.** Load per line is `=IF(ISNUMBER(E8),C8*E8,"")`,
+the totals are `SUM()` over ranges, the connected load is `=G13/C4`. This is more
+than a convenience: a SUM computed by Excel from the cells the reader is looking
+at **cannot disagree with them**, not even if the code above is wrong. Change a
+quantity in the sheet and everything below it follows.
+
+`ISNUMBER` and not `=""`, incidentally, because a sconce's rating cell shows an em
+dash to mean *deliberately not specified* — and `IF(E11="",…)` is false against an
+em dash, so the first version went on to compute `6 × "—"` and the cell read
+`#VALUE!`. ISNUMBER asks the question that was actually meant.
+
+**Two sheets**, because one sheet cannot have two column layouts — `Description`
+wants 32 characters and `Area` wants 12. `Schedule` carries the fittings and the
+ceiling items; `By room` carries the breakdown **and checks itself against the
+schedule** with a cross-sheet formula that prints `OK — matches the schedule` or
+`MISMATCH`. That invariant used to be a claim made by a unit test the reader
+cannot see; now the spreadsheet asserts it in front of them.
+
+Plus the things that make a file feel finished: a merged title, a banded header
+with a rule under it, frozen panes, right-aligned numeric columns, wrapped notes,
+column widths sized to the widest *formatted* value, and A4 portrait print setup
+so it prints as the same page the PDF does.
+
+> **Two width bugs only a render could show.** `0.32` is four characters and
+> `0.32 W/sqft` is eleven, and the column has to fit the second one — it was 9
+> wide, so the cell read `###`, which is a spreadsheet telling you it has given
+> up. And the three header facts sat in one row across A..F, where column A is
+> the 4-character `#` column, so "Rooms" came out as "Room". Both were invisible
+> in the XML and obvious the moment LibreOffice drew the page.
+
+**Validated by a spreadsheet application, not by our own reader.**
+`tools/test-boq.mjs` unzips the file and checks its own structure, but the claim
+that matters is that *Excel's arithmetic agrees with ours* — and that can only be
+tested by something that actually calculates. LibreOffice recalculates the
+workbook and returns 154, 48, 15, blank for the sconce, 57.1 for the strip, a
+274.1 W total and 0.32 W/sqft: exactly what `buildBOQ` computes, from formulas
+rather than from cached values. The check cell evaluates to `OK`.
+
+Four things in there are worth knowing, because each is a way the format bites:
+
+- **The zip stores rather than deflates.** Every reader, Excel included, has
+  read stored entries since 1989, and the alternative is shipping an inflate
+  implementation to save a few kilobytes.
+- **Numbers are written as numbers and everything else as an inline string.**
+  `36°` and `9.6 W/m` written as numbers is a sheet where every cell shows
+  `#VALUE`; a room called `01 Bedroom` written as a number is data loss. Inline
+  strings rather than a `sharedStrings.xml`, because a shared-strings index one
+  out produces a file that opens with every label in the wrong cell.
+- **The PDF's xref offsets are measured on the encoded bytes**, never computed
+  from string lengths — a degree sign is one character and two bytes, and one
+  byte out is a corrupt file with no useful message. The test follows every
+  offset and checks it lands on its own object header.
+- **The CSV leads with a BOM.** Without it Excel reads a UTF-8 file as the local
+  codepage and `36°` arrives as `36Â°`.
+
+Both writers are **deterministic** — fixed zip timestamps, no `new Date()` — so
+the same layout produces byte-identical files and a schedule can be diffed
+between revisions.
+
+**The files are tested by being read back.** `tools/test-boq.mjs` unzips its own
+xlsx, checks every entry's CRC32, pulls the cells and formulas out of the sheet
+XML, and verifies the things a malformed stylesheet gets wrong — that the two
+reserved fills are in place, that `cellXfs count` matches the number of records,
+and that no cell points past the end of the style table. It walks the PDF's xref
+and verifies each offset. A test that only checks the writer did not throw is a test that
+passes on a file Excel refuses. `tools/check-boq.mjs` then clicks all three
+buttons in a real browser and inspects what lands on disk.
+
+### The panel has one job
+
+With a schedule on screen the right-hand panel collapses to the export and
+nothing else. Every other section there — arm a fan, recompute the accents,
+toggle a layer — acts on a drawing you can no longer see, and a panel full of
+controls for an invisible thing is worse than an empty one.
+
 ## Known limits (v1)
 
 - The chunking strategies are a fixed list of six, not a search over every
@@ -2672,6 +2854,21 @@ to prove the origin is far enough out that a 0,0 bug would fail the test.
 - **`minWallDistance` is backwards in a kitchen.** It keeps a large light 5 ft
   off the wall because its cone scallops the wall. In a kitchen the wall is
   cabinet fronts and scalloping it is the goal.
+- **The BOQ has no rates and no cost.** It is a bill of quantities and not a bill
+  of materials: no make, no model, no catalogue reference, no price, so nothing
+  in it can be totalled into money. Adding a rate column is easy — and now that
+  the spreadsheet has formulas it would extend itself, `=Qty*Rate` down the
+  column and a SUM at the foot. Deciding whose rates is the hard part.
+- **Only the spreadsheet computes.** The CSV and the PDF are still flat text, so
+  a quantity edited in the CSV changes no total. That is inherent to CSV and
+  right for a PDF, but it means the three files stop being interchangeable the
+  moment anyone edits one.
+- **Nothing is grouped by circuit or by switch.** A contractor prices per room
+  from the breakdown, but the drawing has no concept of a circuit, so the
+  schedule cannot say what is switched together.
+- **The PDF truncates a long note** with two dots rather than wrapping it. A
+  single-line-per-row table is what makes the columns readable; wrapping means
+  variable row heights and a pagination pass, and the notes are short by design.
 - **The door scale trusts one door.** The other doors' implied widths are shown
   as a check, but nothing cross-checks them automatically, and nothing reads a
   dimension string off the drawing — which is the one source on a plan that is

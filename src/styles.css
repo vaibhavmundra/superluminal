@@ -367,6 +367,107 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
 .door-widths{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 .door-widths .btn{width:100%;padding:7px 4px;text-align:center}
 
+/* --- the Design / BOQ tab pair -------------------------------------------- */
+/* A segmented pair rather than two buttons: they are one choice with two
+   answers, and the sliding fill is what says only one can be true. */
+.tabs{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border);
+  border-radius:8px;background:var(--surface-2, #F4F4F5)}
+.tabs button{
+  appearance:none;border:0;background:transparent;cursor:pointer;
+  font:inherit;font-size:11.5px;font-weight:550;letter-spacing:.01em;
+  color:var(--text-subtle);padding:4px 14px;border-radius:6px;
+  transition:background .12s ease,color .12s ease;
+}
+.tabs button:hover{color:var(--text)}
+.tabs button.on{background:var(--surface);color:#6161f5;
+  box-shadow:0 1px 2px rgba(10,10,10,.06)}
+
+/* --- the schedule --------------------------------------------------------- */
+/* A DOCUMENT, not a dashboard. This is read, priced and marked up, so it gets a
+   sheet with generous margins and a single accent — anything more decorative
+   gets in the way of the one thing it is for. */
+/* A4 PORTRAIT, and not as decoration: the PDF export is A4 portrait, so a sheet
+   with the same proportions on screen is a preview of the thing that prints
+   rather than a differently-shaped cousin of it. 794 x 1123 is A4 at 96dpi, and
+   the 56/60px padding is about 15mm of margin — the page reads as a page.
+
+   `min-height` and not `height`: a schedule longer than one page grows, and it
+   grows the way the PDF does, by carrying on. */
+.boq-wrap{width:100%;display:flex;justify-content:center;padding:0 18px 60px;
+  --a4-w:794px; --a4-h:1123px}
+.boq-sheet{width:var(--a4-w);max-width:100%;min-height:var(--a4-h);
+  background:var(--surface);border:1px solid var(--border);border-radius:6px;
+  padding:52px 58px 64px;box-shadow:0 1px 3px rgba(10,10,10,.07)}
+.boq-head{display:flex;gap:20px;align-items:flex-start;justify-content:space-between;
+  flex-wrap:wrap;padding-bottom:16px;margin-bottom:6px;border-bottom:1px solid var(--border)}
+.boq-sheet h1{margin:0 0 4px;font-size:18px;font-weight:600;letter-spacing:-.02em}
+.boq-h2{margin:26px 0 2px;font-size:11.5px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--text-subtle)}
+.boq-sub{margin:0 0 9px;max-width:60ch}
+
+/* Below the page width the sheet stops pretending and the tables scroll, rather
+   than the eight columns crushing into three characters each. */
+@media (max-width:900px){
+  .boq-wrap{padding:0 10px 40px}
+  .boq-sheet{padding:28px 20px 40px;min-height:0}
+  .boq-scroll{overflow-x:auto}
+}
+
+.boq-tiles{display:flex;gap:7px}
+.boq-tile{min-width:82px;padding:8px 11px;border:1px solid var(--border);border-radius:8px;
+  background:var(--surface-2, #FAFAFA)}
+.boq-tile b{display:block;font-size:17px;font-weight:600;letter-spacing:-.02em;
+  font-family:var(--mono);line-height:1.15}
+.boq-tile span{display:block;font-size:9.5px;color:var(--text-subtle);margin-top:2px}
+
+/* Sized for the page, not for the window. Eight columns inside 676mm-worth of
+   A4 text width is tight, so the type steps down and the padding comes in —
+   which is what a real schedule does too. */
+table.boq{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+table.boq.boq-narrow{max-width:430px}
+table.boq th{
+  text-align:left;font-size:9.5px;font-weight:600;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--text-subtle);
+  padding:7px 6px 5px;border-bottom:1px solid var(--text);white-space:nowrap;
+}
+table.boq td{padding:6px 6px;border-bottom:1px solid var(--border);vertical-align:baseline;
+  overflow-wrap:break-word}
+table.boq tbody tr:hover{background:var(--accent-soft)}
+/* Numbers right, in the mono face, so a column can be read down. The one
+   typographic rule a schedule cannot do without. */
+.boq-r{text-align:right;font-family:var(--mono);white-space:nowrap}
+th.boq-r{text-align:right}
+.boq-i{width:22px;color:var(--text-subtle);font-family:var(--mono);font-size:10px}
+.boq-u{font-family:var(--mono);font-size:10px;color:var(--text-subtle);white-space:nowrap}
+.boq-note{color:var(--text-subtle);font-size:10px;line-height:1.35}
+/* `table-layout: fixed` needs the widths stated. These mirror the PDF's column
+   shares, so the two read the same. */
+table.boq col.c-desc{width:25%}
+table.boq col.c-qty{width:9%}
+table.boq col.c-unit{width:7%}
+table.boq col.c-watt{width:10%}
+table.boq col.c-beam{width:7%}
+table.boq col.c-load{width:10%}
+table.boq col.c-note{width:29%}
+table.boq col.c-room{width:24%}
+table.boq col.c-num{width:12.6%}
+.boq-n{font-family:var(--mono)}
+table.boq tfoot td{border-top:1px solid var(--text);border-bottom:0;padding-top:9px}
+table.boq tfoot tr:hover{background:transparent}
+.boq-caveat td{padding-top:2px;border-top:0;font-size:10.5px;color:var(--text-subtle);
+  line-height:1.4}
+.boq-empty{margin:80px auto;text-align:center;max-width:40ch}
+.boq-empty h2{font-size:16px;font-weight:600;margin:0 0 6px}
+
+/* The three formats. Each is a button with its own one-line reason, because
+   "Excel / CSV / PDF" alone makes the reader guess which of the three they
+   want. */
+.boq-export{display:flex;flex-direction:column;gap:6px}
+.boq-export .btn{width:100%;text-align:left;padding:8px 10px;display:block}
+.boq-export .btn b{display:block;font-size:12px;font-weight:550}
+.boq-export .btn span{display:block;font-size:10px;opacity:.7;margin-top:1px;
+  font-weight:400;white-space:normal}
+
 /* ---------- the pipeline loader ---------- */
 .loader-wrap{
   position:absolute;inset:0;z-index:40;display:grid;place-items:center;

@@ -20,6 +20,9 @@ import AccentPanel from './components/AccentPanel.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
+import BOQView from './components/BOQView.jsx';
+import { buildBOQ } from './lib/boq.js';
+import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
 import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, targetAreaFor } from './lib/roomTypes.js';
 import TaskSurfacePanel from './components/TaskSurfacePanel.jsx';
 import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
@@ -222,6 +225,11 @@ export default function App() {
   const useBoundingRect = SIMPLIFY_ROOM_TO_RECTANGLE;
   const [layers, setLayers] = useState({ plan: true, dim: true, region: true, grid: true, cells: true, lights: true, labels: false, fan: true, zones: true, accents: true, objects: true, surfaces: true, spots: true, secondary: false });
   const [zoom, setZoom] = useState(1);
+  // WHICH HALF OF THE DELIVERABLE IS ON SCREEN. A schedule is not a second view
+  // of the drawing — it is the other half of what leaves the studio, read at a
+  // different moment by a different person. So it replaces the canvas rather
+  // than crowding it.
+  const [view, setView] = useState('design');   // design | boq
   // How far the pointer must travel before a press becomes a drag, in SCREEN
   // pixels — divided by the zoom at the point of use, so it is the same
   // distance under the hand at 40% and at 300%.
@@ -772,7 +780,11 @@ export default function App() {
       colour: TYPE_BY_ID[z.type]?.colour || '#666',
       label: TYPE_BY_ID[z.type]?.label || z.type,
       short: TYPE_BY_ID[z.type]?.short || z.type,
-      runFt: z.runLength != null && pxPerFt ? z.runLength / pxPerFt : null,
+      // NO `runFt` HERE, deliberately. It used to be stamped on at placement
+      // time and it was the one cached derivation on an accent zone — so the
+      // moment a strip's end became draggable it started lying, because a drag
+      // works in plan pixels and cannot know the scale. Feet are derived where
+      // they are shown, from `runLength` and the live px/ft. See runMetres.
     }));
     return { shot, meta: payload.meta, result: { ...res, furniture, handled, zones } };
   }, [source, img, wallLayerSet, pxPerFt, ceilingFt]);
@@ -984,6 +996,43 @@ export default function App() {
       perSqft: lumens / Math.max(1, areaSqft),
     };
   }, [rooms]);
+
+  /**
+   * THE SCHEDULE, derived like everything else here.
+   *
+   * A BOQ held in state would be a second copy of the drawing that drifts the
+   * moment a light moves — and lights move constantly: a fan is dropped, a
+   * chunking is re-picked, a strip is dragged. So it is a memo over the same
+   * sources the canvas draws from, which makes "the schedule matches the
+   * drawing" a property of the code rather than something to remember.
+   */
+  const boq = useMemo(() => buildBOQ({
+    rooms,
+    accents: accentZonesPx,
+    spots: taskSpotsPx,
+    objects: ceilingObjs,
+    fans,
+    pxPerFt,
+    plan: source?.name ?? null,
+  }), [rooms, accentZonesPx, taskSpotsPx, ceilingObjs, fans, pxPerFt, source]);
+
+  /** The schedule as a file. Three formats, one table — see boqExport.js. */
+  const exportBOQ = useCallback((fmt) => {
+    const base = (source?.name || 'plan').replace(/\.[^.]+$/, '');
+    const title = `Lighting schedule — ${base}`;
+    if (fmt === 'csv') {
+      // The BOM is what makes Excel read the file as UTF-8 rather than as the
+      // local codepage, which is the difference between 36° and 36Â°.
+      download(`${base}-boq.csv`, CSV_BOM + boqToCSV(boq), 'text/csv;charset=utf-8');
+      return;
+    }
+    if (fmt === 'xlsx') {
+      download(`${base}-boq.xlsx`, boqToXLSX(boq),
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      return;
+    }
+    download(`${base}-boq.pdf`, boqToPDF(boq, { title }), 'application/pdf');
+  }, [boq, source]);
 
   /** One line per room, and only where something actually went wrong. */
   const troubles = useMemo(() => rooms.flatMap((r) => {
@@ -1374,6 +1423,10 @@ export default function App() {
     : pickingId ? 'chunks'
     : 'plan';
   const showTrace = step === 'trace';
+  // The BOQ tab takes the whole stage. Gated on `source` as well as on the tab
+  // so that a stale `view` cannot survive a Clear and render a schedule of a
+  // plan that is no longer loaded.
+  const boqOpen = view === 'boq' && !!source;
   const picking = pickingId ? rooms.find((r) => r.id === pickingId) : null;
   const showPicker = step === 'chunks' && !zoneMode && !!picking;
 
@@ -2125,17 +2178,32 @@ export default function App() {
         <div className="brand">Light Planner <span>/ ambient layout</span></div>
         <div className="spacer" />
         {busy && <div className="pill">{busy}</div>}
+        {/* THE TAB PAIR, and it is only there once there is something to
+            schedule. An empty BOQ tab on the drop screen is an invitation to a
+            blank page. */}
+        {source && (
+          <div className="tabs" role="tablist">
+            {[['design', 'Design'], ['boq', 'BOQ']].map(([k, label]) => (
+              <button key={k} role="tab" aria-selected={view === k}
+                className={view === k ? 'on' : ''}
+                onClick={() => setView(k)}>{label}</button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div ref={stageRef}
-        className={'stage' + (source ? '' : ' empty') + (showPicker || showTrace ? ' wide' : '')
+        className={'stage' + (source ? '' : ' empty')
+          + (boqOpen ? ' wide' : (showPicker || showTrace ? ' wide' : ''))
           + (panning ? ' panning' : '')}
         onMouseDown={stageMouseDown}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); loadFile(e.dataTransfer.files[0]); }}
       >
-        {!source ? (
+        {boqOpen ? (
+          <BOQView boq={boq} planName={source.name} />
+        ) : !source ? (
           <div className={'dropzone' + (over ? ' over' : '')}>
             <h2>Drop a floor plan</h2>
             <p>To start creating lighting schemes</p>
@@ -2224,7 +2292,7 @@ export default function App() {
               accents={accentZonesPx} />
           </div>
         )}
-        {prep && (
+        {prep && !boqOpen && (
           <PlanLoader
             width={source.w} height={source.h}
             rooms={loaderRooms}
@@ -2234,13 +2302,47 @@ export default function App() {
       </div>
 
       <div className="side">
-        {/* WHILE THE PIPELINE RUNS, THE PANEL SAYS NOTHING ELSE. Every section
-            below reads results the run is in the middle of replacing — half of
-            them would show a stale count and the other half a control that
-            fires a second run into the first. So the panel collapses to the
-            state and the two ways out, and the loader over the drawing carries
-            the detail. */}
-        {prep ? (
+        {/* THE BOQ PANEL HAS ONE JOB. Every other section here is a control over
+            the drawing — arm a fan, recompute the accents, toggle a layer — and
+            not one of them means anything while a schedule is on screen. A panel
+            full of controls that act on something you cannot see is worse than
+            an empty one, so it collapses to the only thing there is to do with a
+            schedule: get it out of here. */}
+        {boqOpen ? (
+          <div className="sec">
+            <h3>Export the schedule</h3>
+            <p className="note" style={{ marginTop: 2, marginBottom: 10 }}>
+              {boq.totals.fittings} fitting{boq.totals.fittings === 1 ? '' : 's'}
+              {boq.totals.stripMetres > 0 && <> · {boq.totals.stripMetres.toFixed(2)} m of strip</>}
+              {' '}· {boq.totals.watts} W
+            </p>
+            <div className="boq-export">
+              {[['xlsx', 'Excel', '.xlsx — one sheet, quantities as numbers'],
+                ['csv', 'CSV', '.csv — UTF-8, opens anywhere'],
+                ['pdf', 'PDF', '.pdf — plain, for printing and marking up']].map(([k, label, note]) => (
+                <button key={k} className={'btn' + (k === 'xlsx' ? ' primary' : '')}
+                  onClick={() => exportBOQ(k)} title={note}>
+                  <b>{label}</b><span>{note}</span>
+                </button>
+              ))}
+            </div>
+            {!boq.scaled && (
+              <p className="note warn" style={{ marginTop: 10 }}>
+                No scale is set, so the LED strip runs are counted but not
+                measured. Set the scale and the metres appear.
+              </p>
+            )}
+            <button className="btn" style={{ marginTop: 12, width: '100%' }}
+              onClick={() => setView('design')}>← Back to the drawing</button>
+          </div>
+        ) : (
+          /* WHILE THE PIPELINE RUNS, THE PANEL SAYS NOTHING ELSE. Every section
+             below reads results the run is in the middle of replacing — half of
+             them would show a stale count and the other half a control that
+             fires a second run into the first. So the panel collapses to the
+             state and the two ways out, and the loader over the drawing carries
+             the detail. */
+          prep ? (
           <div className="sec">
             <h3>Loading…</h3>
             <p className="note" style={{ marginTop: 2 }}>
@@ -2577,6 +2679,7 @@ export default function App() {
               there something to hang an accent scheme off. */}
           <AccentPanel
             rooms={rooms}
+            pxPerFt={pxPerFt}
             roomId={accentRoom?.id ?? null}
             onRoomChange={setAccentRoomId}
             sent={accentShot?.roomId === accentRoom?.id ? accentShot : null}
@@ -2713,7 +2816,8 @@ export default function App() {
           </div>
           </>}
         </>}
-        </>}
+        </>
+        )}
       </div>
     </div>
   );

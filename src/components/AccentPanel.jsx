@@ -26,6 +26,10 @@ export default function AccentPanel({
   state = { status: 'idle' }, result = null,
   dismissed = [], onToggleZone, onClear, onRun,
   ceilingFt, onCeilingChange, selId = null, onSelect,
+  // Needed to say how long a run is. Derived on render rather than read off the
+  // zone, because a stored length stops being true the moment somebody drags an
+  // end — which is exactly what happened. See runMetres in boq.js.
+  pxPerFt = null,
 }) {
   const room = rooms.find((r) => r.id === roomId) || null;
   const running = state.status === 'running';
@@ -161,7 +165,9 @@ export default function AccentPanel({
                     ? <div className="accent-why warn">{z.rejected}</div>
                     : z.why && <div className="accent-why">{z.why}</div>}
                   <div className="accent-meta">
-                    {z.runFt != null && <span>{z.runFt.toFixed(1)} ft run</span>}
+                    {z.runLength != null && pxPerFt > 0 && (
+                      <span>{(z.runLength / pxPerFt).toFixed(1)} ft run</span>
+                    )}
                     {z.edited && <span>moved by hand</span>}
                     {z.mirrored && <span>mirrored</span>}
                     {z.group && <span>pair: {z.group}</span>}
