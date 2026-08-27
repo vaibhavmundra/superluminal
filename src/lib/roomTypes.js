@@ -161,6 +161,44 @@ export const roomTypeIn = (projectId, typeId) =>
 export const wantsAccents = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.accent;
 export const wantsSpots = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.spots;
 
+/**
+ * WHAT ONE CELL SHOULD COVER, where it is not the usual 50 sqft.
+ *
+ * A kitchen wants about twice the light of a living space, and the only lever
+ * this engine has for "more light" is a smaller cell: halve the area a cell
+ * covers and you double the number of fittings over it, which doubles the
+ * lumens landing on the floor. 25 sqft is 50 halved and nothing more subtle
+ * than that.
+ *
+ * It is a PROXY and worth naming as one. The quantity the standards are written
+ * in is lux, and this engine has never worked in lux — `targetArea: 50` is an
+ * assertion, not a calculation, and 25 is the same assertion doubled. Rough
+ * arithmetic on the current spec (900 lm over 50 sqft, a utilisation factor
+ * around 0.7 and a maintenance factor of 0.8) puts a normal room near 100 lux
+ * at the working plane, so a kitchen at 25 sqft lands near 200 — short of the
+ * 300 a kitchen is usually specified at. Halving the cell is the change worth
+ * making first because it is one number; getting to 300 honestly means making
+ * lumens an INPUT to the layout rather than a figure the Result panel reports
+ * afterwards, and that is a different piece of work.
+ *
+ * Two things to watch on a small kitchen, both consequences of the acceptance
+ * band being sized for 50:
+ *   * `areaTol` is ±25%, so at 25 the band is 18.75 to 31.25 sqft. An 8 x 10
+ *     kitchen divides 2x2 into 20 sqft cells (inside, barely) or 1x3 into
+ *     26.7 sqft cells at 2.4:1, which the squareness term dislikes. At 50 the
+ *     room is large relative to the cell and there is always a comfortable
+ *     division; at 25 the room's own quantisation starts to decide.
+ *   * `minLightSpacing` is 3.9 ft. A galley narrow enough to want two columns
+ *     of 5 ft cells is fine; one wanting two columns in 7 ft is not.
+ *
+ * Both are refusals with reasons attached rather than silent failures, so a
+ * kitchen that comes out wrong will say why.
+ */
+export const TARGET_AREA_BY_TYPE = { kitchen: 25 };
+
+/** The override for a type, or null for "lit like anywhere else". */
+export const targetAreaFor = (typeId) => TARGET_AREA_BY_TYPE[typeId] ?? null;
+
 // --- the prompt -------------------------------------------------------------
 
 /**

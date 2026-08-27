@@ -1996,6 +1996,53 @@ whatever number the model volunteered was about a category we then rejected, and
 carrying it forward would display as "90% sure this is Other", a confident-
 sounding claim about the one case where we know nothing.
 
+### A kitchen is lit twice as hard
+
+The type decides the ceiling's density as well as its layers. `TARGET_AREA_BY_TYPE`
+in `roomTypes.js` overrides what one cell should cover, and there is one entry in
+it: **kitchen, 25 sqft** against everywhere else's 50.
+
+The only lever this engine has for "more light" is the size of a cell. Halve the
+area a cell covers and you double the number of fittings over it, which doubles
+the lumens landing on the floor. That is the whole mechanism.
+
+**It reaches the chunker, not just the grid.** Decompositions are enumerated and
+scored against the cell they are expected to carry, so enumerating for 50 sqft
+cells and then laying 25 sqft ones on the winner answers a question nobody asked.
+Both options objects carry the override. A room re-enumerates when its type
+arrives, and a chunking picked by hand is resolved afresh and falls back to the
+recommendation if the denser reading no longer offers it.
+
+What it actually does, on a plain rectangle with no obstacles:
+
+| kitchen | at 50 sqft | at 25 sqft |
+|---|---|---|
+| 7 × 12 galley | 2 lights, 21 lm/sqft | 3 lights, 32 lm/sqft |
+| 8 × 10 | 2 lights, 23 lm/sqft | 4 lights, 45 lm/sqft |
+| 10 × 12 | 2 lights, 15 lm/sqft | 4 lights, 30 lm/sqft |
+| 12 × 16 | 4 lights, 19 lm/sqft | 9 lights, 42 lm/sqft |
+
+**The galley is the one that does not double**, and it is the acceptance band
+doing it: 7 ft will not carry two columns of 5 ft cells once `minLightSpacing`
+(3.9 ft) has had its say, so the room takes three lights in a single file
+instead of six. That is a refusal with a reason attached rather than a silent
+failure, and it is the shape of kitchen to check first if the result looks thin.
+
+**It is a proxy, and worth saying so.** The quantity every standard is written in
+is lux, and this engine has never worked in lux — `targetArea: 50` is an
+assertion rather than a calculation, and 25 is the same assertion doubled. Rough
+arithmetic on the current spec (900 lm, utilisation 0.7, maintenance 0.8) puts a
+normal room near 100 lux at the working plane and a kitchen near 200, against the
+300 a kitchen is usually specified at. Getting there honestly means making
+lumens an **input** to the layout rather than a figure the Result panel reports
+afterwards — deriving cell area from a target illuminance, so 50 sqft becomes a
+consequence of 900 lm at 150 lux instead of a constant. That is a different piece
+of work; this is the one number that buys most of it today.
+
+Nothing else about a kitchen changes: it still gets no accents and no task spots,
+and the grid is still centred and uniform, which is the [known
+limit](#known-limits-v1) worth reading before trusting it in a galley.
+
 ## The pipeline, and the loading screen that is its progress
 
 Pressing **Light the whole plan** used to be one synchronous act. It now runs up
@@ -2443,6 +2490,18 @@ to prove the origin is far enough out that a 0,0 bug would fail the test.
 - Beams, diffusers and sprinklers aren't read from the plan automatically; only
   the fan is. Place them by hand as ceiling objects, or mark them as no-light
   zones.
+- **A kitchen's grid is denser but still centred and uniform**, and a kitchen is
+  the room where that is least true to how it is used. The counter runs round the
+  walls and the middle is a walkway, so a centred grid puts fittings where nobody
+  stands and leaves the worktop lit from behind the person working at it — who
+  then casts their own shadow on it. A denser uniform grid does that twice as
+  expensively. The layout a kitchen actually wants is a run of downlights offset
+  about 2 ft from the counter wall, plus an under-cabinet strip; neither is built,
+  and the second is the only thing that fixes the shadow, because the shadow is
+  cast by the person rather than by the fitting.
+- **`minWallDistance` is backwards in a kitchen.** It keeps a large light 5 ft
+  off the wall because its cone scallops the wall. In a kitchen the wall is
+  cabinet fronts and scalloping it is the goal.
 - **The bed judge only ever picks a whole answer.** It chooses between two
   detectors' readings of a room, not between individual boxes: a room where
   Roboflow got the first bed right and GPT got the second one right has no

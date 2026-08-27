@@ -19,7 +19,7 @@ import AccentPanel from './components/AccentPanel.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
-import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots } from './lib/roomTypes.js';
+import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, targetAreaFor } from './lib/roomTypes.js';
 import TaskSurfacePanel from './components/TaskSurfacePanel.jsx';
 import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
 import { planTaskSpots, chunkFor } from './lib/taskSpots.js';
@@ -565,7 +565,23 @@ export default function App() {
         }),
       };
 
-      const chunking = enumerateChunkings(geo.polygonFt, geo.zonesFt, chunkOpt, geo.fixturesFt);
+      // A KITCHEN IS LIT HARDER THAN A LIVING ROOM, and the only lever this
+      // engine has for that is the size of a cell. See TARGET_AREA_BY_TYPE.
+      //
+      // IT HAS TO REACH THE CHUNKER TOO, not just the grid. The decompositions
+      // are enumerated and scored against the cell they are expected to carry;
+      // enumerate for 50 sqft cells and then lay 25 sqft ones on the winner and
+      // the chunking chosen is the answer to a question nobody asked. So both
+      // options objects carry the override, and a room whose type arrives after
+      // it was first laid out re-enumerates — which is why `roomTypes` is a
+      // dependency of this memo. A chunking the user had picked by hand is
+      // resolved afresh below and falls back to the recommendation if the
+      // denser reading no longer offers it.
+      const cellArea = targetAreaFor(roomTypes[o.id]?.type);
+      const roomOpt = cellArea ? { ...opt, targetArea: cellArea } : opt;
+      const roomChunkOpt = cellArea ? { ...chunkOpt, targetArea: cellArea } : chunkOpt;
+
+      const chunking = enumerateChunkings(geo.polygonFt, geo.zonesFt, roomChunkOpt, geo.fixturesFt);
       // A remembered intent, resolved afresh each time. Change the space enough
       // that the chosen reading no longer exists and the recommendation takes
       // over, rather than a different reading quietly wearing the same name.
@@ -575,7 +591,7 @@ export default function App() {
       const chosenId = picked ?? chunking.recommendedId ?? null;
 
       const res = planLights(geo.polygonFt, geo.fixturesFt,
-        { ...opt, chunkStrategy: chosenId || 'auto' }, geo.zonesFt);
+        { ...roomOpt, chunkStrategy: chosenId || 'auto' }, geo.zonesFt);
 
       const rectToPx = (c) => ({ ...c,
         x0: c.x0 * pxPerFt + origin.x, x1: c.x1 * pxPerFt + origin.x,
@@ -616,7 +632,7 @@ export default function App() {
     }
     return out;
   }, [source, pxPerFt, litOutlines, useBoundingRect, obstaclesPx, zoneList,
-      chunkOpt, chunkPicks, opt, enclosedZones]);
+      chunkOpt, chunkPicks, opt, enclosedZones, roomTypes]);
 
   // What the canvas draws: every zone, whoever it belongs to. The planner sees
   // the per-room subsets above; this is only for the eye.
