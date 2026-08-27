@@ -17,6 +17,7 @@ import { DEFAULTS, resolveOptions } from './planner.js';
 
 /** Planner dials to change from their documented defaults. */
 export const OVERRIDES = {
+  fanClearance: 1.0,
   // targetArea: 50,        // sqft one cell should cover
   // minWallDistance: 5.0,  // ft a large light keeps from the nearest wall
 };

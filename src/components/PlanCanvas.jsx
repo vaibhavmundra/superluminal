@@ -1,4 +1,6 @@
 import React, { forwardRef } from 'react';
+import { guideLine } from '../lib/snapGuides.js';
+import { CEILING_BY_ID, isRect } from '../lib/ceilingObjects.js';
 
 // ---------------------------------------------------------------------------
 // PlanCanvas — the finished drawing. EVERY room on it, not one.
@@ -16,6 +18,12 @@ const C = {
   region: '#16A34A', grid: '#6366F1', cell: '#6366F1',
   large: '#0A0A0A', small: '#6366F1', fan: '#DC2626', measure: '#B45309',
   zone: '#B45309',
+  // Controls are not drawing. Selection frames, grips and alignment guides are
+  // UI that happens to be rendered in the drawing's coordinate space, so they
+  // take the colour every editor uses for exactly that and never the colour of
+  // the object they are attached to — which would read as part of it.
+  grip: '#0D99FF',
+  guide: '#F0308C',
 };
 
 const PlanCanvas = forwardRef(function PlanCanvas(
@@ -23,11 +31,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     width, height, plans = [], focusId = null,
     fansPx = [], pxPerFt, layers, zoom, measure, onCanvasClick, toPx,
     zones = [], draftZone = null, zoneMode = false, onZoneDown, onZoneMove, onZoneUp,
-    cursor = null },
+    accents = [], objMode = false, selObjId = null, onObjPointerDown,
+    objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
+    selAccId = null, onAccPointerDown, cursor = null },
   ref
 ) {
   const s = pxPerFt || 1;
-  const lw = Math.max(width, height) / 900; // line weight that survives any image size
+  // THIN AND CRISP. This was /900 and everything on the drawing is a multiple
+  // of it, so the one number sets the weight of the whole sheet. A lighting
+  // layout is an overlay on somebody else's line work and should read as one —
+  // heavy strokes make it look like the plan is ours.
+  const lw = Math.max(width, height) / 1500;
   const laid = plans.filter((r) => r.plan?.ok);
 
   // each chunk draws its own outline plus its own interior grid lines —
@@ -135,17 +149,180 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         </g>
       )}
 
-      {layers.fan && fansPx.map((f, i) => (
-        <g key={'fan' + i}>
-          <circle cx={f.x} cy={f.y} r={f.r} fill="none" stroke={C.fan}
-            strokeWidth={lw * 1.6} strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.85" />
-          <circle cx={f.x} cy={f.y} r={lw * 3} fill={C.fan} />
-          {fansPx.length > 1 && layers.labels && (
-            <text x={f.x + f.r + lw * 3} y={f.y - f.r * 0.6} fontSize={(pxPerFt || 12) * 0.5}
-              fontFamily="JetBrains Mono, monospace" fill={C.fan} opacity="0.8">F{i + 1}</text>
-          )}
-        </g>
-      ))}
+      {/* --- what is already on the ceiling ---------------------------------
+          A fan, a chandelier and an AC cassette are three drawings of one
+          thing: a centre, a radius and the clearance the planner keeps round
+          it. The dashed circle is that clearance and it is drawn for all three
+          identically, because it IS identical — the difference between them is
+          entirely in the solid symbol inside it.
+
+          On a rectangular object the dashed circle is visibly bigger than the
+          body. That is not a drawing error, it is the circumscribed radius the
+          planner actually reserves, and showing it is the only way anyone would
+          know. See ceilingObjects.js. */}
+      {layers.fan && fansPx.map((f, i) => {
+        const sel = f.id != null && f.id === selObjId;
+        // HANDLES ARE A CONSTANT SIZE ON SCREEN — divided by the zoom — and that
+        // is most of why this reads as an editor rather than a drawing. The plan
+        // scales with the zoom; a grab target must not, or it is unusably small
+        // at 40% and a dinner plate at 300%.
+        const HS = (Math.max(width, height) / 145) / (zoom || 1);
+        const FW = (Math.max(width, height) / 1500) / (zoom || 1);
+        const grab = (mode) => (f.source === 'placed' && onObjPointerDown
+          ? { onPointerDown: (e) => onObjPointerDown(e, f.id, mode),
+              style: { cursor: mode === 'move' ? 'move' : 'grab' } }
+          : {});
+        const col = f.kind === 'chandelier' ? '#B45309'
+          : f.kind === 'ac' ? '#0F766E'
+          : f.kind === 'trapdoor' ? '#6D28D9' : C.fan;
+        const R = f.r || 0;
+        // The BODY's radius, which is NOT the clearance radius: on a rectangle
+        // the clearance circle is circumscribed and larger. The selection frame
+        // has to fit the body, because the body is what a resize changes.
+        const rect = f.kind === 'ac' || f.kind === 'trapdoor';
+        // The clearance, in plan pixels. Drawn as the offset of the body, so a
+        // circle keeps a ring and a rectangle keeps a rounded rectangle.
+        const CL = clearanceFt * (pxPerFt || 0);
+        const R0 = rect ? 0 : R;
+        return (
+          <g key={f.id ?? 'fan' + i} opacity={objMode && !sel && f.source === 'placed' ? 0.75 : 1}>
+            {/* WHAT IS ACTUALLY RESERVED, and it is not always a circle.
+                Clearance is measured to the object's own FACE, so the set of
+                points exactly `fanClearance` away from a rectangle is that
+                rectangle grown by the clearance with its corners rounded to
+                that same radius. Drawing the true offset rather than a circle
+                round everything is the only way the reserved area on screen is
+                the reserved area in the layout — and drawing a big circle round
+                a small cassette was how it came to be reserving one. */}
+            {rect ? (
+              <rect transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}
+                x={f.x - f.w / 2 - CL} y={f.y - f.h / 2 - CL}
+                width={f.w + CL * 2} height={f.h + CL * 2} rx={CL} ry={CL}
+                fill="none" stroke={col} strokeWidth={lw * 1.4}
+                strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
+            ) : (
+              <circle cx={f.x} cy={f.y} r={R + CL} fill="none" stroke={col}
+                strokeWidth={lw * 1.4} strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
+            )}
+
+            {f.kind === 'chandelier' ? (
+              <g stroke={col} strokeWidth={lw * 1.8} fill="none">
+                <circle cx={f.x} cy={f.y} r={R0 * 0.68} fill={col} fillOpacity="0.1" />
+                {[0, 1, 2, 3, 4, 5].map((k) => {
+                  const a = (k * Math.PI) / 3;
+                  return <circle key={k} cx={f.x + Math.cos(a) * R0 * 0.68}
+                    cy={f.y + Math.sin(a) * R0 * 0.68} r={lw * 2.4} fill="#fff" />;
+                })}
+                <circle cx={f.x} cy={f.y} r={lw * 2.2} fill={col} stroke="none" />
+              </g>
+            ) : (f.kind === 'ac' || f.kind === 'trapdoor') ? (
+              <g transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}>
+                <rect x={f.x - f.w / 2} y={f.y - f.h / 2} width={f.w} height={f.h}
+                  fill={col} fillOpacity="0.12" stroke={col} strokeWidth={lw * 2} />
+                <rect x={f.x - f.w / 2 + lw * 3} y={f.y - f.h / 2 + lw * 3}
+                  width={Math.max(0, f.w - lw * 6)} height={Math.max(0, f.h - lw * 6)}
+                  fill="none" stroke={col} strokeWidth={lw} opacity="0.6" />
+                {/* A trap door is crossed; a cassette gets a grille tick to say
+                    which way is up, so a rotation is legible at all. Two marks
+                    rather than one symbol at two sizes: on a printed sheet
+                    "small square" and "slightly smaller square" is not a
+                    distinction anyone can make. */}
+                {f.kind === 'trapdoor' ? (
+                  <g stroke={col} strokeWidth={lw * 1.2} opacity="0.7">
+                    <line x1={f.x - f.w / 2} y1={f.y - f.h / 2} x2={f.x + f.w / 2} y2={f.y + f.h / 2} />
+                    <line x1={f.x + f.w / 2} y1={f.y - f.h / 2} x2={f.x - f.w / 2} y2={f.y + f.h / 2} />
+                  </g>
+                ) : (
+                  <line x1={f.x} y1={f.y - f.h / 2} x2={f.x} y2={f.y - f.h / 2 + Math.min(f.w, f.h) * 0.28}
+                    stroke={col} strokeWidth={lw * 1.8} />
+                )}
+              </g>
+            ) : (
+              <g>
+                <circle cx={f.x} cy={f.y} r={lw * 3} fill={col} />
+                {[0, 1, 2].map((k) => {
+                  const a = (k * 2 * Math.PI) / 3 + Math.PI / 6;
+                  return <line key={k} x1={f.x} y1={f.y}
+                    x2={f.x + Math.cos(a) * R0 * 0.94} y2={f.y + Math.sin(a) * R0 * 0.94}
+                    stroke={col} strokeWidth={lw * 2.2} strokeLinecap="round" opacity="0.75" />;
+                })}
+              </g>
+            )}
+
+            {/* THE BODY IS THE MOVE TARGET. A filled hit area over the whole
+                footprint, not a ring round the middle: an object you can only
+                grab near its centre feels like it is dodging you. */}
+            {objMode && f.source === 'placed' && (
+              rect
+                ? <rect transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}
+                    x={f.x - f.w / 2} y={f.y - f.h / 2} width={f.w} height={f.h}
+                    fill="transparent" {...grab('move')} />
+                : <circle cx={f.x} cy={f.y} r={Math.max(R0, HS * 1.4)}
+                    fill="transparent" {...grab('move')} />
+            )}
+
+            {/* --- the selection frame ------------------------------------
+                Drawn in the object's OWN rotated frame, so it turns with the
+                thing rather than staying square to the page. The frame is
+                telling you what a resize will change; on a rotated object an
+                axis-aligned box would be lying about that. */}
+            {sel && (() => {
+              const hw = rect ? f.w / 2 : R0;
+              const hh = rect ? f.h / 2 : R0;
+              const deg = ((f.rot || 0) * 180) / Math.PI;
+              const stem = -hh - HS * 3.2;
+              return (
+                <g transform={`rotate(${deg} ${f.x} ${f.y})`}>
+                  <rect x={f.x - hw} y={f.y - hh} width={hw * 2} height={hh * 2}
+                    fill="none" stroke={C.grip} strokeWidth={FW} />
+
+                  {/* Rotate: a stem above the frame. Figma's invisible
+                      just-outside-the-corner region is undiscoverable without a
+                      hover cursor to teach it, so this one is drawn. */}
+                  {rect && (
+                    <g {...grab('rotate')}>
+                      <line x1={f.x} y1={f.y - hh} x2={f.x} y2={f.y + stem}
+                        stroke={C.grip} strokeWidth={FW} />
+                      <circle cx={f.x} cy={f.y + stem} r={HS * 0.55} fill="#fff"
+                        stroke={C.grip} strokeWidth={FW * 1.6} />
+                    </g>
+                  )}
+
+                  {[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy], k) => (
+                    <rect key={k}
+                      x={f.x + sx * hw - HS / 2} y={f.y + sy * hh - HS / 2}
+                      width={HS} height={HS} rx={HS * 0.18}
+                      fill="#fff" stroke={C.grip} strokeWidth={FW * 1.6}
+                      style={{ cursor: sx * sy > 0 ? 'nwse-resize' : 'nesw-resize' }}
+                      onPointerDown={(e) => onObjPointerDown?.(e, f.id, 'resize', { sx, sy })} />
+                  ))}
+                </g>
+              );
+            })()}
+
+            {/* The readout, only while the gesture is running: the number you
+                are actually setting, next to where you are looking. */}
+            {sel && objDragMode && (
+              <text x={f.x} y={f.y - (rect ? f.h / 2 : R0) - HS * 5}
+                textAnchor="middle" fontSize={HS * 1.1}
+                fontFamily="JetBrains Mono, monospace" fill={C.grip}>
+                {objDragMode === 'rotate'
+                  ? `${Math.round(((f.rot || 0) * 180) / Math.PI)}\u00B0`
+                  : rect
+                    ? `${Math.round((f.w / (pxPerFt || 1)) * 304.8)} \u00D7 ${Math.round((f.h / (pxPerFt || 1)) * 304.8)}`
+                    : `${Math.round((R0 * 2 / (pxPerFt || 1)) * 304.8)} \u2300`}
+              </text>
+            )}
+
+            {fansPx.length > 1 && layers.labels && (
+              <text x={f.x + (rect ? f.w / 2 : R0) + CL + lw * 3} y={f.y - (rect ? f.h / 2 : R0) * 0.6} fontSize={(pxPerFt || 12) * 0.5}
+                fontFamily="JetBrains Mono, monospace" fill={col} opacity="0.8">
+                {(f.kind || 'fan').slice(0, 1).toUpperCase()}{i + 1}
+              </text>
+            )}
+          </g>
+        );
+      })}
 
       {/* The lights. Tags are prefixed with the room once there is more than
           one, because L1 in the kitchen and L1 in the hall are two fittings and
@@ -197,6 +374,169 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         </g>
       ))}
 
+      {/* --- accent lighting -----------------------------------------------
+          THE FITTING IS THE DRAWING, the box is the working. A strip is a solid
+          red line with real ends, because the whole reason the model was asked
+          to box the OBJECT rather than the run was to get those two ends out of
+          the object's own extent — drawing it back as a box would throw away the
+          one thing that was hard to get. A sconce is a mark ON the wall it
+          projected onto.
+
+          The box stays visible behind it, faint and dashed, so what the model
+          said and what the geometry did with it are both on screen. When they
+          disagree — a run half the length of the wardrobe, a sconce snapped to
+          the wrong wall — that disagreement is the bug, and it is invisible if
+          only one of the two is drawn. */}
+      {layers.accents && accents.map((a) => {
+        const w = a.rect.x1 - a.rect.x0, h = a.rect.y1 - a.rect.y0;
+        const dim = a.rejected ? 0.35 : 1;
+        const accSel = a.id === selAccId;
+        // Constant on screen, like every other control. See the ceiling-object
+        // handles for the argument.
+        const AH = (Math.max(width, height) / 155) / (zoom || 1);
+        const AFW = (Math.max(width, height) / 1500) / (zoom || 1);
+        // THE SYMBOL'S GEOMETRY, WORKED OUT ONCE. It used to live inside the
+        // block that draws the sconce, which meant the hit area was put at
+        // `a.point` — on the WALL — while the symbol it was supposed to catch
+        // is drawn standing off into the room. You had to click the wall line
+        // to select a fitting you could see three feet away.
+        const SG = (a.point && a.inward) ? (() => {
+          const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
+          const { x: ix, y: iy } = a.inward;
+          const stand = R * 2.6;
+          return {
+            R, stand, arm: R * 1.7, ix, iy,
+            ux: a.along?.x ?? -iy, uy: a.along?.y ?? ix,
+            cx: a.point.x + ix * stand, cy: a.point.y + iy * stand,
+          };
+        })() : null;
+        return (
+          <g key={a.id} opacity={dim}>
+            {/* The box behind the fitting is the working, and it is worth seeing
+                — a run half the length of the wardrobe is a bug you can only
+                catch by looking at both. But a rule-derived sconce's box is
+                NOMINAL: it was synthesised round a point that came from the
+                bed's geometry, so drawing it claims an extent the fitting does
+                not have, straddling the wall. Shown for a strip, whose box is
+                the real furniture; hidden for a sconce that came from a rule. */}
+            {accSel && a.run && (
+              <line x1={a.run[0].x} y1={a.run[0].y} x2={a.run[1].x} y2={a.run[1].y}
+                stroke={C.grip} strokeWidth={AFW * 5} strokeLinecap="round" opacity="0.28" />
+            )}
+            {!(a.type === 'sconce' && a.side) && (
+              <rect x={a.rect.x0} y={a.rect.y0} width={w} height={h}
+                fill={a.colour} fillOpacity={a.rejected ? 0.05 : 0.07}
+                stroke={a.colour} strokeWidth={lw * 1.4} strokeOpacity={a.rejected ? 0.8 : 0.4}
+                strokeDasharray={`${lw * 4} ${lw * 4}`} rx={lw * 2} />
+            )}
+
+            {/* the run: a strip, with the ends the object gave it */}
+            {a.run && (() => {
+              const [p0, p1] = a.run;
+              const L = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+              // The end caps are perpendicular ticks, so a run reads as having
+              // a definite start and stop rather than fading into the wall.
+              const nx = -(p1.y - p0.y) / L, ny = (p1.x - p0.x) / L;
+              const t = lw * 4;
+              return (
+                <g style={{ pointerEvents: 'none' }}>
+                  <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
+                    stroke={a.colour} strokeWidth={lw * 4.5} strokeLinecap="round" />
+                  {[p0, p1].map((p, i) => (
+                    <line key={i} x1={p.x - nx * t} y1={p.y - ny * t}
+                      x2={p.x + nx * t} y2={p.y + ny * t}
+                      stroke={a.colour} strokeWidth={lw * 1.8} strokeLinecap="round" />
+                  ))}
+                </g>
+              );
+            })()}
+
+            {/* the point: a sconce.
+                A crosshair STANDING OFF ITS WALL, not sitting astride it. The
+                long stem touches the wall and nothing else does: the fitting is
+                fixed to that surface and hangs in the room, so a symbol centred
+                on the line would be drawn half inside the wall — and, on an
+                external wall, half in next door.
+                The stem is the bracket, so it is what points at the wall; the
+                other three arms are equal and the whole thing turns with the
+                surface. Lines cross the circle rather than stopping at it, over
+                a white ground so it stays legible on top of the plan's own line
+                work. */}
+            {SG && (() => {
+              const { R, arm, ix, iy, ux, uy, cx, cy } = SG;
+              return (
+                <g style={{ pointerEvents: 'none' }}>
+                  <circle cx={cx} cy={cy} r={R} fill="#fff" />
+                  <g stroke={a.colour} strokeWidth={lw * 1.8} strokeLinecap="round">
+                    {/* the stem: from the wall, through the circle, out the far side */}
+                    <line x1={a.point.x} y1={a.point.y}
+                      x2={cx + ix * arm} y2={cy + iy * arm} />
+                    {/* the cross bar, lying along the wall */}
+                    <line x1={cx - ux * arm} y1={cy - uy * arm}
+                      x2={cx + ux * arm} y2={cy + uy * arm} />
+                  </g>
+                  <circle cx={cx} cy={cy} r={R} fill="none"
+                    stroke={a.colour} strokeWidth={lw * 2.1} />
+                </g>
+              );
+            })()}
+
+            {/* --- editing -------------------------------------------------
+                DRAWN LAST, and that is not a detail. SVG paints in document
+                order and hit-tests the topmost thing under the pointer, so a
+                transparent grab area drawn BEFORE the symbol is covered by the
+                symbol's own white ground — the click lands on a shape with no
+                handler, bubbles to the canvas, and deselects instead of
+                selecting. Which is exactly what it did.
+
+                Both gestures are ONE-DIMENSIONAL: a sconce slides along its
+                wall, a strip's ends slide along its run. Neither can leave the
+                surface it is fixed to. */}
+            {a.run && onAccPointerDown && !a.rejected && (
+              <g>
+                <line x1={a.run[0].x} y1={a.run[0].y} x2={a.run[1].x} y2={a.run[1].y}
+                  stroke="transparent" strokeWidth={AH * 1.6} strokeLinecap="round"
+                  style={{ cursor: 'pointer' }}
+                  onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'select')} />
+                {accSel && a.run.map((q, k) => (
+                  <rect key={k} x={q.x - AH / 2} y={q.y - AH / 2} width={AH} height={AH}
+                    rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
+                    style={{ cursor: 'move' }}
+                    onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, k === 0 ? 'end0' : 'end1')} />
+                ))}
+              </g>
+            )}
+
+            {SG && accSel && a.wall && (
+              /* The wall it may slide along, so the constraint is visible
+                 rather than discovered. */
+              <line x1={a.wall.a.x} y1={a.wall.a.y} x2={a.wall.b.x} y2={a.wall.b.y}
+                stroke={C.grip} strokeWidth={AFW} strokeDasharray={`${AFW * 4} ${AFW * 4}`}
+                opacity="0.7" style={{ pointerEvents: 'none' }} />
+            )}
+            {SG && onAccPointerDown && !a.rejected && (
+              <circle cx={SG.cx} cy={SG.cy}
+                r={Math.max(SG.R * 1.7, AH * 1.1)} fill="transparent"
+                style={{ cursor: 'move' }}
+                onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'slide')} />
+            )}
+            {SG && accSel && (
+              <rect x={SG.cx - AH / 2} y={SG.cy - AH / 2} width={AH} height={AH}
+                rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
+                style={{ cursor: 'move' }}
+                onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'slide')} />
+            )}
+
+            {/* NO TEXT. The symbols carry it: a red line is a strip and a
+                crosshair on a wall is a sconce, and a drawing that has to
+                caption its own symbols has the wrong symbols. What the fitting
+                is, why it is there and how long it runs are all in the panel,
+                where there is room to say it properly. Rejected zones are drawn
+                faint and listed there with their reason. */}
+          </g>
+        );
+      })}
+
       {/* Room names, on the same switch as the light tags: both are annotation,
           and both are in the way when what you want to see is the layout. */}
       {layers.labels && laid.length > 1 && laid.map((r) => {
@@ -209,6 +549,70 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             fill={C.region} opacity="0.65">{r.name || 'Room'}</text>
         );
       })}
+
+      {/* --- alignment guides ------------------------------------------------
+          Momentary: they exist only while something is being dragged or
+          placed, which is the only time they mean anything. A guide that
+          stayed on screen would be a drawn line, and there are enough of
+          those.
+
+          Each one stops at the thing it came from rather than running the full
+          width of the sheet — a line that ends at the room it is about is a
+          line that says which room it is about. */}
+      {guides.map((g, i) => {
+        const l = guideLine(g, Math.max(width, height) * 0.012);
+        return (
+          <g key={'gd' + i}>
+            <line {...l} stroke={C.guide} strokeWidth={lw * 1.1}
+              strokeDasharray={`${lw * 6} ${lw * 4}`} opacity="0.9" />
+            {layers.labels && (
+              <text x={g.axis === 'x' ? g.value + lw * 4 : l.x1 + lw * 4}
+                y={g.axis === 'x' ? l.y1 + lw * 10 : g.value - lw * 4}
+                fontSize={Math.max(width, height) / 130}
+                fontFamily="JetBrains Mono, monospace" fill={C.guide} opacity="0.85">
+                {g.label}
+              </text>
+            )}
+          </g>
+        );
+      })}
+
+      {/* Where an armed object would land. Shown before the click, because that
+          is when it is still useful to know. */}
+      {ghost && pxPerFt && (() => {
+        const t = CEILING_BY_ID[ghost.typeId];
+        if (!t) return null;
+        const col = t.colour;
+        const r = (isRect(t) ? Math.hypot(t.wFt, t.hFt) / 2 : (t.diaFt || 0) / 2) * pxPerFt;
+        return (
+          <g opacity="0.55">
+            {isRect(t) ? (
+              <rect x={ghost.x - (t.wFt * pxPerFt) / 2 - clearanceFt * pxPerFt}
+                y={ghost.y - (t.hFt * pxPerFt) / 2 - clearanceFt * pxPerFt}
+                width={t.wFt * pxPerFt + clearanceFt * pxPerFt * 2}
+                height={t.hFt * pxPerFt + clearanceFt * pxPerFt * 2}
+                rx={clearanceFt * pxPerFt} ry={clearanceFt * pxPerFt}
+                fill="none" stroke={col} strokeWidth={lw * 1.2}
+                strokeDasharray={`${lw * 4} ${lw * 4}`} />
+            ) : (
+              <circle cx={ghost.x} cy={ghost.y} r={r + clearanceFt * pxPerFt} fill="none"
+                stroke={col} strokeWidth={lw * 1.2} strokeDasharray={`${lw * 4} ${lw * 4}`} />
+            )}
+            {isRect(t) ? (
+              <rect x={ghost.x - (t.wFt * pxPerFt) / 2} y={ghost.y - (t.hFt * pxPerFt) / 2}
+                width={t.wFt * pxPerFt} height={t.hFt * pxPerFt}
+                fill={col} fillOpacity="0.1" stroke={col} strokeWidth={lw * 1.4} />
+            ) : (
+              <circle cx={ghost.x} cy={ghost.y} r={r * 0.6} fill={col} fillOpacity="0.1"
+                stroke={col} strokeWidth={lw * 1.4} />
+            )}
+            <line x1={ghost.x - r * 0.3} y1={ghost.y} x2={ghost.x + r * 0.3} y2={ghost.y}
+              stroke={col} strokeWidth={lw} />
+            <line x1={ghost.x} y1={ghost.y - r * 0.3} x2={ghost.x} y2={ghost.y + r * 0.3}
+              stroke={col} strokeWidth={lw} />
+          </g>
+        );
+      })()}
 
       {measure?.a && (
         <g stroke={C.measure} strokeWidth={lw * 2} fill={C.measure}>

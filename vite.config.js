@@ -1,15 +1,20 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The detection endpoint is a Vercel function in production. In dev there is no
-// Vercel, so we mount THE SAME MODULE as middleware rather than writing a
-// second implementation that can drift from the first. The key is read from
-// .env.local into process.env here and never reaches the client bundle.
-function detectApi(env) {
+// The API endpoints are Vercel functions in production. In dev there is no
+// Vercel, so we mount THE SAME MODULES as middleware rather than writing a
+// second implementation that can drift from the first. The keys are read from
+// .env.local into process.env here and never reach the client bundle.
+function apiRoutes(env) {
+  // One middleware per handler file. `/api/accents` is a second endpoint rather
+  // than a third branch of the first — see the header of api/accents.js — so it
+  // needs mounting here too, and mounting it by hand a second time is how the
+  // dev server and production quietly end up with different route lists.
+  const ROUTES = [['/api/detect', '/api/detect.js'], ['/api/accents', '/api/accents.js']];
   return {
-    name: 'detect-api',
+    name: 'api-routes',
     configureServer(server) {
-      // Every server-side name the handler reads. A key missing here does not
+      // Every server-side name the handlers read. A key missing here does not
       // fail loudly — it fails as "the provider is not configured" on a machine
       // where .env.local plainly contains it, which is a bad hour.
       for (const k of ['ROBOFLOW_INFERENCE_KEY', 'ROBOFLOW_WORKFLOW_URL',
@@ -17,19 +22,21 @@ function detectApi(env) {
                        'OPENAI_API_KEY', 'OPENAI_VISION_MODEL']) {
         if (env[k] && !process.env[k]) process.env[k] = env[k];
       }
-      server.middlewares.use('/api/detect', async (req, res, next) => {
-        try {
-          const { default: handler } = await server.ssrLoadModule('/api/detect.js');
-          await handler(req, res);
-        } catch (err) {
-          server.config.logger.error(`[detect] ${err.stack || err}`);
-          if (!res.headersSent) {
-            res.statusCode = 500;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: String(err.message || err) }));
-          } else next(err);
-        }
-      });
+      for (const [route, file] of ROUTES) {
+        server.middlewares.use(route, async (req, res, next) => {
+          try {
+            const { default: handler } = await server.ssrLoadModule(file);
+            await handler(req, res);
+          } catch (err) {
+            server.config.logger.error(`[${route}] ${err.stack || err}`);
+            if (!res.headersSent) {
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: String(err.message || err) }));
+            } else next(err);
+          }
+        });
+      }
     },
   };
 }
@@ -39,7 +46,7 @@ export default defineConfig(({ mode }) => {
   // used only inside configureServer, so they stay out of the bundle.
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), detectApi(env)],
+    plugins: [react(), apiRoutes(env)],
     base: './',
     server: { port: 5178, host: true },
   };

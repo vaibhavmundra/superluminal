@@ -1453,6 +1453,427 @@ and columns, lights covering four boxes, large lights off the midpoint — was
 instrumentation for tuning the planner, and the planner is no longer tuned from
 the screen. It is all still in the JSON export and in `plan.stats`.
 
+## Ceiling objects: a chandelier is a fan with a different drawing
+
+The right-hand panel places four things on the ceiling for the grid to work
+around:
+
+| | | |
+|---|---|---|
+| **Fan** | 900 or 1200 sweep | |
+| **Chandelier** | freely resizeable | corner handles |
+| **AC unit** | dimensions in mm | resize and rotate |
+| **Trap door** | dimensions in mm | resize and rotate |
+
+An AC cassette and a trap door differ in what they are called, what they are
+drawn as and what size they default to — and in nothing else; `isRect` is the
+only distinction any of the maths makes. They are drawn with two different marks
+rather than one mark at two sizes, because on a printed sheet "small square" and
+"slightly smaller square" is not a distinction anyone can make.
+
+**They are not a new kind of obstacle.** The planner is built round the fan — a
+centre, a radius, `fanClearance` on top, and a soft anchor the grid tries to
+line up with — and it tests for one in seven separate places. A second kind of
+obstacle would mean a second path through all seven. So everything here resolves
+to `{ x, y, r }` and goes in as `type: 'fan'`. The planner is never told the
+difference; only the canvas draws them apart. `tools/test-ceiling.mjs` asserts
+that a cassette and a fan of the same radius produce a byte-identical layout,
+which is the whole claim.
+
+**Clearance is measured to the object's FACE**, not to a circle round it.
+`surfaceDistance` in planner.js is the signed distance from a point to the
+obstacle's surface: for a circle that is `hypot − r`, and for a rectangle it is
+the point rotated into the object's own frame and the offset that falls outside
+it on each axis. Six sites in the planner used to test `hypot(q − f) < f.r +
+fanClearance`; they now all test `surfaceDistance(f, q) < fanClearance`, and
+`fanClearance` finally means what it says.
+
+> **It was circumscribed, and that was wrong enough to matter.** A rectangular
+> object used to be handed the circle that contained it — half its diagonal —
+> which is right at the corners and badly wrong along the flats. A 900 × 900
+> cassette reserved 636mm in every direction where its own face is 450mm out; a
+> 1200 × 600 trap door reserved 670mm along an edge that is 300mm away. On a
+> tight ceiling that is a whole row of downlights refused for nothing. The exact
+> answer is four lines of arithmetic and no slower.
+
+The set of points exactly `fanClearance` from a rectangle is that rectangle
+grown by the clearance with its corners rounded to that same radius — which is
+what the canvas draws. **What you see reserved is what is reserved**, and
+drawing a big circle round a small cassette is how it came to be reserving one.
+
+A fixture with no `shape` is a circle, so every fan the red-circle detector ever
+found behaves exactly as it did.
+
+Rotation is now real geometry rather than documentation: turning a 1200 × 600
+trap door genuinely moves which side of it a light can sit on, and the offset
+outline turns with it.
+
+### Outside a room, nothing is active
+
+The canvas is bigger than the rooms on it — margin, rooms nobody is lighting,
+the rest of the sheet — and a tool that stays armed out there is a tool that
+drops a fan in the garden because you clicked to dismiss something. So the
+surrounding canvas is **dead space that cancels rather than acts**: a click out
+there disarms the palette and clears the selection, and does nothing else. The
+cursor reverts from a crosshair to a pointer as you cross the boundary, which is
+the cursor's job — saying what a click will do before it is spent.
+
+### The palette, and momentary alignment
+
+Four symbols in a row, not a dropdown. A dropdown asks you to read four words
+and commit before you can see what you picked; these are drawn objects, the
+symbol *is* the name, and the mark on the button is the mark that lands on the
+plan. Clicking one arms it — there is no separate "place" button, because
+picking the thing is already asking to place it.
+
+A fan's **sweep** (900 or 1200) appears only when a fan is in play, armed or
+selected. It is the one property of the four that is a standard size rather than
+something to drag to.
+
+**Guides appear while you place and while you drag**, not after. As the object's
+centre comes within a few pixels of lining up with something meaningful, it
+clicks onto that line and the line briefly draws itself, so you can see what you
+aligned to and why it moved. Today two sources are wired up — the centre of a
+room, and the centre of another ceiling object — but `snapGuides.js` is shaped
+for more of them: a source returns TARGETS, a target is
+`{ axis, value, span, kind, label }`, and everything after that is the same code
+however many sources there are. Edges, thirds, equal spacing and the lights
+themselves are each a new entry in `collectTargets` and nothing else.
+
+Four decisions in there that are not obvious:
+
+- **The two axes snap independently.** A point can be dead on a room's vertical
+  centreline while being nowhere near anything horizontally, and that is a real,
+  useful alignment. Requiring both would make the snap almost never fire.
+- **The object's centre snaps, not the pointer.** Snap the pointer and the same
+  drag lands differently depending on where inside the object you picked it up.
+- **The tolerance is in screen pixels**, converted by the caller. Snapping that
+  gets stickier as you zoom in fights you: it should engage when two things
+  *look* aligned, and how aligned they look is a property of the screen.
+- **A guide stops at the thing it came from.** A line that ends at the room it is
+  about is a line that says which room it is about.
+
+### Direct manipulation, and the copy bug
+
+Drag to move. Four corner handles resize — **Shift** keeps the ratio, **Alt**
+resizes from the centre. The stem above an AC unit rotates it, freely, with
+**Shift** snapping to 15°. **Del** removes, **Esc** deselects. *Add to plan* arms
+a single placement and disarms itself once you have dropped one, the way a shape
+tool returns to the pointer.
+
+Three things make the difference between this feeling like an editor and feeling
+like a drawing you are poking at, and all three are worth writing down because
+none is obvious:
+
+**The opposite corner does not move.** Grab the bottom-right and the top-left
+stays nailed down, so the object grows under your hand. Resizing about the
+*centre* is the easier thing to write — and is what this did first — and it makes
+the object appear to run away from the pointer at half speed in the wrong
+direction. Alt is how you ask for centre-anchored behaviour deliberately.
+
+**Grips are blue, and the drawing is not.** Selection frames, handles and
+guides are UI that happens to be rendered in the drawing's coordinate space, so
+they take the colour every editor uses for exactly that — never the colour of
+the object they are attached to, which would read as part of it.
+
+**Handles are a constant size on screen.** Everything else on this canvas is
+drawing and scales with the zoom; a control is not drawing. Without the `/ zoom`
+a handle is unusably small at 40% and a dinner plate at 300%.
+
+**Resize and rotate happen in the object's own frame**, so the selection box
+turns with a rotated cassette instead of staying square to the page. The box is
+telling you what a resize will change; on a rotated object an axis-aligned box
+would be lying about that.
+
+> **The copy bug**, because it is a trap anyone would fall into twice. Placement
+> used to live on the canvas's `onClick`, and the handles called
+> `e.stopPropagation()` on **pointerdown**. Those are two different events:
+> stopping the pointerdown does nothing whatsoever to the click the browser
+> synthesises afterwards. So every drag ended with a click bubbling up to the
+> canvas, and the canvas dutifully placed a second object on top of the one you
+> had just moved.
+>
+> The fix is not another `stopPropagation`. It is that the whole gesture now
+> lives in the pointer events, with **nothing on click at all**. Pointerdown
+> bubbles child-first, so a handle stopping it means the canvas genuinely never
+> hears about it, and there is no second event left to leak.
+>
+> The same conflation was in the state: one flag was both "editing" and
+> "placing", so the tool that let you move something also placed a new one on
+> any click, and a click that missed by a pixel added an object instead of
+> selecting one. Those are now `objMode` and `armed`.
+
+The gesture maths lives in `ceilingObjects.js` and is pure — which point stays
+still and what the modifier does is arithmetic, not something React should be
+deciding inline, and `tools/test-ceiling.mjs` checks it with no pointer
+involved.
+
+**Held in feet, not pixels**, and kept in a list of their own rather than in
+`fans`. A fan the red-circle detector found *has* to be pixels — that is all it
+knows — and it doubles as the ruler the whole raster drawing is scaled from, so
+dropping a hand-placed chandelier into that list would change the plan's scale
+when you added a light fitting. An object someone placed is a real thing of a
+real size; feet is what keeps it that size when the scale is corrected
+underneath it. The two lists meet in `obstaclesPx` and nowhere earlier.
+
+## Accent lighting: the model marks the region, the code places the fitting
+
+Everything above this is the AMBIENT layer — a grid, and a light at the centre
+of every cell. This is the layer on top of it, and it places exactly **two
+things**: a **wall sconce** and an **LED strip**. Pick a room, press the button,
+and a vision model reads the plan and applies the house rules.
+
+It is asked **room by room**, because the image that goes over the wire is one
+room with the rest of the sheet dimmed away behind it.
+
+### Why this can be asked of a model when "where exactly is the bed" could not
+
+[The other detector](#the-other-detector-asking-gpt-for-the-bounds) spends its
+header explaining that a vision model cannot measure — no spatial regression
+head, several percent of error, which on a 20 ft room is a foot. All still true.
+What changed is the question.
+
+An ambient downlight is placed at a POINT. An accent fixture never is: it is
+placed ON something. So what comes back is a **region containing the right wall
+or the right object**, and the position is derived from that region afterwards
+by code that can measure. **A region absorbs the error a point propagates** — a
+box 20% too big still contains the right wall. That is the whole architecture.
+
+It also means the model never has to name anything. No wall labels are burned
+onto the image and there is no legend to read: it circles a region, which is
+recognition, and the geometry code does the naming. A model cannot hallucinate
+`W9` in a six-wall room if it is never asked for a wall's name.
+
+### The strip problem, and why the model boxes the furniture
+
+A sconce is a point, and a box round a point is nearly the answer already. **A
+strip is a line, and a box round a line does not say where the line starts or
+stops.** Circle the wall behind a TV and you have six feet of wall and no run.
+
+The instinct is to ask the model to *draw* the strip in red and read the colour
+back out. **It cannot.** The vision API is read-only — an image goes in, text
+comes out — and the only thing that returns an image is the *generation* model,
+which re-synthesises the whole picture: a convincing floor plan that is not your
+floor plan, with the walls moved. Same wall this README hits in [Measuring it
+instead of arguing about it](#measuring-it-instead-of-arguing-about-it).
+
+So the question is turned round. A strip never runs along an arbitrary line — it
+runs along an **object**: the TV unit, the wardrobe, the vanity. That object has
+an extent, and **that extent is where the strip starts and stops**. So the model
+is asked to box the object, which is recognition, and `accentPlace.js` projects
+the object onto the wall it stands against. The projection *is* the run. The two
+numbers nobody could estimate fall out of the drawing for free.
+
+| type | role | the box means | what the code derives |
+|---|---|---|---|
+| `sconce` | `fixture` | where the fitting goes — must straddle a wall | the point on that wall, and the mirror of its pair |
+| `strip` | `target` | **the object it runs along**, all four sides | the run: start, end, length, offset |
+
+**The role is not taken from the reply.** It is derived from the type through
+`ROLE_BY_TYPE` — a model that mislabelled it would turn the wardrobe into a
+place to hang a sconce, and nothing on screen would say so.
+
+### The rules are applied in code, and that is a repair
+
+The five house rules were in the prompt, stated to the model, and trusted:
+
+1. **a bed** — a sconce on both sides, as a symmetric pair
+2. **a sofa** — nothing. Never a sconce beside a sofa
+3. **a bathroom basin** — a sconce on both sides, as a symmetric pair
+4. **a TV unit** — an LED strip, and only a strip. Never a sconce
+5. **a wardrobe in a bedroom** — an LED strip
+
+To stop the model inventing work around them, the prompt also said *"where none
+of the rules applies, recommend NOTHING"* and *"an empty list is a valid and
+often correct answer"*. **Those two sentences broke it.** Rooms that had been
+producing a scheme started coming back empty.
+
+The suppression was the escape hatch, not the cause. The cause is that the
+prompt asked for three jobs in one call — identify the furniture, apply five
+rules to it, and lay the fixtures out as boxes — and *identifying a wardrobe on
+a line drawing is genuinely hard*. A model unsure whether that rectangle is a
+wardrobe cannot half-apply rule 5. It has one bit to give, it was handed a
+polite way to give zero, and it took it.
+
+**So the jobs are separated: the model recognises, the code decides.** The
+prompt now asks one question — what furniture is in this room and where — which
+is the question [the bed detector](#finding-the-bed-for-you) next door already
+answers well, phrased the same way and with the same kind of "here is what one
+looks like in plan" guidance for each piece. `accentPlace.js` then applies the
+five rules to that list, deterministically. A wardrobe found is a strip, always.
+
+Three things fall out of the split beyond it working:
+
+- **The rules are testable with no network.** `tools/test-accents.mjs` asserts
+  all five, and asserts the prompt does not contain the sentences that broke it.
+- **An empty answer is now diagnosable.** There are exactly two ways to get one
+  — it found no furniture, or it found furniture no rule fires on — and the
+  panel lists what it found, so the two are one glance apart. Every piece is
+  reported whether it produced a fitting or not, so a sofa reads as *"seen, rule
+  2 says nothing"* rather than as silence.
+- **A bedside sconce is placed from the bed's own geometry** — a fixed step past
+  either end of the bed along the wall its head is against. Symmetric by
+  construction, where before it was two independent boxes drawn by eye that then
+  had to be mirrored back into line.
+
+A model that is unsure is now told to *answer anyway, with a low confidence* —
+the number is carried through and shown, and a person can throw it out in one
+click. What it must still never do is promote a dining table into a TV unit to
+avoid returning nothing. That distinction — *wrong is worse than unsure; unsure
+is much better than nothing* — is the one the bed prompt already draws, and
+getting it backwards is what this section is about.
+
+### What goes over the wire: one room, the rest of the sheet dimmed
+
+The whole plan is the wrong thing to send: on a four-bedroom sheet the room being
+asked about is an eighth of the frame, so a box given as fractions of the whole
+image resolves at eight times the error it needs to, and the model's attention is
+spread over seven rooms nobody asked about. So `accentMask.js` crops to the room
+plus a tenth, pads the short axis toward the long one (a 20 × 4 ft corridor
+cropped to its own bounds is a letterbox, and a letterbox starves one axis of
+patch tokens), and washes everything outside the room polygon back to 12%.
+
+Cropping for **attention** buys **accuracy** for nothing: a fraction of a cropped
+image is worth far fewer feet than a fraction of the sheet.
+
+**Washed, not erased, and that is a measured result rather than a preference.**
+Flat white was tried — the argument being that a faint neighbouring wardrobe is
+purely a thing to be mistaken for this room's — and it came back *worse*. The
+likely why: a room cut out of a white void gives the model nothing to read the
+drawing's own conventions from. Wall poché, door swings, the weight of a
+furniture line are all calibrated against the rest of the sheet, and a room in
+isolation is a handful of rectangles that could be anything at any scale. The
+ghost is not context for its own sake — it is what says *this is a floor plan,
+drawn like this*.
+
+Two things are drawn on, and each earns its place:
+
+- **the room boundary**, a thin green line, so "the room" is not left to be
+  inferred from where the wash happens to stop
+- **the ambient lights already laid out**, as small grey circles. Without them
+  the model puts a fitting where a downlight already hangs, and there is nothing
+  in the picture to tell it not to.
+
+Nothing else. `gridPixels` lost because an overlay dense enough to be precise
+buries the line work under it; dimming what was not asked about adds no ink at
+all.
+
+The panel shows the sent image, and that is not decoration: a crop that landed on
+the wrong room, or a mask that dimmed the wrong side, produces a confident answer
+about somewhere else, and there is nothing in a list of zones that could tell you
+so.
+
+> **Renders are gone.** The first version took a couple of photographic renders
+> of the room alongside the plan and asked the model which wall each one faced.
+> It read *worse* than the plan alone — the correspondence was the weak link, and
+> a recommendation pinned to the wrong wall is worse than one never made. The
+> plan-only arm was built as the honest baseline to compare against, and it won.
+
+### Symmetry is enforced after placement
+
+Two sconces either side of a bed are two independent boxes drawn by eye, so they
+snap to two slightly different points along the wall. **Four inches out of line
+is the most visible failure this feature can produce** — nobody checks whether a
+strip is the right length; everybody sees a crooked pair. So a `group` of two on
+the **same wall** is mirrored about its own midpoint afterwards.
+
+Only on the same wall. Two sconces the model grouped across different walls are
+not a mirror pair whatever it called them, and averaging them would put both
+somewhere neither belongs.
+
+### Everything the model proposes is editable
+
+A fitting is a starting point, not a verdict. The furniture reading and the
+rules are both going to be wrong sometimes in ways only the person looking at
+the drawing can see — the wardrobe runs behind a beam, the bedside table is not
+where the plan says — so every fitting can be moved by hand.
+
+- a **sconce** slides along its wall
+- a **strip's two ends** slide along its run, independently
+
+**Both gestures are one-dimensional, and that is the design.** A sconce mounts
+on a wall and a strip runs along one; neither can leave its wall without
+becoming a different thing. So a drag projects onto the wall's own line: the
+fitting cannot be pulled into the middle of the room, cannot go crooked, and
+cannot come off the surface it is fixed to. You get exactly the freedom the real
+fitting has and no more. A strip's ends cannot cross either — dragging one
+through the other pins it a hair short, because a run of negative length is not
+a thing and one that silently flips direction is worse.
+
+> **Two bugs worth writing down**, because both are the same mistake in
+> different clothes and SVG invites it. The grab area for a sconce was placed at
+> `a.point` — on the wall — while the symbol it was meant to catch is drawn
+> STANDING OFF the wall into the room, so you had to click a wall line to select
+> a fitting you could see three feet away. And it was drawn BEFORE the symbol:
+> SVG paints in document order and hit-tests the topmost thing under the
+> pointer, so the symbol's own white ground covered it, the click landed on a
+> shape with no handler, bubbled up to the canvas, and *deselected* instead of
+> selecting.
+>
+> So the symbol's geometry is worked out once, above both, and the grab areas
+> are drawn LAST with the symbols marked `pointer-events: none`. A control has
+> to be the topmost thing where it looks like it is, and neither of those is
+> automatic.
+
+A hand-moved sconce is marked `edited` and drops out of its mirrored pair: it is
+where somebody put it, and the mirroring pass should not claim credit for a
+position it did not choose.
+
+A **refused** fitting stays uneditable. It has a wall — that is how it worked
+out it was too far from one — but no position, and letting a drag give it one
+would resurrect a fitting the placement pass declined to make, with none of the
+checks that would have applied.
+
+> The gesture maths is easiest to get wrong in one specific way, so
+> `tools/test-accent-edit.mjs` checks invariants rather than coordinates: a
+> wall's own frame runs whichever way the polygon happened to wind, so "further
+> along the wall" can be a *smaller* y. Stayed on the wall, never inverted,
+> other end untouched — those hold regardless of winding.
+
+### No text on the drawing
+
+The fittings carry no labels. A red line is a strip and a crosshair on a wall is
+a sconce, and a drawing that has to caption its own symbols has the wrong
+symbols. What a fitting is, why it is there, how long it runs and whether it was
+moved by hand are all in the panel, where there is room to say it properly.
+
+### Rejections are sentences
+
+A box that cannot be placed comes back with a reason and is drawn faint on the
+canvas rather than dropped: *"That box is out in the middle of the floor — a
+sconce has to be on a wall."* Snapping it to whichever wall happened to be
+nearest would produce a confident fitting nobody asked for.
+
+The box stays visible behind the fitting, faint and dashed. When the two disagree
+— a run half the length of the wardrobe, a sconce on the wrong wall — **that
+disagreement is the bug**, and it is invisible if only one of the two is drawn.
+
+### The eval this hands you, and it isn't IoU
+
+A box only has to get **one** thing right — which wall, or which object — so:
+
+- **rejection rate** — fully automatic, no ground truth at all
+- **run length vs the real furniture** — one measurement per strip, and it is the
+  number that says whether boxing the object worked
+- **rule agreement** — did it fire the rule you would have, on the furniture you
+  would have called it? Categorical, seconds to label
+
+Choosing a representation with slack in it is what made the measurement cheap.
+
+### Reading the run
+
+`OPENAI_API_KEY`, and optionally `OPENAI_VISION_MODEL`. No new keys.
+
+```
+[accents 4b1c] -> 41KB — room 840x840, room="Master Bedroom", gpt-5.5
+[accents 4b1c] <- openai 200 in 9840ms
+[accents 4b1c] == 3 zone(s): sconce, sconce, strip
+```
+
+The browser console carries the crop as a `data:` URL you can open in a tab, the
+placed runs and points in plan pixels, and — when a run comes back empty — the
+model's own words, which is invisible in the parsed payload.
+
 ## Known limits (v1)
 
 - The chunking strategies are a fixed list of six, not a search over every
@@ -1469,7 +1890,15 @@ the screen. It is all still in the JSON export and in `plan.stats`.
   comes in from a DXF correctly and then gets stepped, so a bay window becomes
   a staircase of small treads — right for the grid, ugly on the drawing.
 - Beams, diffusers and sprinklers aren't read from the plan automatically; only
-  the fan is. Mark them by hand as no-light zones.
+  the fan is. Place them by hand as ceiling objects, or mark them as no-light
+  zones.
+- **Clearance is uniform on every face.** `fanClearance` is one number, so the
+  ends of a long object keep the same distance as its sides. That is usually
+  right and occasionally not — a linear diffuser wants more at the ends than
+  along its length — and there is nowhere to say so.
+- **Snapping has two sources**, room centres and other objects' centres. Edges,
+  thirds and equal spacing are each one entry in `collectTargets` and are not
+  built.
 - A fan sitting near a cell centre is handled in three stages: the grid tries
   to avoid creating such a cell at all, then the matching tries to cover it with
   a large light, then — failing both — the cell is ceded. With **one** fan in
@@ -1525,6 +1954,47 @@ the screen. It is all still in the JSON export and in `plan.stats`.
   would rather the rest of the row could get there.
 - Scale from the fan carries the stroke width of your drawn circle (~2–4% high).
   Use Measure if you need it tighter. A DXF has no such error.
+
+### Known limits of the accent zones
+
+- **Two fixtures only** — a sconce and a strip. Coves, picture lights, ceiling
+  spots, wall washers and uplights are refused by the parser and reported as
+  dropped. They were in the vocabulary and came out: a fixture is only worth
+  offering once there is a placement rule behind it.
+- **The model cannot draw.** Everything it knows about the strip's position has
+  to arrive as a box round an object, because the vision API returns text. A
+  strip along a plain wall with no furniture on it is therefore not askable —
+  there is nothing to take the extent from.
+- **A strip runs along one wall**, chosen to be parallel to the object's long
+  side rather than simply the nearest — see `wallForRun`, and the corner case it
+  exists for. An L-shaped run round a corner unit still comes back as the longer
+  leg only.
+- **A near-square object has no long side**, so the wall for its run is decided
+  by distance, and in a corner that is a coin toss.
+- **The strip sits on the object's face nearest the wall** — concealed behind the
+  TV unit, under the wardrobe. Whether that is the right face for a given detail
+  is neither asked nor offered.
+- **The furniture identification is the whole ballgame now**, and nothing
+  corroborates it. The bed detector's answer is sitting right there, on the same
+  plan, and is not cross-referenced — that is the obvious next check and it is
+  not built.
+- **"a wardrobe in a bedroom" is applied as "a wardrobe".** The room type is not
+  tested, so a wardrobe read in a dressing room or a hallway still takes a strip.
+- **A rule fires once per piece.** Two beds in one room give four sconces with
+  no check on whether that is one bedroom or two.
+- **`washAlpha` is a dial nobody has swept.** 0.88 beat 1.0 on the plans it was
+  tried on and that is the entire evidence base. The failure it guards against —
+  a fixture recommended onto the neighbouring room's furniture, which shows up as
+  a box outside the green boundary — is the one to watch for.
+- **Ceiling height is one figure for the whole plan**, and nothing consumes it
+  today except the prompt.
+- The zones are **not exported** — not in the DXF, CSV or JSON, which still carry
+  the ambient layout only. A fitting you have moved by hand is therefore lost on
+  reload along with the rest.
+- **A hand-edited fitting is overwritten by the next run.** Asking again for a
+  room replaces its whole list; there is no merge that keeps what you moved.
+- Capped at 8 zones in the parser. The model is told to be restrained and is
+  otherwise ungoverned.
 
 ### Known limits of the room detector
 

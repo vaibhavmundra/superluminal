@@ -15,6 +15,16 @@ import { REFERENCES, scaleFromFans, scaleFromReference } from './lib/scale.js';
 import { proposeOutlines } from './lib/outlineSources.js';
 import { detectFurniture, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER } from './lib/furniture.js';
 import { download, toJSON, toCSV, toDXF, svgString, svgToPNG } from './lib/exporters.js';
+import AccentPanel from './components/AccentPanel.jsx';
+import CeilingPalette from './components/CeilingPalette.jsx';
+import { roomSnapshot, requestAccents, toPlanRect } from './lib/accentMask.js';
+import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
+import { zonesFromFurniture, slideSconceTo, setRunEnd } from './lib/accentPlace.js';
+import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
+         sizeLabel, radiusFt, clampFt, resizeFromCorner, rotateTo, isRect,
+         halfExtents, isUniform, applyResize, FAN_SWEEPS, sweepMm, withSweep }
+         from './lib/ceilingObjects.js';
+import { collectTargets, snapPoint, SNAP_DEFAULTS } from './lib/snapGuides.js';
 
 const LS = 'lightPlanner.v1';
 
@@ -56,6 +66,39 @@ export default function App() {
   const [fans, setFans] = useState([]);
   const [fanReason, setFanReason] = useState('');
 
+  // --- things already on the ceiling ---------------------------------------
+  // A SEPARATE LIST FROM `fans`, and deliberately. `fans` is what the red-circle
+  // detector found, measured in pixels, and it is also the RULER the raster
+  // route scales the whole drawing from — put a hand-placed chandelier in there
+  // and the plan's scale would change when you added a light fitting.
+  //
+  // These are held in FEET. A fan the detector found has to be pixels because
+  // that is all it knows; an object someone placed is a real thing of a real
+  // size, and feet is what keeps it that size when the scale is corrected
+  // underneath it.
+  //
+  // To the planner they are all one thing — see ceilingObjects.js.
+  const [ceilingObjs, setCeilingObjs] = useState([]);
+  const [objType, setObjType] = useState('fan');
+  const [fanSweepMm, setFanSweepMm] = useState(1200);
+  const [selObjId, setSelObjId] = useState(null);
+  const [objDrag, setObjDrag] = useState(null);   // {id, mode, ...} while dragging
+
+  // TWO SEPARATE THINGS, and conflating them was half of why this felt wrong.
+  //
+  // `objMode` is the editing CONTEXT: handles are shown, objects can be picked
+  // up. `armed` is a one-shot — the next click on empty ceiling drops an object
+  // of that type, and then it disarms itself.
+  //
+  // One flag could not be both. It meant the tool that let you MOVE something
+  // was the same tool that placed a new one on any click, so a click that
+  // missed by a pixel added an object instead of selecting one.
+  const [objMode, setObjMode] = useState(false);
+  const [armed, setArmed] = useState(null);       // a type id, or null
+  const [guides, setGuides] = useState([]);       // momentary alignment lines
+  const [overRoom, setOverRoom] = useState(false); // is the pointer on a ceiling
+  const [ghost, setGhost] = useState(null);       // where an armed object would land
+
   const [zones, setZones] = useState([]);        // no-light rects in image px {id,x0,y0,x1,y1}
   // Furniture found on the plan. Deliberately NOT the same thing as a zone:
   // a detection is a property of the IMAGE and is found once, whereas whether
@@ -82,6 +125,35 @@ export default function App() {
   const [roomState, setRoomState] = useState({ status: 'idle' });
   const [roomNonce, setRoomNonce] = useState(0);
 
+  // --- accent lighting ------------------------------------------------------
+  // A SECOND QUESTION ABOUT A ROOM THAT ALREADY HAS A CEILING. Everything above
+  // is the ambient layer: a grid, and a light at the centre of every cell. This
+  // is the layer that goes on top of it — coves, sconces, picture lights, strips
+  // — and it is asked ROOM BY ROOM rather than plan-wide, because the image that
+  // goes over the wire is one room with every other room on the sheet erased.
+  //
+  // Keyed by outline id throughout, so switching rooms in the panel does not
+  // lose the answer the last one gave.
+  const [accentRoomId, setAccentRoomId] = useState(null);
+  const [accentResults, setAccentResults] = useState({});   // roomId -> parsed reply, boxes in PLAN px
+  // Carries its own roomId. Everything else here is keyed by room, and a bare
+  // status was the odd one out: a failure on room A left its error banner sitting
+  // under room B's controls, over a button still offering to run.
+  const [accentState, setAccentState] = useState({ status: 'idle', roomId: null });
+  const [accentDismissed, setAccentDismissed] = useState([]);
+  // The image that is actually sent. Held in state rather than made at call
+  // time so the panel can show it: "what did it look at" is the first question
+  // whenever an answer is strange, and a crop that is off the room or washed
+  // out the wrong way is invisible in a list of zones.
+  const [accentShot, setAccentShot] = useState(null);
+  // Editing what the model proposed. A fitting is a starting point, not a
+  // verdict — see the note in accentPlace.js.
+  const [selAccId, setSelAccId] = useState(null);
+  const [accDrag, setAccDrag] = useState(null);   // {roomId, id, mode}
+  // Not on the plan, and every mounting height and throw distance depends on
+  // it. One field, and load-bearing — see the header of accentPrompt.js.
+  const [ceilingFt, setCeilingFt] = useState(10);
+
   const [scaleMode, setScaleMode] = useState('fan');   // fan | ref | manual
   const [fanSweep, setFanSweep] = useState('fan1200');
   const [refId, setRefId] = useState('door900');
@@ -93,7 +165,7 @@ export default function App() {
   // see the header there for why.
   const opt = PLAN_OPTIONS;
   const useBoundingRect = SIMPLIFY_ROOM_TO_RECTANGLE;
-  const [layers, setLayers] = useState({ plan: true, dim: true, region: true, grid: true, cells: true, lights: true, labels: false, fan: true, zones: true });
+  const [layers, setLayers] = useState({ plan: true, dim: true, region: true, grid: true, cells: true, lights: true, labels: false, fan: true, zones: true, accents: true, objects: true });
   const [zoom, setZoom] = useState(1);
   const [over, setOver] = useState(false);
   const svgRef = useRef(null);
@@ -116,7 +188,12 @@ export default function App() {
     setChunkPicks({}); setPickingId(null);
     setDetections([]); setDetectState({ status: 'idle' }); setDismissed([]);
     setRoomState({ status: 'idle' });
+    setAccentRoomId(null); setAccentResults({});
+    setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
+    setSelAccId(null); setAccDrag(null);
     setFans([]); setFanReason(''); setFanMode(false);
+    setCeilingObjs([]); setObjMode(false); setSelObjId(null); setObjDrag(null);
+    setArmed(null); setGuides([]); setGhost(null);
     setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
     setUnitId(null);
   }, []);
@@ -321,6 +398,21 @@ export default function App() {
     return fans.length ? scaleFromFans(fans, sweep) : null;
   }, [isVector, source, scaleMode, manualPx, measure, refId, customFt, fans, fanSweep]);
 
+  /**
+   * EVERY OBSTACLE ON THE CEILING, in plan pixels, whoever put it there.
+   *
+   * The detector's fans and the hand-placed objects meet here and nowhere
+   * earlier, because they are different upstream — one is measured in pixels
+   * and doubles as the drawing's ruler, the other is held in feet — and
+   * identical downstream: the planner is handed { x, y, r } and is not told
+   * which kind it is looking at.
+   */
+  const obstaclesPx = useMemo(() => {
+    const det = fans.map((f) => ({ ...f, kind: 'fan', source: 'detected' }));
+    if (!pxPerFt) return det;
+    return [...det, ...ceilingObjs.map((o) => toObstaclePx(o, pxPerFt))];
+  }, [fans, ceilingObjs, pxPerFt]);
+
   // Every no-light zone on the plan, whoever drew it.
   //
   // A DETECTION IS A PROPERTY OF THE IMAGE, not of a room. The bed detector runs
@@ -402,7 +494,7 @@ export default function App() {
       // A whole-floor plan carries fans and beds for every room. Only the ones
       // over THIS ceiling are obstacles in THIS layout, and a centre inside the
       // polygon is the test — a bed belongs to the room it is standing in.
-      const mine = fans.filter((f) => pointInPolygon({ x: f.x, y: f.y }, polygonPx));
+      const mine = obstaclesPx.filter((f) => pointInPolygon({ x: f.x, y: f.y }, polygonPx));
       const myZones = [
         ...zoneList.filter((z) => pointInPolygon(
           { x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 }, polygonPx)),
@@ -414,7 +506,16 @@ export default function App() {
         polygonPx, origin, toFt, toPx,
         polygonFt: polygonPx.map(toFt),
         fansInRoom: mine,
-        fixturesFt: mine.map((f) => ({ type: 'fan', ...toFt(f), r: f.r / pxPerFt })),
+        // THE SHAPE TRAVELS WITH IT. A rectangular object hands the planner
+        // its own w/h/rot so clearance is measured from its faces; anything
+        // without a shape stays the circle it always was, which is every fan
+        // the detector ever found.
+        fixturesFt: mine.map((f) => ({
+          type: 'fan', ...toFt(f), r: f.r / pxPerFt,
+          ...(f.shape === 'rect'
+            ? { shape: 'rect', w: f.w / pxPerFt, h: f.h / pxPerFt, rot: f.rot || 0 }
+            : { shape: 'circle' }),
+        })),
         zonesFt: myZones.map((z) => {
           const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
           return { x0: a.x, y0: a.y, x1: c.x, y1: c.y };
@@ -471,7 +572,7 @@ export default function App() {
       });
     }
     return out;
-  }, [source, pxPerFt, litOutlines, useBoundingRect, fans, zoneList,
+  }, [source, pxPerFt, litOutlines, useBoundingRect, obstaclesPx, zoneList,
       chunkOpt, chunkPicks, opt, enclosedZones]);
 
   // What the canvas draws: every zone, whoever it belongs to. The planner sees
@@ -484,6 +585,152 @@ export default function App() {
   const focus = useMemo(
     () => rooms.find((r) => r.id === focusId) || rooms[0] || null,
     [rooms, focusId]);
+
+  // --- accent lighting, room by room ----------------------------------------
+  //
+  // THE MODEL IS NEVER ASKED FOR A COORDINATE. It is asked for a REGION — a
+  // rough box round the wall a cove runs along, or round the painting a spot
+  // should graze — and the placement of the fitting inside that region is
+  // arithmetic done here, later, by code that can measure. That is the whole
+  // architecture of this feature and the reason it can work at all where
+  // asking for the bed's exact bounds could not: a box 20% too big still
+  // contains the right wall, so the several-percent error that makes a point
+  // useless is simply absorbed. See the header of accentPrompt.js.
+  //
+  // Nothing is placed yet. This step produces the zones and draws them; turning
+  // a zone into a fixture is the next one.
+  const accentRoom = useMemo(
+    () => rooms.find((r) => r.id === accentRoomId) || rooms[0] || null,
+    [rooms, accentRoomId]);
+
+  /**
+   * The picture that goes over the wire, made ahead of the call.
+   *
+   * Eagerly and not at call time, for two reasons. The panel shows it, and "what
+   * did it actually look at" is the first question whenever an answer is odd —
+   * a crop that missed the room or a wash that came out the wrong way round is
+   * invisible in a list of zones and obvious in a thumbnail. And it re-renders
+   * when the LAYOUT changes, not just when the room does, because the ambient
+   * lights are drawn onto it: send yesterday's crop and the model is being told
+   * about downlights that have since moved.
+   */
+  useEffect(() => {
+    if (!source || !accentRoom?.plan?.ok) { setAccentShot(null); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const shot = await roomSnapshot({
+          source, img,
+          polygonPx: accentRoom.plan.polygonPx,
+          lightsPx: accentRoom.plan.lightsPx,
+          wallLayers: wallLayerSet,
+        });
+        if (alive) setAccentShot({ ...shot, roomId: accentRoom.id });
+      } catch (err) {
+        console.warn('[accents] could not build the room crop:', err);
+        if (alive) setAccentShot(null);
+      }
+    })();
+    return () => { alive = false; };
+  }, [source, img, accentRoom, wallLayerSet]);
+
+  const runAccents = useCallback(async () => {
+    if (!accentRoom?.plan?.ok || !source) return;
+    const r = accentRoom;
+    // The crop is built by the effect above. If it is not there yet, or belongs
+    // to the room we were looking at a moment ago, make one now rather than
+    // sending the wrong room's picture — which is a failure nothing downstream
+    // could possibly detect.
+    let shot = accentShot?.roomId === r.id ? accentShot : null;
+    setAccentState({ status: 'running', roomId: r.id });
+    const t0 = Date.now();
+    // ZONE IDS ARE POSITIONAL — acc-<room>-<index> — so a second run renumbers
+    // them from zero and a dismissal from the first run would land on whatever
+    // fixture happens to take that index next. Clearing this room's dismissals
+    // as the run starts is what stops a brand-new zone being born struck
+    // through, invisible on the canvas, for no reason the user could see.
+    setAccentDismissed((d) => d.filter((x) => !x.startsWith(`acc-${r.id}-`)));
+    try {
+      if (!shot) {
+        shot = await roomSnapshot({
+          source, img, polygonPx: r.plan.polygonPx,
+          lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
+        });
+        setAccentShot({ ...shot, roomId: r.id });
+      }
+      console.log(`[accents] ${r.outline.name || 'room'}: sending ${shot.w}x${shot.h} crop`,
+        { crop: shot.crop, sent: shot.dataUrl });
+
+      const payload = await requestAccents({
+        plan: shot,
+        room: {
+          name: r.outline.name || null,
+          widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
+        },
+        ceilingFt,
+      });
+      console.log('[accents] server:', payload.meta);
+
+      // OUT OF THE CROP AND BACK ONTO THE PLAN. The model answered in fractions
+      // of an image that was a cut-out of one room; every other rectangle in
+      // this app is in plan pixels, and a zone that stayed in the crop's space
+      // would draw itself in the top-left corner of the sheet.
+      // OUT OF THE CROP AND BACK ONTO THE PLAN. The model answered in fractions
+      // of an image that was a cut-out of one room; every other rectangle in
+      // this app is in plan pixels, and furniture left in the crop's space
+      // would sit in the top-left corner of the sheet.
+      const res = payload.result;
+      const furniture = res.furniture.map((f, i) => {
+        const t = FURNITURE_BY_ID[f.type];
+        return {
+          ...f,
+          id: `furn-${r.id}-${i}`,
+          rect: toPlanRect(f.rect, shot.crop, res.image),
+          label: t?.label || f.type,
+          colour: t?.colour || '#666',
+        };
+      });
+
+      // AND THEN THE RULES, IN CODE. The model was asked what furniture is in
+      // the room and nothing else; this is where a bed becomes a pair of
+      // sconces at either end of itself and a wardrobe becomes a strip along
+      // its own length. Deterministic, so the house style is the same every
+      // run — see accentPrompt.js's header for what happened when it was not.
+      const { zones: placed, handled } = zonesFromFurniture(furniture, r.plan.polygonPx);
+      const zones = placed.map((z, i) => ({
+        ...z,
+        id: `acc-${r.id}-${i}`,
+        // Carried on the fitting so a drag handler knows which room's result
+        // list to write back into. The zones live per-room in accentResults,
+        // and the canvas draws them all in one flat pass.
+        roomId: r.id,
+        colour: TYPE_BY_ID[z.type]?.colour || '#666',
+        label: TYPE_BY_ID[z.type]?.label || z.type,
+        short: TYPE_BY_ID[z.type]?.short || z.type,
+        runFt: z.runLength != null && pxPerFt ? z.runLength / pxPerFt : null,
+      }));
+      console.log(`[accents] ${furniture.length} piece(s) of furniture -> `
+        + `${zones.length} fitting(s), ${zones.filter((z) => z.rejected).length} unplaceable`,
+        { furniture, handled, zones });
+
+      setAccentResults((m) => ({ ...m, [r.id]: { ...res, furniture, handled, zones } }));
+      setAccentState({ status: 'done', roomId: r.id, ms: Date.now() - t0, meta: payload.meta });
+    } catch (err) {
+      console.warn('[accents] failed:', err);
+      setAccentState({ status: 'error', roomId: r.id, error: String(err.message || err), ms: Date.now() - t0 });
+    }
+  }, [accentRoom, accentShot, source, img, wallLayerSet, pxPerFt, ceilingFt]);
+
+  /** What the canvas draws: every accent zone still standing, in plan pixels. */
+  const accentZonesPx = useMemo(() => {
+    const out = [];
+    for (const r of rooms) {
+      const res = accentResults[r.id];
+      if (!res?.zones) continue;
+      for (const z of res.zones) if (!accentDismissed.includes(z.id)) out.push(z);
+    }
+    return out;
+  }, [rooms, accentResults, accentDismissed]);
 
   /**
    * The layout, in the one number a lighting drawing is actually judged on.
@@ -546,8 +793,198 @@ export default function App() {
     return ((pxPerFt || 20) * sweep) / 2;
   };
 
+  /**
+   * Direct manipulation of a ceiling object.
+   *
+   * THE COPY BUG, written down because it is a trap anyone would fall into
+   * twice. Placement used to live on the SVG's onClick, and the handles called
+   * `e.stopPropagation()` on POINTERDOWN. Those are two different events:
+   * stopping the pointerdown does nothing at all to the click that the browser
+   * synthesises afterwards, so every drag ended with a click bubbling up to the
+   * canvas, and the canvas dutifully placed a second object on top of the one
+   * you had just moved.
+   *
+   * The fix is not another stopPropagation. It is that the whole gesture now
+   * lives in the pointer events — down, move, up — with nothing on click at
+   * all. Pointerdown bubbles child-first, so a handle stopping it means the
+   * canvas genuinely never hears about it, and there is no second event left to
+   * leak. See onZoneDown, which is the canvas's pointerdown.
+   *
+   * Everything is stored in FEET. A drag is the size the thing actually is,
+   * not the size it looked at the zoom it was dragged at.
+   */
+  /**
+   * What this drag may line up with, in plan pixels.
+   *
+   * Rebuilt per gesture rather than held in state: the rooms and the other
+   * objects are exactly what they are at the moment the drag starts, and a
+   * stale target list is a point snapping to where something used to be.
+   */
+  /**
+   * Is this point on a ceiling we are laying out?
+   *
+   * OUTSIDE A ROOM, NOTHING IS ACTIVE. The canvas is bigger than the rooms on
+   * it — there is margin, there are rooms nobody is lighting, there is the rest
+   * of the sheet — and a tool that stays armed out there is a tool that drops a
+   * fan into the garden because you clicked to dismiss something. So the
+   * surrounding canvas is dead space that cancels rather than acts, and the
+   * cursor says so before you click.
+   */
+  const insideAnyRoom = useCallback((p) => rooms.some((r) => {
+    const poly = r.plan?.polygonPx || r.geo?.polygonPx;
+    return poly && pointInPolygon(p, poly);
+  }), [rooms]);
+
+  const snapTargets = useCallback((excludeId) => collectTargets({
+    rooms: rooms.map((r) => ({ id: r.id, name: r.outline.name, polygonPx: r.plan?.polygonPx || r.geo?.polygonPx })),
+    objects: obstaclesPx.filter((o) => o.source === 'placed'),
+    exclude: excludeId,
+  }), [rooms, obstaclesPx]);
+
+  /** Screen pixels -> plan pixels. The tolerance must not stiffen as you zoom. */
+  const snapTol = () => SNAP_DEFAULTS.tolScreenPx / (zoom || 1);
+
+  const applySnap = (ptPx, excludeId) => {
+    const r = snapPoint(ptPx, snapTargets(excludeId), { tol: snapTol() });
+    setGuides(r.guides);
+    return r;
+  };
+
+  const objPointerDown = (e, id, mode, corner = null) => {
+    if (!pxPerFt) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const svg = svgRef.current;
+    svg?.setPointerCapture?.(e.pointerId);
+    const o = ceilingObjs.find((q) => q.id === id);
+    if (!o) return;
+    setObjMode(true);
+    setArmed(null); setGuides([]); setGhost(null);
+    setSelObjId(id);
+    const p = svgPoint(e);
+    const ft = { x: p.x / pxPerFt, y: p.y / pxPerFt };
+    setObjDrag({
+      id, mode, corner, pointerId: e.pointerId,
+      grabFt: { x: ft.x - o.x, y: ft.y - o.y },
+      startRot: o.rot || 0,
+      startAngle: Math.atan2(ft.y - o.y, ft.x - o.x),
+      start: { ...o },
+      moved: false,
+    });
+  };
+
+  const objPointerMove = (e) => {
+    if (!objDrag || !pxPerFt) return;
+    const p = svgPoint(e);
+    const ft = { x: p.x / pxPerFt, y: p.y / pxPerFt };
+    if (!objDrag.moved) setObjDrag((d) => (d ? { ...d, moved: true } : d));
+    setCeilingObjs((os) => os.map((o) => {
+      if (o.id !== objDrag.id) return o;
+      if (objDrag.mode === 'move') {
+        // The OBJECT'S CENTRE is what snaps, not the pointer. Snapping the
+        // pointer would align wherever inside the object you happened to grab
+        // it, so the same drag would land differently depending on where you
+        // picked it up.
+        const want = { x: (ft.x - objDrag.grabFt.x) * pxPerFt,
+                       y: (ft.y - objDrag.grabFt.y) * pxPerFt };
+        const snapped = applySnap(want, o.id);
+        return { ...o, x: snapped.x / pxPerFt, y: snapped.y / pxPerFt };
+      }
+      if (objDrag.mode === 'resize') {
+        if (guides.length) setGuides([]);
+        const base = objDrag.start;
+        const { hw, hh } = halfExtents(base);
+        const next = resizeFromCorner(
+          { wFt: hw * 2, hFt: hh * 2, x: base.x, y: base.y, rot: base.rot || 0 },
+          objDrag.corner, ft,
+          // Shift locks the ratio; a round object has no ratio to unlock. Alt
+          // resizes about the centre instead of the opposite corner.
+          { uniform: e.shiftKey || isUniform(base), fromCentre: e.altKey });
+        return applyResize(o, next);
+      }
+      if (objDrag.mode === 'rotate') {
+        if (guides.length) setGuides([]);
+        return { ...o, rot: rotateTo(o, ft, {
+          startRot: objDrag.startRot, startAngle: objDrag.startAngle, snap: e.shiftKey }) };
+      }
+      return o;
+    }));
+  };
+
+  const objPointerUp = () => { if (objDrag) { setObjDrag(null); setGuides([]); } };
+
+  /**
+   * Editing an accent fitting.
+   *
+   * Everything here is in PLAN PIXELS, unlike the ceiling objects, and it is
+   * worth knowing why the two differ. A ceiling object is a real thing of a
+   * real size that someone placed, so it is held in feet and survives a scale
+   * correction. An accent fitting is DERIVED — from a box the model drew on a
+   * crop, projected onto a wall that is itself in plan pixels — so pixels are
+   * the space it already lives in, and converting to feet and back would only
+   * add two roundings to every drag.
+   */
+  const accPointerDown = (e, roomId, id, mode) => {
+    e.stopPropagation();
+    e.preventDefault();
+    svgRef.current?.setPointerCapture?.(e.pointerId);
+    setSelAccId(id);
+    setSelObjId(null);
+    setArmed(null);
+    setAccDrag({ roomId, id, mode, pointerId: e.pointerId });
+  };
+
+  const accPointerMove = (e) => {
+    if (!accDrag) return;
+    const p = svgPoint(e);
+    setAccentResults((m) => {
+      const res = m[accDrag.roomId];
+      if (!res?.zones) return m;
+      const zones = res.zones.map((z) => {
+        if (z.id !== accDrag.id) return z;
+        if (accDrag.mode === 'slide') return slideSconceTo(z, p);
+        if (accDrag.mode === 'end0') return setRunEnd(z, 0, p);
+        if (accDrag.mode === 'end1') return setRunEnd(z, 1, p);
+        return z;
+      });
+      return { ...m, [accDrag.roomId]: { ...res, zones } };
+    });
+  };
+
+  const accPointerUp = () => { if (accDrag) setAccDrag(null); };
+
+  /** Escape backs out, Delete removes. The two keys every editor answers to. */
+  useEffect(() => {
+    if (!objMode && !armed && !selAccId) return;
+    const onKey = (e) => {
+      const t = e.target;
+      if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+      if (e.key === 'Escape') {
+        if (armed) { setArmed(null); setGhost(null); setGuides([]); }
+        else if (selAccId) setSelAccId(null);
+        else if (selObjId) setSelObjId(null);
+        else setObjMode(false);
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selAccId && !accDrag) {
+        e.preventDefault();
+        setAccentDismissed((d) => (d.includes(selAccId) ? d : [...d, selAccId]));
+        setSelAccId(null);
+        return;
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selObjId && !objDrag) {
+        e.preventDefault();
+        setCeilingObjs((os) => os.filter((q) => q.id !== selObjId));
+        setSelObjId(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [objMode, armed, selObjId, objDrag, selAccId, accDrag]);
+
   const onCanvasClick = (e) => {
-    if (zoneMode || !source) return;
+    // Ceiling objects are handled entirely in the pointer events — see the note
+    // on objPointerDown. Nothing about them may happen on a click.
+    if (zoneMode || !source || objMode || armed) return;
     // Placing a fan: a DXF has no red circle to find, so the fans are put where
     // you click. The sweep comes from the same standard-size list the raster
     // route uses as a ruler.
@@ -556,13 +993,42 @@ export default function App() {
       setFans((fs) => [...fs, { id: Date.now() + Math.random(), x: p.x, y: p.y, r: fanRadiusPx() }]);
       return;
     }
-    if (scaleMode !== 'ref' || isVector) return;
-    const p = svgPoint(e);
-    setMeasure((m) => (!m.a || m.b ? { a: p, b: null } : { ...m, b: p }));
+    // THE SCALE IS SETTLED BY THE TIME WE ARE HERE. Measuring belongs to the
+    // tracer screen, where the scale is actually being decided; leaving the
+    // click live on this screen meant a stray click could redefine px-per-foot
+    // under a finished layout, and every light on the plan would move.
+    return;
   };
 
   // no-light zones are drawn by dragging a rectangle on the plan
   const onZoneDown = (e) => {
+    // A ceiling-object gesture that started on an object stopped this event
+    // before it got here, so reaching this point means the EMPTY ceiling was
+    // hit. Armed: drop one, and disarm — the way a shape tool returns to the
+    // pointer after you draw one shape. Not armed: deselect.
+    if ((armed || objMode || selAccId) && source && pxPerFt) {
+      const p = svgPoint(e);
+      // Outside every room: cancel, do not act. One branch, before anything
+      // else, so there is no path by which a click out here places something.
+      if (!insideAnyRoom(p)) {
+        setArmed(null); setGhost(null); setGuides([]);
+        setSelObjId(null); setSelAccId(null);
+        return;
+      }
+      if (armed) {
+        const snapped = applySnap(p, null);
+        let o = makeCeilingObject(armed, { x: snapped.x / pxPerFt, y: snapped.y / pxPerFt });
+        if (o.kind === 'fan') o = withSweep(o, fanSweepMm);
+        setCeilingObjs((os) => [...os, o]);
+        setSelObjId(o.id);
+        setArmed(null);
+        setGuides([]); setGhost(null); setGuides([]); setGhost(null);
+      } else {
+        setSelObjId(null);
+        setSelAccId(null);
+      }
+      return;
+    }
     if (!zoneMode || !source) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -570,11 +1036,33 @@ export default function App() {
     setDraftZone({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
   };
   const onZoneMove = (e) => {
+    if (objDrag) { objPointerMove(e); return; }
+    if (accDrag) { accPointerMove(e); return; }
+    // ARMED AND HOVERING. The guides have to appear BEFORE the click, not
+    // after: their job is to tell you where the thing will land while you can
+    // still move the pointer.
+    if (armed && source && pxPerFt) {
+      const p = svgPoint(e);
+      const inside = insideAnyRoom(p);
+      if (inside !== overRoom) setOverRoom(inside);
+      if (!inside) {
+        // No ghost and no guides off the ceiling: nothing is going to land
+        // there, so nothing should be promised.
+        if (ghost) setGhost(null);
+        if (guides.length) setGuides([]);
+        return;
+      }
+      const snapped = applySnap(p, null);
+      setGhost({ x: snapped.x, y: snapped.y, typeId: armed });
+      return;
+    }
     if (!zoneMode || !draftZone) return;
     const p = svgPoint(e);
     setDraftZone((d) => (d ? { ...d, x1: p.x, y1: p.y } : d));
   };
   const onZoneUp = () => {
+    if (objDrag) { objPointerUp(); return; }
+    if (accDrag) { accPointerUp(); return; }
     if (!zoneMode || !draftZone) return;
     const z = {
       x0: Math.min(draftZone.x0, draftZone.x1), x1: Math.max(draftZone.x0, draftZone.x1),
@@ -900,11 +1388,21 @@ export default function App() {
               width={source.w} height={source.h}
               plans={rooms.map((r) => ({ id: r.id, name: r.outline.name, plan: r.plan }))}
               focusId={focus?.id ?? null}
-              fansPx={fans} pxPerFt={pxPerFt} layers={layers} zoom={zoom}
-              measure={measure} onCanvasClick={onCanvasClick}
-              cursor={fanMode ? 'crosshair' : null}
+              fansPx={obstaclesPx} pxPerFt={pxPerFt} layers={layers} zoom={zoom}
+              objMode={objMode} selObjId={selObjId} onObjPointerDown={objPointerDown}
+              objDragMode={objDrag?.moved ? objDrag.mode : null}
+              guides={guides} ghost={ghost} clearanceFt={opt.fanClearance}
+              selAccId={selAccId} onAccPointerDown={accPointerDown}
+              measure={null} onCanvasClick={onCanvasClick}
+              /* Crosshair only where a click would actually do something. Off
+                 the ceiling it reverts to a pointer, which is the cursor's job:
+                 saying what the click will do before it is spent. */
+              cursor={objDrag || accDrag ? 'grabbing'
+                : (fanMode || armed) ? (overRoom ? 'crosshair' : 'pointer')
+                : null}
               zones={drawnZones} draftZone={draftZone} zoneMode={zoneMode}
-              onZoneDown={onZoneDown} onZoneMove={onZoneMove} onZoneUp={onZoneUp} />
+              onZoneDown={onZoneDown} onZoneMove={onZoneMove} onZoneUp={onZoneUp}
+              accents={accentZonesPx} />
           </div>
         )}
       </div>
@@ -991,35 +1489,114 @@ export default function App() {
             )}
           </div>
 
-          {/* --- fans: an input, not a setting ---------------------------- */}
-          {isVector && (
-            <div className="sec">
-              <h3>Ceiling fans</h3>
-              <div className="btnrow">
-                <button className={'btn' + (fanMode ? ' accent' : '')}
-                  onClick={() => { setFanMode((v) => !v); setZoneMode(false); }}>
-                  {fanMode ? 'Done placing' : 'Place fans'}
-                </button>
-                {fans.length > 0 && <button className="btn" onClick={() => setFans([])}>Clear all</button>}
-              </div>
-              <select value={fanSweep} onChange={(e) => setFanSweep(e.target.value)} style={{ marginTop: 8 }}>
-                {REFERENCES.filter((r) => r.group === 'Fan').map((r) => (
-                  <option key={r.id} value={r.id}>{r.label}</option>
-                ))}
-              </select>
-              <div className="kv" style={{ marginTop: 8 }}><span>In {focus?.outline?.name || 'this room'}</span>
-                <b>{focus?.geo?.fansInRoom?.length ?? 0} of {fans.length}</b></div>
-            </div>
-          )}
+          {/* --- what is already on the ceiling --------------------------- */}
+          {/* One section for all of them, because to the layout they ARE all
+              one: a centre, a radius and the same clearance. The old pair of
+              fan panels — one for DXF, one for raster — said the same thing
+              twice and neither could hold anything but a fan. */}
+          <div className="sec">
+            <h3>Ceiling objects</h3>
 
-          {!isVector && fans.length > 0 && (
-            <div className="sec">
-              <h3>Ceiling fans</h3>
-              <div className="kv"><span>Found on the plan</span><b>{fans.length}</b></div>
-              <div className="kv"><span>In {focus?.outline?.name || 'this room'}</span>
-                <b>{focus?.geo?.fansInRoom?.length ?? 0}</b></div>
-            </div>
-          )}
+            {/* Four symbols, and clicking one arms it. There is no separate
+                "place" button: picking the thing IS asking to place it, and a
+                picker that then needs confirming was a click spent on nothing. */}
+            <CeilingPalette armed={armed} disabled={!pxPerFt}
+              onArm={(id) => {
+                setArmed(id);
+                if (id) { setObjType(id); setObjMode(true); setFanMode(false); setZoneMode(false); }
+                setGuides([]); setGhost(null);
+              }} />
+
+            {/* A fan's sweep, offered only when a fan is in play — armed, or
+                selected. It is the one property of the four that is a standard
+                size rather than something to drag to. */}
+            {(() => {
+              const sel = ceilingObjs.find((o) => o.id === selObjId);
+              if (armed !== 'fan' && sel?.kind !== 'fan') return null;
+              const current = sel?.kind === 'fan' ? sweepMm(sel) : fanSweepMm;
+              return (
+                <div className="sweep">
+                  {FAN_SWEEPS.map((mm) => (
+                    <button key={mm} type="button" className={current === mm ? 'on' : ''}
+                      onClick={() => {
+                        setFanSweepMm(mm);
+                        if (sel?.kind === 'fan') setCeilingObjs((os) =>
+                          os.map((o) => (o.id === sel.id ? withSweep(o, mm) : o)));
+                      }}>{mm} sweep</button>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {!pxPerFt && <p className="note warn">Set the scale first — these are placed at a real size.</p>}
+            {armed && (
+              <p className="note">Click the plan to place the
+                {' '}{CEILING_BY_ID[armed]?.label.toLowerCase()}. Guides appear when it lines up
+                with a room's centre or another object. Esc to cancel.</p>
+            )}
+            {objMode && !armed && (
+              <p className="note">Drag to move. Corner handles resize — <b>Shift</b> keeps the
+                ratio, <b>Alt</b> resizes from the centre. The stem above an AC unit rotates it;
+                <b> Shift</b> snaps to 15°. <b>Del</b> removes, <b>Esc</b> deselects.</p>
+            )}
+
+            {ceilingObjs.map((o) => {
+              const on = o.id === selObjId;
+              return (
+                <div key={o.id} className={'outline-row' + (on ? ' on' : '')}>
+                  <button className="outline-pick plain"
+                    onClick={() => { setSelObjId(o.id); setObjMode(true); setArmed(null); }}>
+                    <span className="outline-name">{CEILING_BY_ID[o.typeId]?.label ?? o.kind}</span>
+                    <span className="layer-count">{sizeLabel(o)}</span>
+                  </button>
+                  <div className="outline-meta">
+                    <span>
+                      {isRect(o) ? (
+                        <>
+                          <input type="number" min="100" max="3600" step="50"
+                            value={Math.round(o.wFt * 304.8)} className="mm"
+                            onChange={(e) => setCeilingObjs((os) => os.map((q) => q.id === o.id
+                              ? { ...q, wFt: clampFt(Number(e.target.value) / 304.8) } : q))} />
+                          <span>×</span>
+                          <input type="number" min="100" max="3600" step="50"
+                            value={Math.round(o.hFt * 304.8)} className="mm"
+                            onChange={(e) => setCeilingObjs((os) => os.map((q) => q.id === o.id
+                              ? { ...q, hFt: clampFt(Number(e.target.value) / 304.8) } : q))} />
+                          <span>mm · {Math.round(((o.rot || 0) * 180) / Math.PI)}°</span>
+                        </>
+                      ) : (
+                        <span>keeps {opt.fanClearance.toFixed(1)} ft clear of its
+                        {' '}{isRect(o) ? 'faces' : 'sweep'}</span>
+                      )}
+                    </span>
+                    <button className="btn tiny" title="Remove"
+                      onClick={() => { setCeilingObjs((os) => os.filter((q) => q.id !== o.id));
+                                       setSelObjId((v) => (v === o.id ? null : v)); }}>×</button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* The detector's own fans, which are a different animal: found in
+                the image, measured in pixels, and the ruler the whole drawing
+                is scaled from. Listed, not editable. */}
+            {fans.length > 0 && (
+              <div className="kv" style={{ marginTop: 8 }}>
+                <span>Fans found on the plan</span><b>{fans.length}</b></div>
+            )}
+            {isVector && (
+              <div className="btnrow" style={{ marginTop: 8 }}>
+                <button className={'btn' + (fanMode ? ' accent' : '')}
+                  onClick={() => { setFanMode((v) => !v); setObjMode(false); setZoneMode(false); }}>
+                  {fanMode ? 'Done' : 'Quick-place fans'}
+                </button>
+                {fans.length > 0 && <button className="btn" onClick={() => setFans([])}>Clear</button>}
+              </div>
+            )}
+            <div className="kv" style={{ marginTop: 6 }}>
+              <span>In {focus?.outline?.name || 'this room'}</span>
+              <b>{focus?.geo?.fansInRoom?.length ?? 0} of {obstaclesPx.length}</b></div>
+          </div>
 
           {/* --- no-light zones ------------------------------------------- */}
           <div className="sec">
@@ -1083,6 +1660,32 @@ export default function App() {
               about one of them, and which one it meant was never on screen. */}
 
           {step !== 'chunks' && step !== 'trace' && <>
+          {/* The accent layer. It sits directly under the no-light zones
+              because that is the order the work happens in: the ambient ceiling
+              is settled, the obstacles on it are settled, and only then is
+              there something to hang an accent scheme off. */}
+          <AccentPanel
+            rooms={rooms}
+            roomId={accentRoom?.id ?? null}
+            onRoomChange={setAccentRoomId}
+            sent={accentShot?.roomId === accentRoom?.id ? accentShot : null}
+            state={accentState.roomId === accentRoom?.id ? accentState : { status: 'idle' }}
+            result={accentResults[accentRoom?.id] || null}
+            dismissed={accentDismissed}
+            onToggleZone={(zid) => setAccentDismissed((d) =>
+              d.includes(zid) ? d.filter((x) => x !== zid) : [...d, zid])}
+            onClear={() => {
+              const rid = accentRoom?.id;
+              setAccentResults((m) => { const n = { ...m }; delete n[rid]; return n; });
+              setAccentDismissed((d) => d.filter((x) => !x.startsWith(`acc-${rid}-`)));
+              setAccentState({ status: 'idle', roomId: null });
+            }}
+            onRun={runAccents}
+            ceilingFt={ceilingFt}
+            onCeilingChange={setCeilingFt}
+            selId={selAccId}
+            onSelect={(id) => { setSelAccId(id); setSelObjId(null); setArmed(null); }} />
+
           <div className="sec">
             <h3>View</h3>
             <div className="btnrow" style={{ marginBottom: 6 }}>
@@ -1091,8 +1694,8 @@ export default function App() {
               <button className="btn" onClick={() => setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)))}>+</button>
             </div>
             {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Room outline'], ['grid', 'Grid lines'],
-              ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'], ['fan', 'Fan'],
-              ['zones', 'No-light zones']].map(([k, l]) => (
+              ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'], ['fan', 'Ceiling objects'],
+              ['zones', 'No-light zones'], ['accents', 'Accent zones']].map(([k, l]) => (
               <label className="check" key={k}><input type="checkbox" checked={layers[k]} onChange={toggle(k)} />{l}</label>
             ))}
           </div>

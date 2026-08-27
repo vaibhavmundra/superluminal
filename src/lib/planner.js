@@ -184,7 +184,7 @@ export const DEFAULTS = {
                           //   worth, in units of "one ordinary cell covered".
                           //   0 turns the whole preference off.
   alignTol: 1.25,         // ft — lights within this get snapped into a row/column
-  fanClearance: 2.0,      // ft — keep lights this far outside the fan's blade circle
+  fanClearance: 1.0,      // ft — keep lights this far outside the fan's blade circle
   fanAnchorWeight: 0.6,   // how hard each chunk's grid tries to line up with the fans
   preferLongAxis: true,
   uniformOrientation: true, // pair every cell the same way when it costs nothing
@@ -560,13 +560,50 @@ function chooseChunkGrid(ch, softX, softY, fans, opt) {
 }
 
 /**
+ * How far a point is from an obstacle's SURFACE. Positive outside, negative in.
+ *
+ * This replaced `hypot(q - f) - f.r`, and the reason is worth writing down.
+ * Everything on the ceiling used to be reduced to a circle, so a rectangular
+ * AC cassette or trap door was given the circle that CIRCUMSCRIBED it — right
+ * at the corners, and badly wrong along the flats. A 900 x 900 cassette
+ * reserved a 636mm radius where its own face is 450mm out, and a 1200 x 600
+ * trap door reserved 670mm along an edge that is 300mm away. On a tight
+ * ceiling that is a whole row of downlights refused for nothing.
+ *
+ * The exact answer for a rectangle is not hard and is not slower in any way
+ * that matters: rotate the point into the object's own frame, and the distance
+ * to the rectangle is the length of the part of the offset that falls outside
+ * it on each axis. Clearance then means what it says — `fanClearance` feet from
+ * the object's actual face, whichever face is nearest.
+ *
+ * The set of points at exactly `c` from a rectangle is that rectangle grown by
+ * `c` with its corners rounded to radius `c` — which is what the canvas draws,
+ * so what you see reserved is exactly what is reserved.
+ *
+ * A fixture with no `shape` is a circle, which keeps every existing caller and
+ * every fan the detector finds working unchanged.
+ */
+export function surfaceDistance(f, q) {
+  if (f?.shape === 'rect') {
+    const c = Math.cos(f.rot || 0), sn = Math.sin(f.rot || 0);
+    const dx = q.x - f.x, dy = q.y - f.y;
+    // into the object's own frame, where the rectangle is axis-aligned
+    const lx = Math.abs(dx * c + dy * sn) - (f.w || 0) / 2;
+    const ly = Math.abs(-dx * sn + dy * c) - (f.h || 0) / 2;
+    if (lx <= 0 && ly <= 0) return Math.max(lx, ly);   // inside: negative
+    return Math.hypot(Math.max(lx, 0), Math.max(ly, 0));
+  }
+  return Math.hypot(q.x - f.x, q.y - f.y) - (f.r || 0);
+}
+
+/**
  * Can this cell hold a small light inside its centre band, clear of the fans?
  * Cells never overlap a no-light zone, so only the fans can spoil a centre.
  */
 function cellIsAwkward(cell, fans, opt) {
   if (!fans.length) return false;
   const clear = (qx, qy) => !fans.some((f) =>
-    Math.hypot(qx - f.x, qy - f.y) < (f.r || 0) + opt.fanClearance);
+    surfaceDistance(f, { x: qx, y: qy }) < opt.fanClearance);
   if (clear(cell.cx, cell.cy)) return false;
   const dx = cell.w * opt.centreBand, dy = cell.h * opt.centreBand;
   const N = 13;
@@ -590,8 +627,9 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
 
   // A room can carry several fans. Every fan is an obstacle in its own right,
   // and every fan is a soft anchor the grid tries to line up with.
-  const fanNeed = (f) => (f.r || 0) + opt.fanClearance;
-  const fanBlocked = (q) => fans.some((f) => Math.hypot(q.x - f.x, q.y - f.y) < fanNeed(f));
+  // Distance to the obstacle's FACE, not to a circle round it — see
+  // surfaceDistance. `fanClearance` is now literally what it says.
+  const fanBlocked = (q) => fans.some((f) => surfaceDistance(f, q) < opt.fanClearance);
   const zones = prepareZones(noLightZones);
 
   // 1+2. carve the zones out, then adopt ONE of the ways what remains can be
@@ -781,7 +819,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
           // breathing room past the fan clearance: two otherwise equal spots
           // are not equal if one of them only just scrapes past a blade circle
           const gap = fans.length
-            ? Math.min(...fans.map((f) => Math.hypot(p.x - f.x, p.y - f.y) - (f.r || 0) - opt.fanClearance))
+            ? Math.min(...fans.map((f) => surfaceDistance(f, p) - opt.fanClearance))
             : 3;
           w += 0.6 * Math.min(Math.max(gap, 0), 3) / 3;
           // the midpoint stays the default; a slide has to earn its keep, and
@@ -1161,7 +1199,7 @@ function findSmallSpot(cell, polygon, fans, zones, opt, maxFrac) {
   const violation = (q) => {
     let v = zoneDepth(q, zones);
     for (const f of fans) {
-      v += Math.max(0, (f.r || 0) + opt.fanClearance - Math.hypot(q.x - f.x, q.y - f.y));
+      v += Math.max(0, opt.fanClearance - surfaceDistance(f, q));
     }
     return v;
   };
@@ -1207,7 +1245,7 @@ function reseatOnCellAxis(lights, polygon, fans, zones, opt) {
   const legal = (q) => {
     if (!pointInPolygon(q, polygon)) return false;
     if (inAnyZone(q, zones)) return false;
-    return !fans.some((f) => Math.hypot(q.x - f.x, q.y - f.y) < (f.r || 0) + opt.fanClearance);
+    return !fans.some((f) => surfaceDistance(f, q) < opt.fanClearance);
   };
   // An offset is EARNED when it is the light's own forced position, or when it
   // puts the light in line with a constrained neighbour. Only unearned offsets
@@ -1350,7 +1388,7 @@ function alignAxis(lights, axis, polygon, opt, fans = [], zones = [], wallDist =
     const trial = { ...g, [axis]: next };
     if (!pointInPolygon(trial, polygon)) return false;
     if (g.kind === 'large' && dist(trial) + 1e-9 < opt.minWallDistance) return false;
-    if (fans.some((f) => Math.hypot(trial.x - f.x, trial.y - f.y) < (f.r || 0) + opt.fanClearance)) return false;
+    if (fans.some((f) => surfaceDistance(f, trial) < opt.fanClearance)) return false;
     if (inAnyZone(trial, zones)) return false;
     // Aligning must not undo the spacing repair that ran before it, nor create
     // a crowded pair of its own — a chunk's cells can differ in size, so two
