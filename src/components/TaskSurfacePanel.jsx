@@ -38,10 +38,10 @@ export default function TaskSurfacePanel({
           ))}
         </select>
 
+        {/* One action, and it runs the whole plan — see AccentPanel. */}
         <button className="btn primary" style={{ marginTop: 8, width: '100%' }}
-          disabled={!room || !room.plan?.ok || running}
-          onClick={onRun}>
-          {running ? 'Reading the room…' : found.length ? 'Look again' : 'Find task surfaces'}
+          disabled={running} onClick={onRun}>
+          {running ? 'Working…' : 'Recompute task surfaces for the plan'}
         </button>
 
         <details className="accent-rules">

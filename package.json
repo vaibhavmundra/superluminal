@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tools/test-planner.mjs && node tools/test-chunking.mjs && node tools/test-rooms.mjs && node tools/test-dxf.mjs && node tools/test-snap.mjs && node tools/test-outline.mjs && node tools/test-vector-flow.mjs && node tools/test-furniture.mjs && node tools/test-detect-api.mjs && node tools/test-detect-flow.mjs && node tools/test-openai-detect.mjs && node tools/test-room-booleans.mjs && node tools/test-rooms-detect.mjs && node tools/test-accents.mjs && node tools/test-accent-edit.mjs && node tools/test-surfaces.mjs && node tools/test-spots.mjs && node tools/test-cad-export.mjs && node tools/test-ceiling.mjs"
+    "test": "node tools/test-planner.mjs && node tools/test-chunking.mjs && node tools/test-rooms.mjs && node tools/test-dxf.mjs && node tools/test-snap.mjs && node tools/test-outline.mjs && node tools/test-vector-flow.mjs && node tools/test-furniture.mjs && node tools/test-detect-api.mjs && node tools/test-detect-flow.mjs && node tools/test-openai-detect.mjs && node tools/test-room-booleans.mjs && node tools/test-rooms-detect.mjs && node tools/test-accents.mjs && node tools/test-accent-edit.mjs && node tools/test-surfaces.mjs && node tools/test-spots.mjs && node tools/test-cad-export.mjs && node tools/test-roomtypes.mjs && node tools/test-api-accents.mjs && node tools/test-bedfit.mjs && node tools/test-ceiling.mjs"
   },
   "dependencies": {
     "dxf-parser": "^1.1.2",

@@ -252,5 +252,58 @@ console.log('\n-- the wall rule is the SPOT\'s, not the large light\'s --');
   ok(!!alive.spot, 'and 2 ft finds a spot — which is the bug this number fixes');
 }
 
+console.log('\n-- EACH SURFACE AGAINST ITS OWN CHUNK --');
+{
+  // A living-dining room: one long space cut into two chunks of ceiling, each
+  // with its own 3 x 2 grid. The coffee table is up in the first chunk, the
+  // dining table down in the second — the exact plan that exposed the bug.
+  const upper = { x0: 0, y0: 0,  x1: 24, y1: 16 };
+  const lower = { x0: 0, y0: 16, x1: 24, y1: 32 };
+  const lights = [];
+  [4, 12, 20].forEach((x) => [4, 12, 20, 28].forEach((y) =>
+    lights.push({ id: `S${lights.length}`, x, y, kind: 'small' })));
+  const poly = [{x:0,y:0},{x:24,y:0},{x:24,y:32},{x:0,y:32}];
+  const ctx = { chunks: [upper, lower], lights, polygon: poly, fixtures: [], zones: [],
+                opt: { fanClearance: 1, minWallDistance: 0, wallDistance: 0 } };
+
+  const coffee = { x0: 13, y0: 6,  x1: 18, y1: 10 };   // centre 15.5, 8
+  const dining = { x0: 13, y0: 22, x1: 18, y1: 26 };   // centre 15.5, 24
+
+  const res = planTaskSpots([coffee, dining], ctx);
+  ok(res.every((r) => r.spot), `both placed: ${res.map((r) => r.rejected ?? r.skipped ?? 'ok').join(' / ')}`);
+  ok(near(res[0].spot.x, 12) && near(res[0].spot.y, 8),
+    `the coffee table takes its own chunk's midpoint: ${res[0].spot.x},${res[0].spot.y}`);
+  ok(near(res[1].spot.x, 12) && near(res[1].spot.y, 24),
+    `and the dining table takes ITS chunk's, not the coffee table's: ${res[1].spot.x},${res[1].spot.y}`);
+  ok(res[1].spot.y >= lower.y0 && res[1].spot.y <= lower.y1,
+    'the dining spot is inside the chunk the dining table is in');
+  ok(rectDistance({ x: res[1].spot.x, y: res[1].spot.y }, dining) < 2,
+    'and it stands right beside what it lights, not across the room');
+
+  // THE BUG, reproduced: hand the whole room ONE chunk — the coffee table's,
+  // which is what taking the first surface's chunk amounted to — and the dining
+  // table's spot is thrown to the far end of the room.
+  const oneChunk = planTaskSpots([coffee, dining], { ...ctx, chunks: null, chunk: upper });
+  ok(oneChunk[1].spot && oneChunk[1].spot.y < lower.y0,
+    `sharing one chunk strands it at y=${oneChunk[1].spot?.y}`);
+  ok(rectDistance({ x: oneChunk[1].spot.x, y: oneChunk[1].spot.y }, dining)
+     > rectDistance({ x: res[1].spot.x, y: res[1].spot.y }, dining) + 5,
+    'far further from the table than the per-chunk answer — which is the bug');
+
+  // A surface listed first must not decide anything for the others: reverse the
+  // order and both answers are unchanged.
+  const rev = planTaskSpots([dining, coffee], ctx);
+  ok(near(rev[0].spot.x, 12) && near(rev[0].spot.y, 24)
+     && near(rev[1].spot.x, 12) && near(rev[1].spot.y, 8),
+    'and the order surfaces are listed in changes nothing');
+
+  // The used-once rule still spans chunks — two surfaces in DIFFERENT chunks
+  // can never contend, but two in the same one still do.
+  const second = { x0: 4.5, y0: 22, x1: 6.5, y1: 26 };
+  const three = planTaskSpots([coffee, dining, second], ctx);
+  const keys = three.filter((r) => r.spot).map((r) => segmentKey(r.spot.segment));
+  ok(new Set(keys).size === keys.length, 'no two spots share a segment');
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\nall good');
 process.exit(fail ? 1 : 0);

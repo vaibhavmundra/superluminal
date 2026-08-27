@@ -63,6 +63,10 @@ export const MASK_DEFAULTS = {
   maxDim: 1400,
   minDim: 700,
   quality: 0.9,
+  // The ink for a candidate box. One colour for every source — see BED_SOURCES
+  // in bedFit.js for why the two images must not be distinguishable by colour.
+  boxStroke: 'rgba(220,38,38,0.95)',
+  boxFill: 'rgba(220,38,38,0.10)',
 };
 
 /**
@@ -144,7 +148,7 @@ function loadImage(url) {
  * they end up out of step after a re-crop.
  */
 export async function roomSnapshot({ source, img, polygonPx, lightsPx = [], wallLayers = null,
-                                     opts = {} } = {}) {
+                                     boxes = [], badge = null, opts = {} } = {}) {
   const o = { ...MASK_DEFAULTS, ...opts };
   if (!source || !polygonPx?.length) throw new Error('No room to look at.');
 
@@ -228,6 +232,52 @@ export async function roomSnapshot({ source, img, polygonPx, lightsPx = [], wall
   }
   ctx.restore();
 
+  // --- candidate boxes, for the passes that ask ABOUT a rectangle
+  //
+  // Nothing draws these on the accent or task crops; they exist for the bed-fit
+  // judge, which is shown two copies of this same picture differing in nothing
+  // but what is drawn here. That is why the drawing is unconditional and
+  // uncoloured-by-source: the two images must be identical in every respect
+  // except the geometry being compared, so the caller does not get to pick a
+  // colour per provider. See bedFit.js.
+  if (boxes.length) {
+    ctx.save();
+    ctx.lineWidth = Math.max(2, outW / 260);
+    ctx.strokeStyle = o.boxStroke;
+    ctx.fillStyle = o.boxFill;
+    for (const b of boxes) {
+      const p0 = toC({ x: b.x0, y: b.y0 }), p1 = toC({ x: b.x1, y: b.y1 });
+      const w = p1.x - p0.x, h = p1.y - p0.y;
+      // Filled AND stroked. The fill alone reads as a swatch and hides the
+      // furniture under it; the stroke alone is hard to attribute when two
+      // rectangles overlap. A 10% wash keeps the line work legible underneath,
+      // which is the thing being judged.
+      ctx.fillRect(p0.x, p0.y, w, h);
+      ctx.strokeRect(p0.x, p0.y, w, h);
+    }
+    ctx.restore();
+  }
+
+  // --- the letter
+  //
+  // Burned into the image rather than stated only in the prompt. A model
+  // shown two pictures and told "the first is A" has to keep track of an
+  // ordering it cannot see; a model shown a picture with an A in the corner
+  // can look. It costs one glyph in a corner the drawing does not use.
+  if (badge) {
+    const size = Math.max(18, Math.round(outW / 16));
+    ctx.save();
+    ctx.font = `700 ${size}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+    ctx.textBaseline = 'top';
+    const pad = Math.round(size * 0.35);
+    const tw = ctx.measureText(String(badge)).width;
+    ctx.fillStyle = 'rgba(17,17,17,0.86)';
+    ctx.fillRect(0, 0, tw + pad * 2, size + pad * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(String(badge), pad, pad);
+    ctx.restore();
+  }
+
   const url = cv.toDataURL('image/jpeg', o.quality);
   return {
     base64: url.split(',')[1], mime: 'image/jpeg', dataUrl: url,
@@ -254,16 +304,26 @@ export function toPlanRect(rect, crop, sent) {
 
 // --- the call ---------------------------------------------------------------
 
-export async function requestAccents({ plan, room = null, ceilingFt = null,
-                                       task = 'furniture',
+/**
+ * `plans` rather than `plan` for the passes that compare two pictures. The
+ * route reads a list either way — one image is a list of one — so the wire
+ * shape does not fork per task, and neither does the size guard on the far end.
+ */
+export async function requestAccents({ plan, plans = null, room = null, ceilingFt = null,
+                                       task = 'furniture', projectId = null, counts = null,
                                        endpoint = '/api/accents', signal } = {}) {
-  if (!plan?.base64) throw new Error('No plan image to send.');
+  const list = (plans && plans.length ? plans : [plan]).filter(Boolean);
+  if (!list.length || !list[0]?.base64) throw new Error('No plan image to send.');
+  const wire = list.map((p) => ({ image: p.base64, mime: p.mime, w: p.w, h: p.h }));
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      plan: { image: plan.base64, mime: plan.mime, w: plan.w, h: plan.h },
-      room, ceilingFt, task,
+      // Both fields, always. `plan` is what the three single-image tasks have
+      // always read and there is no reason to make them handle a list; `plans`
+      // is the whole set. They agree on the first image by construction.
+      plan: wire[0], plans: wire,
+      room, ceilingFt, task, projectId, counts,
     }),
     signal,
   });

@@ -961,6 +961,92 @@ name comes back with every box, so `MASTER BEDROOM` arrives attached to the
 biggest bed, and when it finds nothing it says why in words — which is the only
 useful thing on the wire in that case, so its reply is relayed and shown.
 
+### A third model decides which of the two got it right
+
+`both` runs the two detectors and merges what they say. That is the right answer
+when they agree and quietly the wrong one when they do not, which is the case
+that matters.
+
+De-dup collapses two boxes over one bed into one zone at 45% overlap. Two
+readings of the same bed that are half a bed apart overlap by less than that, so
+**both survive**, and the ceiling gets the union of a good answer and a bad one —
+a zone bigger than either detector claimed, most of it floor, with real fittings
+moved out of the way of nothing. Averaging them would be worse still: the mean of
+a right answer and a wrong one is a third answer that neither detector would
+defend.
+
+So `judge` — the default — is the same two calls with the merge **replaced by a
+choice**. `src/lib/bedFit.js`.
+
+**Room by room, not sheet by sheet.** The two answers are drawn on two crops of
+one room and compared there. A whole-sheet A/B would force one detector to win
+every bedroom on the plan, and on a sheet where Roboflow nails one bed and GPT
+nails another there is no answer to that question that is right. Per room, each
+bed is judged against the other reading *of that bed*, in the same isolated crop
+the accent and task passes are shown — same `roomSnapshot()`, same wash, same
+boundary.
+
+**The two pictures differ in the rectangles and in nothing else.** Same crop,
+same scale, same ink, same line weight, and — deliberately — **the same colour
+for both**. Drawing Roboflow in red and GPT in blue is the obvious thing and it
+is wrong: the images would then differ in a way that has nothing to do with which
+box is on the bed, and a preference for one colour over another is not a
+preference worth collecting. The only thing telling them apart is a letter burned
+into the top-left corner, and the letter says nothing about who drew what.
+`tools/check-overlay.mjs` renders both in a real browser and reads the pixels
+back to assert exactly this — that the boxes paint, that the same point on the
+other image is untouched, and that everything else is identical.
+
+**No lights on these crops.** Everywhere else the ambient layout is drawn onto
+the picture so the model does not recommend a fitting where a downlight already
+hangs. Here it would be misleading: this runs *before* the layout, precisely
+because its answer moves the layout.
+
+**The judge never emits a coordinate. It picks a letter.** This is the rule the
+whole app is built on — the model recognises, the code decides — taken as far as
+it goes. A region absorbs the error a point propagates; a *choice between two
+regions* absorbs all of it. Whatever comes back, the rectangle that lands on the
+plan is one a detector measured. The worst case is that the wrong detector wins.
+There is no case where the zone is a rectangle nobody drew.
+
+**It is asked far less often than you would think.** Three of the four situations
+a room can be in are decided without a call:
+
+| | |
+|---|---|
+| neither found a bed | nothing to judge |
+| only one found a bed | that answer stands — see below |
+| both found the same bed | not a disagreement. Same count, every box pairing above `agreeIou` (80%) |
+| they genuinely differ | **this is the one that costs a call** |
+
+**An uncontested answer is taken as it stands.** The alternative — send the one
+overlay and ask "is this really a bed?" — is a different question with a
+different failure mode, and one that a model shown a single confident rectangle
+tends to answer yes to. The cost of not asking is that a lone false positive from
+either detector becomes a zone; the cost of asking is a call per room plus a
+second way to be wrong. The first is the cheaper mistake, and it is the one you
+can see on the canvas and drag away.
+
+**Every fallback is defined and deterministic.** A judge that cannot be reached,
+that hedges below `minConfidence` (35%), or that answers "they look the same"
+does not leave the room without a bed: `applyVerdict` takes `BEDFIT_DEFAULTS.fallback`
+— Roboflow, because the case where both committed and neither is clearly better
+is the case where Roboflow's is the tighter box, which is that detector's whole
+description. Not a coin toss and not list order. The panel says which of these
+happened, per room, with the judge's own sentence on hover.
+
+**Beds in a room you have not traced** keep the behaviour they have always had:
+both readings merged, overlaps de-duplicated. There was no room to isolate and no
+ceiling for them to affect, so there was nothing to judge — and dropping them
+would silently remove boxes that are on the canvas today.
+
+**Wiring.** `task: 'bedfit'` on `/api/accents`, which now reads a *list* of
+images rather than one — three of its four questions send a single crop, this one
+sends two. The size guard counts the whole body, because that is the number
+Vercel refuses on. `tools/test-bedfit.mjs` covers the decision table, every
+fallback and every reply shape; `tools/test-api-accents.mjs` assembles the real
+response for all four tasks with `fetch` stubbed.
+
 ### Measuring it instead of arguing about it
 
 Adding a provider is half a day and produces a feature that looks like it works.
@@ -1559,6 +1645,25 @@ segment when one is legal.
 Only *adjacent* lights on a line make a pair — a segment that skips over a light
 in between is not a segment.
 
+### Whose grid — the chunk is resolved per surface
+
+A chunk is a region of ceiling with its own grid, so the segments available to a
+surface are the ones in the chunk **that surface** sits in. This is decided
+inside `planTaskSpots`, once per surface, from the centre of its outline.
+
+It used to be decided once for the whole room, from the first surface's centre,
+which is right until a room has two surfaces in different chunks — and a
+living-dining room always does. The dining table was placed against the *coffee
+table's* grid and its spot landed on a segment at the far end of the room,
+several metres from the thing it was aimed at, while the pair of downlights
+directly either side of the table went unused. There was never a sense in which
+the other chunk's lines were candidates; the code just never asked the question
+twice. `tools/test-spots.mjs` reproduces both the fix and the old behaviour, so
+the failure is pinned rather than merely absent.
+
+The used-once rule still spans the whole room. Two surfaces in different chunks
+can never contend for a segment, but the set is planned as a set regardless.
+
 ### One spot lights one surface
 
 A segment is spent once. Placed independently, two surfaces either side of the
@@ -1834,6 +1939,141 @@ dropping a hand-placed chandelier into that list would change the plan's scale
 when you added a light fitting. An object someone placed is a real thing of a
 real size; feet is what keeps it that size when the scale is corrected
 underneath it. The two lists meet in `obstaclesPx` and nowhere earlier.
+
+## What kind of space is this?
+
+Everything downstream of the ambient grid is **conditional on the answer**. A
+bedroom gets bedside sconces; a store cupboard gets nothing. A conference room
+gets a spot over the table; a toilet gets its basin sconces and nothing aimed.
+Before this existed the user picked a room and pressed a button, one room at a
+time, and had to know themselves which passes were worth running.
+
+### The project type is asked, not guessed
+
+One dialog, on upload, no dismiss: **Residential, Office, Hotel, Restaurant,
+Educational**.
+
+It is asked because a plan often cannot answer it. Twelve identical rooms off a
+corridor are a hotel floor, a hostel or a student block, and the lighting differs
+in each. It is one click, once, and it makes every classification after it
+dramatically easier — a model told *"this is an office"* does not have to wonder
+whether the room with one desk is a study or a chamber.
+
+There is no close button and no backdrop click, which is a thing to be sparing
+with and is earned here: every path afterwards reads the answer, so a skipped
+dialog would mean a pipeline that either guesses or stops.
+
+### Each project has its own short vocabulary
+
+Seven to twelve room types per project, not one list of forty. **A classifier
+picking one of nine is a different and far more reliable job than one picking
+from thirty**, and a long tail of types nobody acts on differently is a long tail
+of ways to be wrong for no benefit. A flat cannot be classified as a conference
+room; an office cannot be a pooja room.
+
+Each type carries what it looks like in plan — the same lesson as the furniture
+pass — and the drawing's own text label is passed as evidence where `rooms.js`
+found one, hedged as *"may be a room number, a level marker or plain wrong"*.
+
+### What a type is entitled to is a property of the type
+
+`accent` and `spots` are two flags on the type itself, not a list of ids
+somewhere in `App.jsx`, so the rule and the vocabulary cannot drift apart:
+
+| | accents | spots |
+|---|---|---|
+| bedroom, living space, office chamber, conference room | ✓ | ✓ |
+| guest room, suite, lobby, dining area, bar, library, canteen | ✓ | ✓ |
+| **toilet** | ✓ | — |
+| kitchen, corridor, balcony, store, workspace, classroom, … | — | — |
+
+A toilet gets its basin sconces and **no directional spot**: there is nothing in
+a WC to aim at, and one over a basin is glare in a mirror.
+
+An unknown project or an unreadable type is entitled to nothing. A classification
+that could not be read comes back as `other` **with a confidence of zero** —
+whatever number the model volunteered was about a category we then rejected, and
+carrying it forward would display as "90% sure this is Other", a confident-
+sounding claim about the one case where we know nothing.
+
+## The pipeline, and the loading screen that is its progress
+
+Pressing **Light the whole plan** used to be one synchronous act. It now runs up
+to four model calls per room before the user sees anything — a minute on a
+six-room flat — so the wait has to be both visible and worth it.
+
+1. **Placing the beds** — the two detectors' answers, judged room by room
+2. **Reading your geometry** — the ambient layout, no model involved
+3. **Understanding room types** — one small call per room
+4. **Adding accent lighting** — only the rooms whose type qualifies
+5. **Aiming task lights** — the same rooms, less the toilets
+
+Then the user lands on the layout with everything already on it.
+
+**The bed step is first, and its position is load-bearing** — the only step here
+of which that is true. A bed is a no-light zone, a zone changes where the ambient
+lights go, and everything after step 2 reads those light positions: the accent
+pass is shown them so it does not put a sconce under a downlight, and the task
+spots are placed on the grid they form. Settle the beds after the layout and all
+three are working from a layout that is about to change underneath them. So it
+runs before the rooms are marked lit at all — it needs only the traced outlines —
+and the layout is then computed **once**, with the zones already in it.
+
+It is skipped entirely unless the detector ran in `judge` mode, and it does not
+re-run on a panel's recompute button: re-judging is its own button next to
+**Look again**, because the two cost different things and fail differently. See
+[A third model decides which of the two got it right](#a-third-model-decides-which-of-the-two-got-it-right).
+
+**Nothing aborts the whole run.** A room whose classification fails is an `other`
+and gets no accent pass; a room whose accent call 502s is noted and skipped. Five
+rooms lit and one not is a far better outcome than a spinner that gave up at room
+two, and every failure is on the console.
+
+**The crop is built once per room and reused** by the three passes that follow.
+(The bed step's crops are not among them and cannot be: it runs before the layout
+exists, and its two pictures carry rectangles the others must not have on them.) It is the
+same picture of the same room, and building it three times is three canvas
+renders and three JPEG encodes for one image.
+
+> **Why the rooms are read from a ref.** Everything after step one needs the
+> *computed* rooms — polygons, chunks, the ambient lights — and those come out of
+> a memo that cannot run until React has re-rendered with the new `litIds`. An
+> async function holding `rooms` from its own closure would hold the empty array
+> it was created with, forever. So the ref is the live view and the pipeline
+> waits for it to fill.
+
+### The loader is the plan
+
+Not a spinner. Every room the user just confirmed is drawn as its own outline,
+and each carries its state on its face: a pulse travelling round the stroke while
+it is being worked on, solid and filled once it is done. You watch the work move
+across your own drawing, which is both the honest progress bar and the thing that
+makes the wait feel like progress rather than like nothing happening. The room
+labels change from the drawing's own text to the classification as it arrives.
+
+The shapes come from the **outlines**, not from the computed rooms, so the loader
+has something to draw the instant it opens — the layout it is waiting for does
+not exist yet, and a loading screen that starts empty and fills in is the thing
+it exists to avoid.
+
+> **The travelling stroke, and the obvious way that does not work.** One dash
+> painted with a gradient that fades at both ends seems right and is wrong: an
+> SVG gradient is *spatial*, so `objectBoundingBox` maps the fade to the
+> polygon's width. The pulse tapers nicely along a room's top and bottom edges
+> and is flat colour down the sides — which looks like a bug on any room that is
+> not a letterbox.
+>
+> So the taper is built out of the **dashes**, which are measured along the path
+> and therefore work at every orientation and around corners: three laps of the
+> same outline, each a longer dash at a lower opacity, phase-shifted to sit
+> behind the one in front. Head, body, trail — a comet. A positive
+> `stroke-dashoffset` shifts the pattern *backward* along the path, which is what
+> puts the trail behind the head.
+>
+> Dash lengths are fractions of each polygon's own **perimeter**, or a WC and a
+> hall get the same absolute dash and the effect reads completely differently on
+> each. Each room's animation is delayed by its index, so six rooms do not pulse
+> in lockstep like a Christmas light. `prefers-reduced-motion` stops it dead.
 
 ## Accent lighting: the model marks the region, the code places the fitting
 
@@ -2203,6 +2443,21 @@ to prove the origin is far enough out that a 0,0 bug would fail the test.
 - Beams, diffusers and sprinklers aren't read from the plan automatically; only
   the fan is. Place them by hand as ceiling objects, or mark them as no-light
   zones.
+- **The bed judge only ever picks a whole answer.** It chooses between two
+  detectors' readings of a room, not between individual boxes: a room where
+  Roboflow got the first bed right and GPT got the second one right has no
+  outcome here that is fully right. Per-bed pairing is the fix and it is not
+  built — it needs the two answers matched bed to bed before the crops are made,
+  and a rule for the bed that only one of them found.
+- **An uncontested bed is not checked.** Where only one detector committed, that
+  box becomes a zone with no second opinion, by
+  [design](#a-third-model-decides-which-of-the-two-got-it-right) — so a lone
+  false positive from either detector goes through. Visible on the canvas, and
+  draggable, but nothing catches it for you.
+- **The judge is never told it is wrong.** There is no record of which detector
+  won on which kind of plan, so `BEDFIT_DEFAULTS.fallback` is an argument rather
+  than a measurement. `tools/eval-detect.mjs` measures a detector in feet against
+  a truth file and is exactly the harness this wants pointing at it; nobody has.
 - **Clearance is uniform on every face.** `fanClearance` is one number, so the
   ends of a long object keep the same distance as its sides. That is usually
   right and occasionally not — a linear diffuser wants more at the ends than
@@ -2314,11 +2569,23 @@ to prove the origin is far enough out that a 0,0 bug would fail the test.
   room replaces its whole list; there is no merge that keeps what you moved.
 - Capped at 8 zones in the parser. The model is told to be restrained and is
   otherwise ungoverned.
+- **The classification cannot be corrected.** A room read as a store gets no
+  accents and there is no way to say "no, that is a bedroom" short of running the
+  per-room buttons by hand. The type is shown on the room's row in the sidebar
+  with the model's reason on hover, so at least the wrong answer is visible.
+- **The pipeline cannot be re-run** without going back to the outlines and
+  starting again, and it has no cancel button — only an internal flag that the
+  reset path sets.
+- **A project type cannot be changed** once chosen, short of reloading the plan.
+- **Room types are not exported** anywhere: not in the CSV, the JSON or the CAD
+  DXF, so the reason a room got what it got does not travel with the drawing.
 - **A task surface gets exactly one spot.** A long conference table wants two or
   three along its length; nothing says so.
-- **Every surface in a room is placed against ONE chunk's grid** — the chunk
-  holding the first surface's centre. Right for the common case, wrong for a room
-  cut into several chunks with surfaces in more than one of them.
+- **A spot only ever uses its own chunk's grid.** That is the right rule, but it
+  means a surface sitting astride a chunk boundary — a dining table half in one
+  piece of ceiling and half in the next — sees only the segments of whichever
+  chunk holds its centre, and the pair of downlights on the other side of the
+  line are not candidates however close they are.
 - **Only a chandelier vetoes a spot.** A pendant is not a ceiling-object type, so
   a dining table under one still gets a spot beside it.
 - **The spot is not editable and not exported.** It is derived on every render,

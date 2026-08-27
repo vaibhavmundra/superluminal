@@ -21,6 +21,8 @@
 
 import { buildAccentRequest, furnitureFromReply, DEFAULT_MODEL } from '../src/lib/accentPrompt.js';
 import { buildSurfaceRequest, surfacesFromReply } from '../src/lib/taskSurfaces.js';
+import { buildRoomTypeRequest, roomTypeFromReply } from '../src/lib/roomTypes.js';
+import { buildBedFitRequest, bedFitFromReply } from '../src/lib/bedFit.js';
 import { textFromResponse } from '../src/lib/openaiDetect.js';
 
 const log = (id, arrow, msg) => console.log(`[accents ${id}] ${arrow} ${msg}`);
@@ -73,22 +75,37 @@ export default async function handler(req, res) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return send(500, { error: 'OPENAI_API_KEY is not set on the server.' });
 
-  const planB64 = bare(body?.plan?.image);
-  if (!planB64 || typeof planB64 !== 'string') {
-    return send(400, { error: 'Expected { plan: { image: "<base64>" } }.' });
+  // ONE OR TWO PICTURES, read as a list either way. Three of the four tasks
+  // send a single crop and always have; the bed-fit judge sends two of the same
+  // room and compares them. Reading a list here rather than forking on the task
+  // means the size guard below counts the WHOLE body, which is the number
+  // Vercel refuses on — a per-image guard would have passed two 3MB crops and
+  // then been rejected upstream with a message about neither of them.
+  const rawImages = Array.isArray(body?.plans) && body.plans.length
+    ? body.plans
+    : (body?.plan ? [body.plan] : []);
+  const images = rawImages
+    .map((p) => ({ base64: bare(p?.image), mime: p?.mime || 'image/jpeg',
+                   w: Number(p?.w) > 0 ? Number(p.w) : 1000,
+                   h: Number(p?.h) > 0 ? Number(p.h) : 1000 }))
+    .filter((p) => p.base64 && typeof p.base64 === 'string');
+
+  if (!images.length) {
+    return send(400, { error: 'Expected { plan: { image: "<base64>" } } or { plans: [...] }.' });
   }
+  const planB64 = images[0].base64;
 
   // The client downscales; this is the guard for when it did not. Base64
   // inflates by a third, and Vercel refuses a body over 4.5MB with a message
   // that says nothing about which image was the problem.
-  const bytes = Math.floor(planB64.length * 0.75);
+  const bytes = images.reduce((n, p) => n + Math.floor(p.base64.length * 0.75), 0);
   if (bytes > 4_000_000) {
-    log(id, '!!', `refused ${(bytes / 1e6).toFixed(1)}MB body`);
-    return send(413, { error: `That image is ${(bytes / 1e6).toFixed(1)}MB after decoding. Downscale it before sending — the cap here is 4MB.` });
+    log(id, '!!', `refused ${(bytes / 1e6).toFixed(1)}MB body (${images.length} image${images.length === 1 ? '' : 's'})`);
+    return send(413, { error: `Those ${images.length === 1 ? 'image is' : 'images are'} ${(bytes / 1e6).toFixed(1)}MB after decoding. Downscale before sending — the cap here is 4MB for the whole request.` });
   }
 
-  const w = Number(body?.plan?.w) > 0 ? Number(body.plan.w) : 1000;
-  const h = Number(body?.plan?.h) > 0 ? Number(body.plan.h) : 1000;
+  const w = images[0].w;
+  const h = images[0].h;
   const model = body.model || process.env.OPENAI_VISION_MODEL || DEFAULT_MODEL;
   // Coerced field by field, not accepted wholesale. Every other input on this
   // route is coerced (plan.w, ceilingFt, the render list); a `room` object taken
@@ -96,11 +113,15 @@ export default async function handler(req, res) {
   // unhandled throw inside the prompt builder rather than a 400.
   const numOrNull = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
   const rb = body.room && typeof body.room === 'object' && !Array.isArray(body.room) ? body.room : null;
-  // WHICH QUESTION about the same picture. Both passes send an identical crop
-  // of one room and both get back a list of things with boxes on it; only the
-  // vocabulary differs. A third endpoint for that would be a third copy of the
-  // key handling, the scrubbing, the size guard and the logging.
-  const task = body.task === 'surfaces' ? 'surfaces' : 'furniture';
+  // WHICH QUESTION about the same picture. Three of the four send an identical
+  // crop of one room; two of those get back a list of things with boxes on it
+  // and differ only in vocabulary, one gets back a room type. The fourth —
+  // `bedfit` — sends two copies of that crop with different rectangles drawn on
+  // them and gets back a letter. A separate endpoint per question would be a
+  // separate copy of the key handling, the scrubbing, the size guard and the
+  // logging, four times over.
+  const task = ['surfaces', 'roomtype', 'bedfit'].includes(body.task) ? body.task : 'furniture';
+  const projectId = typeof body.projectId === 'string' ? body.projectId : null;
 
   const room = rb ? {
     name: typeof rb.name === 'string' ? rb.name.slice(0, 60) : null,
@@ -110,13 +131,27 @@ export default async function handler(req, res) {
   } : null;
   const ceilingFt = Number(body.ceilingFt) > 0 ? Number(body.ceilingFt) : null;
 
-  log(id, '->', `${(bytes / 1024).toFixed(0)}KB — room ${w}x${h}`
-    + `, task=${task}, room="${room?.name ?? '?'}", ${model}`);
+  log(id, '->', `${(bytes / 1024).toFixed(0)}KB${images.length > 1 ? ` x${images.length}` : ''} — room ${w}x${h}`
+    + `, task=${task}${projectId ? `/${projectId}` : ''}`
+    + `, room="${room?.name ?? '?'}", ${model}`);
 
-  const plan = { base64: planB64, mime: body?.plan?.mime || 'image/jpeg' };
-  const request = task === 'surfaces'
-    ? buildSurfaceRequest({ plan, room, model })
-    : buildAccentRequest({ plan, room, ceilingFt, model });
+  const plan = images[0];
+  // A/B counts, so the prompt can say out loud that the two answers disagree on
+  // how many beds there are. Coerced like everything else on this route.
+  const cb = body.counts && typeof body.counts === 'object' ? body.counts : null;
+  const counts = cb && Number.isFinite(Number(cb.a)) && Number.isFinite(Number(cb.b))
+    ? { a: Number(cb.a), b: Number(cb.b) } : null;
+  let request;
+  try {
+    request = task === 'roomtype' ? buildRoomTypeRequest({ plan, projectId, room })
+      : task === 'surfaces' ? buildSurfaceRequest({ plan, room, model })
+      : task === 'bedfit' ? buildBedFitRequest({ plans: images, room, counts, model })
+      : buildAccentRequest({ plan, room, ceilingFt, model });
+  } catch (err) {
+    // An unknown project id reaches the prompt builder as a throw. That is a
+    // caller error, not an upstream one, so it is a 400 rather than a 500.
+    return send(400, { error: String(err.message || err), id });
+  }
 
   const t0 = Date.now();
   let upstream;
@@ -153,26 +188,50 @@ export default async function handler(req, res) {
   catch { return send(502, { error: 'OpenAI returned non-JSON.', ms, id }); }
 
   const reply = textFromResponse(json);
-  const payload = task === 'surfaces'
-    ? surfacesFromReply(reply, { w, h })
+  const payload = task === 'roomtype' ? roomTypeFromReply(reply, { projectId })
+    : task === 'surfaces' ? surfacesFromReply(reply, { w, h })
+    : task === 'bedfit' ? bedFitFromReply(reply)
     : furnitureFromReply(reply, { w, h });
-  const found = payload.furniture ?? payload.surfaces;
+  // The room-type task returns one answer rather than a list, so there is
+  // nothing to count. Logged as the answer itself.
+  const found = payload.furniture ?? payload.surfaces ?? null;
 
   // The model's own words. A refusal, a hedge, or "none of the rules apply to
   // this room" is the single most useful thing on the wire when a run comes
   // back empty, and it is invisible in the parsed payload.
-  log(id, '==', found.length
-    ? `${found.length}: ${found.map((f) => `${f.type} ${f.confidence.toFixed(2)}`).join(', ')}`
-    : `nothing found. reply: ${reply.slice(0, 300)}`);
-  if (payload.skipped.length) {
+  // An `other` is the one answer worth seeing the model's own words for: it is
+  // either a genuinely unclassifiable space or a question it could not read, and
+  // those need completely different fixes.
+  if (task === 'roomtype' && (!payload.matched || payload.type === 'other')) {
+    log(id, '??', `answered "${payload.type}" — raw reply: ${reply.slice(0, 300)}`);
+  }
+  // A judge that would not choose is the one failure this route cannot see from
+  // the parsed payload — `pick: null` looks like any other empty answer — and it
+  // is the one worth the raw reply, because "both look the same to me" and "I
+  // could not read the images" need different fixes.
+  if (task === 'bedfit' && !payload.matched) {
+    log(id, '??', `the judge did not pick — raw reply: ${reply.slice(0, 300)}`);
+  }
+  log(id, '==', task === 'bedfit'
+    ? `pick ${payload.pick ?? 'NONE'} ${payload.confidence.toFixed(2)}${payload.why ? ` — ${payload.why}` : ''}`
+    : !found
+    ? `${payload.type} ${payload.confidence?.toFixed(2)}${payload.matched ? '' : ' (UNMATCHED)'}`
+    : found.length
+      ? `${found.length}: ${found.map((f) => `${f.type} ${f.confidence.toFixed(2)}`).join(', ')}`
+      : `nothing found. reply: ${reply.slice(0, 300)}`);
+  if (payload.skipped?.length) {
     log(id, '??', `${payload.skipped.length} dropped: ${payload.skipped.map((s) => s.reason).join('; ').slice(0, 240)}`);
   }
 
   return send(200, {
     meta: {
       id, model, ms, bytes,
-      task, found: found.length,
-      skipped: payload.skipped.length,
+      task, found: found ? found.length : 1, images: images.length,
+      // The room-type payload is ONE answer, not a list, so it has no `skipped`
+      // array. Guarding the log line and not this one meant every successful
+      // classification was logged and then threw on the way out — the server
+      // said "bedroom 0.98" and the browser got a 500.
+      skipped: payload.skipped?.length ?? 0,
       usage: json.usage ?? null,
       reply: reply.slice(0, 900),
     },

@@ -262,6 +262,17 @@ export function chandelierOver(surface, chandeliers = [], opt = {}) {
  * somewhere else, and a compromise on the coffee table costs less.
  */
 export function planTaskSpots(surfaces, ctx = {}) {
+  // EACH SURFACE AGAINST ITS OWN CHUNK. This took one chunk for the whole room —
+  // the one holding the FIRST surface — and that is wrong the moment a room has
+  // two surfaces in different chunks, which a living-dining room always does.
+  // The dining table was placed against the coffee table's grid and landed on a
+  // segment at the far end of the room, metres from the thing it was aiming at,
+  // while the pair of downlights either side of it went unused.
+  //
+  // A chunk is a region of ceiling with its own grid, so the segments available
+  // to a surface are the ones in the chunk the surface actually sits in. There
+  // is no sense in which the other chunk's lines were candidates.
+  const chunks = ctx.chunks?.length ? ctx.chunks : (ctx.chunk ? [ctx.chunk] : []);
   const area = (s) => Math.max(0, s.x1 - s.x0) * Math.max(0, s.y1 - s.y0);
   const order = surfaces
     .map((s, i) => ({ s, i }))
@@ -277,7 +288,9 @@ export function planTaskSpots(surfaces, ctx = {}) {
         + ` already lights this surface.` };
       continue;
     }
-    const res = placeTaskSpot(s, { ...ctx, usedSegments });
+    const chunk = chunkFor({ x: (s.x0 + s.x1) / 2, y: (s.y0 + s.y1) / 2 }, chunks);
+    if (!chunk) { out[i] = { rejected: 'This surface is not in any chunk of ceiling.' }; continue; }
+    const res = placeTaskSpot(s, { ...ctx, chunk, usedSegments });
     if (res.spot) usedSegments.add(segmentKey(res.spot.segment));
     out[i] = res;
   }

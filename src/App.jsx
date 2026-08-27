@@ -13,14 +13,19 @@ import { enumerateChunkings, findChunking } from './lib/chunking.js';
 import { bbox, pointInPolygon } from './lib/geometry.js';
 import { REFERENCES, scaleFromFans, scaleFromReference } from './lib/scale.js';
 import { proposeOutlines } from './lib/outlineSources.js';
-import { detectFurniture, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER } from './lib/furniture.js';
+import { detectFurniture, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER, wireProvider } from './lib/furniture.js';
 import { download, toJSON, toCSV, toDXF, toSuperluminalDXF, svgString, svgToPNG } from './lib/exporters.js';
 import AccentPanel from './components/AccentPanel.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
+import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
+import PlanLoader from './components/PlanLoader.jsx';
+import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots } from './lib/roomTypes.js';
 import TaskSurfacePanel from './components/TaskSurfacePanel.jsx';
 import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
 import { planTaskSpots, chunkFor } from './lib/taskSpots.js';
 import { roomSnapshot, requestAccents, toPlanRect } from './lib/accentMask.js';
+import { BED_SOURCES, splitByProvider, label as labelBeds, bedsIn, contestFor,
+         applyVerdict } from './lib/bedFit.js';
 import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
 import { zonesFromFurniture, slideSconceTo, setRunEnd } from './lib/accentPlace.js';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
@@ -109,6 +114,14 @@ export default function App() {
   // apart is what lets the detection run before a boundary exists.
   const [detections, setDetections] = useState([]);          // {id,cls,conf,rect} in image px
   const [detectState, setDetectState] = useState({ status: 'idle' });
+  // THE TWO ANSWERS, KEPT APART. The ordinary path walks the whole `both`
+  // response at once so that dedupe() collapses two boxes over one bed into one
+  // zone; the judge needs the opposite — the two claims side by side, because
+  // they are what is being compared. Empty on any single-provider run.
+  const [bedSets, setBedSets] = useState(null);   // {roboflow:[...], openai:[...]}
+  // What the judge decided, per room, so the panel can say why a bed is where
+  // it is. Keyed by outline id.
+  const [bedVerdicts, setBedVerdicts] = useState({});
   const [dismissed, setDismissed] = useState([]);            // detection ids the user rejected
   const [detectNonce, setDetectNonce] = useState(0);         // bumping this re-runs detection
   const [provider, setProvider] = useState(DEFAULT_PROVIDER);
@@ -156,6 +169,16 @@ export default function App() {
   // the look of it, and a TASK surface is a plane somebody works at. This pass
   // only FINDS them — same order the accent pass was built in, and the order
   // that made its one real failure obvious instead of mysterious.
+  // WHAT KIND OF PROJECT. Asked once, on upload, and everything conditional
+  // downstream reads it — see roomTypes.js for why it is asked rather than
+  // guessed.
+  const [projectId, setProjectId] = useState(null);
+  const [roomTypes, setRoomTypes] = useState({});   // outline id -> {type,confidence,why}
+  // The pipeline's own state while it runs. Null when it is not running, which
+  // is also what the loader keys off.
+  const [prep, setPrep] = useState(null);
+  const cancelPrep = useRef(false);
+
   const [surfaceRoomId, setSurfaceRoomId] = useState(null);
   const [surfaceResults, setSurfaceResults] = useState({});
   const [surfaceState, setSurfaceState] = useState({ status: 'idle', roomId: null });
@@ -204,6 +227,7 @@ export default function App() {
     setAccentRoomId(null); setAccentResults({});
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
     setSelAccId(null); setAccDrag(null);
+    setProjectId(null); setRoomTypes({}); setPrep(null); cancelPrep.current = false;
     setSurfaceRoomId(null); setSurfaceResults({});
     setSurfaceState({ status: 'idle', roomId: null }); setSurfaceDismissed([]);
     setFans([]); setFanReason(''); setFanMode(false);
@@ -653,151 +677,153 @@ export default function App() {
     return () => { alive = false; };
   }, [source, img, accentRoom, wallLayerSet]);
 
-  const runAccents = useCallback(async () => {
-    if (!accentRoom?.plan?.ok || !source) return;
-    const r = accentRoom;
-    // The crop is built by the effect above. If it is not there yet, or belongs
-    // to the room we were looking at a moment ago, make one now rather than
-    // sending the wrong room's picture — which is a failure nothing downstream
-    // could possibly detect.
-    let shot = accentShot?.roomId === r.id ? accentShot : null;
-    setAccentState({ status: 'running', roomId: r.id });
-    const t0 = Date.now();
-    // ZONE IDS ARE POSITIONAL — acc-<room>-<index> — so a second run renumbers
-    // them from zero and a dismissal from the first run would land on whatever
-    // fixture happens to take that index next. Clearing this room's dismissals
-    // as the run starts is what stops a brand-new zone being born struck
-    // through, invisible on the canvas, for no reason the user could see.
-    setAccentDismissed((d) => d.filter((x) => !x.startsWith(`acc-${r.id}-`)));
-    try {
-      if (!shot) {
-        shot = await roomSnapshot({
-          source, img, polygonPx: r.plan.polygonPx,
-          lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
-        });
-        setAccentShot({ ...shot, roomId: r.id });
-      }
-      console.log(`[accents] ${r.outline.name || 'room'}: sending ${shot.w}x${shot.h} crop`,
-        { crop: shot.crop, sent: shot.dataUrl });
+  /**
+   * ACCENTS FOR ONE ROOM, without touching state.
+   *
+   * Pulled out of the button handler because the pipeline needs the same work
+   * for a room the panel is not looking at. A handler that reads `accentRoom`
+   * and writes `accentResults` cannot be reused for the fourth room of six
+   * while the panel is showing the first, and the alternative — driving the
+   * panel's state from the pipeline to make the handler fire — is a loop
+   * waiting to happen.
+   */
+  const computeAccents = useCallback(async (r, { reuseShot = null } = {}) => {
+    const shot = reuseShot ?? await roomSnapshot({
+      source, img, polygonPx: r.plan.polygonPx,
+      lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
+    });
+    const payload = await requestAccents({
+      plan: shot,
+      room: {
+        name: r.outline.name || null,
+        widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
+      },
+      ceilingFt,
+    });
+    // OUT OF THE CROP AND BACK ONTO THE PLAN. The model answered in fractions
+    // of an image that was a cut-out of one room; every other rectangle in this
+    // app is in plan pixels, and furniture left in the crop's space would sit in
+    // the top-left corner of the sheet.
+    const res = payload.result;
+    const furniture = res.furniture.map((f, i) => {
+      const t = FURNITURE_BY_ID[f.type];
+      return {
+        ...f,
+        id: `furn-${r.id}-${i}`,
+        rect: toPlanRect(f.rect, shot.crop, res.image),
+        label: t?.label || f.type,
+        colour: t?.colour || '#666',
+      };
+    });
+    // AND THEN THE RULES, IN CODE. The model was asked what furniture is in the
+    // room and nothing else; this is where a bed becomes a pair of sconces at
+    // either end of itself and a wardrobe becomes a strip along its own length.
+    // Deterministic, so the house style is the same every run — see
+    // accentPrompt.js's header for what happened when it was not.
+    const { zones: placed, handled } = zonesFromFurniture(furniture, r.plan.polygonPx);
+    const zones = placed.map((z, i) => ({
+      ...z,
+      id: `acc-${r.id}-${i}`,
+      // Carried on the fitting so a drag handler knows which room's result list
+      // to write back into. The zones live per-room in accentResults, and the
+      // canvas draws them all in one flat pass.
+      roomId: r.id,
+      colour: TYPE_BY_ID[z.type]?.colour || '#666',
+      label: TYPE_BY_ID[z.type]?.label || z.type,
+      short: TYPE_BY_ID[z.type]?.short || z.type,
+      runFt: z.runLength != null && pxPerFt ? z.runLength / pxPerFt : null,
+    }));
+    return { shot, meta: payload.meta, result: { ...res, furniture, handled, zones } };
+  }, [source, img, wallLayerSet, pxPerFt, ceilingFt]);
 
-      const payload = await requestAccents({
-        plan: shot,
-        room: {
-          name: r.outline.name || null,
-          widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
-        },
-        ceilingFt,
-      });
-      console.log('[accents] server:', payload.meta);
+  /** Task surfaces for one room, likewise. */
+  const computeSurfaces = useCallback(async (r, { reuseShot = null } = {}) => {
+    const shot = reuseShot ?? await roomSnapshot({
+      source, img, polygonPx: r.plan.polygonPx,
+      lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
+    });
+    const payload = await requestAccents({
+      plan: shot, task: 'surfaces',
+      room: {
+        name: r.outline.name || null,
+        widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
+      },
+    });
+    const res = payload.result;
+    const surfaces = res.surfaces.map((sf, i) => {
+      const rect = toPlanRect(sf.rect, shot.crop, res.image);
+      const t = SURFACE_BY_ID[sf.type];
+      return {
+        ...sf,
+        id: `surf-${r.id}-${i}`, roomId: r.id, rect,
+        colour: t?.colour || '#666', label: t?.label || sf.type,
+        widthFt: pxPerFt ? (rect.x1 - rect.x0) / pxPerFt : null,
+        heightFt: pxPerFt ? (rect.y1 - rect.y0) / pxPerFt : null,
+      };
+    });
+    return { shot, meta: payload.meta, result: { ...res, surfaces } };
+  }, [source, img, wallLayerSet, pxPerFt]);
 
-      // OUT OF THE CROP AND BACK ONTO THE PLAN. The model answered in fractions
-      // of an image that was a cut-out of one room; every other rectangle in
-      // this app is in plan pixels, and a zone that stayed in the crop's space
-      // would draw itself in the top-left corner of the sheet.
-      // OUT OF THE CROP AND BACK ONTO THE PLAN. The model answered in fractions
-      // of an image that was a cut-out of one room; every other rectangle in
-      // this app is in plan pixels, and furniture left in the crop's space
-      // would sit in the top-left corner of the sheet.
-      const res = payload.result;
-      const furniture = res.furniture.map((f, i) => {
-        const t = FURNITURE_BY_ID[f.type];
-        return {
-          ...f,
-          id: `furn-${r.id}-${i}`,
-          rect: toPlanRect(f.rect, shot.crop, res.image),
-          label: t?.label || f.type,
-          colour: t?.colour || '#666',
-        };
-      });
+  /** What kind of space is it? One small call, one word back. */
+  const computeRoomType = useCallback(async (r, { reuseShot = null } = {}) => {
+    const shot = reuseShot ?? await roomSnapshot({
+      source, img, polygonPx: r.plan.polygonPx,
+      lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
+    });
+    const payload = await requestAccents({
+      plan: shot, task: 'roomtype', projectId,
+      room: {
+        name: r.outline.name || null,
+        widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
+      },
+    });
+    return { shot, ...payload.result };
+  }, [source, img, wallLayerSet, projectId]);
 
-      // AND THEN THE RULES, IN CODE. The model was asked what furniture is in
-      // the room and nothing else; this is where a bed becomes a pair of
-      // sconces at either end of itself and a wardrobe becomes a strip along
-      // its own length. Deterministic, so the house style is the same every
-      // run — see accentPrompt.js's header for what happened when it was not.
-      const { zones: placed, handled } = zonesFromFurniture(furniture, r.plan.polygonPx);
-      const zones = placed.map((z, i) => ({
-        ...z,
-        id: `acc-${r.id}-${i}`,
-        // Carried on the fitting so a drag handler knows which room's result
-        // list to write back into. The zones live per-room in accentResults,
-        // and the canvas draws them all in one flat pass.
-        roomId: r.id,
-        colour: TYPE_BY_ID[z.type]?.colour || '#666',
-        label: TYPE_BY_ID[z.type]?.label || z.type,
-        short: TYPE_BY_ID[z.type]?.short || z.type,
-        runFt: z.runLength != null && pxPerFt ? z.runLength / pxPerFt : null,
-      }));
-      console.log(`[accents] ${furniture.length} piece(s) of furniture -> `
-        + `${zones.length} fitting(s), ${zones.filter((z) => z.rejected).length} unplaceable`,
-        { furniture, handled, zones });
+  /**
+   * WHICH DETECTOR GOT THE BED RIGHT, for one room.
+   *
+   * Two crops of the same room, made by the same roomSnapshot() that feeds the
+   * accent and task passes, differing in NOTHING but the rectangles drawn on
+   * them. Same crop rectangle, same wash, same colour, same line weight — the
+   * only thing the model can prefer is the geometry, which is the only thing it
+   * is being asked about.
+   *
+   * NO LIGHTS ON THESE CROPS. Everywhere else the ambient layout is drawn onto
+   * the picture so the model does not recommend a fitting where one already
+   * hangs. Here it would be noise at best and misleading at worst: this runs
+   * BEFORE the layout, precisely because the answer moves the layout.
+   *
+   * Takes the outline rather than a laid-out room for the same reason — there
+   * is no `plan` yet when this runs.
+   */
+  const computeBedFit = useCallback(async (o, a, b, { signal = null } = {}) => {
+    const region = regionFromOutline(o, pxPerFt);
+    if (!region?.ok) throw new Error('That outline has no region.');
+    const polygonPx = useBoundingRect ? region.boundingRect : region.polygon;
+    const stats = outlineStats(o, pxPerFt);
 
-      setAccentResults((m) => ({ ...m, [r.id]: { ...res, furniture, handled, zones } }));
-      setAccentState({ status: 'done', roomId: r.id, ms: Date.now() - t0, meta: payload.meta });
-    } catch (err) {
-      console.warn('[accents] failed:', err);
-      setAccentState({ status: 'error', roomId: r.id, error: String(err.message || err), ms: Date.now() - t0 });
-    }
-  }, [accentRoom, accentShot, source, img, wallLayerSet, pxPerFt, ceilingFt]);
+    const shots = await Promise.all([a, b].map((boxes, i) => roomSnapshot({
+      source, img, polygonPx, lightsPx: [], wallLayers: wallLayerSet,
+      boxes: boxes.map((d) => d.rect),
+      badge: BED_SOURCES[i].letter,
+    })));
+
+    const payload = await requestAccents({
+      plans: shots, task: 'bedfit', signal,
+      counts: { a: a.length, b: b.length },
+      room: {
+        name: o.name || null,
+        widthFt: stats?.widthFt ?? null, heightFt: stats?.heightFt ?? null,
+        areaSqft: stats?.areaSqft ?? null,
+      },
+    });
+    return { shots, verdict: payload.result, meta: payload.meta };
+  }, [source, img, wallLayerSet, pxPerFt, useBoundingRect]);
 
   const surfaceRoom = useMemo(
     () => rooms.find((r) => r.id === surfaceRoomId) || rooms[0] || null,
     [rooms, surfaceRoomId]);
-
-  /**
-   * Find the task surfaces in one room.
-   *
-   * The SAME masked crop the accent pass sends, built the same way, because it
-   * is the same picture of the same room — only the question over the wire
-   * differs. Nothing here is cached: this runs once per press, and a crop is
-   * cheap next to the call it precedes.
-   */
-  const runSurfaces = useCallback(async () => {
-    if (!surfaceRoom?.plan?.ok || !source) return;
-    const r = surfaceRoom;
-    setSurfaceState({ status: 'running', roomId: r.id });
-    const t0 = Date.now();
-    try {
-      const shot = await roomSnapshot({
-        source, img, polygonPx: r.plan.polygonPx,
-        lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
-      });
-      const payload = await requestAccents({
-        plan: shot,
-        task: 'surfaces',
-        room: {
-          name: r.outline.name || null,
-          widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
-        },
-      });
-      const res = payload.result;
-      const surfaces = res.surfaces.map((sf, i) => {
-        const rect = toPlanRect(sf.rect, shot.crop, res.image);
-        const t = SURFACE_BY_ID[sf.type];
-        return {
-          ...sf,
-          id: `surf-${r.id}-${i}`,
-          roomId: r.id,
-          rect,
-          colour: t?.colour || '#666',
-          label: t?.label || sf.type,
-          widthFt: pxPerFt ? (rect.x1 - rect.x0) / pxPerFt : null,
-          heightFt: pxPerFt ? (rect.y1 - rect.y0) / pxPerFt : null,
-        };
-      });
-      console.log(`[surfaces] ${r.outline.name || 'room'}: ${surfaces.length}`,
-        { sent: shot.dataUrl, meta: payload.meta, surfaces });
-      // A fresh run replaces this room's list, so its dismissals go with it —
-      // the ids are positional and would otherwise land on different surfaces.
-      setSurfaceDismissed((d) => d.filter((x) => !x.startsWith(`surf-${r.id}-`)));
-      setSurfaceResults((m) => ({ ...m, [r.id]: { ...res, surfaces } }));
-      setSurfaceState({ status: 'done', roomId: r.id, ms: Date.now() - t0 });
-    } catch (err) {
-      console.warn('[surfaces] failed:', err);
-      setSurfaceState({ status: 'error', roomId: r.id,
-                        error: String(err.message || err), ms: Date.now() - t0 });
-    }
-  }, [surfaceRoom, source, img, wallLayerSet, pxPerFt]);
 
   /** What the canvas draws: every surface still standing, in plan pixels. */
   const surfacesPx = useMemo(() => {
@@ -841,16 +867,12 @@ export default function App() {
         return { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y),
                  x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
       });
-      // Chunk taken from the FIRST surface's centre. Every surface in one room
-      // is placed against one chunk's grid, which is right for the common case
-      // and is the known limit for a room cut into several.
-      const chunk = chunkFor(
-        { x: (inFt[0].x0 + inFt[0].x1) / 2, y: (inFt[0].y0 + inFt[0].y1) / 2 },
-        r.plan.chunks);
-      if (!chunk) continue;
-
+      // ALL the room's chunks. Which one a surface belongs to is decided per
+      // surface inside planTaskSpots — a living-dining room has its coffee
+      // table in one chunk and its dining table in another, and giving both the
+      // same grid puts one of them nowhere near what it is lighting.
       const placed = planTaskSpots(inFt, {
-        chunk,
+        chunks: r.plan.chunks,
         lights: r.plan.lights,
         polygon: r.plan.polygonFt,
         fixtures: r.geo.fixturesFt,
@@ -938,6 +960,374 @@ export default function App() {
   // An image reaches the tracer with no scale yet; the tracer is where it gets
   // set, so `trace` covers "measure this plan", "correct what was found" and
   // "draw one the detector missed".
+  /**
+   * THE PIPELINE, and the loading screen is its progress.
+   *
+   * Pressing "Light the whole plan" used to be one synchronous act: mark the
+   * outlines lit and land on the layout. It now runs up to four model calls per
+   * room before the user sees anything, which is a minute on a six-room flat, so
+   * the wait needs to be both visible and worth it.
+   *
+   * WHY THE ROOMS ARE READ FROM A REF. Everything after step one needs the
+   * COMPUTED rooms — polygons, chunks, the ambient lights — and those come out
+   * of a memo that cannot run until React has re-rendered with the new litIds.
+   * An async function holding `rooms` from its own closure would hold the empty
+   * array it was created with, forever. So the ref is the live view and the
+   * pipeline waits for it to fill.
+   *
+   * NOTHING ABORTS THE WHOLE RUN. A room whose classification fails is an
+   * `other` and gets no accent pass; a room whose accent call 502s is noted and
+   * skipped. Five rooms lit and one not is a far better outcome than a spinner
+   * that gave up at room two, and every failure is on the console.
+   */
+  const roomsRef = useRef(rooms);
+  useEffect(() => { roomsRef.current = rooms; }, [rooms]);
+
+  // BEDS FIRST, and it is the only step whose ORDER is load-bearing.
+  //
+  // A bed is a no-light zone, a zone changes where the ambient lights go, and
+  // everything after this reads those light positions: the accent pass is shown
+  // them so it does not put a sconce under a downlight, and the task spots are
+  // placed on the grid they form. Decide the beds after the layout and every
+  // one of those is working from a layout that is about to change.
+  //
+  // So this runs before "Reading your geometry" — before the rooms are marked
+  // lit at all — and it works off the traced outlines, which is everything it
+  // needs. The layout is then computed ONCE, with the beds already in it.
+  const PREP_STEPS = useMemo(() => [
+    { key: 'beds', label: 'Placing the beds' },
+    { key: 'geometry', label: 'Reading your geometry' },
+    { key: 'types', label: 'Understanding room types' },
+    { key: 'accents', label: 'Adding accent lighting' },
+    { key: 'spots', label: 'Aiming task lights' },
+  ], []);
+
+  /** Run `fn` over `items`, at most `limit` at a time. */
+  const mapLimit = async (items, limit, fn) => {
+    const out = new Array(items.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= items.length) return;
+        try { out[i] = await fn(items[i], i); }
+        catch (err) { out[i] = { error: err }; }
+      }
+    }));
+    return out;
+  };
+
+  /**
+   * ONE FUNCTION FOR THE WHOLE RUN AND FOR EVERY RE-RUN.
+   *
+   * `opts` picks the steps. The tracer's button runs all three; the panels'
+   * recompute buttons run one. Which means a recompute is the SAME code as the
+   * first pass — same loader, same per-room progress, same error handling —
+   * rather than a second implementation that drifts from it. The old per-room
+   * "Find accent zones" button was exactly that second implementation, and it
+   * is gone.
+   */
+  const runPipeline = useCallback(async (opts = {}) => {
+    const { classify = true, accents = true, surfaces = true, relight = true,
+            beds = true } = opts;
+    if (!source || !outlines.length) return;
+    cancelPrep.current = false;
+
+    const wanted = PREP_STEPS.filter((st) =>
+      st.key === 'beds' ? (beds && !!bedSets)
+      : st.key === 'geometry' ? relight
+      : st.key === 'types' ? classify
+      : st.key === 'accents' ? accents
+      : surfaces);
+    // A room that fails is skipped, not fatal — but a silent skip is how six
+    // rooms quietly become four. Counted here and reported in the step's own
+    // note, so a partial run says it was partial.
+    const failed = { beds: 0, types: 0, accents: 0, surfaces: 0 };
+    const withFails = (text, n) => (n ? `${text} · ${n} room${n > 1 ? 's' : ''} failed` : text);
+    const roomState = {};
+    for (const o of outlines) roomState[o.id] = 'idle';
+    let steps = wanted.map((st, i) => ({ ...st, state: i === 0 ? 'busy' : 'idle' }));
+    let done = 0, total = relight ? outlines.length : 0;
+    const paint = (patch = {}) => setPrep((prev) => ({
+      phase: steps.find((x) => x.state === 'busy')?.label ?? 'Finishing',
+      detail: '', ...prev, ...patch, steps: [...steps], roomState: { ...roomState },
+      done, total,
+    }));
+    const stepTo = (key) => {
+      const at = steps.findIndex((q) => q.key === key);
+      if (at < 0) return false;
+      steps = steps.map((st, i) => ({ ...st, state: i === at ? 'busy' : i < at ? 'done' : st.state }));
+      return true;
+    };
+    const note = (key, text) => {
+      steps = steps.map((st) => (st.key === key ? { ...st, note: text } : st));
+    };
+    paint({ detail: beds && bedSets ? 'Two readings of the beds' : relight ? 'Working out where the rooms are' : '' });
+
+    // --- 0. the beds, decided BEFORE anything is laid out
+    //
+    // Room by room, because that is the unit the question makes sense in: a
+    // whole-sheet A/B forces one detector to win every bedroom, and on a plan
+    // where Roboflow nails one bed and GPT nails another there is no answer that
+    // is right. Per room, each bed is judged against the other reading OF THAT
+    // BED, in the same isolated crop the accent and task passes are shown.
+    if (beds && bedSets) {
+      stepTo('beds');
+      const A = bedSets.roboflow || [], B = bedSets.openai || [];
+      total += outlines.length;
+      for (const o of outlines) roomState[o.id] = 'idle';
+      paint({ detail: `${A.length} from Roboflow, ${B.length} from GPT` });
+
+      // TWO AT A TIME, like the accent pass. Each contested room is a
+      // high-detail two-image call and running eight of them at once is how a
+      // rate limit turns into eight failures instead of one queue.
+      const perRoom = await mapLimit(outlines, 2, async (o) => {
+        if (cancelPrep.current) return null;
+        const region = regionFromOutline(o, pxPerFt);
+        const poly = region?.ok ? (useBoundingRect ? region.boundingRect : region.polygon) : null;
+        const a = poly ? bedsIn(A, poly) : [];
+        const b = poly ? bedsIn(B, poly) : [];
+
+        roomState[o.id] = 'busy'; paint();
+        const c = contestFor(a, b);
+        let rec = { ...c, asked: false, confidence: 0 };
+
+        if (c.ask) {
+          paint({ detail: `Two readings of ${o.name || 'a room'}` });
+          try {
+            const out = await computeBedFit(o, a, b);
+            rec = { kind: 'judged', asked: true, ...applyVerdict(a, b, out.verdict) };
+          } catch (err) {
+            // A judge that cannot be reached is not a reason to lose both
+            // answers. applyVerdict with no verdict takes the documented
+            // fallback and says it fell back, and the room is counted as failed
+            // so the step's own note admits the run was partial.
+            console.warn('[beds] the judge failed for', o.name, err);
+            failed.beds++;
+            rec = { kind: 'judged', asked: true, failed: true, ...applyVerdict(a, b, null) };
+          }
+        }
+        roomState[o.id] = 'done'; done++; paint();
+        return { id: o.id, name: o.name, a, b, rec };
+      });
+      if (cancelPrep.current) { setPrep(null); return; }
+
+      const rows = perRoom.filter((r) => r && !r.error);
+      const verdicts = {};
+      const won = [];
+      const claimed = new Set();
+      for (const r of rows) {
+        verdicts[r.id] = {
+          kind: r.rec.kind, pick: r.rec.pick, asked: r.rec.asked,
+          confidence: r.rec.confidence ?? 0, why: r.rec.why || '',
+          fellBack: !!r.rec.fellBack, failed: !!r.rec.failed,
+          counts: { roboflow: r.a.length, openai: r.b.length },
+        };
+        for (const d of [...r.a, ...r.b]) claimed.add(d.id);
+        for (const d of (r.rec.winner || [])) won.push({ ...d, roomId: r.id, contest: r.rec.kind });
+      }
+
+      // BEDS IN NO TRACED ROOM. Nothing judged these — there was no room to
+      // isolate and no ceiling for them to affect — so they keep the behaviour
+      // they have always had: both readings merged, overlaps de-duplicated.
+      // Dropping them instead would silently remove boxes the user can see on
+      // the canvas today, on a plan where they simply have not drawn that room
+      // yet.
+      const loose = [...A, ...B].filter((d) => !claimed.has(d.id));
+      for (const d of dedupe(loose)) won.push({ ...d, roomId: null, contest: 'unjudged' });
+
+      setBedVerdicts(verdicts);
+      // A DISMISSAL CANNOT SURVIVE THIS. The ids it holds are the merged set's
+      // (`det-3-...`); the judged list's are the winning detector's
+      // (`det-rf-0-...`), so a kept dismissal would silently apply to nothing —
+      // a box the user struck out would come back with no way to tell that it
+      // had. Cleared, so the list on screen is the list that was decided.
+      setDismissed([]);
+      setDetections(won);
+
+      const asked = rows.filter((r) => r.rec.asked).length;
+      const withBeds = rows.filter((r) => r.rec.kind !== 'none').length;
+      // COUNTED IN ROOMS, not over the whole list: the loose ones belong to no
+      // room and saying "4 beds in 2 rooms" when two of them are in neither is
+      // a sentence that does not add up on the screen it is printed on.
+      const inRooms = won.filter((d) => d.roomId).length;
+      note('beds', withFails(
+        `${inRooms} bed${inRooms === 1 ? '' : 's'} in ${withBeds} room${withBeds === 1 ? '' : 's'}`
+        + (asked ? ` · ${asked} judged` : ' · none needed judging'), failed.beds));
+      console.log('[beds] verdicts', verdicts);
+    }
+
+    if (relight) {
+      // Not a model call: mark everything lit so the memo produces the ambient
+      // layout the rest of this depends on. AFTER the beds, so it is computed
+      // once with their zones in it rather than once without and once with.
+      setOutlines((os) => os.map((o) => ({ ...o, reviewed: true })));
+      setLitIds(outlines.map((o) => o.id));
+      setFocusId(outlines[0]?.id ?? null);
+      setPickingId(null);
+      stepTo('geometry');
+      paint({ detail: 'Working out where the rooms are' });
+    }
+
+    // --- 1. the ambient layout
+    let list = [];
+    for (let i = 0; i < 80 && !cancelPrep.current; i++) {
+      list = (roomsRef.current || []).filter((r) => r.plan?.ok);
+      if (list.length) break;
+      await new Promise((res) => setTimeout(res, 60));
+    }
+    if (cancelPrep.current) { setPrep(null); return; }
+    if (!list.length) {
+      // Nothing laid out at all: there is no pipeline to run and the layout
+      // screen will say why. Better to land there than to hold a loader over an
+      // explanation the user needs to read.
+      setPrep(null);
+      return;
+    }
+    if (relight) {
+      note('geometry', `${list.length} room${list.length > 1 ? 's' : ''}, `
+        + `${list.reduce((n, r) => n + r.plan.lights.length, 0)} ambient lights`);
+    }
+
+    // --- 2. classify, unless we already know
+    const shots = {};
+    let types = roomTypes;
+    if (classify) {
+      stepTo('types');
+      paint({ detail: `${PROJECT_BY_ID[projectId]?.label ?? 'Project'} — reading each space` });
+      total += list.length;
+      const found = {};
+      await mapLimit(list, 3, async (r) => {
+        if (cancelPrep.current) return null;
+        roomState[r.id] = 'busy'; paint({ detail: `Reading ${r.outline.name || 'a room'}` });
+        try {
+          const out = await computeRoomType(r);
+          // The crop is kept and reused by the next two passes. It is the same
+          // picture of the same room, and building it three times is three
+          // canvas renders and three JPEG encodes for one image.
+          shots[r.id] = out.shot;
+          found[r.id] = { type: out.type, confidence: out.confidence,
+                          why: out.why, matched: out.matched };
+        } catch (err) {
+          console.warn('[types] failed for', r.outline.name, err);
+          failed.types++;
+          found[r.id] = { type: 'other', confidence: 0, why: 'could not be read', matched: false };
+        }
+        roomState[r.id] = 'done'; done++; paint();
+        return null;
+      });
+      if (cancelPrep.current) { setPrep(null); return; }
+      types = found;
+      setRoomTypes(found);
+      const named = (r) => roomTypeIn(projectId, found[r.id]?.type)?.label ?? 'unclassified';
+      note('types', withFails(list.map((r) => named(r)).slice(0, 4).join(', ')
+        + (list.length > 4 ? `, +${list.length - 4}` : ''), failed.types));
+      console.log('[pipeline] room types', found);
+    }
+
+    const forAccents = list.filter((r) => wantsAccents(projectId, types[r.id]?.type));
+    const forSpots = list.filter((r) => wantsSpots(projectId, types[r.id]?.type));
+
+    // --- 3. accents, for the types entitled to them
+    if (accents) {
+      total += forAccents.length;
+      stepTo('accents');
+      if (!forAccents.length) note('accents', 'nothing in this plan takes accents');
+      paint({ detail: forAccents.length
+        ? `${forAccents.length} room${forAccents.length > 1 ? 's' : ''} qualify` : 'none' });
+      for (const o of outlines) roomState[o.id] = forAccents.some((r) => r.id === o.id) ? 'idle' : 'done';
+      const got = {};
+      await mapLimit(forAccents, 2, async (r) => {
+        if (cancelPrep.current) return null;
+        roomState[r.id] = 'busy'; paint({ detail: `Accents in ${r.outline.name || 'a room'}` });
+        try {
+          const out = await computeAccents(r, { reuseShot: shots[r.id] });
+          got[r.id] = out.result;
+        } catch (err) { console.warn('[accents] failed for', r.outline.name, err); failed.accents++; }
+        roomState[r.id] = 'done'; done++; paint();
+        return null;
+      });
+      if (cancelPrep.current) { setPrep(null); return; }
+      // A re-run REPLACES a room's fittings, so its dismissals go too — the ids
+      // are positional and would otherwise strike out whatever takes that index
+      // next.
+      setAccentDismissed((d) => d.filter((x) =>
+        !forAccents.some((r) => x.startsWith(`acc-${r.id}-`))));
+      setAccentResults((m) => ({ ...m, ...got }));
+      const fittings = Object.values(got)
+        .reduce((n, a) => n + a.zones.filter((z) => !z.rejected).length, 0);
+      if (forAccents.length) {
+        note('accents', withFails(`${fittings} fitting${fittings === 1 ? '' : 's'}`, failed.accents));
+      }
+    }
+
+    // --- 4. task surfaces, which is what the directional spots derive from
+    if (surfaces) {
+      total += forSpots.length;
+      stepTo('spots');
+      if (!forSpots.length) note('spots', 'nothing to aim at');
+      for (const o of outlines) roomState[o.id] = forSpots.some((r) => r.id === o.id) ? 'idle' : 'done';
+      paint({ detail: forSpots.length ? 'Looking for task surfaces' : 'none' });
+      const got = {};
+      await mapLimit(forSpots, 2, async (r) => {
+        if (cancelPrep.current) return null;
+        roomState[r.id] = 'busy'; paint({ detail: `Task surfaces in ${r.outline.name || 'a room'}` });
+        try {
+          const out = await computeSurfaces(r, { reuseShot: shots[r.id] });
+          got[r.id] = out.result;
+        } catch (err) { console.warn('[surfaces] failed for', r.outline.name, err); failed.surfaces++; }
+        roomState[r.id] = 'done'; done++; paint();
+        return null;
+      });
+      if (cancelPrep.current) { setPrep(null); return; }
+      setSurfaceDismissed((d) => d.filter((x) =>
+        !forSpots.some((r) => x.startsWith(`surf-${r.id}-`))));
+      setSurfaceResults((m) => ({ ...m, ...got }));
+      const n = Object.values(got).reduce((acc, sr) => acc + sr.surfaces.length, 0);
+      if (forSpots.length) note('spots', withFails(`${n} surface${n === 1 ? '' : 's'}`, failed.surfaces));
+    }
+
+    const anyFailed = failed.types + failed.accents + failed.surfaces;
+    steps = steps.map((st) => ({ ...st, state: 'done' }));
+    paint({ phase: anyFailed ? 'Ready, with gaps' : 'Ready',
+            detail: anyFailed
+              ? `${anyFailed} room${anyFailed > 1 ? 's' : ''} could not be read — recompute from the panel`
+              : '' });
+    // A beat on "Ready" rather than a cut. The list of what was found is worth
+    // half a second, and a loader that vanishes the instant it completes reads
+    // as a glitch.
+    await new Promise((res) => setTimeout(res, anyFailed ? 2200 : 550));
+    setPrep(null);
+  }, [source, outlines, projectId, roomTypes, PREP_STEPS, pxPerFt, useBoundingRect,
+      bedSets, computeBedFit, computeRoomType, computeAccents, computeSurfaces]);
+
+  /** Stop the run where it is and land on whatever finished. */
+  const stopPipeline = useCallback(() => {
+    cancelPrep.current = true;
+    setPrep(null);
+  }, []);
+
+  /**
+   * The shapes the loader draws.
+   *
+   * Taken from the OUTLINES rather than from the computed rooms, so the loader
+   * has something to draw the instant it opens — the layout it is waiting for
+   * does not exist yet, and a loading screen that starts empty and fills in is
+   * the thing it exists to avoid.
+   */
+  const loaderRooms = useMemo(() => outlinesPx.map((o) => {
+    const b = bbox(o.pointsPx);
+    return {
+      id: o.id,
+      points: o.pointsPx,
+      centre: { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 },
+      label: roomTypes[o.id]
+        ? (roomTypeIn(projectId, roomTypes[o.id].type)?.label ?? null)
+        : (o.name || null),
+      state: prep?.roomState?.[o.id] ?? 'idle',
+    };
+  }), [outlinesPx, prep, roomTypes, projectId]);
+
   const step = !source ? 'upload'
     : !litIds.length ? 'trace'
     : pickingId ? 'chunks'
@@ -1414,7 +1804,9 @@ export default function App() {
           // The size SENT, not the size of the original. The GPT route answers
           // in fractions of the image it was given and needs this to resolve
           // them; rescaleRect maps the result back afterwards as ever.
-          provider, w: shot.w, h: shot.h,
+          // `judge` is two calls and a decision, and the decision is not made
+          // here — the wire only knows about `both`.
+          provider: wireProvider(provider), w: shot.w, h: shot.h,
         });
         if (!alive) return;
         if (payload?.meta) console.log('[detect] server:', payload.meta);
@@ -1425,11 +1817,34 @@ export default function App() {
         const { kept, rejected } = detectionsToZones(payload, { image, polygon: null });
         console.log(`[detect] kept ${kept.length}, rejected ${rejected.length}`, { kept, rejected });
 
+        // THE SAME RESPONSE, READ TWICE AND DIFFERENTLY. Above: everything at
+        // once, de-duplicated, which is what goes on the canvas the moment
+        // detection lands and what every non-judged run has always used. Below:
+        // the two halves kept apart, because the judge's whole question is which
+        // of them is right and a merge has already answered it.
+        //
+        // Both, and not one or the other, so there is something on screen before
+        // the pipeline runs and the judged answer REPLACES it rather than being
+        // the only thing that ever appears. A detector that lands while the user
+        // is still tracing outlines should show its work.
+        let sets = null;
+        if (provider === 'judge') {
+          sets = {};
+          const split = splitByProvider(payload, (half) =>
+            detectionsToZones(half, { image, polygon: null }));
+          for (const src of BED_SOURCES) sets[src.id] = labelBeds(split[src.id].kept, src.id);
+          console.log('[detect] judged sets:',
+            BED_SOURCES.map((x) => `${x.label} ${sets[x.id].length}`).join(', '));
+        }
+        setBedSets(sets);
+        setBedVerdicts({});
+
         setDetections(kept.map((k, i) => ({ ...k, id: `det-${i}-${Math.round(k.rect.x0)}-${Math.round(k.rect.y0)}` })));
         setDetectState({
           status: 'done', rejected, ms: Date.now() - t0,
           meta: payload?.meta ?? null, count: kept.length, kind: source.kind,
           provider,
+          sets: sets ? Object.fromEntries(BED_SOURCES.map((x) => [x.id, sets[x.id].length])) : null,
         });
       } catch (err) {
         if (!alive || err.name === 'AbortError') return;
@@ -1470,6 +1885,11 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* ONE QUESTION, BEFORE ANYTHING ELSE. Shown the moment a plan is
+          readable and dismissed only by answering — see ProjectTypeDialog. */}
+      {source && !projectId && (
+        <ProjectTypeDialog planName={source.name} onPick={setProjectId} />
+      )}
       {/* Deliberately bare. This bar carried five status pills — outlines,
           room, fans, scale, chunking — and every one of them duplicated
           something in the panel on the right, so the eye had two places to look
@@ -1509,7 +1929,7 @@ export default function App() {
             onUpdateOutline={updateOutline}
             onDeleteOutline={deleteOutline}
             onConfirm={lightOneRoom}
-            onProceed={lightWholePlan}
+            onProceed={runPipeline}
             onMovePoint={movePoint}
             onInsertPoint={insertPoint}
             onRemovePoint={removePoint}
@@ -1571,9 +1991,48 @@ export default function App() {
               accents={accentZonesPx} />
           </div>
         )}
+        {prep && (
+          <PlanLoader
+            width={source.w} height={source.h}
+            rooms={loaderRooms}
+            phase={prep.phase} detail={prep.detail}
+            done={prep.done} total={prep.total} steps={prep.steps} />
+        )}
       </div>
 
       <div className="side">
+        {/* WHILE THE PIPELINE RUNS, THE PANEL SAYS NOTHING ELSE. Every section
+            below reads results the run is in the middle of replacing — half of
+            them would show a stale count and the other half a control that
+            fires a second run into the first. So the panel collapses to the
+            state and the two ways out, and the loader over the drawing carries
+            the detail. */}
+        {prep ? (
+          <div className="sec">
+            <h3>Loading…</h3>
+            <p className="note" style={{ marginTop: 2 }}>
+              <b>{prep.phase}</b>{prep.detail ? <><br />{prep.detail}</> : null}
+            </p>
+            {prep.total > 0 && (
+              <div className="kv" style={{ marginTop: 8 }}>
+                <span>Done</span><b>{prep.done} of {prep.total}</b></div>
+            )}
+            {/* Two ways out, because a run that hangs on somebody else's server
+                must not be a dead end. Stop keeps whatever finished; Clear
+                throws the plan away and starts over. */}
+            <div className="btnrow" style={{ marginTop: 10 }}>
+              <button className="btn" onClick={stopPipeline}>Stop</button>
+              <button className="btn" onClick={() => {
+                stopPipeline();
+                setImg(null); setDxf(null); resetForNewPlan();
+              }}>Clear and start again</button>
+            </div>
+            <p className="note" style={{ marginTop: 8 }}>
+              Stopping keeps the rooms that finished. You can recompute the rest
+              from the panel afterwards.
+            </p>
+          </div>
+        ) : <>
         <div className="sec">
           <h3>Plan</h3>
           <div className="btnrow">
@@ -1614,7 +2073,16 @@ export default function App() {
                     </span>
                   </button>
                   <div className="outline-meta">
-                    <span>{ftin(r.stats.widthFt)} × {ftin(r.stats.heightFt)}
+                    <span>
+                      {/* The classification, where it exists. It is the reason a
+                          room did or did not get accents, so it belongs next to
+                          the room rather than buried in a console log. */}
+                      {roomTypes[r.id] && (
+                        <b className="rtype" title={roomTypes[r.id].why}>
+                          {roomTypeIn(projectId, roomTypes[r.id].type)?.label ?? 'Other'}
+                        </b>
+                      )}
+                      {ftin(r.stats.widthFt)} × {ftin(r.stats.heightFt)}
                       {' '}· {Math.round(r.stats.areaSqft)} sqft</span>
                     <span>
                       {r.chunking?.needsChoice && (
@@ -1810,15 +2278,59 @@ export default function App() {
               <b>{detectState.status === 'running' ? 'looking…'
                 : detectState.status === 'error' ? 'detector offline'
                 : detectState.status === 'done'
-                  ? `${detectState.count} on the plan, ${rooms.reduce((n, r) => n + (r.plan?.zonesPx?.filter((z) => z.source === 'detected').length ?? 0), 0)} in a room`
+                  ? `${detections.length} on the plan, ${rooms.reduce((n, r) => n + (r.plan?.zonesPx?.filter((z) => z.source === 'detected').length ?? 0), 0)} in a room`
                   : '—'}</b></div>
             <div className="kv"><span>Detector</span>
               <select value={provider} onChange={(e) => setProvider(e.target.value)}
                 style={{ width: 'auto', padding: '2px 4px', fontSize: 11 }}>
                 {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select></div>
-            <button className="btn" style={{ marginTop: 6 }} disabled={!!busy}
-              onClick={() => setDetectNonce((n) => n + 1)}>Look again</button>
+
+            {/* WHY THE BED IS WHERE IT IS. One line per room that had a bed in
+                it — who won, and in the contested case the judge's own sentence
+                about what was wrong with the other reading. A zone that moves
+                real fittings should be able to account for itself, and "the
+                detector said so" stops being an account the moment there are
+                two detectors. */}
+            {Object.keys(bedVerdicts).length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                {outlines.map((o) => {
+                  const v = bedVerdicts[o.id];
+                  if (!v || v.kind === 'none') return null;
+                  const who = v.pick === 'openai' ? 'GPT' : 'Roboflow';
+                  const how = v.kind === 'uncontested' ? 'only reading'
+                    : v.kind === 'agreed' ? 'both agreed'
+                    : v.failed ? 'judge offline'
+                    : v.fellBack ? 'judge unsure'
+                    : `judged ${Math.round(v.confidence * 100)}%`;
+                  return (
+                    <div key={o.id} className="kv" style={{ alignItems: 'flex-start' }}
+                         title={v.why || ''}>
+                      <span>{o.name || 'Room'}</span>
+                      <b style={{ textAlign: 'right', fontWeight: 500 }}>
+                        {who} <span style={{ opacity: 0.55 }}>· {how}</span>
+                      </b>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="btnrow" style={{ marginTop: 6 }}>
+              <button className="btn" disabled={!!busy}
+                onClick={() => setDetectNonce((n) => n + 1)}>Look again</button>
+              {/* Re-judging is a SEPARATE button from re-detecting, because they
+                  cost different things and fail differently. "Look again" is two
+                  detector calls and throws the verdicts away; this is the judge
+                  alone, over the two answers already in hand. */}
+              {!!bedSets && outlines.length > 0 && (
+                <button className="btn" disabled={!!busy}
+                  onClick={() => runPipeline({ beds: true, classify: false, accents: false,
+                                               surfaces: false, relight: false })}>
+                  Re-judge beds
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Chunking moved into the room rows above. With one room a whole
@@ -1846,7 +2358,10 @@ export default function App() {
               setAccentDismissed((d) => d.filter((x) => !x.startsWith(`acc-${rid}-`)));
               setAccentState({ status: 'idle', roomId: null });
             }}
-            onRun={runAccents}
+            onRun={() => runPipeline({ classify: false, accents: true,
+                                       surfaces: false, relight: false, beds: false })}
+            roomTypeLabel={accentRoom && roomTypes[accentRoom.id]
+              ? roomTypeIn(projectId, roomTypes[accentRoom.id].type)?.label ?? null : null}
             ceilingFt={ceilingFt}
             onCeilingChange={setCeilingFt}
             selId={selAccId}
@@ -1867,7 +2382,8 @@ export default function App() {
               setSurfaceDismissed((d) => d.filter((x) => !x.startsWith(`surf-${rid}-`)));
               setSurfaceState({ status: 'idle', roomId: null });
             }}
-            onRun={runSurfaces}
+            onRun={() => runPipeline({ classify: false, accents: false,
+                                       surfaces: true, relight: false, beds: false })}
             spots={taskSpotsPx} />
 
           <div className="sec">
@@ -1963,6 +2479,7 @@ export default function App() {
             )}
           </div>
           </>}
+        </>}
         </>}
       </div>
     </div>

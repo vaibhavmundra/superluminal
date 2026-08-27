@@ -256,8 +256,25 @@ export const PROVIDERS = [
   { id: 'roboflow', label: 'Roboflow', note: 'trained detector — tight boxes, often finds nothing on a line drawing' },
   { id: 'openai',   label: 'GPT',      note: 'reads the plan like a person; one call for the bounds, we do the maths' },
   { id: 'both',     label: 'Both',     note: 'two calls, both answers — overlapping boxes are de-duplicated' },
+  { id: 'judge',    label: 'Both, judged',
+    note: 'two calls, then a third that looks at the two answers drawn on the room and picks the one on the bed' },
 ];
-export const DEFAULT_PROVIDER = 'openai';
+
+/**
+ * JUDGED, and it is the default because a bed is the one detection that changes
+ * the ceiling. Everything else the detector finds is advisory; a bed becomes a
+ * no-light zone, and a zone in the wrong place moves real fittings.
+ *
+ * `both` merges the two answers and de-duplicates. That is right when they
+ * agree and quietly wrong when they do not: two boxes 3 ft apart over one bed
+ * are below the de-dup threshold, so BOTH survive and the union of a good
+ * answer and a bad one is a worse zone than either. `judge` is the same two
+ * calls with the merge replaced by a choice. See src/lib/bedFit.js.
+ */
+export const DEFAULT_PROVIDER = 'judge';
+
+/** What actually goes on the wire. The judging happens after, in the browser. */
+export const wireProvider = (p) => (p === 'judge' ? 'both' : p);
 
 export async function detectFurniture({ base64, mime = 'image/png', classes = ZONE_CLASSES,
                                         endpoint = '/api/detect', signal,
