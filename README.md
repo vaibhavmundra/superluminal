@@ -2093,6 +2093,98 @@ The browser console carries the crop as a `data:` URL you can open in a tab, the
 placed runs and points in plan pixels, and — when a run comes back empty — the
 model's own words, which is invisible in the parsed payload.
 
+## Export for CAD: a DXF that lands on the drawing it came from
+
+**Offered only on a DXF**, because it is only meaningful on one. It comes back
+out in the *original file's own coordinates* so it overlays the drawing you
+started from — and an image's pixels have nothing to line up with.
+
+Five layers, and nothing else in the file:
+
+| layer | what is on it |
+|---|---|
+| `superluminal_spots` | every recessed fitting — ambient downlights **and** directional task spots |
+| `superluminal_led_strips` | accent strip runs, as open polylines |
+| `superluminal_decorative` | chandeliers and wall sconces |
+| `superluminal_ceiling_objects` | fans, AC cassettes, trap doors |
+| `superluminal_rooms` | one closed polyline per room outline |
+
+No grid, no cells, no no-light zones, no chunk boundaries. Those are the
+planner's working, not the drawing.
+
+### The layers follow the trade, not the pass that made the thing
+
+That is the principle, and it is worth stating because one consequence looks like
+a bug: **a chandelier exports to `decorative`, not to `ceiling_objects`** — which
+is where it lives everywhere else in this codebase.
+
+Internally a chandelier *is* a ceiling object: it has a body, keeps a clearance
+and anchors the grid, identical treatment to a fan, and [that sameness is the
+whole point](#ceiling-objects-a-chandelier-is-a-fan-with-a-different-drawing) of
+`ceilingObjects.js`. On a drawing it is none of those things. It is bought from a
+lighting supplier, wired to a lighting circuit, and switched with the sconces. A
+fan and an AC cassette are somebody else's scope entirely.
+
+The same logic puts an **ambient downlight and a directional task spot on one
+layer**. They arrive from completely different passes — one from the grid, one
+aimed at a coffee table off the secondary grid — and they are one recessed
+schedule: same fitting, same circuit, ordered together.
+
+Each layer is a thing a person switches off on its own to look at the rest, which
+is the only test a layer split has to pass.
+
+### How it differs from the other DXF
+
+`toDXF` produces a **standalone** drawing: feet, Y flipped, its own layer names,
+everything the planner knows. Useful to look at, useless to overlay. This one is
+for importing back over the original, which means every entity has to arrive in
+the source file's units, at its origin, with its Y-up orientation — or the whole
+lighting layer lands in the next flat along and at the wrong scale.
+
+`source.toDu` is exactly that mapping, inverted from the one that brought the
+drawing in, so it is used for every single point and nothing is converted by
+hand.
+
+**Transform points, never angles.** Screen Y grows downward and CAD Y grows
+upward, so a rotation carried across as a *number* comes out mirrored — a trap
+door turned 30° arrives turned −30°, which looks plausible and is wrong. Carried
+across as four corners it cannot. The AC unit's rectangle is built in pixels,
+rotated in pixels, and only then converted, which is why there is no minus sign
+anywhere in the exporter.
+
+### R12, deliberately
+
+`POLYLINE`/`VERTEX`/`SEQEND` rather than `LWPOLYLINE`, no handles, no object
+section, and an explicit `LAYER` table with colours. It is the dialect every CAD
+program on earth reads, and nothing here needs anything newer. `$INSUNITS`
+carries the **original** drawing's unit code, not feet: import scaling keys off
+it, and a file that claims feet while holding millimetres arrives 300× too big.
+
+A strip exports as an **open** polyline — it is a run, and its two ends are the
+whole specification. A sconce exports at its **wall point**, not at the offset
+the on-screen symbol hangs out into the room, because the mounting position is
+what gets set out on site. A refused fitting exports as nothing at all.
+
+### Tested by converting back
+
+`tools/test-cad-export.mjs` exports, re-reads the file with its own independent
+scanner, and runs the coordinates back through `fromDu` to check they land on the
+pixels they started from. A self-consistent export that is uniformly wrong passes
+any check that only looks at the file, and borrowing our own parser to read it
+back would let a shared misunderstanding agree with itself.
+
+The fixture is a **millimetre** drawing at an awkward non-zero origin
+(51234.5, −8765.25) — millimetres to catch a missing unit conversion, and the
+offset to catch an exporter that quietly assumes 0,0. One assertion exists purely
+to prove the origin is far enough out that a 0,0 bug would fail the test.
+
+> Writing that fixture surfaced something worth knowing: it was 5 × 4 ft at
+> first, and `parseDXF` read it as **centimetres** despite `$INSUNITS 4`, because
+> a 5 × 4 ft building in millimetres is below its plausibility floor. That is the
+> unit guesser working as designed (see [Units](#units)) — but it means a test
+> fixture has to be a realistic size or every length assertion in it is off by a
+> factor of ten for a reason that has nothing to do with what is being tested.
+
 ## Known limits (v1)
 
 - The chunking strategies are a fixed list of six, not a search over every
@@ -2207,8 +2299,16 @@ model's own words, which is invisible in the parsed payload.
   a box outside the green boundary — is the one to watch for.
 - **Ceiling height is one figure for the whole plan**, and nothing consumes it
   today except the prompt.
-- The zones are **not exported** — not in the DXF, CSV or JSON, which still carry
-  the ambient layout only. A fitting you have moved by hand is therefore lost on
+- The zones are **not exported** by the standalone DXF, CSV or JSON, which carry
+  the ambient layout only. The CAD export does carry accents and spots — see
+  [Export for CAD](#export-for-cad-a-dxf-that-lands-on-the-drawing-it-came-from).
+- **The CAD export has no schedule.** It is geometry on three layers; nothing in
+  it says which circle is a 12W downlight and which is a spot. Fitting types,
+  counts and lengths are in the CSV, which is a separate file the recipient has
+  to line up by eye.
+- **A large and a small downlight share the `spots` layer**, told apart only by
+  the radius of their symbol. So do an ambient light and a directional spot,
+  which is deliberate — but it means the aimed ones cannot be isolated in CAD. A fitting you have moved by hand is therefore lost on
   reload along with the rest.
 - **A hand-edited fitting is overwritten by the next run.** Asking again for a
   room replaces its whole list; there is no merge that keeps what you moved.

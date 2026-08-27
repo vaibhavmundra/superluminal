@@ -259,3 +259,208 @@ export function toDXF(rooms, { pxPerFt, heightPx } = {}) {
   out = out.concat(['0','ENDSEC','0','EOF']);
   return out.join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// THE CAD EXPORT — a DXF that lands ON the drawing it came from.
+//
+// This is a different animal to toDXF above and the difference is the whole
+// point. toDXF produces a STANDALONE drawing: feet, Y flipped, its own layer
+// names, everything the planner knows. Useful to look at, useless to overlay.
+//
+// This one is meant to be imported into the drawing the user started from, so
+// every entity has to come back out in THE ORIGINAL FILE'S OWN COORDINATES —
+// its units, its origin, its Y-up orientation — or it lands somewhere in the
+// next field along and at the wrong scale.
+//
+// `source.toDu` is exactly that mapping, inverted from the one that brought the
+// drawing in, so it is used for every single point and nothing is converted by
+// hand. Which leads to the one rule worth stating: TRANSFORM POINTS, NEVER
+// ANGLES. Screen Y grows downward and CAD Y grows upward, so a rotation carried
+// across as a number comes out mirrored; carried across as four corners it
+// cannot. The AC unit's rectangle is built in pixels, rotated in pixels, and
+// only then converted — which is why there is no minus sign anywhere below.
+//
+// DXF R12, deliberately: POLYLINE/VERTEX/SEQEND rather than LWPOLYLINE, no
+// handles, no object section. It is the dialect every CAD program on earth can
+// read, and nothing here needs anything newer.
+// ---------------------------------------------------------------------------
+
+/**
+ * FIVE LAYERS, SPLIT BY WHAT GETS ORDERED AND SWITCHED, not by which pass of
+ * this app produced it.
+ *
+ * That is the whole principle, and it is why a chandelier is not a ceiling
+ * object here even though it is one everywhere else in the code. Internally a
+ * chandelier is an obstacle: it has a body, it keeps a clearance, it anchors the
+ * grid — identical treatment to a fan, which is the point of ceilingObjects.js.
+ * On a drawing it is a decorative light fitting: it is bought from a lighting
+ * supplier, wired to a lighting circuit, and switched with the sconces. A fan
+ * and an AC cassette are none of those things.
+ *
+ * So the layers follow the trades. Strips are a linear product on their own
+ * driver; spots are the recessed downlight schedule whether they are lighting a
+ * ceiling evenly or aimed at a table; decorative is what an interior designer
+ * specifies by model number; ceiling objects are somebody else's scope entirely.
+ * Each is a thing a person switches off on its own to look at the rest.
+ */
+export const SUPERLUMINAL_LAYERS = {
+  spots: 'superluminal_spots',
+  strips: 'superluminal_led_strips',
+  decorative: 'superluminal_decorative',
+  objects: 'superluminal_ceiling_objects',
+  rooms: 'superluminal_rooms',
+};
+
+/** Layer colours, so they are told apart the moment they import. */
+const SL_COLOUR = {
+  spots: 5,        // blue
+  strips: 4,       // cyan
+  decorative: 6,   // magenta
+  objects: 1,      // red
+  rooms: 3,        // green
+};
+
+function dxfPolyline(layer, pts, closed = true) {
+  if (!pts?.length) return [];
+  const out = ['0','POLYLINE','8',layer,'66','1','70',closed ? '1' : '0',
+               '10','0.0','20','0.0','30','0.0'];
+  for (const p of pts) {
+    out.push('0','VERTEX','8',layer,
+             '10',p.x.toFixed(6),'20',p.y.toFixed(6),'30','0.0');
+  }
+  out.push('0','SEQEND','8',layer);
+  return out;
+}
+
+function slHeader(insunits) {
+  const layer = (name, colour) => ['0','LAYER','2',name,'70','0',
+                                   '62',String(colour),'6','CONTINUOUS'];
+  return [
+    '0','SECTION','2','HEADER',
+    '9','$ACADVER','1','AC1009',
+    // The ORIGINAL drawing's units, not ours. Import scaling keys off this, and
+    // a file that says feet while holding millimetres arrives 300x too big.
+    '9','$INSUNITS','70',String(insunits ?? 0),
+    '0','ENDSEC',
+    // An explicit LAYER table. Most CAD will invent a layer named by an entity
+    // that references a missing one, but "most" is not a promise, and inventing
+    // it loses the colour.
+    '0','SECTION','2','TABLES','0','TABLE','2','LAYER',
+    '70',String(Object.keys(SUPERLUMINAL_LAYERS).length),
+    ...Object.keys(SUPERLUMINAL_LAYERS)
+      .flatMap((k) => layer(SUPERLUMINAL_LAYERS[k], SL_COLOUR[k])),
+    '0','ENDTAB','0','ENDSEC',
+    '0','SECTION','2','ENTITIES',
+  ];
+}
+
+/**
+ * The layers, in the original drawing's coordinates.
+ *
+ * Everything arrives in PLAN PIXELS — the one space every part of this app
+ * shares — and leaves in drawing units.
+ *
+ * WHAT GOES WHERE is decided by SUPERLUMINAL_LAYERS above — by trade, not by
+ * which pass of this app produced the thing. Note in particular that a
+ * chandelier lands on `decorative` and not on `ceiling_objects`, which is where
+ * it lives everywhere else in the code.
+ */
+export function toSuperluminalDXF({ source, rooms = [], objects = [],
+                                    accents = [], spots = [] } = {}) {
+  if (source?.kind !== 'vector') {
+    throw new Error('The CAD export needs the original DXF to line up with.');
+  }
+  const units = source.drawing?.units;
+  const duPerFt = 1 / (units?.toFeet || 1);
+  const P = (p) => source.toDu(p);              // plan pixels -> drawing units
+  const L = (ft) => ft * duPerFt;               // feet -> drawing units
+  const { spots: LY_S, strips: LY_T, decorative: LY_D,
+          objects: LY_O, rooms: LY_R } = SUPERLUMINAL_LAYERS;
+
+  let out = slHeader(units?.code);
+  const add = (e) => { out = out.concat(e); };
+
+  // A ring and a cross: the fitting symbol, in real size, so it can be
+  // measured off the drawing rather than just seen.
+  const marker = (layer, at, rFt) => {
+    const c = P(at), r = L(rFt);
+    add(dxfCircle(layer, c.x, c.y, r));
+    add(dxfLine(layer, c.x - r, c.y, c.x + r, c.y));
+    add(dxfLine(layer, c.x, c.y - r, c.x, c.y + r));
+  };
+
+  // --- room outlines
+  for (const r of rooms) {
+    const poly = r?.plan?.polygonPx;
+    if (!poly?.length) continue;
+    add(dxfPolyline(LY_R, poly.map(P), true));
+  }
+
+  // --- ceiling objects, less the chandeliers
+  for (const o of objects) {
+    // A chandelier is a light fitting on a drawing, whatever it is in the
+    // planner. Same symbol, different layer.
+    if (o.kind === 'chandelier') {
+      const c = P({ x: o.x, y: o.y });
+      const rFt = (o.r || 0) / (source.pxPerFt || 1);
+      add(dxfCircle(LY_D, c.x, c.y, L(rFt)));
+      const t = L(0.3);
+      add(dxfLine(LY_D, c.x - t, c.y, c.x + t, c.y));
+      add(dxfLine(LY_D, c.x, c.y - t, c.x, c.y + t));
+      continue;
+    }
+    if (o.w > 0 && o.h > 0 && (o.kind === 'ac' || o.kind === 'trapdoor')) {
+      // Rotated in PIXELS and converted corner by corner. See the header: an
+      // angle carried across the Y flip comes out mirrored, four points cannot.
+      const c = Math.cos(o.rot || 0), sn = Math.sin(o.rot || 0);
+      const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
+        const lx = (sx * o.w) / 2, ly = (sy * o.h) / 2;
+        return P({ x: o.x + lx * c - ly * sn, y: o.y + lx * sn + ly * c });
+      });
+      add(dxfPolyline(LY_O, corners, true));
+    } else {
+      const c = P({ x: o.x, y: o.y });
+      const rFt = (o.r || 0) / (source.pxPerFt || 1);
+      add(dxfCircle(LY_O, c.x, c.y, L(rFt)));
+      // A cross at the centre: a circle alone gives nothing to snap to, and the
+      // centre is what an electrician sets out from.
+      const t = L(0.3);
+      add(dxfLine(LY_O, c.x - t, c.y, c.x + t, c.y));
+      add(dxfLine(LY_O, c.x, c.y - t, c.x, c.y + t));
+    }
+  }
+
+  // --- spots: the recessed schedule, ambient and aimed alike
+  for (const r of rooms) {
+    for (const l of r?.plan?.lightsPx || []) {
+      marker(LY_S, l, l.kind === 'large' ? 0.5 : 0.29);
+    }
+  }
+
+  // --- accents: a strip is linear product, a sconce is decorative
+  for (const a of accents) {
+    if (a.rejected) continue;
+    // A strip is its RUN — the two ends are the whole specification, and they
+    // are the numbers the derivation existed to produce.
+    if (a.run) add(dxfPolyline(LY_T, a.run.map(P), false));
+    // A sconce goes at its wall point, not at the offset the drawing hangs the
+    // symbol out to: the mounting position is what gets set out on site.
+    else if (a.point) marker(LY_D, a.point, 0.3);
+  }
+
+  // --- directional spots, on the same layer as the ambient ones
+  for (const sp of spots) {
+    if (sp.x == null) continue;
+    marker(LY_S, sp, 0.3);
+    // The tail, pointing at what it lights. Drawn to a fixed length rather than
+    // all the way to the surface, which would read as a line to somewhere.
+    const from = P(sp), to = P(sp.target);
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const d = Math.hypot(dx, dy) || 1, reach = L(1.2);
+    add(dxfLine(LY_S, from.x + (dx / d) * L(0.42), from.y + (dy / d) * L(0.42),
+                      from.x + (dx / d) * reach,   from.y + (dy / d) * reach));
+  }
+
+  out = out.concat(['0','ENDSEC','0','EOF']);
+  return out.join('\n');
+}

@@ -14,7 +14,7 @@ import { bbox, pointInPolygon } from './lib/geometry.js';
 import { REFERENCES, scaleFromFans, scaleFromReference } from './lib/scale.js';
 import { proposeOutlines } from './lib/outlineSources.js';
 import { detectFurniture, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER } from './lib/furniture.js';
-import { download, toJSON, toCSV, toDXF, svgString, svgToPNG } from './lib/exporters.js';
+import { download, toJSON, toCSV, toDXF, toSuperluminalDXF, svgString, svgToPNG } from './lib/exporters.js';
 import AccentPanel from './components/AccentPanel.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
 import TaskSurfacePanel from './components/TaskSurfacePanel.jsx';
@@ -1911,6 +1911,35 @@ export default function App() {
 
           <div className="sec">
             <h3>Export</h3>
+            {/* THE CAD EXPORT, and it is only offered on a DXF because it is
+                only meaningful on one: it comes back out in the ORIGINAL file's
+                coordinates so it overlays the drawing it came from. There is
+                nothing for an image's pixels to line up with. */}
+            {isVector && (
+              <>
+                <button className="btn primary" style={{ width: '100%', marginBottom: 8 }}
+                  disabled={!totals.rooms}
+                  onClick={() => download(`${exportBase}-superluminal.dxf`,
+                    toSuperluminalDXF({
+                      source,
+                      rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
+                      objects: obstaclesPx,
+                      accents: accentZonesPx,
+                      spots: taskSpotsPx,
+                    }), 'application/dxf')}>
+                  Export for CAD
+                </button>
+                <p className="note" style={{ marginBottom: 10 }}>
+                  Five layers, split by trade — <code>superluminal_spots</code>
+                  {' '}(ambient and directional), <code>superluminal_led_strips</code>,
+                  {' '}<code>superluminal_decorative</code> (chandeliers and sconces),
+                  {' '}<code>superluminal_ceiling_objects</code> (fans, AC, trap doors)
+                  {' '}and <code>superluminal_rooms</code> — in this drawing's own units
+                  and origin, so it lands straight on top of the original.
+                </p>
+              </>
+            )}
+
             <div className="btnrow">
               <button className="btn" disabled={!totals.rooms}
                 onClick={() => download(`${exportBase}-lights.dxf`,
