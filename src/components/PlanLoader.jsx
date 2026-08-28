@@ -104,7 +104,7 @@ export default function PlanLoader({
                 {r.label && (
                   <text x={r.centre.x} y={r.centre.y} textAnchor="middle"
                     fontSize={Math.max(width, height) / 78}
-                    fontFamily="Neue Montreal, sans-serif"
+                    fontFamily="The Neue Montreal, sans-serif"
                     fill={r.state === 'done' ? '#000000' : '#A8A8A8'}>
                     {r.label}
                   </text>

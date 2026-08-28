@@ -25,7 +25,7 @@
    --------------------------------------------------------------------------- */
 
 /* THE TYPEFACES, AND WHY THEY ARE HERE RATHER THAN IN `public/`.
-                     
+
    They were in `public/fonts` and referenced as `url('/fonts/...')`, and they
    did not load. The reason is one line in vite.config.js: `base: './'`. With a
    relative base, Vite rewrites the absolute `/fonts/...` in this file into
@@ -34,55 +34,39 @@
    stylesheet is" is the document, not `/assets/`. The URL came out somewhere
    that has no font on it, silently, and the app fell back to the next family in
    the stack.
-                     
+
    FILES UNDER `src/` ARE THE BUNDLER'S PROBLEM, and that is the fix. A relative
    `url('./fonts/...')` from a file inside `src/` is resolved, hashed and emitted
    by Vite, which then writes whatever URL is correct for the base, the dev
    server and the build. There is nothing left for a base setting to get wrong.
-   `public/fonts` still holds the original TTFs and the variable file; nothing
-   references them by hand any more.
-                     
-   AND THEY ARE FOUR STATIC CUTS, NOT THE VARIABLE FILE. The variable woff2 is
-   genuinely variable and works — that was checked, its `wght` axis runs 200 to
-   800 — but two things about it were quietly wrong. It was declared
-   `font-weight: 100 900`, a range wider than the axis it has, so every browser
-   had to clamp; and its DEFAULT INSTANCE IS wght 200, which means any browser
-   that loads the file but fails to apply the variation renders the whole app in
-   Thin. That is a failure mode with no visible cause, and it is not worth 100KB.
-   Four static faces cannot do it: each one is the weight it says it is.
-                     
-   Converted from the supplied TTFs to woff2 — 235KB down to 59KB apiece, 260KB
-   for all five against about 1.2MB of TrueType. */
-@font-face{
-  font-family:'Neue Montreal';
-  src:url('./fonts/NeueMontreal-400.woff2') format('woff2');
-  font-weight:400; font-style:normal; font-display:swap;
-}
-@font-face{
-  font-family:'Neue Montreal';
-  src:url('./fonts/NeueMontreal-500.woff2') format('woff2');
-  font-weight:500; font-style:normal; font-display:swap;
-}
-@font-face{
-  font-family:'Neue Montreal';
-  src:url('./fonts/NeueMontreal-600.woff2') format('woff2');
-  font-weight:600; font-style:normal; font-display:swap;
-}
-@font-face{
-  font-family:'Neue Montreal';
-  src:url('./fonts/NeueMontreal-700.woff2') format('woff2');
-  font-weight:700; font-style:normal; font-display:swap;
-}
+   A path under `public/` is copied verbatim and is not checked by anything: the
+   `.ttf` that used to sit there was referenced from here as `./fonts/...`, which
+   resolves against THIS directory, where it did not exist — so the build left
+   the URL alone and production 404ed on `/assets/fonts/...`. That is why every
+   font this app uses now lives in `src/fonts` and nowhere else.
+
+   ONE CUT: Regular, as a TTF. Not four static woff2 cuts and not the variable
+   file. The variable woff2 is genuinely variable and works — its `wght` axis
+   runs 200 to 800 — but it was declared `font-weight: 100 900`, a range wider
+   than the axis it has, so every browser had to clamp; and its DEFAULT INSTANCE
+   IS wght 200, so any browser that loads the file but fails to apply the
+   variation renders the whole app in Thin. A failure mode with no visible cause,
+   and not worth 100KB.
+
+   The cost of one cut is that there is no weight to ask for: see the note on
+   the ink scale below. TrueType costs nothing here — this file is 59KB, the
+   same as the woff2 it replaced, because it is already subset; the 235KB
+   figure belongs to the full supplied TTFs, which are gone. */
 @font-face{
   font-family:'The Neue Montreal';
   src:url('./fonts/NeueMontreal-Regular.ttf') format('truetype');
-  font-weight:400; font-style:normal; font-display:swap;
+  font-weight:400; font-style:normal; font-display:swap
 }
 /* LUNAR, and only for the wordmark. It is a display face with one job. */
 @font-face{
   font-family:'Lunar';
   src:url('./fonts/Lunar-400.woff2') format('woff2');
-  font-weight:400; font-style:normal; font-display:block;
+  font-weight:400; font-style:normal; font-display:block
 }
 
 :root{
@@ -125,8 +109,8 @@
 
   --input-bg:#FFFFFF;
 
-  --font:'The Neue Montreal','Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
-  --display:'Lunar','Neue Montreal',sans-serif;
+  --font:'The Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --display:'Lunar',sans-serif;
   /* ONE TYPEFACE. There was a monospace here for numeric columns, and it was
      buying alignment Neue Montreal already provides: its `tnum` figures are
      real — 1111 and 0000 measure identically under tabular-nums, which was
@@ -135,26 +119,16 @@
      not optional anywhere a column of numbers has to be read down; see the rule
      below. `--mono` stays as a name so the twenty-odd rules that ask for it do
      not all have to change, and it now resolves to the app face. */
-  --mono:'The Neue Montreal','Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --mono:'The Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
 
-  /* --- WEIGHT, STATED ONCE.
-     It was stated NOWHERE, which is the bug: `body` set family, size,
-     line-height and tracking and no weight at all, so every unstyled string in
-     the app was the browser default 400 — Neue Montreal's Regular, which at
-     13px is a light-looking Regular. Four tokens now, and the rule that decides
-     between them is optical rather than semantic:
-
-     SMALL TEXT NEEDS MORE WEIGHT, NOT LESS. A 10px letterspaced grey section
-     head is the thinnest thing on any screen here and needs 550 to hold up; a
-     20px heading has all the presence it needs at 500 and looks clumsy heavier.
-     So the scale runs the opposite way to the type size. */
-  --w-body:400;             /* the default. Medium, not Regular. */
-  --w-strong:600;           /* emphasis inside a sentence, and a value */
-  /* 550 with static cuts resolves to the 600 face (CSS font matching prefers
-     the nearest weight at or above the request in this range), which is what
-     was wanted — the token names the intent and the face does the work. */
-  --w-head:550;             /* small caps, column heads: small, spaced, grey */
-  --w-display:500;          /* headings, where size is doing the work */
+  /* --- NO WEIGHT SCALE. There is one cut, Regular, so there is nothing to
+     choose between. The tokens and every `font-weight` rule that used them are
+     gone rather than left pointing at faces that do not exist: a declaration
+     asking for 600 does not fail, it gets SYNTHETIC bold, which on this TTF is
+     a smeared Regular at large sizes and the reason the app looked wrong.
+     Hierarchy is carried by size, tracking and colour instead — see the ink
+     scale above and the size-dependent tracking below. `body` states 400 once
+     and everything inherits it. */
 
   --r:6px;                  /* the radius. One value, and a larger one for cards. */
   --r-lg:10px;
@@ -172,7 +146,7 @@
      neither can quietly drift into the other. */
   --field-h:48px;
   --shadow:0 1px 2px rgba(0,0,0,.04);
-  --shadow-pop:0 8px 30px rgba(0,0,0,.12);
+  --shadow-pop:0 8px 30px rgba(0,0,0,.12)
 }
 
 *{box-sizing:border-box}
@@ -181,7 +155,13 @@ body{
   margin:0; background:var(--bg); color:var(--text);
   font-family:var(--font);
   font-size:13px; line-height:1.5;
-  font-weight:var(--w-body);
+  font-weight:400;
+  /* AND THE BROWSER MAY NOT INVENT A HEAVIER ONE. There is one cut; anything
+     that still asks for bold — a UA default, a stray inline style, a `<b>` in
+     content we do not control — would otherwise be SYNTHESISED, which is the
+     Regular outlines smeared and is exactly what "absurdly weighted" looks
+     like. `style` is kept so the one `<em>` in PlanLoader still slants. */
+  font-synthesis:style;
   /* NO `-webkit-font-smoothing: antialiased`, and it was doing real damage.
      On macOS that switch turns off subpixel rendering, and the result is
      visibly LIGHTER strokes — perhaps a third of a weight step. Stacked on top
@@ -190,12 +170,20 @@ body{
   font-feature-settings:'ss01' 1;
   letter-spacing:-0.006em;
   background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
-  background-size:40px 40px;
+  background-size:40px 40px
 }
 /* TIGHTER AS IT GETS BIGGER. Neue Montreal is drawn on the tight side already,
    so display sizes need negative tracking and text sizes need none — the usual
    optical rule, stated once here instead of per-rule. */
 h1,h2,.brand,.modal h2,.boq-sheet h1{letter-spacing:-0.025em}
+/* THE UA STYLESHEET IS THE LAST PLACE WEIGHT COMES FROM, AND IT HAD TO GO TOO.
+   Removing `font-weight` from the app's own rules did not leave these elements
+   at 400 — it handed them back to the browser's defaults, where `h1`–`h6`,
+   `b`, `strong` and `th` are all `bold`. The home-page `<h1>` went from a
+   deliberate 500 to a synthesised 700 that way, heavier than it had ever been.
+   Stated once here, as elements rather than as classes, so a new heading or a
+   `<b>` added later cannot reintroduce it. */
+h1,h2,h3,h4,h5,h6,b,strong,th,optgroup{font-weight:400}
 /* TABULAR FIGURES ANYWHERE A NUMBER IS READ DOWN A COLUMN — or against another
    number in the row below. Not a nicety in this face: its proportional `1` is
    half the width of its `0`, so a ragged column is genuinely hard to scan. */
@@ -210,7 +198,7 @@ table.boq td,table.boq th{font-variant-numeric:tabular-nums}
   position:absolute;top:0;left:0;right:340px;height:56px;z-index:5;
   display:flex;align-items:center;gap:14px;padding:0 20px;
   background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(12px);
-  border-bottom:1px solid var(--border);
+  border-bottom:1px solid var(--border)
 }
 @media (max-width:960px){.topbar{right:0}}
 
@@ -230,7 +218,7 @@ table.boq td,table.boq th{font-variant-numeric:tabular-nums}
    below, and the header of components/Wordmark.jsx. */
 .wordmark{
   font-family:var(--display);font-size:15px;line-height:1;letter-spacing:.02em;
-  text-transform:uppercase;color:var(--ink);white-space:nowrap;
+  text-transform:uppercase;color:var(--ink);white-space:nowrap
 }
 /* THE SEPARATOR, UNSCOPED. It was written as `.brand .sep`, so the identical
    span in `.plan-head` — the editor's own top bar — rendered as an empty
@@ -238,13 +226,13 @@ table.boq td,table.boq th{font-variant-numeric:tabular-nums}
    the mark, not to one of them. */
 .sep{width:1px;height:15px;background:var(--border);flex:0 0 auto;transform:rotate(15deg)}
 .brand .where{
-  font-size:12px;color:var(--text-muted);font-weight:var(--w-body);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;
+  font-size:12px;color:var(--text-muted);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis
 }
 .pill{
   font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:999px;
   border:1px solid var(--border);background:var(--surface);color:var(--text-muted);
-  white-space:nowrap;
+  white-space:nowrap
 }
 .pill.ok{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
 .pill.bad{border-color:var(--danger-line);background:var(--danger-soft);color:var(--danger-ink)}
@@ -263,10 +251,10 @@ table.boq td,table.boq th{font-variant-numeric:tabular-nums}
 .dropzone{
   width:min(560px,92%);border:1px dashed var(--border-strong);border-radius:var(--r-lg);
   background:var(--surface);
-  padding:52px 32px;text-align:center;transition:border-color .15s,background .15s;
+  padding:52px 32px;text-align:center;transition:border-color .15s,background .15s
 }
 .dropzone.over{border-color:var(--accent);border-style:solid;background:var(--accent-soft)}
-.dropzone h2{margin:0 0 8px;font-size:20px;font-weight:var(--w-display);letter-spacing:-.03em}
+.dropzone h2{margin:0 0 8px;font-size:20px;letter-spacing:-.03em}
 .dropzone p{margin:0 auto 18px;color:var(--text-muted);max-width:42ch}
 .legend{display:flex;gap:18px;justify-content:center;margin-top:22px;flex-wrap:wrap}
 .legend div{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted)}
@@ -280,13 +268,13 @@ svg.plan.pan{cursor:default}
 /* ---------- sidebar ---------- */
 .side{
   background:var(--surface);border-left:1px solid var(--border);
-  overflow-y:auto;padding:16px 16px 40px;display:flex;flex-direction:column;gap:6px;
+  overflow-y:auto;padding:16px 16px 40px;display:flex;flex-direction:column;gap:6px
 }
 .sec{border-top:1px solid var(--border);padding-top:14px;margin-top:10px}
 .sec:first-of-type{border-top:0;margin-top:0;padding-top:0}
 .sec h3{
-  margin:0 0 10px;font-size:10px;font-weight:var(--w-head);letter-spacing:.11em;
-  text-transform:uppercase;color:var(--text-subtle);
+  margin:0 0 10px;font-size:10px;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--text-subtle)
 }
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
 .row label{color:var(--text-muted);flex:1;min-width:0}
@@ -304,7 +292,7 @@ input[type=number],input[type=text],input[type=email],input[type=password],
 input[type=search],input[type=tel],input[type=url],select{
   font:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);
   border-radius:var(--r);background:var(--input-bg);color:var(--text);width:100%;
-  transition:border-color .12s,box-shadow .12s;
+  transition:border-color .12s,box-shadow .12s
 }
 input[type=number]:hover,input[type=text]:hover,input[type=email]:hover,
 input[type=password]:hover,input[type=search]:hover,select:hover{border-color:var(--border-strong)}
@@ -312,34 +300,34 @@ input[type=password]:hover,input[type=search]:hover,select:hover{border-color:va
    plus a 3px halo at low alpha. Anything softer stops being a focus indicator
    and starts being a decoration. */
 input:focus,select:focus,textarea:focus{
-  outline:0;border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,112,243,.16);
+  outline:0;border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,112,243,.16)
 }
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .seg{display:flex;background:var(--surface-3);border:1px solid var(--border);border-radius:var(--r);padding:2px;gap:2px;margin-bottom:10px}
 .seg button{
   flex:1;border:0;background:transparent;font:inherit;font-size:11.5px;padding:6px 4px;
-  border-radius:6px;cursor:pointer;color:var(--text-muted);font-weight:var(--w-body);
+  border-radius:6px;cursor:pointer;color:var(--text-muted)
 }
-.seg button.on{background:var(--surface);color:var(--ink);font-weight:var(--w-strong);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
 .btn{
-  font:inherit;font-size:12px;font-weight:var(--w-body);padding:7px 12px;border-radius:var(--r);
+  font:inherit;font-size:12px;padding:7px 12px;border-radius:var(--r);
   border:1px solid var(--border);background:var(--surface);color:var(--ink);cursor:pointer;
-  transition:background .12s,border-color .12s,color .12s;
+  transition:background .12s,border-color .12s,color .12s
 }
 .btn:hover{background:var(--surface-2);border-color:var(--border-strong)}
 .btn:active{background:var(--surface-3)}
 /* THE PRIMARY BUTTON IS BLACK. Not the accent — the accent means "this is the
    live thing", and a page with three blue buttons on it has stopped saying that. */
-.btn.primary{background:var(--cta);color:#fff;border-color:var(--cta);font-weight:var(--w-strong)}
+.btn.primary{background:var(--cta);color:#fff;border-color:var(--cta)}
 .btn.primary:hover{background:var(--cta-hover);border-color:var(--cta-hover)}
-.btn.accent{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:var(--w-strong)}
+.btn.accent{background:var(--accent);color:#fff;border-color:var(--accent)}
 .btn.accent:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .btn:disabled:hover{background:var(--surface);border-color:var(--border)}
 .btnrow{display:flex;gap:6px;flex-wrap:wrap}
 .check{display:flex;align-items:center;gap:8px;margin-bottom:7px;color:var(--text-muted);cursor:pointer}
 .check input{accent-color:var(--accent);width:14px;height:14px;margin:0}
-.note{font-size:11.5px;font-weight:var(--w-body);color:var(--text-muted);line-height:1.5;margin:8px 0 0}
+.note{font-size:11.5px;color:var(--text-muted);line-height:1.5;margin:8px 0 0}
 /* ATTENTION, NOT ALARM. Most of the twenty-odd `.note.warn`s in this app are
    guidance — "set the scale first", "no doors found, measure instead" — and
    rendering all of them in red spent the one loud colour on sentences that are
@@ -348,18 +336,18 @@ input:focus,select:focus,textarea:focus{
    `.note.err` is the red one, and it is for something that actually failed. */
 .note.warn{
   color:var(--text-muted);border-left:2px solid var(--border-strong);
-  padding-left:9px;margin-left:0;
+  padding-left:9px;margin-left:0
 }
 .note.err{
   color:var(--danger-ink);border-left:2px solid var(--danger);
-  padding-left:9px;
+  padding-left:9px
 }
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .stat{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:9px 11px}
-.stat b{display:block;font-size:17px;font-weight:var(--w-strong);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.stat span{font-size:9.5px;font-weight:var(--w-head);color:var(--text-subtle);text-transform:uppercase;letter-spacing:.08em}
-.kv{display:flex;justify-content:space-between;font-size:11.5px;padding:3px 0;color:var(--text-muted);font-weight:var(--w-body)}
-.kv b{font-weight:var(--w-strong);color:var(--ink);font-variant-numeric:tabular-nums}
+.stat b{display:block;font-size:17px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.stat span{font-size:9.5px;color:var(--text-subtle);text-transform:uppercase;letter-spacing:.08em}
+.kv{display:flex;justify-content:space-between;font-size:11.5px;padding:3px 0;color:var(--text-muted)}
+.kv b{color:var(--ink);font-variant-numeric:tabular-nums}
 .hint{background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:var(--r);padding:9px 11px;font-size:11.5px;color:var(--accent-hover);margin-bottom:10px}
 
 /* ---------- step one: choosing how to chunk the space ---------- */
@@ -372,22 +360,22 @@ input:focus,select:focus,textarea:focus{
 .chunk-card{
   display:flex;flex-direction:column;gap:8px;text-align:left;font:inherit;color:inherit;
   background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;
-  cursor:pointer;transition:border-color .12s,box-shadow .12s;
+  cursor:pointer;transition:border-color .12s,box-shadow .12s
 }
 .chunk-card:hover{border-color:var(--accent);box-shadow:0 2px 10px rgba(10,10,10,.06)}
 .chunk-card.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft),0 2px 12px rgba(99,102,241,.14)}
 .chunk-card-top{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-.chunk-card-name{font-weight:600;letter-spacing:-.01em;font-size:13.5px}
+.chunk-card-name{letter-spacing:-.01em;font-size:13.5px}
 .chunk-thumb{
   display:block;width:100%;height:210px;background:var(--bg);
-  border:1px solid var(--border);border-radius:8px;
+  border:1px solid var(--border);border-radius:8px
 }
 .chip-row{display:flex;gap:5px;flex-wrap:wrap}
 .chip{
   font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:6px;
-  background:var(--input-bg);color:var(--text-muted);white-space:nowrap;
+  background:var(--input-bg);color:var(--text-muted);white-space:nowrap
 }
-.chip b{color:var(--text);font-weight:600}
+.chip b{color:var(--text)}
 .chip.bad{background:var(--danger-soft);color:var(--danger-ink)}
 .chip.bad b{color:var(--danger-ink)}
 .tag{font-size:10px;padding:2px 7px;border-radius:999px;white-space:nowrap}
@@ -399,7 +387,7 @@ input:focus,select:focus,textarea:focus{
 .picker-foot{
   position:sticky;bottom:0;margin-top:18px;display:flex;align-items:center;gap:14px;
   border-top:1px solid var(--border);
-  padding:14px 2px;background:linear-gradient(rgba(250,250,250,0),rgba(250,250,250,.95) 34%);
+  padding:14px 2px;background:linear-gradient(rgba(250,250,250,0),rgba(250,250,250,.95) 34%)
 }
 .picker-foot-txt{flex:1;color:var(--text-muted);font-size:12px}
 @media (max-width:960px){.chunk-thumb{height:170px}}
@@ -409,18 +397,18 @@ input:focus,select:focus,textarea:focus{
 .rooms-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}
 .rooms-plan{
   background:var(--surface);border:1px solid var(--border);border-radius:12px;
-  padding:10px;box-shadow:0 1px 2px rgba(10,10,10,.04);min-width:0;
+  padding:10px;box-shadow:0 1px 2px rgba(10,10,10,.04);min-width:0
 }
 .rooms-svg{display:block;width:100%;height:auto;max-height:calc(100vh - 260px)}
 .rooms-side{
   background:var(--surface);border:1px solid var(--border);border-radius:12px;
   padding:14px;box-shadow:0 1px 2px rgba(10,10,10,.04);
-  max-height:calc(100vh - 260px);overflow:auto;
+  max-height:calc(100vh - 260px);overflow:auto
 }
 .layer-list{display:flex;flex-direction:column;gap:1px;margin-bottom:4px}
 .layer-row{
   display:grid;grid-template-columns:14px minmax(0,1fr) auto auto;gap:7px;align-items:center;
-  padding:3px 5px;border-radius:6px;cursor:pointer;font-size:11.5px;color:var(--text-muted);
+  padding:3px 5px;border-radius:6px;cursor:pointer;font-size:11.5px;color:var(--text-muted)
 }
 .layer-row:hover{background:var(--input-bg)}
 .layer-row.on{background:var(--accent-soft);color:var(--accent)}
@@ -438,11 +426,11 @@ input:focus,select:focus,textarea:focus{
 .loading-sec{flex:1;display:flex;flex-direction:column;min-height:0}
 .loading-mid{
   flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:16px;text-align:center;padding:24px 4px;
+  gap:16px;text-align:center;padding:24px 4px
 }
 .loading-say{
-  margin:0;font-size:17px;line-height:1.35;font-weight:var(--w-strong);
-  letter-spacing:-.02em;color:var(--ink);max-width:18ch;
+  margin:0;font-size:17px;line-height:1.35;
+  letter-spacing:-.02em;color:var(--ink);max-width:18ch
 }
 .loading-mid .btn{padding:7px 14px}
 /* The list of spaces sits inside the section that counts them, so it needs a
@@ -458,7 +446,7 @@ input:focus,select:focus,textarea:focus{
    `.tracer-plan` so the two line up top and bottom. */
 .rooms-side.door-only{
   height:calc(100vh - 262px);
-  display:flex;flex-direction:column;
+  display:flex;flex-direction:column
 }
 .rooms-side.door-only > .sec{display:flex;flex-direction:column;flex:1;min-height:0}
 
@@ -467,14 +455,14 @@ input:focus,select:focus,textarea:focus{
    so the supporting sentence hangs off it rather than balancing it. */
 .door-ask{
   flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;
-  text-align:center;gap:10px;padding:16px 4px;
+  text-align:center;gap:10px;padding:16px 4px
 }
 .door-ask-h{
-  margin:0;font-size:17px;line-height:1.32;font-weight:var(--w-strong);
-  letter-spacing:-.02em;color:var(--ink);max-width:20ch;
+  margin:0;font-size:17px;line-height:1.32;
+  letter-spacing:-.02em;color:var(--ink);max-width:20ch
 }
 .door-ask-p{
-  margin:0;font-size:12px;line-height:1.5;color:var(--text-muted);max-width:28ch;
+  margin:0;font-size:12px;line-height:1.5;color:var(--text-muted);max-width:28ch
 }
 
 @media (max-width:1080px){
@@ -492,11 +480,11 @@ input:focus,select:focus,textarea:focus{
 .tracer-plan{position:relative;padding:0;overflow:hidden;height:calc(100vh - 262px);min-height:380px}
 .tracer-hud{
   position:absolute;left:10px;bottom:10px;display:flex;gap:6px;flex-wrap:wrap;
-  pointer-events:none;
+  pointer-events:none
 }
 .tracer-hud .chip{
   font-family:var(--mono);font-size:10px;padding:3px 7px;border-radius:999px;
-  background:rgba(255,255,255,.92);border:1px solid var(--border);color:var(--text-muted);
+  background:rgba(255,255,255,.92);border:1px solid var(--border);color:var(--text-muted)
 }
 .tracer-hud .chip.on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
 .tracer-hud .chip.snap{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
@@ -528,7 +516,7 @@ input:focus,select:focus,textarea:focus{
   display:inline-flex;align-items:center;justify-content:center;
   flex:0 0 auto;width:26px;height:26px;
   border:0;background:none;padding:0;cursor:pointer;
-  color:var(--text-faint);line-height:0;border-radius:6px;
+  color:var(--text-faint);line-height:0;border-radius:6px
 }
 /* A hit area larger than the mark, which is the point of the fixed box above:
    the glyph is 19px and the target is 26px, so it is comfortable to hit without
@@ -541,7 +529,7 @@ input:focus,select:focus,textarea:focus{
 .row-icon:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px}
 .outline-pick{
   display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:7px;align-items:center;
-  width:100%;border:0;background:none;font:inherit;cursor:pointer;padding:0;text-align:left;
+  width:100%;border:0;background:none;font:inherit;cursor:pointer;padding:0;text-align:left
 }
 .outline-name{font-family:var(--mono);font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* The same row without the colour dot. The tracer colours each outline and can
@@ -554,7 +542,7 @@ input:focus,select:focus,textarea:focus{
 .outline-pick{cursor:inherit}
 .outline-meta{
   display:flex;justify-content:space-between;align-items:center;gap:6px;
-  font-size:10px;color:var(--text-subtle);margin-top:3px;
+  font-size:10px;color:var(--text-subtle);margin-top:3px
 }
 .outline-meta span{display:flex;align-items:center;gap:5px}
 .btn.tiny{padding:0 5px;font-size:11px;line-height:1.5}
@@ -569,41 +557,41 @@ label.mini input{width:11px;height:11px;margin:0;accent-color:var(--accent)}
 .render-strip{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .render-thumb{
   position:relative;width:62px;height:62px;border-radius:7px;overflow:hidden;
-  border:1px solid var(--border);background:var(--input-bg);flex:0 0 auto;
+  border:1px solid var(--border);background:var(--input-bg);flex:0 0 auto
 }
 .render-thumb.plan{border-color:var(--accent-line);background:var(--surface)}
 .render-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .render-thumb.plan img{object-fit:contain}
 .render-no{
   position:absolute;left:3px;bottom:3px;font-family:var(--mono);font-size:9px;
-  padding:0 4px;border-radius:4px;background:rgba(0,0,0,.78);color:#fff;line-height:1.5;
+  padding:0 4px;border-radius:4px;background:rgba(0,0,0,.78);color:#fff;line-height:1.5
 }
 .render-x{
   position:absolute;top:2px;right:2px;width:15px;height:15px;padding:0;line-height:13px;
   border:0;border-radius:4px;background:rgba(0,0,0,.7);color:#fff;
-  font-size:12px;cursor:pointer;
+  font-size:12px;cursor:pointer
 }
 .render-x:hover{background:var(--danger)}
 
 .accent-row{
   border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin-top:6px;
-  background:var(--surface);
+  background:var(--surface)
 }
 .accent-row.off{opacity:.42}
 .accent-row.off .accent-what,.accent-row.off .accent-why{text-decoration:line-through}
 .accent-head{display:flex;align-items:center;gap:6px}
-.accent-head b{font-family:var(--mono);font-size:11px;font-weight:500}
+.accent-head b{font-family:var(--mono);font-size:11px}
 .accent-head .btn.tiny{margin-left:auto}
 .accent-dot{width:8px;height:8px;border-radius:2px;flex:0 0 auto}
 .accent-role{
   font-size:9px;color:var(--text-subtle);border:1px solid var(--border);
-  border-radius:999px;padding:0 5px;line-height:1.6;white-space:nowrap;
+  border-radius:999px;padding:0 5px;line-height:1.6;white-space:nowrap
 }
 .accent-what{font-size:11.5px;color:var(--text);margin-top:3px}
 .accent-why{font-size:10.5px;color:var(--text-muted);margin-top:2px;line-height:1.45}
 .accent-meta{
   display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;
-  font-family:var(--mono);font-size:9.5px;color:var(--text-subtle);
+  font-family:var(--mono);font-size:9.5px;color:var(--text-subtle)
 }
 
 /* The house rules, collapsed. Worth having on screen because a wrong
@@ -613,12 +601,12 @@ label.mini input{width:11px;height:11px;margin:0;accent-color:var(--accent)}
 .accent-rules summary{cursor:pointer;color:var(--text-subtle);font-size:10.5px}
 .accent-rules ol{margin:6px 0 0;padding-left:18px}
 .accent-rules li{margin-bottom:3px;line-height:1.4}
-.accent-rules b{font-weight:500;color:var(--text)}
+.accent-rules b{color:var(--text)}
 .accent-row.bad{border-style:dashed;border-color:var(--danger-line);background:var(--danger-soft)}
 .accent-why.warn{color:var(--danger-ink)}
 .furn-row{
   display:grid;grid-template-columns:8px minmax(0,1fr) auto auto;gap:7px;align-items:center;
-  padding:3px 0;font-size:11px;border-bottom:1px solid var(--border);
+  padding:3px 0;font-size:11px;border-bottom:1px solid var(--border)
 }
 .furn-row:last-of-type{border-bottom:0}
 .furn-name{font-family:var(--mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -636,11 +624,11 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
   display:flex;flex-direction:column;align-items:center;gap:3px;
   padding:7px 2px 5px;border:1px solid var(--border);border-radius:8px;
   background:var(--surface);cursor:pointer;font:inherit;
-  transition:background .12s,border-color .12s;
+  transition:background .12s,border-color .12s
 }
 .palette-btn span{
   font-size:8.5px;line-height:1.15;text-align:center;color:var(--text-muted);
-  letter-spacing:.01em;
+  letter-spacing:.01em
 }
 .palette-btn:hover:not(:disabled){background:var(--input-bg)}
 .palette-btn.on{background:var(--input-bg);box-shadow:inset 0 0 0 1px currentColor}
@@ -649,7 +637,7 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
 .sweep{display:flex;gap:4px;margin-top:7px}
 .sweep button{
   flex:1;padding:3px 0;font-family:var(--mono);font-size:10px;
-  border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;
+  border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer
 }
 .sweep button.on{border-color:var(--text);background:var(--input-bg);color:var(--text)}
 .accent-row.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
@@ -676,22 +664,22 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
 /* ---------- the project-type question ---------- */
 .modal-wrap{
   position:fixed;inset:0;z-index:60;display:grid;place-items:center;
-  background:rgba(20,20,28,.34);backdrop-filter:blur(3px);
+  background:rgba(20,20,28,.34);backdrop-filter:blur(3px)
 }
 .modal{
   width:min(520px,calc(100vw - 40px));background:var(--surface);
   border:1px solid var(--border);border-radius:14px;padding:22px 22px 20px;
-  box-shadow:0 18px 50px rgba(20,20,40,.18);
+  box-shadow:0 18px 50px rgba(20,20,40,.18)
 }
-.modal h2{margin:0 0 6px;font-size:17px;font-weight:600;letter-spacing:-.01em}
+.modal h2{margin:0 0 6px;font-size:17px;letter-spacing:-.01em}
 .proj-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .proj-btn{
   display:flex;flex-direction:column;gap:2px;align-items:flex-start;
   padding:11px 12px;border:1px solid var(--border);border-radius:9px;
   background:var(--surface);cursor:pointer;font:inherit;text-align:left;
-  transition:border-color .12s,background .12s,transform .08s;
+  transition:border-color .12s,background .12s,transform .08s
 }
-.proj-btn b{font-size:13px;font-weight:550}
+.proj-btn b{font-size:13px}
 .proj-btn span{font-size:10.5px;color:var(--text-subtle);line-height:1.3}
 .proj-btn:hover{border-color:var(--ink);background:var(--surface-2)}
 .proj-btn:active{transform:translateY(1px)}
@@ -699,11 +687,11 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
    same moment, not a new screen — so the modal must not jump when the grid is
    replaced by one line. */
 .modal-busy{display:flex;align-items:center;gap:14px;padding:10px 2px;min-height:74px}
-.modal-busy b{font-size:14px;font-weight:550;display:block}
+.modal-busy b{font-size:14px;display:block}
 .modal-spin{
   width:22px;height:22px;flex:0 0 auto;border-radius:50%;
   border:2px solid var(--border);border-top-color:var(--accent);
-  animation:sl-spin .7s linear infinite;
+  animation:sl-spin .7s linear infinite
 }
 @keyframes sl-spin{to{transform:rotate(360deg)}}
 /* The three door widths. A row of equal buttons, because they are one question
@@ -735,9 +723,9 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
   border-radius:var(--r);background:var(--surface-3)}
 .tabs button{
   appearance:none;border:0;background:transparent;cursor:pointer;
-  font:inherit;font-size:11.5px;font-weight:550;letter-spacing:.01em;
+  font:inherit;font-size:11.5px;letter-spacing:.01em;
   color:var(--text-subtle);padding:4px 14px;border-radius:6px;
-  transition:background .12s ease,color .12s ease;
+  transition:background .12s ease,color .12s ease
 }
 .tabs button:hover{color:var(--text)}
 .tabs button.on{background:var(--surface);color:var(--ink);
@@ -761,8 +749,8 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
   padding:52px 58px 64px;box-shadow:0 1px 3px rgba(10,10,10,.07)}
 .boq-head{display:flex;gap:20px;align-items:flex-start;justify-content:space-between;
   flex-wrap:wrap;padding-bottom:16px;margin-bottom:6px;border-bottom:1px solid var(--border)}
-.boq-sheet h1{margin:0 0 4px;font-size:18px;font-weight:600;letter-spacing:-.02em}
-.boq-h2{margin:26px 0 2px;font-size:11.5px;font-weight:600;letter-spacing:.06em;
+.boq-sheet h1{margin:0 0 4px;font-size:18px;letter-spacing:-.02em}
+.boq-h2{margin:26px 0 2px;font-size:11.5px;letter-spacing:.06em;
   text-transform:uppercase;color:var(--text-subtle)}
 .boq-sub{margin:0 0 9px;max-width:60ch}
 
@@ -777,9 +765,9 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
 .boq-tiles{display:flex;gap:7px}
 .boq-tile{min-width:82px;padding:8px 11px;border:1px solid var(--border);border-radius:8px;
   background:var(--surface-2)}
-.boq-tile b{display:block;font-size:17px;font-weight:600;letter-spacing:-.02em;
+.boq-tile b{display:block;font-size:17px;letter-spacing:-.02em;
   font-family:var(--mono);line-height:1.15}
-.boq-tile span{display:block;font-size:9.5px;font-weight:var(--w-head);color:var(--text-subtle);margin-top:2px}
+.boq-tile span{display:block;font-size:9.5px;color:var(--text-subtle);margin-top:2px}
 
 /* Sized for the page, not for the window. Eight columns inside 676mm-worth of
    A4 text width is tight, so the type steps down and the padding comes in —
@@ -787,9 +775,9 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
 table.boq{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
 table.boq.boq-narrow{max-width:430px}
 table.boq th{
-  text-align:left;font-size:9.5px;font-weight:var(--w-head);letter-spacing:.04em;
+  text-align:left;font-size:9.5px;letter-spacing:.04em;
   text-transform:uppercase;color:var(--text-subtle);
-  padding:7px 6px 5px;border-bottom:1px solid var(--text);white-space:nowrap;
+  padding:7px 6px 5px;border-bottom:1px solid var(--text);white-space:nowrap
 }
 table.boq td{padding:6px 6px;border-bottom:1px solid var(--border);vertical-align:baseline;
   overflow-wrap:break-word}
@@ -799,8 +787,8 @@ table.boq tbody tr:hover{background:var(--accent-soft)}
 .boq-r{text-align:right;font-family:var(--mono);white-space:nowrap}
 th.boq-r{text-align:right}
 .boq-i{width:22px;color:var(--text-subtle);font-family:var(--mono);font-size:10px}
-.boq-u{font-size:10px;font-weight:var(--w-body);color:var(--text-muted);white-space:nowrap}
-.boq-note{color:var(--text-muted);font-size:10px;font-weight:var(--w-body);line-height:1.4}
+.boq-u{font-size:10px;color:var(--text-muted);white-space:nowrap}
+.boq-note{color:var(--text-muted);font-size:10px;line-height:1.4}
 /* `table-layout: fixed` needs the widths stated. These mirror the PDF's column
    shares, so the two read the same. */
 table.boq col.c-desc{width:25%}
@@ -818,25 +806,25 @@ table.boq tfoot tr:hover{background:transparent}
 .boq-caveat td{padding-top:2px;border-top:0;font-size:10.5px;color:var(--text-subtle);
   line-height:1.4}
 .boq-empty{margin:80px auto;text-align:center;max-width:40ch}
-.boq-empty h2{font-size:16px;font-weight:600;margin:0 0 6px}
+.boq-empty h2{font-size:16px;margin:0 0 6px}
 
 /* The three formats. Each is a button with its own one-line reason, because
    "Excel / CSV / PDF" alone makes the reader guess which of the three they
    want. */
 .boq-export{display:flex;flex-direction:column;gap:6px}
 .boq-export .btn{width:100%;text-align:left;padding:8px 10px;display:block}
-.boq-export .btn b{display:block;font-size:12px;font-weight:550}
+.boq-export .btn b{display:block;font-size:12px}
 .boq-export .btn span{display:block;font-size:10px;opacity:.7;margin-top:1px;
-  font-weight:var(--w-body);white-space:normal}
+  white-space:normal}
 
 /* ---------- the pipeline loader ---------- */
 .loader-wrap{
   position:absolute;inset:0;z-index:40;display:grid;place-items:center;
-  background:rgba(250,250,252,.93);backdrop-filter:blur(2px);
+  background:rgba(250,250,252,.93);backdrop-filter:blur(2px)
 }
 .loader-stage{
   display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:26px;align-items:center;
-  width:min(1020px,calc(100% - 56px));
+  width:min(1020px,calc(100% - 56px))
 }
 @media (max-width:900px){.loader-stage{grid-template-columns:minmax(0,1fr);gap:16px}}
 .loader-plan{width:100%;max-height:min(62vh,560px);display:block}
@@ -850,21 +838,21 @@ table.boq tfoot tr:hover{background:transparent}
   .sl-run{animation:none;opacity:.55}
 }
 
-.loader-phase{font-size:15px;font-weight:550;letter-spacing:-.01em;color:var(--text)}
+.loader-phase{font-size:15px;letter-spacing:-.01em;color:var(--text)}
 .loader-detail{font-size:11.5px;color:var(--text-muted);margin-top:3px;min-height:15px}
 .loader-bar{
-  height:3px;border-radius:2px;background:var(--grid);margin:12px 0 14px;overflow:hidden;
+  height:3px;border-radius:2px;background:var(--grid);margin:12px 0 14px;overflow:hidden
 }
 .loader-bar i{display:block;height:100%;background:var(--accent);border-radius:2px;
   transition:width .35s cubic-bezier(.4,0,.2,1)}
 .loader-steps{list-style:none;margin:0;padding:0;display:grid;gap:7px}
 .loader-steps li{
   display:grid;grid-template-columns:14px minmax(0,1fr);gap:7px;align-items:baseline;
-  font-size:11.5px;color:var(--text-subtle);
+  font-size:11.5px;color:var(--text-subtle)
 }
 .loader-steps li .dot{
   width:6px;height:6px;border-radius:50%;background:var(--border);
-  margin-top:5px;grid-column:1;
+  margin-top:5px;grid-column:1
 }
 .loader-steps li>div{grid-column:2;min-width:0}
 .loader-steps li.busy{color:var(--text)}
@@ -876,9 +864,9 @@ table.boq tfoot tr:hover{background:transparent}
 @keyframes sl-blink{0%,100%{opacity:1}50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.loader-steps li.busy .dot{animation:none}}
 .rtype{
-  font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:.02em;
+  font-family:var(--mono);font-size:9px;letter-spacing:.02em;
   background:var(--accent-soft);color:var(--accent);border-radius:4px;
-  padding:1px 5px;margin-right:5px;
+  padding:1px 5px;margin-right:5px
 }
 
 /* ---------- the layout is lit ----------------------------------------------
@@ -902,7 +890,7 @@ table.boq tfoot tr:hover{background:transparent}
 .lp-pulse{
   transform-box:fill-box; transform-origin:center;
   animation:lp-pulse 2.8s ease-in-out infinite;
-  will-change:transform,opacity;
+  will-change:transform,opacity
 }
 @keyframes lp-pulse{
   0%,100%{transform:scale(0.92); opacity:.72}
@@ -931,7 +919,7 @@ table.boq tfoot tr:hover{background:transparent}
    the sheet's line weight, which a stylesheet cannot know. */
 .lp-breathe{
   animation:lp-breathe 2.8s ease-in-out infinite;
-  will-change:stroke-width,opacity;
+  will-change:stroke-width,opacity
 }
 @keyframes lp-breathe{
   0%,100%{stroke-width:var(--lp-w0); opacity:calc(var(--lp-glow-o,.5) * .78)}
@@ -963,23 +951,23 @@ table.boq tfoot tr:hover{background:transparent}
   backdrop-filter:saturate(180%) blur(18px);
   border:1px solid rgba(0,0,0,.09);
   box-shadow:0 8px 26px rgba(10,10,10,.14), 0 1px 2px rgba(10,10,10,.08);
-  animation:tip-in .11s ease-out;
+  animation:tip-in .11s ease-out
 }
 @keyframes tip-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.fixture-tip{animation:none}}
 .fixture-tip h4{
-  margin:0 0 7px; font-size:12px; font-weight:var(--w-strong);
-  color:var(--ink); letter-spacing:-.01em; line-height:1.25;
+  margin:0 0 7px; font-size:12px; 
+  color:var(--ink); letter-spacing:-.01em; line-height:1.25
 }
 .fixture-tip dl{margin:0; display:grid; grid-template-columns:auto 1fr; gap:3px 12px}
 .fixture-tip dt{font-size:11px; color:var(--text-muted); white-space:nowrap}
 .fixture-tip dd{
-  margin:0; font-family:var(--mono); font-size:11px; font-weight:var(--w-strong);
-  color:var(--ink); text-align:right; font-variant-numeric:tabular-nums;
+  margin:0; font-family:var(--mono); font-size:11px; 
+  color:var(--ink); text-align:right; font-variant-numeric:tabular-nums
 }
 .fixture-tip p{
   margin:8px 0 0; padding-top:7px; border-top:1px solid rgba(0,0,0,.08);
-  font-size:10.5px; line-height:1.4; color:var(--text-subtle);
+  font-size:10.5px; line-height:1.4; color:var(--text-subtle)
 }
 
 /* ===========================================================================
@@ -1002,7 +990,7 @@ table.boq tfoot tr:hover{background:transparent}
 .home-top{
   height:56px;flex:0 0 auto;display:flex;align-items:center;gap:14px;padding:0 22px;
   border-bottom:1px solid var(--border);background:rgba(255,255,255,.72);
-  backdrop-filter:saturate(180%) blur(12px);
+  backdrop-filter:saturate(180%) blur(12px)
 }
 .brand-link{display:flex;align-items:center;gap:10px;text-decoration:none}
 /* THE WHOLE PAGE IS THE DROP TARGET, and the border only appears when something
@@ -1011,7 +999,7 @@ table.boq tfoot tr:hover{background:transparent}
 .home-main{
   flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
   text-align:center;padding:64px 24px;gap:6px;
-  border:2px solid transparent;transition:border-color .15s,background .15s;
+  border:2px solid transparent;transition:border-color .15s,background .15s
 }
 .home-main.over{border-color:var(--accent);background:var(--accent-soft)}
 /* CLAMPED, NOT FIXED. This is the one string on the site that has to land at
@@ -1019,7 +1007,7 @@ table.boq tfoot tr:hover{background:transparent}
    a laptop and stays two lines on a phone. */
 .home-h1{
   margin:0 0 10px;font-size:clamp(34px,4.4vw,58px);line-height:1.04;
-  font-weight:var(--w-display);letter-spacing:-.035em;max-width:22ch;
+  letter-spacing:-.035em;max-width:22ch
 }
 .home-sub{margin:0 0 26px;color:var(--text-muted);max-width:56ch;font-size:14px;line-height:1.6}
 .home-cta{display:flex;flex-direction:column;align-items:center;gap:12px}
@@ -1030,7 +1018,7 @@ table.boq tfoot tr:hover{background:transparent}
 .home-err{max-width:48ch}
 .home-foot{
   flex:0 0 auto;display:flex;justify-content:space-between;padding:16px 22px;
-  border-top:1px solid var(--border);font-size:11px;color:var(--text-subtle); background-color: #FFFFFF;
+  border-top:1px solid var(--border);font-size:11px;color:var(--text-subtle); background-color: #FFFFFF
 }
 
 /* ---------- login ---------- */
@@ -1038,24 +1026,24 @@ table.boq tfoot tr:hover{background:transparent}
 .auth-top{width:100%;height:56px;display:flex;align-items:center;padding:0 22px;border-bottom:1px solid var(--border); background-color: #FFFFFF}
 .auth-card{
   width:min(420px,92%);margin:auto;background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--r-lg);padding:30px 28px;box-shadow:var(--shadow);
+  border-radius:var(--r-lg);padding:30px 28px;box-shadow:var(--shadow)
 }
-.auth-card h1{margin:0 0 8px;font-size:22px;font-weight:var(--w-display);letter-spacing:-.03em}
+.auth-card h1{margin:0 0 8px;font-size:22px;letter-spacing:-.03em}
 .auth-sub{margin:0 0 22px;color:var(--text-muted);font-size:12.5px;line-height:1.6}
 .auth-form{display:flex;flex-direction:column;gap:8px}
-.auth-label{font-size:10px;font-weight:var(--w-head);letter-spacing:.11em;text-transform:uppercase;color:var(--text-subtle)}
+.auth-label{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-subtle)}
 .auth-form .btn{margin-top:8px}
 /* THE CODE FIELD IS WIDE-TRACKED AND CENTRED because six digits typed into a
    normal text input read as a word, and the thing being checked is a sequence of
    characters one at a time. */
 input.otp{
   font-size:24px;letter-spacing:.42em;text-align:center;padding:12px 8px;
-  font-variant-numeric:tabular-nums;
+  font-variant-numeric:tabular-nums
 }
 .auth-alt{display:flex;justify-content:space-between;gap:12px;margin-top:12px}
 .linkish{
   border:0;background:none;font:inherit;font-size:11.5px;color:var(--link);
-  cursor:pointer;padding:0;text-decoration:none;
+  cursor:pointer;padding:0;text-decoration:none
 }
 .linkish:hover{text-decoration:underline}
 .linkish:disabled{color:var(--text-faint);cursor:default;text-decoration:none}
@@ -1065,7 +1053,7 @@ input.otp{
 .shell{display:grid;grid-template-columns:56px 1fr;height:100%}
 .rail{
   border-right:1px solid var(--border);background:var(--surface);
-  display:flex;flex-direction:column;align-items:center;padding:18px 0 14px;gap:10px;
+  display:flex;flex-direction:column;align-items:center;padding:18px 0 14px;gap:10px
 }
 .rail-mark{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px}
 .rail-mark:hover{background:var(--surface-3)}
@@ -1075,8 +1063,8 @@ input.otp{
 .bubble{
   width:32px;height:32px;border-radius:50%;border:1px solid var(--border-strong);
   background:var(--surface-3);color:var(--ink);font:inherit;font-size:13px;
-  font-weight:var(--w-strong);cursor:pointer;display:grid;place-items:center;
-  transition:background .12s,border-color .12s,box-shadow .12s;
+  cursor:pointer;display:grid;place-items:center;
+  transition:background .12s,border-color .12s,box-shadow .12s
 }
 .bubble:hover{background:var(--surface);border-color:var(--ink)}
 .bubble.on{background:var(--ink);border-color:var(--ink);color:#fff}
@@ -1085,14 +1073,14 @@ input.otp{
 .rail-menu{
   position:absolute;bottom:0;left:44px;width:210px;z-index:20;
   background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
-  box-shadow:var(--shadow-pop);padding:6px;display:flex;flex-direction:column;gap:2px;
+  box-shadow:var(--shadow-pop);padding:6px;display:flex;flex-direction:column;gap:2px
 }
 .rail-who{padding:8px 9px 10px;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid var(--border);margin-bottom:4px}
-.rail-who b{font-size:12.5px;font-weight:var(--w-strong)}
+.rail-who b{font-size:12.5px}
 .rail-who span{font-size:11px;color:var(--text-subtle);overflow:hidden;text-overflow:ellipsis}
 .rail-menu button{
   text-align:left;border:0;background:none;font:inherit;font-size:12.5px;
-  padding:7px 9px;border-radius:var(--r);cursor:pointer;color:var(--ink);
+  padding:7px 9px;border-radius:var(--r);cursor:pointer;color:var(--ink)
 }
 .rail-menu button:hover{background:var(--surface-3)}
 .rail-menu button.danger{color:var(--danger-ink)}
@@ -1114,7 +1102,7 @@ input.otp{
 .detail-bar{
   height:56px;flex:0 0 auto;display:flex;align-items:center;padding:0 30px;
   background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(12px);
-  border-bottom:1px solid var(--border);
+  border-bottom:1px solid var(--border)
 }
 /* Held to the same measure as `.shell-inner` below it, and to the same 30px
    gutter, so the back arrow lines up with the first card's left edge and the
@@ -1122,7 +1110,7 @@ input.otp{
    centred grid reads as a different page. */
 .detail-bar-inner{
   width:100%;max-width:1180px;margin-inline:auto;
-  display:flex;align-items:center;gap:12px;min-width:0;
+  display:flex;align-items:center;gap:12px;min-width:0
 }
 .detail-bar .plan-name{max-width:40ch}
 /* The bar answers "where am I"; the body opens on what is in here. Without the
@@ -1143,19 +1131,19 @@ input.otp{
    content. */
 .shell-inner{width:100%;max-width:1180px;margin-inline:auto}
 .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin:6px 0 26px}
-.page-head h1{margin:0;font-size:26px;font-weight:var(--w-display);letter-spacing:-.03em}
+.page-head h1{margin:0;font-size:26px;letter-spacing:-.03em}
 .page-sub{margin:6px 0 0;color:var(--text-muted);font-size:12.5px}
 .page-sec{margin-bottom:34px}
 .page-sec h3{
-  margin:0 0 12px;font-size:10px;font-weight:var(--w-head);letter-spacing:.11em;
-  text-transform:uppercase;color:var(--text-subtle);
+  margin:0 0 12px;font-size:10px;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--text-subtle)
 }
 /* THE BACK BUTTON IS TEXT WITH AN ARROW, not a bordered button. It is a
    direction, not an action, and every screen that has one has it in the same
    place — top-left, above the title. */
 .back{
   border:0;background:none;font:inherit;font-size:12px;color:var(--text-muted);
-  cursor:pointer;padding:4px 0;display:inline-flex;align-items:center;gap:7px;margin-bottom:14px;
+  cursor:pointer;padding:4px 0;display:inline-flex;align-items:center;gap:7px;margin-bottom:14px
 }
 .back:hover{color:var(--ink)}
 .back span{font-size:13px}
@@ -1174,28 +1162,28 @@ input.otp{
 .card{
   background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
   overflow:hidden;cursor:pointer;display:flex;flex-direction:column;
-  transition:border-color .12s,box-shadow .12s,transform .12s;
+  transition:border-color .12s,box-shadow .12s,transform .12s
 }
 .card:hover{border-color:var(--border-strong);box-shadow:var(--shadow)}
 .card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .card-body{padding:13px 14px;flex:1}
-.card-body h4{margin:0 0 6px;font-size:13.5px;font-weight:var(--w-strong);letter-spacing:-.01em}
+.card-body h4{margin:0 0 6px;font-size:13.5px;letter-spacing:-.01em}
 .card-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:var(--text-muted)}
 .dotsep{color:var(--text-faint)}
 .card-stats{display:flex;gap:14px;margin-top:10px;font-size:11px;color:var(--text-muted)}
-.card-stats b{font-weight:var(--w-strong);color:var(--ink);font-variant-numeric:tabular-nums}
+.card-stats b{color:var(--ink);font-variant-numeric:tabular-nums}
 .card-foot{padding:8px 14px;border-top:1px solid var(--border);display:flex;justify-content:flex-end}
 .project-card .card-body{padding-top:15px}
 /* THE SNAPSHOT IS THE CARD. 4:3, cropped, on the page's own grey so a drawing
    that does not fill it does not look broken. */
 .plan-shot{
   aspect-ratio:4/3;background:var(--surface-2);border-bottom:1px solid var(--border);
-  display:grid;place-items:center;overflow:hidden;
+  display:grid;place-items:center;overflow:hidden
 }
 .plan-shot img{width:100%;height:100%;object-fit:cover;display:block}
 .plan-shot-empty{
-  font-size:10px;font-weight:var(--w-head);letter-spacing:.14em;text-transform:uppercase;
-  color:var(--text-faint);
+  font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--text-faint)
 }
 
 /* ---------- waiting ---------- */
@@ -1208,14 +1196,14 @@ input.otp{
 .spinner{
   width:26px;height:26px;border-radius:50%;
   border:2px solid var(--border);border-top-color:var(--accent);
-  animation:sl-spin .8s linear infinite;
+  animation:sl-spin .8s linear infinite
 }
 @keyframes sl-spin{to{transform:rotate(360deg)}}
 .notice-card{
   width:min(460px,92%);background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--r-lg);padding:24px;text-align:center;
+  border-radius:var(--r-lg);padding:24px;text-align:center
 }
-.notice-card h2{margin:0 0 10px;font-size:18px;font-weight:var(--w-display);letter-spacing:-.025em}
+.notice-card h2{margin:0 0 10px;font-size:18px;letter-spacing:-.025em}
 .notice-card p{margin:0 0 14px;color:var(--text-muted);font-size:12.5px;line-height:1.6}
 .notice-card code{font-family:var(--mono);font-size:11px;background:var(--surface-3);padding:1px 4px;border-radius:3px}
 
@@ -1224,12 +1212,12 @@ input.otp{
 /* The name is a button that looks like text until you point at it, which is the
    same trick as the project heading and for the same reason. */
 .plan-name{
-  border:0;background:none;font:inherit;font-size:13.5px;font-weight:var(--w-strong);
+  border:0;background:none;font:inherit;font-size:13.5px;
   color:var(--ink);cursor:text;padding:3px 6px;border-radius:var(--r);
-  max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
 }
 .plan-name:hover{background:var(--surface-3);box-shadow:inset 0 -1px 0 var(--border-strong)}
-.plan-name-input{font:inherit;font-size:13.5px;font-weight:var(--w-strong);width:26ch;padding:3px 6px}
+.plan-name-input{font:inherit;font-size:13.5px;width:26ch;padding:3px 6px}
 
 
 /* ===========================================================================
@@ -1260,7 +1248,7 @@ input.otp{
   padding:0 14px;
   /* 12px type in a 48px box reads as a small label floating in a large box. 14px
      is the size that makes the field look intended. */
-  font-size:14px;
+  font-size:14px
 }
 /* The chevron needs room, and a select with 14px of right padding puts the arrow
    on top of the last character. */
@@ -1309,7 +1297,7 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
   --logo-w:104px;
   position:relative;overflow:hidden;flex:0 0 auto;display:block;
   width:var(--logo-w);
-  height:calc(var(--logo-w) * 0.349432);
+  height:calc(var(--logo-w) * 0.349432)
 }
 .logo img{
   position:absolute;display:block;
@@ -1331,8 +1319,7 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
    stays for the one act a screen is actually for.
    =========================================================================== */
 .btn.secondary{
-  background:var(--surface);color:var(--ink);border:1px solid var(--border-strong);
-  font-weight:var(--w-strong);
+  background:var(--surface);color:var(--ink);border:1px solid var(--border-strong)
 }
 .btn.secondary:hover{background:var(--surface-2);border-color:var(--ink)}
 .btn.secondary:active{background:var(--surface-3)}
@@ -1352,11 +1339,11 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
    =========================================================================== */
 .page-sec.empty{
   min-height:min(58vh,560px);
-  display:flex;align-items:center;justify-content:center;
+  display:flex;align-items:center;justify-content:center
 }
 .dropzone.hero{
   width:min(760px,100%);padding:76px 56px;border-radius:16px;
-  border:1.5px dashed var(--border-strong);
+  border:1.5px dashed var(--border-strong)
 }
 .dropzone.hero h2{font-size:32px;letter-spacing:-.035em;margin-bottom:12px}
 .dropzone.hero p{font-size:14px;line-height:1.65;max-width:52ch}
@@ -1370,8 +1357,7 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
    subject is a grid of drawings the account is the only genuinely interactive
    object in the chrome. Grey-on-grey read as a label. */
 .bubble{
-  background:var(--accent);border-color:var(--accent);color:#fff;
-  font-weight:var(--w-strong);
+  background:var(--accent);border-color:var(--accent);color:#fff
 }
 .bubble:hover{background:var(--accent-hover);border-color:var(--accent-hover);color:#fff}
 .bubble.on{background:var(--ink);border-color:var(--ink);color:#fff}
@@ -1385,7 +1371,7 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
    do — which is the difference between a choice and a click. */
 .proj-btn.on{
   border-color:var(--accent);background:var(--accent-soft);
-  box-shadow:0 0 0 1px var(--accent) inset;
+  box-shadow:0 0 0 1px var(--accent) inset
 }
 .proj-btn.on b{color:var(--accent)}
 .cat-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}
@@ -1398,17 +1384,17 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
    thumbnails land one by one. */
 .pdf-pages{
   display:grid;grid-template-columns:repeat(auto-fill,minmax(122px,1fr));gap:10px;
-  max-height:min(52vh,440px);overflow-y:auto;padding:2px;
+  max-height:min(52vh,440px);overflow-y:auto;padding:2px
 }
 .pdf-page{
   border:1px solid var(--border);background:var(--surface);border-radius:var(--r);
   padding:7px;cursor:pointer;font:inherit;display:flex;flex-direction:column;gap:6px;
-  transition:border-color .12s,background .12s;
+  transition:border-color .12s,background .12s
 }
 .pdf-page:hover{border-color:var(--accent);background:var(--accent-soft)}
 .pdf-thumb{
   aspect-ratio:1/1.35;background:var(--surface-3);border:1px solid var(--border);
-  border-radius:3px;display:grid;place-items:center;overflow:hidden;
+  border-radius:3px;display:grid;place-items:center;overflow:hidden
 }
 /* WHITE BEHIND THE THUMBNAIL, matching the white the full render paints under the
    page. A transparent PDF background on a grey tile looks like a grey drawing,
@@ -1418,11 +1404,11 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
 .pdf-thumb-wait{
   width:16px;height:16px;border-radius:50%;
   border:2px solid var(--border-strong);border-top-color:var(--accent);
-  animation:sl-spin .8s linear infinite;
+  animation:sl-spin .8s linear infinite
 }
 .pdf-page-no{
-  font-size:10.5px;font-weight:var(--w-head);letter-spacing:.06em;text-transform:uppercase;
-  color:var(--text-subtle);text-align:center;
+  font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-subtle);text-align:center
 }
 
 /* A pill that is also a control. Used for "the drawing did not upload · Retry",
@@ -1437,13 +1423,13 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
    to whoever is tuning the models rather than to whoever is lighting the flat —
    and somebody with it switched on needs to notice that they have. */
 .sec.admin{
-  border-top:1px solid var(--border-strong);margin-top:20px;padding-top:14px;
+  border-top:1px solid var(--border-strong);margin-top:20px;padding-top:14px
 }
 .sec.admin h3{color:#C026D3}
 .admin-counts{
   margin-top:10px;padding:9px 10px;border-radius:var(--r);
   background:var(--surface-3);border:1px solid var(--border);
-  display:flex;flex-direction:column;gap:5px;
+  display:flex;flex-direction:column;gap:5px
 }
 .admin-counts .kv{margin:0}
 
@@ -1454,7 +1440,7 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
 .bed-why{margin-top:4px;border-top:1px solid var(--border);padding-top:6px}
 .bed-why > summary{
   cursor:pointer;font-size:11.5px;color:var(--text-subtle);
-  list-style:none;user-select:none;
+  list-style:none;user-select:none
 }
 .bed-why > summary::-webkit-details-marker{display:none}
 .bed-why > summary::before{content:'▸ ';font-size:9px}
@@ -1472,5 +1458,5 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
   margin:14px 0;padding:10px 12px;border-radius:var(--r);
   background:var(--danger-soft);border:1px solid var(--danger-line);
   color:var(--danger-ink);font-family:var(--mono);font-size:11.5px;line-height:1.5;
-  white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto;
+  white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto
 }

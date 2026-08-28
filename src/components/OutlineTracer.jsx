@@ -847,7 +847,7 @@ export default function OutlineTracer({
               {draftFt != null && snap && (
                 <Text x={snap.x} y={snap.y} offsetX={px(-10)} offsetY={px(20)}
                   text={ftin(draftFt)} fontSize={px(11)}
-                  fontFamily="Neue Montreal, sans-serif" fill="#000000" />
+                  fontFamily="The Neue Montreal, sans-serif" fill="#000000" />
               )}
             </Layer>
 
@@ -1067,7 +1067,7 @@ export default function OutlineTracer({
                 {hasScale && scaleUI.doors.length > 1 && (
                   <div className="kv" style={{ marginTop: 8, alignItems: 'flex-start' }}>
                     <span>Other doors</span>
-                    <b style={{ textAlign: 'right', fontWeight: 500 }}>
+                    <b style={{ textAlign: 'right' }}>
                       {scaleUI.doors.filter((d) => d.id !== scaleUI.pick?.id)
                         .slice(0, 4)
                         .map((d) => `${Math.round(d.openingPx / pxPerFt * 304.8 / 25) * 25}`)

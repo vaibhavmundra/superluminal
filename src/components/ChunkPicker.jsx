@@ -163,7 +163,7 @@ function ChunkCard({
           if (Math.min(r.w, r.h) < fs * 2.4) return null;
           return (
             <text key={'t' + k} x={r.x + r.w / 2} y={r.y + r.h / 2} fontSize={fs}
-              fontFamily="Neue Montreal, sans-serif" fill={FILL[k % FILL.length]}
+              fontFamily="The Neue Montreal, sans-serif" fill={FILL[k % FILL.length]}
               stroke="#FAFAFA" strokeWidth={lw * 3.4} paintOrder="stroke"
               textAnchor="middle" dominantBaseline="central">
               {c.w.toFixed(1)}×{c.h.toFixed(1)}

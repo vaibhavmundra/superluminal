@@ -450,7 +450,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {sel && objDragMode && (
               <text x={f.x} y={f.y - (rect ? f.h / 2 : R0) - HS * 5}
                 textAnchor="middle" fontSize={HS * 1.1}
-                fontFamily="Neue Montreal, sans-serif" fill={C.grip}>
+                fontFamily="The Neue Montreal, sans-serif" fill={C.grip}>
                 {objDragMode === 'rotate'
                   ? `${Math.round(((f.rot || 0) * 180) / Math.PI)}\u00B0`
                   : rect
@@ -461,7 +461,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
 
             {fansPx.length > 1 && layers.labels && (
               <text x={f.x + (rect ? f.w / 2 : R0) + CL + lw * 3} y={f.y - (rect ? f.h / 2 : R0) * 0.6} fontSize={(pxPerFt || 12) * 0.5}
-                fontFamily="Neue Montreal, sans-serif" fill={col} opacity="0.8">
+                fontFamily="The Neue Montreal, sans-serif" fill={col} opacity="0.8">
                 {(f.kind || 'fan').slice(0, 1).toUpperCase()}{i + 1}
               </text>
             )}
@@ -539,7 +539,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 )}
                 {layers.labels && (
                   <text x={l.x + R * 1.6} y={l.y - R * 1.2} fontSize={s * 0.5}
-                    fontFamily="Neue Montreal, sans-serif" fill={col} opacity="0.75">
+                    fontFamily="The Neue Montreal, sans-serif" fill={col} opacity="0.75">
                     {laid.length > 1 && r.name ? `${r.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 4)}-` : ''}{l.id}
                   </text>
                 )}
@@ -817,7 +817,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const cy = poly.reduce((a, p) => a + p.y, 0) / poly.length;
         return (
           <text key={'n' + r.id} x={cx} y={cy} textAnchor="middle"
-            fontSize={s * 0.8} fontFamily="Neue Montreal, sans-serif"
+            fontSize={s * 0.8} fontFamily="The Neue Montreal, sans-serif"
             fill={C.region} opacity="0.65">{r.name || 'Space'}</text>
         );
       })}
@@ -847,7 +847,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 fill="#C026D3" fillOpacity="0.06" stroke="#C026D3"
                 strokeWidth={lw * 1.6} strokeDasharray={`${lw * 4} ${lw * 3}`} />
               <text x={z.x0 + lw * 3} y={z.y0 - lw * 2} fill="#C026D3"
-                fontSize={Math.max(width, height) / 130} fontFamily="Neue Montreal, sans-serif">
+                fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
                 bed
               </text>
             </g>
@@ -864,7 +864,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   fill="#C026D3" fillOpacity="0.05" stroke="#C026D3"
                   strokeWidth={lw * 1.6} strokeDasharray={`${lw * 6} ${lw * 3}`} />
                 <text x={r.x0 + lw * 3} y={r.y0 - lw * 2} fill="#C026D3"
-                  fontSize={Math.max(width, height) / 130} fontFamily="Neue Montreal, sans-serif">
+                  fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
                   {sf.label || sf.type || 'surface'}{sf.rejected ? ' (rejected)' : ''}
                 </text>
               </g>
@@ -970,7 +970,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               <text x={g.axis === 'x' ? g.value + lw * 4 : l.x1 + lw * 4}
                 y={g.axis === 'x' ? l.y1 + lw * 10 : g.value - lw * 4}
                 fontSize={Math.max(width, height) / 130}
-                fontFamily="Neue Montreal, sans-serif" fill={C.guide} opacity="0.85">
+                fontFamily="The Neue Montreal, sans-serif" fill={C.guide} opacity="0.85">
                 {g.label}
               </text>
             )}
@@ -1034,7 +1034,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {pxPerFt > 0 && L > lw * 8 && (
               <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - lw * 8}
                 fontSize={Math.max(width, height) / 120} textAnchor="middle"
-                fontFamily="Neue Montreal, sans-serif" fill={C.lit}>
+                fontFamily="The Neue Montreal, sans-serif" fill={C.lit}>
                 {(L / pxPerFt).toFixed(1)} ft
               </text>
             )}

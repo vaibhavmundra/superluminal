@@ -225,9 +225,41 @@ a rule down the left; `.note.err` is the red one.
 
 ### Type
 
-**Neue Montreal throughout: four static woff2 cuts — 400, 500, 600, 700 — in
-`src/fonts`.** 260KB for all five faces including Lunar, converted from the
-supplied TrueType (235KB each down to 59KB).
+**Neue Montreal throughout: one cut, Regular, as `NeueMontreal-Regular.ttf` in
+`src/fonts`.** 59KB — the supplied TTF is already subset, so TrueType costs
+nothing against woff2 here. Lunar is the only other face, `Lunar-400.woff2`,
+and it has one job.
+
+**There is no weight scale, and the CSS no longer pretends there is.** The four
+`--w-*` tokens and all 54 `font-weight` rules that referenced them are gone.
+With one cut, a rule asking for 600 does not fail — it gets SYNTHETIC bold, a
+smeared Regular that is worst at exactly the display sizes it was meant to
+help. `body` states 400 once; everything inherits it. Hierarchy is carried by
+size, tracking and colour, which is what the ink scale and the size-dependent
+tracking were already doing most of the work of.
+
+> **Stripping the rules is not the same as reaching 400, and the home-page `<h1>`
+> proved it.** The browser's own stylesheet makes `h1`–`h6`, `b`, `strong` and
+> `th` bold. Deleting `.page-head h1{font-weight:var(--w-display)}` did not leave
+> that heading at Regular — it handed it back to the UA default, so a deliberate
+> 500 became a synthesised 700, heavier than it had ever been and visibly smeared
+> at 26px. Two lines fix it for good: an element-level reset
+> (`h1,h2,h3,h4,h5,h6,b,strong,th,optgroup{font-weight:400}`) so nothing inherits
+> bold from the UA, and `font-synthesis:style` on `body` so that even if some
+> rule does ask for 600 the browser renders true Regular instead of faking it.
+> `style` rather than `none` because the one `<em>` in `PlanLoader` should still
+> slant.
+
+> **Nothing lives in `public/fonts` any more, and a `.ttf` there is a trap.**
+> `public/` is copied verbatim and checked by nothing. A face written as
+> `url('./fonts/NeueMontreal-Regular.ttf')` resolves against `src/fonts`, not
+> `public/fonts` — Vite cannot resolve it, leaves the URL untouched, and
+> production asks the CDN for `/assets/fonts/NeueMontreal-Regular.ttf` and gets
+> a 404. It is silent for as long as a working face sits later in the stack and
+> turns the whole app to system sans the moment that one is removed. The fifteen
+> PP-named TTFs and the variable woff2 that used to sit there were also being
+> served to the public on every deploy, which is a licensing problem as much as
+> a 1.2MB one; they are deleted.
 
 > **They started in `public/fonts`, referenced as `url('/fonts/...')`, and they
 > did not load at all.** The cause is one line in `vite.config.js`: `base: './'`.
@@ -259,28 +291,33 @@ supplied TrueType (235KB each down to 59KB).
 > for each face; and it behaves identically served from the root and from a deep
 > subpath, which is the case the old URL could not survive.
 
-**`public/fonts` still holds the original TTFs and the variable file, and nothing
-references them any more** — so they are about 1.5MB of dead weight in every
-build. Moving them out of `public/` (anywhere else in the repo is fine) slims the
-deploy without losing the originals.
+**`public/fonts` is empty of app faces now.** The fifteen PP-named TTFs and the
+variable woff2 were about 1.5MB copied verbatim into every build and served to
+anyone who guessed the path; nothing referenced them. They are deleted — git has
+them if the originals are ever needed again.
 
-**Weight is stated once, in `:root`, and it used to be stated nowhere.** `body`
-set the family, the size, the line-height and the tracking — and no weight — so
-every unstyled string in the app was the browser's default 400. Neue Montreal's
-Regular at 13px is a light-looking Regular, and the app read as thin because of
-it. Four tokens now:
+**Weight used to be stated in `:root` as four tokens, and now it is not stated
+at all.** The history is worth keeping because the reasoning inverted twice.
+`body` originally set family, size, line-height and tracking and *no* weight, so
+every unstyled string was the browser's default 400; Neue Montreal's Regular at
+13px is a light-looking Regular, and the app read as thin. The answer then was
+four tokens — `--w-body` 500, `--w-strong` 600, `--w-head` 550, `--w-display`
+500 — chosen optically and running *opposite* to the type size, on the reasoning
+that a 10px letterspaced grey section head is the thinnest thing on any screen
+and needs 550 to hold up while a 20px heading looks clumsy heavier than 500.
 
-| | | |
-|---|---|---|
-| `--w-body` | 500 | the default. Medium, not Regular. |
-| `--w-strong` | 600 | emphasis inside a sentence, and a value |
-| `--w-head` | 550 | small caps and column heads: small, letterspaced, grey |
-| `--w-display` | 500 | headings, where the size is doing the work |
+That whole scale is gone, because it needed four real cuts and there is now one.
+A `font-weight: 600` against a single Regular face does not fail — it gets
+**synthetic bold**, which is the browser smearing the Regular outlines, and it
+is ugliest at exactly the display sizes the token existed to serve. So the
+tokens and all 54 rules referencing them were removed rather than left pointing
+at faces that do not exist. `body` states 400 once and everything inherits it.
 
-The rule choosing between them is optical, and it runs **opposite to the type
-size**: small text needs more weight, not less. A 10px letterspaced grey section
-head is the thinnest thing on any screen here and needs 550 to hold up; a 20px
-heading has all the presence it needs at 500 and looks clumsy heavier.
+What carries hierarchy instead is already in this file: the size scale, the
+size-dependent tracking below, and the ink scale — a section head is small,
+letterspaced and grey, and that reads as a section head without a weight step.
+The thinness the four tokens were fighting had a second cause anyway, and it was
+the bigger one:
 
 > **`-webkit-font-smoothing: antialiased` was doing real damage**, and it is
 > gone. On macOS that switch turns off subpixel rendering and the result is
