@@ -445,5 +445,50 @@ function unzip(bytes) {
   return out;
 }
 
+console.log('\n-- a wet room is a different product in the same grid --');
+{
+  // The planner emits `kind: 'small'` for a toilet exactly as for a bedroom —
+  // one light per cell — and the ROOM TYPE decides what that light is bought as.
+  // See FIXTURE_BY_TYPE in roomTypes.js. Here the stamp is already applied,
+  // because buildBOQ is downstream of it.
+  const wet = {
+    id: 'wc', outline: { name: 'Toilet' },
+    plan: { ok: true, stats: { areaSqft: 36 },
+            lights: [{ kind: 'small', fixture: 'small-narrow' },
+                     { kind: 'small', fixture: 'small-narrow' }] },
+  };
+  const dry = {
+    id: 'bd', outline: { name: 'Bed 1' },
+    plan: { ok: true, stats: { areaSqft: 150 },
+            lights: [{ kind: 'small', fixture: 'small' },
+                     { kind: 'large', fixture: 'large' }] },
+  };
+  const b = buildBOQ({ rooms: [wet, dry], pxPerFt: PX });
+
+  const wcRow = b.rooms.find((r) => r.id === 'wc');
+  ok(wcRow.qty['small-narrow'] === 2 && wcRow.qty.small === 0,
+    'a toilet\'s grid lights are counted on the narrow-beam line, not the 7 W one');
+  const bdRow = b.rooms.find((r) => r.id === 'bd');
+  ok(bdRow.qty.small === 1 && bdRow.qty.large === 1 && !bdRow.qty['small-narrow'],
+    'and every other room is unchanged');
+
+  const line = b.lines.find((l) => l.id === 'small-narrow');
+  ok(line && line.qty === 2, 'the schedule carries its own line');
+  ok(line.watts === 5 && line.beam === 30, `5 W at 30 degrees: ${line.watts}W / ${line.beam}deg`);
+  ok(near(line.load, 10, 1e-9), `and the load is counted at 5 W each: ${line.load} W`);
+  const small = b.lines.find((l) => l.id === 'small');
+  ok(small.watts === 7 && small.beam === 36,
+    'while the standard downlight is still 7 W at 36 degrees');
+  ok(line.id !== 'spot' && FIXTURE_BY_ID.spot.watts === 5,
+    'and it is NOT the directional spot line, though the lamp matches — a spot is aimed, this is ambient');
+
+  // THE FALLBACK. A plan saved before `fixture` existed has lights with only a
+  // kind, and must still schedule rather than counting nothing.
+  const legacy = buildBOQ({ rooms: [room('old', 'Hall', 3, 1, 120)], pxPerFt: PX });
+  ok(legacy.rooms[0].qty.small === 3 && legacy.rooms[0].qty.large === 1,
+    'a light with no `fixture` falls back to its kind');
+}
+
+
 console.log(fail ? `\n${fail} FAILED` : '\nall good');
 process.exit(fail ? 1 : 0);

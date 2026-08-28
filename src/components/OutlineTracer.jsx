@@ -15,6 +15,7 @@ Konva.dragButtons = [0];
 import { buildSnapIndex, snapAt } from '../lib/snap.js';
 import { outlineStats, validateOutline } from '../lib/outline.js';
 import { REFERENCES, describeScale } from '../lib/scale.js';
+import { parseDoorWidth } from '../lib/doors.js';
 
 // ---------------------------------------------------------------------------
 // OutlineTracer — draw the room over the plan, and let the plan hold the cursor.
@@ -169,6 +170,10 @@ export default function OutlineTracer({
   // The door under the cursor. A door box is a button, and a button that does
   // not answer the pointer leaves you clicking to find out whether it is one.
   const [hoverDoor, setHoverDoor] = useState(null);
+  // The custom door width, typed rather than chosen. `customOpen` is separate
+  // from "is there a value" so the field stays open while it is being corrected.
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customMm, setCustomMm] = useState('');
   // ...and the space under it, for the same reason. These polygons are the
   // things being edited on this screen; a shape that does not acknowledge the
   // pointer reads as part of the drawing rather than as something you can grab.
@@ -186,6 +191,17 @@ export default function OutlineTracer({
     && !!(scaleUI.doors || []).length && !hasScale;
   /** The door the user clicked, if it is still in the list. */
   const picked = (scaleUI?.doors || []).find((d) => d.id === scaleUI?.pick?.id) || null;
+  const customParsed = useMemo(() => parseDoorWidth(customMm), [customMm]);
+  /** Is the width in force one the three buttons offer, or a typed one? */
+  const isCustomMm = !!scaleUI?.pick?.mm
+    && !(scaleUI.widths || []).some((w) => w.mm === scaleUI.pick.mm);
+
+  // CLOSE THE TYPED FIELD WHEN THE DOOR CHANGES. The number is a width of THAT
+  // door, and leaving the panel open across a re-pick shows a value that looks
+  // applied and is not — the new pick's mm is null until something is chosen
+  // again. The text is kept, because the next door is very often the same width.
+  const pickedId = scaleUI?.pick?.id ?? null;
+  useEffect(() => { setCustomOpen(false); }, [pickedId]);
   const canTrace = hasScale && !measuring && !pickingDoor;
   // THE DOOR SCREEN IS A SCREEN OF ITS OWN, and that is the point of this flag.
   // Before the scale exists there is exactly one thing to do — name a door —
@@ -480,6 +496,11 @@ export default function OutlineTracer({
   }, [draft, hasScale, pxPerFt, onCommit]);
 
   // --- keys ----------------------------------------------------------------
+  // THE DRAFT, READ THROUGH A REF. The key handler needs to know whether a trace
+  // is in progress, and taking `draft` as a dependency would tear down and
+  // rebind three window listeners on every corner clicked.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   useEffect(() => {
     const down = (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
@@ -488,8 +509,21 @@ export default function OutlineTracer({
       if (e.key === 'Escape') { setDraft([]); setProblem(''); }
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault();
-        setDraft((d) => d.slice(0, -1));
-        setProblem('');
+        // TWO MEANINGS, SETTLED BY WHETHER A TRACE IS IN PROGRESS — and that is
+        // the only reading that is never ambiguous. Mid-trace this key undoes
+        // the last corner and is pressed constantly; with no draft it removes
+        // the SELECTED OUTLINE, which is what the cross at the end of the row
+        // used to do before the row became the control.
+        //
+        // Deliberately not gated on the `Delete` key alone. That would be safer
+        // against a stray press, and it would also make the feature unreachable
+        // on a laptop keyboard without fn — which is most of them.
+        if (draftRef.current.length) {
+          setDraft((d) => d.slice(0, -1));
+          setProblem('');
+          return;
+        }
+        if (selectedId && onDeleteOutline) onDeleteOutline(selectedId);
       }
       if (e.key === 'Enter') finish();
       if (e.key === 'o' || e.key === 'O') setOrthoLock((v) => !v);
@@ -509,7 +543,7 @@ export default function OutlineTracer({
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', blur);
     };
-  }, [finish, fit]);
+  }, [finish, fit, selectedId, onDeleteOutline]);
 
   const onWheel = (e) => {
     e.evt.preventDefault();
@@ -946,7 +980,13 @@ export default function OutlineTracer({
                 {/* THE QUESTION, asked only once a door is clicked. Three
                     buttons and not a dropdown: they are the whole vocabulary of
                     door widths, they are short, and a dropdown would hide two
-                    of the three behind a click. */}
+                    of the three behind a click.
+                    AND THEN A FOURTH WAY IN. The three cover the built world,
+                    but a drawing that STATES a width — a dimension string, a
+                    door schedule — knows better than the list does, and refusing
+                    it refuses the one input more reliable than the guess. It is
+                    below the three rather than among them because it is the
+                    exception: a full-width row reads as "or, if you know". */}
                 {picked && (<>
                   <p className="note" style={{ marginTop: 8, marginBottom: 6 }}>
                     How wide is this door? Its opening measures{' '}
@@ -955,11 +995,63 @@ export default function OutlineTracer({
                   <div className="door-widths">
                     {scaleUI.widths.map((w) => (
                       <button key={w.mm}
-                        className={'btn' + (scaleUI.pick?.mm === w.mm ? ' primary' : '')}
-                        onClick={() => scaleUI.onSetWidth(w.mm)}
+                        className={'btn' + (scaleUI.pick?.mm === w.mm && !isCustomMm ? ' primary' : '')}
+                        onClick={() => { setCustomOpen(false); scaleUI.onSetWidth(w.mm); }}
                         title={w.note}>{w.label}</button>
                     ))}
                   </div>
+
+                  {!customOpen ? (
+                    <button className="btn door-custom-open"
+                      onClick={() => {
+                        // Seed the field with the width already in force, so
+                        // "Custom — 825mm" opens on 825 rather than on empty.
+                        if (isCustomMm && !customMm.trim()) setCustomMm(String(scaleUI.pick.mm));
+                        setCustomOpen(true);
+                      }}>
+                      {isCustomMm ? `Custom — ${scaleUI.pick.mm}mm` : 'Enter a custom width…'}
+                    </button>
+                  ) : (
+                    <div className="door-custom">
+                      <label htmlFor="door-custom-mm">Door width</label>
+                      <div className="door-custom-row">
+                        {/* type=text, not number. A number input silently eats a
+                            typed comma, spins the value on a stray scroll over
+                            it, and hides the one thing worth showing here —
+                            WHY a value was refused. */}
+                        <input id="door-custom-mm" type="text" inputMode="numeric"
+                          autoFocus value={customMm}
+                          placeholder="e.g. 825"
+                          onChange={(e) => setCustomMm(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && customParsed.ok) {
+                              scaleUI.onSetWidth(customParsed.mm);
+                            }
+                            if (e.key === 'Escape') setCustomOpen(false);
+                          }} />
+                        <span className="door-custom-unit">mm</span>
+                        <button className="btn primary" disabled={!customParsed.ok}
+                          onClick={() => scaleUI.onSetWidth(customParsed.mm)}>Use</button>
+                      </div>
+                      {/* THE REFUSAL SAYS WHY. This one number divides the whole
+                          plan — every cell, every fitting, the BOQ — so a typed
+                          90 where 900 was meant does not fail, it produces a
+                          drawing at ten times the scale that looks plausible
+                          until somebody orders from it. */}
+                      {customMm.trim() && !customParsed.ok && (
+                        <p className="note warn" style={{ margin: '6px 0 0' }}>
+                          {customParsed.why}
+                        </p>
+                      )}
+                      {customParsed.ok && (
+                        <p className="note" style={{ margin: '6px 0 0' }}>
+                          That makes this plan{' '}
+                          <b>{(picked.openingPx / (customParsed.mm / 304.8)).toFixed(1)} px/ft</b>.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {scaleUI.pick?.mm && (
                     <button className="btn" style={{ marginTop: 6, width: '100%' }}
                       onClick={() => scaleUI.onPickDoor(null)}>Pick a different door</button>
@@ -1069,16 +1161,29 @@ export default function OutlineTracer({
               )}
               {stats.length > 0 && (
                 <div className="space-list">
+                {/* THE WHOLE ROW IS THE TARGET, same as the layout screen's
+                    list. It was the name-plus-area button only, with the
+                    dimensions, the square toggle and the controls outside it, so
+                    the bottom half of something that plainly looks like one row
+                    did nothing. The controls inside stop the click so each can
+                    still mean its own thing.
+                    THE CROSS WENT; Delete removes the selected outline. */}
                 {stats.map(({ o, st }, i) => (
-                  <div key={o.id} className={'outline-row' + (o.id === selectedId ? ' on' : '')}>
-                    <button className="outline-pick" onClick={() => onSelect(o.id)}
-                      onDoubleClick={() => onConfirm(o.id)}>
+                  <div key={o.id} role="button" tabIndex={0}
+                    className={'outline-row row-pick' + (o.id === selectedId ? ' on' : '')}
+                    onClick={() => onSelect(o.id)}
+                    onDoubleClick={() => onConfirm(o.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(o.id); }
+                    }}>
+                    <div className="outline-pick">
                       <span className="room-dot" style={{ background: FILL[i % FILL.length] }} />
                       {renaming === o.id ? (
                         <input autoFocus defaultValue={o.name || ''}
                           onClick={(e) => e.stopPropagation()}
                           onBlur={(e) => { onUpdateOutline(o.id, { name: e.target.value.trim() || o.name }); setRenaming(null); }}
-                          onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setRenaming(null); }}
+                          onKeyDown={(e) => { e.stopPropagation();
+                            if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setRenaming(null); }}
                           style={{ fontSize: 11, padding: '1px 4px' }} />
                       ) : (
                         <span className="outline-name" onDoubleClick={(e) => { e.stopPropagation(); setRenaming(o.id); }}>
@@ -1088,10 +1193,10 @@ export default function OutlineTracer({
                       <span className="layer-count">
                         {o.detected && !o.reviewed ? 'found · ' : ''}{Math.round(st.areaSqft)} sqft
                       </span>
-                    </button>
+                    </div>
                     <div className="outline-meta">
                       <span>{ftin(st.widthFt)} × {ftin(st.heightFt)} · {st.corners} cnr</span>
-                      <span>
+                      <span onClick={(e) => e.stopPropagation()}>
                         <label className="mini" title="Force right angles on this outline">
                           <input type="checkbox" checked={o.rectify}
                             onChange={(e) => onUpdateOutline(o.id, { rectify: e.target.checked })} />
@@ -1099,8 +1204,6 @@ export default function OutlineTracer({
                         </label>
                         <button className="btn tiny" title="Rename"
                           onClick={() => setRenaming(o.id)}>✎</button>
-                        <button className="btn tiny" title="Delete this outline"
-                          onClick={() => onDeleteOutline(o.id)}>×</button>
                       </span>
                     </div>
                     {o.enclosingPx?.length > 0 && (

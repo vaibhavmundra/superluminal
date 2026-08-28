@@ -60,6 +60,16 @@ export const FIXTURES = [
   { id: 'large',  label: 'Recessed downlight — large', unit: 'nos',
     watts: 12, beam: 60, lumens: FITTING_LUMENS.large,
     note: 'ambient grid, serves a pair of cells' },
+  { id: 'small-narrow', label: 'Recessed downlight — small, narrow beam', unit: 'nos',
+    // THE SAME LAMP AS THE SPOT, IN THE GRID. 5 W at 30 degrees, in a wet room
+    // whose cells are 18 sqft rather than 50 — a smaller cell wants a tighter
+    // cone, and a 36-degree 7 W fitting over a 4ft cell spills onto the walls
+    // instead of the floor. It is a separate LINE from `spot` and not a reuse of
+    // it because the two are bought for different reasons and a schedule that
+    // merges them cannot be read: a spot is aimed at a task surface, this is
+    // ambient, and the electrician wiring a WC needs to know which.
+    watts: 5, beam: 30, lumens: 450,
+    note: 'ambient grid in a wet room, one per cell' },
   { id: 'spot',   label: 'Directional spot', unit: 'nos',
     // 450 lm at 5 W is the ordinary efficacy of a narrow-beam COB, and it is
     // STATED here for the same reason the wattage is: a drawing cannot know it.
@@ -104,10 +114,17 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
 
   // --- per room
   const byRoom = lit.map((r) => {
-    const q = { small: 0, large: 0, spot: 0, sconce: 0, strip: 0 };
+    const q = { small: 0, 'small-narrow': 0, large: 0, spot: 0, sconce: 0, strip: 0 };
 
+    // BY `fixture`, FALLING BACK TO `kind`. The planner only ever emits 'small'
+    // and 'large' — those are geometry, not product — and the room's type then
+    // decides which catalogue line a small light is bought as. See
+    // FIXTURE_BY_TYPE in roomTypes.js. The fallback matters for a plan saved
+    // before this existed, whose lights carry no `fixture` at all.
     for (const l of r.plan.lights) {
-      if (l.kind === 'large') q.large++; else q.small++;
+      const id = l.fixture || (l.kind === 'large' ? 'large' : 'small');
+      if (q[id] == null) q[id] = 0;
+      q[id]++;
     }
     for (const s of spots) if (s.roomId === r.id) q.spot++;
 
@@ -136,10 +153,10 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
   });
 
   // --- the totals, which are what actually gets ordered
-  const total = { small: 0, large: 0, spot: 0, sconce: 0, strip: 0 };
+  const total = { small: 0, 'small-narrow': 0, large: 0, spot: 0, sconce: 0, strip: 0 };
   let stripRuns = 0;
   for (const r of byRoom) {
-    for (const k of Object.keys(total)) total[k] += r.qty[k];
+    for (const k of Object.keys(total)) total[k] += r.qty[k] ?? 0;
     stripRuns += r.stripRuns;
   }
 

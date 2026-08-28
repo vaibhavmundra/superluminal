@@ -14,15 +14,16 @@ import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, DOOR_WIDTHS } from './lib/doors.js';
 import { proposeOutlines } from './lib/outlineSources.js';
 import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, plausibleBed, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER, wireProvider } from './lib/furniture.js';
-import { download, toJSON, toCSV, toDXF, toSuperluminalDXF, svgString, svgToPNG } from './lib/exporters.js';
+import { download, toJSON, toDXF, toSuperluminalDXF, svgString, svgToPNG } from './lib/exporters.js';
 import LightPalette from './components/LightPalette.jsx';
+import ChunkIcon from './components/ChunkIcon.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
 import BOQView from './components/BOQView.jsx';
 import { buildBOQ } from './lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
-import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, targetAreaFor } from './lib/roomTypes.js';
+import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, targetAreaFor, fixtureFor } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
 import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
 import { planTaskSpots, chunkFor } from './lib/taskSpots.js';
@@ -92,6 +93,32 @@ const ftin = (v) => {
  *                         admin section at the foot of the panel.
  *   saveState             so the bar can say 'Saved' without owning the truth
  */
+/**
+ * WHAT THE LAYOUT SCREEN DRAWS.
+ *
+ * `region` — the traced space outline — is OFF. It is the one layer here that is
+ * scaffolding rather than deliverable: it says where the boundary the user drew
+ * is, which is the question of the TRACER screen and a settled fact by the time
+ * fittings are being placed. On a plan with eight spaces it is eight heavy
+ * closed curves laid over the drawing the fittings have to be read against.
+ * Still a checkbox, because checking that a fitting sits inside its own space is
+ * a real thing to want to do.
+ *
+ * The cost, and it is small: `focusId` is used in exactly one place — drawing
+ * the focused space's outline heavier — so with this off, focus is not shown on
+ * the canvas at all. Survivable because focus is ASSIGNED rather than chosen (it
+ * falls back to the first room when nothing is picked), so it was never a
+ * reliable signal of intent, and the panel already names the space it is editing.
+ *
+ * MODULE SCOPE so that restoring a saved plan can merge over it. A saved `ui
+ * .layers` used to REPLACE this wholesale, which meant every layer added after a
+ * plan was saved came back `undefined` — falsy, so off — on every existing plan,
+ * with nothing to say why one drawing was missing a whole category of fitting.
+ */
+const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: true,
+  lights: true, labels: false, fan: true, zones: true, accents: true,
+  objects: true, spots: true };
+
 export default function App({
   planName = null, initialFile = null, restore = null, saveState = 'idle',
   initialProjectType = null, initialPdfPage = null, uploadState = null, isAdmin = false,
@@ -316,7 +343,7 @@ export default function App({
   // nothing draws them and nothing toggles them, so a key here would be a
   // setting with no effect, which is the kind of thing that survives three
   // refactors and then gets wired to the wrong render.
-  const [layers, setLayers] = useState({ plan: true, dim: true, region: true, cells: true, lights: true, labels: false, fan: true, zones: true, accents: true, objects: true, spots: true });
+  const [layers, setLayers] = useState(LAYER_DEFAULTS);
   const [zoom, setZoom] = useState(1);
   // WHICH HALF OF THE DELIVERABLE IS ON SCREEN. A schedule is not a second view
   // of the drawing — it is the other half of what leaves the studio, read at a
@@ -545,7 +572,9 @@ export default function App({
       setCeilingObjs, setChunkPicks,
       setAccentResults, setAccentDismissed, setManualAccents,
       setSurfaceResults, setSurfaceDismissed, setManualSurfaces,
-      setLayers, setZoom, setView,
+      // MERGED OVER THE DEFAULTS, not assigned. See LAYER_DEFAULTS.
+      setLayers: (saved) => setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
+      setZoom, setView,
     });
     setRestoreApplied(true);
     console.log('[plan] restored', {
@@ -656,7 +685,13 @@ export default function App({
   const lightWholePlan = useCallback(() => {
     setOutlines((os) => os.map((o) => ({ ...o, reviewed: true })));
     setLitIds(outlines.map((o) => o.id));
-    setFocusId(outlines[0]?.id ?? null);
+    // NOTHING IS SELECTED TO BEGIN WITH. `focusId` used to be seeded with the
+    // first outline, which was harmless while it only decided which room the
+    // panel described — it now also draws a blue outline on the canvas, and a
+    // space highlighted because it happens to be first is a selection nobody
+    // made. `focus` still falls back to rooms[0] for the panel's own purposes,
+    // so the details pane is unaffected.
+    setFocusId(null);
     setPickingId(null);
   }, [outlines]);
 
@@ -1026,6 +1061,11 @@ export default function App({
 
       const plan = !res.ok ? { ...res, polygonPx } : {
         ...res,
+        // The same stamp on the feet-space list, because the BOQ reads
+        // `plan.lights` and the canvas reads `plan.lightsPx`, and a fixture that
+        // is drawn small but billed as the 7 W line is the worst of both.
+        lights: res.lights.map((l) => ({ ...l,
+          fixture: fixtureFor(roomTypes[o.id]?.type, l.kind) })),
         polygonFt: geo.polygonFt, polygonPx, origin, toPx,
         chunksPx: res.chunks.map((ch) => ({
           ...rectToPx(ch),
@@ -1033,7 +1073,11 @@ export default function App({
           yLines: ch.yLines.map((y) => y * pxPerFt + origin.y),
         })),
         cellsPx: res.cells.map(rectToPx),
+        // WHAT EACH LIGHT IS BOUGHT AS, stamped here because this is the one
+        // place that knows both the layout and the room's type. The planner
+        // deals in `kind` (geometry) and never in products; see FIXTURE_BY_TYPE.
         lightsPx: res.lights.map((l) => ({ ...l, ...toPx(l),
+          fixture: fixtureFor(roomTypes[o.id]?.type, l.kind),
           centrePx: l.cell ? toPx({ x: l.cell.cx, y: l.cell.cy }) : null,
           coverPx: l.cells.map((id) => {
             const c = res.cells.find((x) => x.id === id);
@@ -1635,7 +1679,12 @@ export default function App({
       for (const z of res.zones) if (!accentDismissed.includes(z.id)) out.push(z);
     }
     const live = new Set(rooms.map((r) => r.id));
-    return [...out, ...manualAccents.filter((m) => live.has(m.roomId))];
+    // THE DISMISSED FILTER APPLIES HERE TOO. Deleting a hand-placed fitting now
+    // removes it outright, so nothing new lands in `accentDismissed` — but a
+    // plan saved while that was broken has manual ids sitting in the list, and
+    // those fittings should stay deleted rather than reappearing on reload.
+    return [...out, ...manualAccents.filter(
+      (m) => live.has(m.roomId) && !accentDismissed.includes(m.id))];
   }, [rooms, accentResults, accentDismissed, manualAccents]);
 
   /**
@@ -1938,7 +1987,13 @@ export default function App({
       // once with their zones in it rather than once without and once with.
       setOutlines((os) => os.map((o) => ({ ...o, reviewed: true })));
       setLitIds(outlines.map((o) => o.id));
-      setFocusId(outlines[0]?.id ?? null);
+      // NOTHING IS SELECTED TO BEGIN WITH. `focusId` used to be seeded with the
+      // first outline, which was harmless while it only decided which room the
+      // panel described — it now also draws a blue outline on the canvas, and a
+      // space highlighted because it happens to be first is a selection nobody
+      // made. `focus` still falls back to rooms[0] for the panel's own purposes,
+      // so the details pane is unaffected.
+      setFocusId(null);
       setPickingId(null);
       stepTo('geometry');
       paint({ detail: 'Working out where the spaces are' });
@@ -2428,6 +2483,41 @@ export default function App({
    * the space it already lives in, and converting to feet and back would only
    * add two roundings to every drag.
    */
+  /**
+   * APPLY AN EDIT TO ONE ACCENT FITTING, WHEREVER IT LIVES.
+   *
+   * THIS IS THE FIX FOR A REAL BUG: a strip or sconce placed BY HAND could not
+   * be moved at all. The grips appeared, the drag armed, and nothing happened.
+   *
+   * The cause is that accent fittings live in two stores and the editor only
+   * knew one. `accentResults[roomId].zones` holds what the accent pass produced;
+   * `manualAccents` is a flat list of the ones placed with the palette. The
+   * canvas draws the MERGE of the two (see accentZonesPx), so a hand-placed
+   * strip looks and behaves identically right up until it is dragged, at which
+   * point the write went `setAccentResults(...)` and the id was not in there.
+   * Worse in a room with no accent pass at all, where `res?.zones` is undefined
+   * and the updater bailed on the first line.
+   *
+   * SO THE WRITE FOLLOWS THE ZONE INSTEAD OF ASSUMING THE STORE. Both updaters
+   * run; each returns its own state UNCHANGED when the id is not one of its
+   * own, so the miss costs a referential no-op and never a re-render. That is
+   * deliberately not "look up which store first" — the lookup would have to
+   * happen outside a setState updater, against a possibly stale copy, which is
+   * the same class of bug one level down.
+   *
+   * `fn` must be pure: it can be invoked more than once for one edit.
+   */
+  const updateAccentZone = useCallback((roomId, id, fn) => {
+    setManualAccents((list) => (list.some((z) => z.id === id)
+      ? list.map((z) => (z.id === id ? fn(z) : z))
+      : list));
+    setAccentResults((m) => {
+      const res = m[roomId];
+      if (!res?.zones || !res.zones.some((z) => z.id === id)) return m;
+      return { ...m, [roomId]: { ...res, zones: res.zones.map((z) => (z.id === id ? fn(z) : z)) } };
+    });
+  }, []);
+
   const accPointerDown = (e, roomId, id, mode) => {
     if (e.button != null && e.button !== 0) return;   // middle button is the pan
     e.stopPropagation();
@@ -2484,18 +2574,12 @@ export default function App({
     }
 
     const o = runOpts(accDrag.roomId, e);
-    setAccentResults((m) => {
-      const res = m[accDrag.roomId];
-      if (!res?.zones) return m;
-      const zones = res.zones.map((z) => {
-        if (z.id !== accDrag.id) return z;
-        if (accDrag.mode === 'slide') return slideSconceTo(z, p);
-        if (accDrag.mode === 'end0') return setRunEnd(z, 0, p, o);
-        if (accDrag.mode === 'end1') return setRunEnd(z, 1, p, o);
-        if (accDrag.mode === 'move') return moveRun(z, p, accDrag.from, o);
-        return z;
-      });
-      return { ...m, [accDrag.roomId]: { ...res, zones } };
+    updateAccentZone(accDrag.roomId, accDrag.id, (z) => {
+      if (accDrag.mode === 'slide') return slideSconceTo(z, p);
+      if (accDrag.mode === 'end0') return setRunEnd(z, 0, p, o);
+      if (accDrag.mode === 'end1') return setRunEnd(z, 1, p, o);
+      if (accDrag.mode === 'move') return moveRun(z, p, accDrag.from, o);
+      return z;
     });
     // The body drag is relative, so the origin advances with the pointer.
     if (accDrag.mode === 'move') setAccDrag((d) => (d ? { ...d, from: p } : d));
@@ -2507,18 +2591,13 @@ export default function App({
     // it goes when the gesture does. Left on the zone it would draw a guide
     // line through a strip nobody is touching.
     const { roomId, id } = accDrag;
-    setAccentResults((m) => {
-      const res = m[roomId];
-      if (!res?.zones) return m;
-      return { ...m, [roomId]: { ...res,
-        zones: res.zones.map((z) => (z.id === id && z.snap ? { ...z, snap: null } : z)) } };
-    });
+    updateAccentZone(roomId, id, (z) => (z.snap ? { ...z, snap: null } : z));
     setAccDrag(null);
   };
 
   /** Escape backs out, Delete removes. The two keys every editor answers to. */
   useEffect(() => {
-    if (!objMode && !armed && !selAccId && !addTool) return;
+    if (!objMode && !armed && !selAccId && !addTool && !focusId) return;
     const onKey = (e) => {
       const t = e.target;
       if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
@@ -2527,11 +2606,29 @@ export default function App({
         if (armed) { setArmed(null); setGhost(null); setGuides([]); }
         else if (selAccId) setSelAccId(null);
         else if (selObjId) setSelObjId(null);
+        else if (focusId) setFocusId(null);
         else setObjMode(false);
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selAccId && !accDrag) {
         e.preventDefault();
-        setAccentDismissed((d) => (d.includes(selAccId) ? d : [...d, selAccId]));
+        // TWO STORES AGAIN, and here they want genuinely DIFFERENT verbs.
+        //
+        // `accentDismissed` is a record of "the detector proposed this and I
+        // said no" — it has to persist, because the pass can run again and must
+        // not put the same fitting back. A HAND-PLACED fitting has no generator
+        // to come back from, so dismissing it would leave an id in that list for
+        // the life of the plan, suppressing something that no longer exists.
+        // It is removed instead.
+        //
+        // Deleting one used to do nothing at all: the id went into
+        // accentDismissed, and accentZonesPx only ever filtered the accent
+        // pass's zones through that list — the manual ones were appended
+        // straight after, unfiltered.
+        if (manualAccents.some((z) => z.id === selAccId)) {
+          setManualAccents((list) => list.filter((z) => z.id !== selAccId));
+        } else {
+          setAccentDismissed((d) => (d.includes(selAccId) ? d : [...d, selAccId]));
+        }
         setSelAccId(null);
         return;
       }
@@ -2539,11 +2636,27 @@ export default function App({
         e.preventDefault();
         setCeilingObjs((os) => os.filter((q) => q.id !== selObjId));
         setSelObjId(null);
+        return;
+      }
+      // A SELECTED SPACE, AND THIS IS LAST ON PURPOSE. A fitting or a ceiling
+      // object selected inside a room is the more specific thing under the
+      // cursor, and both branches above return — so Delete never takes the room
+      // out from under the fitting somebody meant to remove.
+      //
+      // It takes the space OUT OF THE LAYOUT rather than deleting its outline:
+      // the outline is the traced boundary and belongs to the tracer screen,
+      // and losing one to a keypress on a different screen would be unrecoverable
+      // work. Re-light it from "Light all N outlines".
+      if ((e.key === 'Delete' || e.key === 'Backspace') && focusId && !accDrag && !objDrag) {
+        e.preventDefault();
+        setLitIds((ids) => ids.filter((x) => x !== focusId));
+        setFocusId(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [objMode, armed, selObjId, objDrag, selAccId, accDrag, addTool, disarmAdd]);
+  }, [objMode, armed, selObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
+      manualAccents, focusId]);
 
   const onCanvasClick = (e) => {
     // Ceiling objects are handled entirely in the pointer events — see the note
@@ -2553,7 +2666,20 @@ export default function App({
     // tracer screen, where the scale is actually being decided; leaving the
     // click live on this screen meant a stray click could redefine px-per-foot
     // under a finished layout, and every light on the plan would move.
-    return;
+    //
+    // SO THE CLICK SELECTS A SPACE INSTEAD, which is the one harmless thing it
+    // can mean here. Inside a space selects it; anywhere else clears the
+    // selection. Both directions matter — a selection you cannot get out of is
+    // worse than no selection, because the blue outline then reads as part of
+    // the drawing rather than as a state.
+    //
+    // A FITTING'S CLICK NEVER REACHES THIS. Everything interactive on the plan
+    // (a light, a strip's body, a sconce's grip, a ceiling object) calls
+    // stopPropagation on pointerdown, so clicking one does not also re-select
+    // the space under it and yank the panel to a different room.
+    const hit = roomAt(svgPoint(e));
+    setFocusId(hit ? hit.id : null);
+    if (!hit) { setSelAccId(null); setSelObjId(null); }
   };
 
   // no-light zones are drawn by dragging a rectangle on the plan
@@ -3701,6 +3827,11 @@ export default function App({
               width={source.w} height={source.h}
               plans={rooms.map((r) => ({ id: r.id, name: r.outline.name, plan: r.plan }))}
               focusId={focus?.id ?? null}
+              /* THE RAW `focusId`, NOT `focus`. `focus` falls back to rooms[0]
+                 so the details panel always has something to describe; the blue
+                 outline must show only what somebody actually picked, and
+                 nothing when they have picked nothing. */
+              selectedId={focusId}
               fansPx={obstaclesPx} pxPerFt={pxPerFt} layers={layers} zoom={zoom}
               objMode={objMode} selObjId={selObjId} onObjPointerDown={objPointerDown}
               objDragMode={objDrag?.moved ? objDrag.mode : null}
@@ -3834,41 +3965,68 @@ export default function App({
               behind a click and still not say which was which. */}
           <div className="sec">
             <h3>Spaces · {rooms.length}</h3>
+            {/* THE WHOLE ROW IS THE TARGET. It used to be the name alone — a
+                button inside a div, with the dimensions, the type and the
+                controls outside it — so half of a row that plainly looks like
+                one thing did nothing when clicked. The row is the control now;
+                the chunking mark inside it stops the click so it can mean its
+                own thing.
+                NO LIGHT COUNT AND NO CROSS. The count was the one number here
+                nobody acts on — it is on the canvas, in the Result panel and in
+                the schedule — and it took the place where the chunking mark
+                belongs. The cross went because Delete does it, which is the key
+                every list answers to and one that does not need a 12px target. */}
             {rooms.map((r) => {
-              const on = r.id === focus?.id;
+              const on = r.id === focusId;
+              const chunked = r.chunking?.needsChoice;
               return (
-                <div key={r.id} className={'outline-row' + (on ? ' on' : '')}>
-                  <button className="outline-pick plain" onClick={() => setFocusId(r.id)}>
-                    <span className="outline-name">{r.outline.name || 'Space'}</span>
-                    <span className="layer-count">
-                      {r.plan?.ok ? `${r.plan.lights.length} lights` : 'no layout'}
-                    </span>
-                  </button>
-                  <div className="outline-meta">
-                    <span>
-                      {/* The classification, where it exists. It is the reason a
-                          room did or did not get accents, so it belongs next to
-                          the room rather than buried in a console log. */}
-                      {roomTypes[r.id] && (
-                        <b className="rtype" title={roomTypes[r.id].why}>
-                          {roomTypeIn(projectId, roomTypes[r.id].type)?.label ?? 'Other'}
-                        </b>
-                      )}
-                      {ftin(r.stats.widthFt)} × {ftin(r.stats.heightFt)}
-                      {' '}· {Math.round(r.stats.areaSqft)} sqft</span>
-                    <span>
-                      {r.chunking?.needsChoice && (
-                        <button className="btn tiny"
-                          title={r.chunkingChosenBy === 'user'
-                            ? 'Change how this space is cut up'
-                            : `${r.chunking.options.length} ways to cut this space up — the recommended one is in use`}
-                          onClick={() => { setPickingId(r.id); setFocusId(r.id); setZoneMode(false); }}>
-                          {r.chunkingChosenBy === 'user' ? 'chunking ✓' : 'chunking'}
-                        </button>
-                      )}
-                      <button className="btn tiny" title="Take this space out of the layout"
-                        onClick={() => setLitIds((ids) => ids.filter((x) => x !== r.id))}>×</button>
-                    </span>
+                <div key={r.id} role="button" tabIndex={0}
+                  className={'outline-row row-pick' + (on ? ' on' : '')}
+                  onClick={() => setFocusId(r.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFocusId(r.id); }
+                  }}>
+                  {/* THE ICON IS A SIBLING OF THE TEXT, NOT PART OF THE FIRST
+                      LINE. It used to sit inside `.outline-pick` beside the
+                      name, which centred it on the NAME's line — so on a row
+                      that is two lines tall it rode high against the top edge.
+                      The two text lines are one block now and the icon is the
+                      other half of a flex row, so `align-items:center` centres
+                      it on the whole item however tall that item gets. */}
+                  <div className="row-top">
+                    <div className="row-main">
+                      <div className="outline-pick plain">
+                        <span className="outline-name">{r.outline.name || 'Space'}</span>
+                      </div>
+                      <div className="outline-meta">
+                        <span>
+                          {/* The classification, where it exists. It is the
+                              reason a room did or did not get accents, so it
+                              belongs next to the room rather than buried in a
+                              console log. */}
+                          {roomTypes[r.id] && (
+                            <b className="rtype" title={roomTypes[r.id].why}>
+                              {roomTypeIn(projectId, roomTypes[r.id].type)?.label ?? 'Other'}
+                            </b>
+                          )}
+                          {ftin(r.stats.widthFt)} × {ftin(r.stats.heightFt)}
+                          {' '}· {Math.round(r.stats.areaSqft)} sqft</span>
+                      </div>
+                    </div>
+                    {chunked && (
+                      <button className="row-icon"
+                        title={r.chunkingChosenBy === 'user'
+                          ? 'Change how this space is cut up'
+                          : `${r.chunking.options.length} ways to cut this space up — the recommended one is in use`}
+                        onClick={(e) => {
+                          // The row selects; this does something else entirely.
+                          e.stopPropagation();
+                          setPickingId(r.id); setFocusId(r.id); setZoneMode(false);
+                        }}>
+                        <ChunkIcon title={r.chunkingChosenBy === 'user'
+                          ? 'Chunking — chosen by hand' : 'Chunking'} />
+                      </button>
+                    )}
                   </div>
                   {r.outline.enclosingPx?.length > 0 && (
                     <p className="note warn" style={{ margin: '2px 0 0' }}>
@@ -3883,8 +4041,25 @@ export default function App({
                 </div>
               );
             })}
+            {/* CONFIRMED, BECAUSE IT THROWS THE LAYOUT AWAY. This clears
+                `litIds`, and everything derived from it — the grids, the
+                fittings, every accent and spot placed by hand on top of them —
+                is a memo off that list. There is no undo, and the button sits
+                directly under a list somebody has been clicking through, which
+                is the worst place for an irreversible action to be one click
+                deep. window.confirm rather than a custom modal: it is the one
+                dialog in this app, it is genuinely modal, and a bespoke one
+                would be a component to maintain for a single sentence. */}
             <button className="btn" style={{ marginTop: 8, width: '100%' }}
-              onClick={() => { setPickingId(null); setLitIds([]); }}>
+              onClick={() => {
+                const n = rooms.length;
+                if (!window.confirm(
+                  `Go back to the outlines?\n\n`
+                  + `The layout for ${n} space${n === 1 ? '' : 's'} will be discarded — `
+                  + `the fittings, and anything you placed or moved by hand. `
+                  + `The outlines themselves are kept.\n\nThis cannot be undone.`)) return;
+                setPickingId(null); setLitIds([]);
+              }}>
               Back to the outlines
             </button>
             {outlinesPx.length > rooms.length && (
@@ -3965,10 +4140,7 @@ export default function App({
                               ? { ...q, hFt: clampFt(Number(e.target.value) / 304.8) } : q))} />
                           <span>mm · {Math.round(((o.rot || 0) * 180) / Math.PI)}°</span>
                         </>
-                      ) : (
-                        <span>keeps {opt.fanClearance.toFixed(1)} ft clear of its
-                        {' '}{isRect(o) ? 'faces' : 'sweep'}</span>
-                      )}
+                      ) : null}
                     </span>
                     <button className="btn tiny" title="Remove"
                       onClick={() => { setCeilingObjs((os) => os.filter((q) => q.id !== o.id));
@@ -4178,24 +4350,22 @@ export default function App({
             )}
 
             <div className="btnrow">
-              <button className="btn" disabled={!totals.rooms}
-                onClick={() => download(`${exportBase}-lights.dxf`,
-                  toDXF(rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                        { pxPerFt, heightPx: source.h }), 'application/dxf')}>DXF</button>
-              <button className="btn" disabled={!totals.rooms}
-                onClick={() => download(`${exportBase}-lights.csv`,
-                  toCSV(rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                        { pxPerFt }), 'text/csv')}>CSV</button>
+              {/* THREE, AND THEY ARE THE THREE PEOPLE ACTUALLY TAKE AWAY: a
+                  drawing to work on, a drawing to send, a picture to paste. CSV
+                  and JSON went — a coordinate dump is not a deliverable to
+                  anybody in this workflow, and every extra button in a row of
+                  five is a moment spent deciding.
+                  THE MILESTONE MOVED HERE. Somebody taking an export away is the
+                  strongest signal available that the design was considered
+                  finished — a far better label than "the pipeline completed" —
+                  and it used to hang off the JSON button, which is now gone. */}
               <button className="btn" disabled={!totals.rooms}
                 onClick={() => {
-                  download(`${exportBase}-lights.json`,
-                    toJSON(rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                           exportMeta), 'application/json');
-                  // SOMEBODY TOOK THIS AWAY, which is the strongest signal
-                  // available that the design was considered finished — a far
-                  // better label than "the pipeline completed".
+                  download(`${exportBase}-lights.dxf`,
+                    toDXF(rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
+                          { pxPerFt, heightPx: source.h }), 'application/dxf');
                   milestone.current?.('export');
-                }}>JSON</button>
+                }}>DXF</button>
               <button className="btn" disabled={!source} onClick={() => download(`${exportBase}-lights.svg`, svgString(svgRef.current), 'image/svg+xml')}>SVG</button>
               <button className="btn" disabled={!source} onClick={async () => download(`${exportBase}-lights.png`, await svgToPNG(svgRef.current, source.w))}>PNG</button>
             </div>

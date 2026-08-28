@@ -12,7 +12,8 @@
 // ---------------------------------------------------------------------------
 
 import { DOOR_WIDTHS, DOOR_DEFAULTS, MM_PER_FT, openingPx, scaleFromDoor,
-         doorWidthAt, doorsFromPayload, median, planSizeFt } from '../src/lib/doors.js';
+         doorWidthAt, doorsFromPayload, median, planSizeFt,
+         parseDoorWidth, CUSTOM_DOOR_MM } from '../src/lib/doors.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
@@ -184,6 +185,53 @@ console.log('\n-- the vocabulary --');
   ok(planSizeFt(null, 20) === null && planSizeFt({ w: 100, h: 100 }, 0) === null,
     'planSizeFt refuses rather than dividing by zero');
   ok(DOOR_DEFAULTS.maxAspect > 1, 'the aspect cut is a real number');
+}
+
+
+console.log('\n-- ...and a width the drawing states, typed in --');
+{
+  // THIS ONE NUMBER DIVIDES THE WHOLE PLAN. Every cell, every fitting, every
+  // metre of strip and the whole BOQ are derived from it, so the parser's job is
+  // not to be permissive — it is to refuse a typo LOUDLY. A typed 90 where 900
+  // was meant does not fail anywhere downstream; it produces a drawing at ten
+  // times the scale that looks plausible until somebody orders from it.
+  const p = parseDoorWidth;
+
+  ok(p('825').ok && p('825').mm === 825, 'a plain number is millimetres');
+  ok(p('750mm').mm === 750, 'a unit suffix is tolerated — people type what they read');
+  ok(p('1,200').mm === 1200, 'so is a thousands separator');
+  ok(p(' 900 ').mm === 900, 'and surrounding space');
+  ok(p('812.8').mm === 813, 'a fraction of a millimetre is rounded, not refused');
+
+  ok(!p('').ok && p('').why === '',
+    'an empty field is not an error — nothing has been said yet');
+  ok(!p('abc').ok && /not a number/.test(p('abc').why), 'a non-number says so');
+
+  // THE TWO TYPOS THAT MATTER, and they are named rather than clamped.
+  const metres = p('0.9');
+  ok(!metres.ok && /millimetres/.test(metres.why) && /900/.test(metres.why),
+    `metres are caught and converted in the message: "${metres.why}"`);
+  ok(/2500/.test(p('2.5').why), 'and so is 2.5 m');
+  const tenth = p('90');
+  ok(!tenth.ok && /narrower than/.test(tenth.why),
+    `a dropped zero is refused: "${tenth.why}"`);
+
+  ok(p(String(CUSTOM_DOOR_MM.min)).ok && p(String(CUSTOM_DOOR_MM.max)).ok,
+    'the bounds themselves are accepted — they are limits, not exclusions');
+  ok(!p(String(CUSTOM_DOOR_MM.min - 1)).ok && !p(String(CUSTOM_DOOR_MM.max + 1)).ok,
+    'and one past either is not');
+  ok(CUSTOM_DOOR_MM.min < 750 && CUSTOM_DOOR_MM.max > 1200,
+    'the band contains all three presets, or the list would offer what the field refuses');
+
+  // A TYPED WIDTH IS THE SAME INPUT AS A CHOSEN ONE. It goes through
+  // scaleFromDoor unchanged — there is no second scale path to drift.
+  const door = { x0: 0, y0: 0, x1: 100, y1: 140 };   // a 100px opening
+  ok(near(scaleFromDoor(door, 900), scaleFromDoor(door, p('900').mm)),
+    'a typed 900 and the 900 button produce the identical scale');
+  ok(near(scaleFromDoor(door, p('825').mm), 100 / (825 / MM_PER_FT)),
+    'and an in-between width scales the way the arithmetic says');
+  ok(scaleFromDoor(door, p('90').mm) === null,
+    'a refused width carries no mm, so it cannot reach the scale at all');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

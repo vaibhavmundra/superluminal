@@ -193,5 +193,74 @@ console.log('\n-- a rejected fitting is not editable geometry --');
   ok(slideSconceTo(marooned.zones[0], {x:10,y:0}) === marooned.zones[0], 'and sliding it is a no-op');
 }
 
+// --- THE TWO STORES, AND THE ROUTING BETWEEN THEM ---------------------------
+//
+// A HAND-PLACED FITTING COULD NOT BE MOVED, AND COULD NOT BE DELETED. Both had
+// the same cause: accent fittings live in two places — `accentResults[roomId]
+// .zones` for what the accent pass produced and `manualAccents` for what the
+// palette placed — the canvas draws the MERGE of the two, and every write
+// assumed the first. So a hand-placed strip looked and behaved identically
+// right up to the moment it was edited, then silently did nothing.
+//
+// The routing is App.jsx state and cannot be imported, so these tests are of
+// the SHAPE of it: the reducer logic is reproduced here exactly, and asserts
+// what the app now does. If the app's version drifts from this, that is the
+// thing to notice.
+console.log('\n-- a fitting is edited wherever it lives --');
+{
+  const manual = [{ id: 'man-1', roomId: 'r1', type: 'strip', source: 'placed', n: 0 }];
+  const results = { r1: { zones: [{ id: 'acc-r1-0', roomId: 'r1', type: 'strip', n: 0 }] } };
+  const bump = (z) => ({ ...z, n: z.n + 1 });
+
+  // The two updaters, verbatim in shape from updateAccentZone.
+  const upManual = (list, id, fn) => (list.some((z) => z.id === id)
+    ? list.map((z) => (z.id === id ? fn(z) : z)) : list);
+  const upResults = (m, roomId, id, fn) => {
+    const res = m[roomId];
+    if (!res?.zones || !res.zones.some((z) => z.id === id)) return m;
+    return { ...m, [roomId]: { ...res, zones: res.zones.map((z) => (z.id === id ? fn(z) : z)) } };
+  };
+
+  // A MANUAL ID reaches the manual store...
+  ok(upManual(manual, 'man-1', bump)[0].n === 1, 'a hand-placed fitting is edited');
+  // ...and leaves the other one alone, BY REFERENCE, so the miss is free.
+  ok(upResults(results, 'r1', 'man-1', bump) === results,
+    'and the pass store is returned unchanged — the miss costs no re-render');
+
+  // A PASS ID goes the other way.
+  ok(upResults(results, 'r1', 'acc-r1-0', bump).r1.zones[0].n === 1,
+    "the pass's own fitting still edits");
+  ok(upManual(manual, 'acc-r1-0', bump) === manual, 'and the manual list is untouched');
+
+  // THE ROOM WITH NO ACCENT PASS AT ALL — the worst version of the original
+  // bug, where the updater bailed on its first line and the fitting was frozen.
+  ok(upResults({}, 'r9', 'man-1', bump) !== undefined,
+    'a room with no accent result does not throw');
+  ok(upManual(manual, 'man-1', bump)[0].n === 1,
+    'and a fitting placed in it still moves');
+
+  // DELETE TAKES A DIFFERENT VERB PER STORE. `accentDismissed` is a persisted
+  // record of "the detector proposed this and I said no", which a hand-placed
+  // fitting has no use for — nothing will re-propose it, so an id parked there
+  // would suppress something that no longer exists for the life of the plan.
+  const del = (list, dismissed, id) => (list.some((z) => z.id === id)
+    ? { list: list.filter((z) => z.id !== id), dismissed }
+    : { list, dismissed: dismissed.includes(id) ? dismissed : [...dismissed, id] });
+
+  const a = del(manual, [], 'man-1');
+  ok(a.list.length === 0 && a.dismissed.length === 0,
+    'deleting a hand-placed fitting removes it, and parks nothing in the dismissed list');
+  const b = del(manual, [], 'acc-r1-0');
+  ok(b.list.length === 1 && b.dismissed[0] === 'acc-r1-0',
+    "deleting the pass's fitting dismisses it instead, so a re-run cannot bring it back");
+
+  // AND THE MERGE HONOURS THE DISMISSED LIST FOR BOTH, so a plan saved while
+  // this was broken — manual ids sitting in accentDismissed — stays deleted.
+  const merge = (list, dismissed) => list.filter((z) => !dismissed.includes(z.id));
+  ok(merge(manual, ['man-1']).length === 0,
+    'a manual id already in the dismissed list stays hidden on reload');
+}
+
+
 console.log(fail ? `\n${fail} FAILED` : '\nall good');
 process.exit(fail?1:0);

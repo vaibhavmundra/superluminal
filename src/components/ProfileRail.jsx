@@ -49,9 +49,9 @@ export default function ProfileRail() {
           logotype would need three times this width; two lines fit the column
           the rail already is, so the asset being stacked is a piece of luck
           worth using rather than working around. */}
-      <Link to="/dashboard" className="rail-mark" title="Dashboard" aria-label="Dashboard">
+      {/* <Link to="/dashboard" className="rail-mark" title="Dashboard" aria-label="Dashboard">
         <Logo width={38} />
-      </Link>
+      </Link> */}
 
       <div className="rail-spacer" />
 

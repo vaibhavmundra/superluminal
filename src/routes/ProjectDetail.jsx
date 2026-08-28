@@ -62,6 +62,51 @@ export default function ProjectDetail() {
   return (
     <div className="shell">
       <ProfileRail />
+      {/* A COLUMN, SO THE BAR CAN STAY WHILE THE PLANS SCROLL UNDER IT. The
+          shell's second grid cell used to be the scrolling body itself; it is now
+          a two-row grid — bar, then body — and the body keeps the scrolling and
+          the drop handling. `min-height:0` on the column is what actually lets
+          the body scroll: without it a grid item takes its content's height and
+          the whole page scrolls instead, taking the bar with it. */}
+      <div className="shell-col">
+        {/* THE SAME BAR AS THE EDITOR'S, and deliberately so. Both screens
+            answer the same three questions in the same corner — where am I, how
+            do I get back, what is the one thing to do here — and answering them
+            in two different shapes made moving between the two screens feel like
+            moving between two apps. Translucent white over a hairline, 56px, the
+            back arrow and the name on the left and the primary action on the
+            right.
+            THE CONTENT IS HELD TO THE SAME MEASURE AS THE CARDS BELOW, so the
+            back arrow lines up with the first card's left edge and the button
+            with the last card's right edge. A bar whose contents run to the
+            window edge over a centred grid reads as a different page. */}
+        <div className="detail-bar">
+          <div className="detail-bar-inner">
+            <button className="back small" onClick={() => nav('/dashboard')}>
+              <span aria-hidden="true">←</span> Back to Dashboard
+            </button>
+            <span className="sep" aria-hidden="true" />
+            {editing ? (
+              <input className="plan-name-input" autoFocus value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={commitName}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitName();
+                  if (e.key === 'Escape') { setEditing(false); }
+                }} />
+            ) : (
+              <button className="plan-name" title="Rename this project"
+                onClick={() => { setDraftName(project?.name || ''); setEditing(true); }}>
+                {project?.name || 'Loading…'}
+              </button>
+            )}
+            <div className="spacer" />
+            <button className="btn primary"
+              onClick={() => fileRef.current?.click()}>+ Add a plan</button>
+            <input ref={fileRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
+              onChange={(e) => upload(e.target.files?.[0])} />
+          </div>
+        </div>
       <div className="shell-body"
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
@@ -75,35 +120,19 @@ export default function ProjectDetail() {
             content: 1180px, centred, so it sits under the eye instead of
             hugging the rail on a wide display. */}
         <div className="shell-inner">
-          <button className="back" onClick={() => nav('/dashboard')}>
-            <span aria-hidden="true">←</span> Back to Dashboard
-          </button>
-
+          {/* THE NAME, THE BACK ARROW AND THE ACTION ALL LIVE IN THE BAR NOW.
+              What is left here is the two things that describe the project
+              rather than address it: how many plans and when it changed, and the
+              category — which every plan added to this project inherits, so a
+              project without one is quietly sending each new drawing back to the
+              plan-level dialog. Worth surfacing, not worth a bar. */}
           <header className="page-head">
             <div className="page-title">
-              {editing ? (
-                <input className="title-input" autoFocus value={draftName}
-                  onChange={(e) => setDraftName(e.target.value)}
-                  onBlur={commitName}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitName();
-                    if (e.key === 'Escape') { setEditing(false); }
-                  }} />
-              ) : (
-                <h1 className="editable" title="Click to rename"
-                  onClick={() => { setDraftName(project?.name || ''); setEditing(true); }}>
-                  {project?.name || 'Loading…'}
-                </h1>
-              )}
-              <p className="page-sub">
+              <p className="page-sub lead">
                 {plans == null ? 'Loading…'
                   : `${plans.length} plan${plans.length === 1 ? '' : 's'}`
                     + (project?.updated_at ? ` · updated ${when(project.updated_at)}` : '')}
               </p>
-              {/* THE CATEGORY, SHOWN AND FIXABLE HERE. Every plan added to this
-                  project inherits it, so a project that has none is quietly
-                  sending each new drawing back to the plan-level dialog — worth
-                  surfacing rather than leaving as an invisible property. */}
               {project && (
                 <div className="cat-row">
                   {project.project_type ? (
@@ -124,12 +153,6 @@ export default function ProjectDetail() {
                   )}
                 </div>
               )}
-            </div>
-            <div className="btnrow">
-              <button className="btn primary"
-                onClick={() => fileRef.current?.click()}>Add a plan</button>
-              <input ref={fileRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
-                onChange={(e) => upload(e.target.files?.[0])} />
             </div>
           </header>
 
@@ -164,6 +187,7 @@ export default function ProjectDetail() {
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

@@ -37,6 +37,8 @@ export default function BOQView({ boq, planName }) {
   }
 
   const t = boq.totals;
+  // Whether the narrow-beam column earns its place on THIS plan.
+  const narrow = boq.rooms.reduce((n, r) => n + (r.qty['small-narrow'] || 0), 0);
 
   return (
     <div className="boq-wrap">
@@ -173,6 +175,11 @@ export default function BOQView({ boq, planName }) {
                 <th>Space</th>
                 <th className="boq-r">Area</th>
                 <th className="boq-r">Small</th>
+                {/* ONLY WHERE THERE ARE ANY. A column of dashes on every
+                    residential plan is a column nobody reads; a wet room's 5 W
+                    narrow-beam lamp is a different product from the 7 W and has
+                    to be countable separately when it exists. */}
+                {narrow > 0 && <th className="boq-r">Small 5W</th>}
                 <th className="boq-r">Large</th>
                 <th className="boq-r">Spots</th>
                 <th className="boq-r">Sconces</th>
@@ -185,6 +192,7 @@ export default function BOQView({ boq, planName }) {
                   <td><b>{r.name}</b></td>
                   <td className="boq-r"><N v={r.areaSqft} dp={0} /></td>
                   <td className="boq-r">{r.qty.small || '—'}</td>
+                  {narrow > 0 && <td className="boq-r">{r.qty['small-narrow'] || '—'}</td>}
                   <td className="boq-r">{r.qty.large || '—'}</td>
                   <td className="boq-r">{r.qty.spot || '—'}</td>
                   <td className="boq-r">{r.qty.sconce || '—'}</td>

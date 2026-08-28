@@ -55,7 +55,11 @@ export function roomInFeet(room, pxPerFt) {
     zones: (plan.zonesPx || []).map(rect),
     fans: (plan.fansPx || []).map((fan) => ({ ...f(fan), r: (fan.r || 0) / pxPerFt })),
     lights: (plan.lightsPx || []).map((l) => ({
-      id: l.id, kind: l.kind, axis: l.axis ?? null, nudged: !!l.nudged, ...f(l),
+      // `kind` IS GEOMETRY, `fixture` IS PRODUCT, and every export needs the
+      // second. A schedule on which a toilet's 5 W 30-degree lamp is the same
+      // entry as a bedroom's 7 W 36-degree one cannot be ordered from.
+      id: l.id, kind: l.kind, fixture: l.fixture || l.kind,
+      axis: l.axis ?? null, nudged: !!l.nudged, ...f(l),
     })),
   };
 }
@@ -108,7 +112,8 @@ export function toJSON(rooms, meta = {}) {
       grid: { cells: r.cells.length, omittedChunks: r.stats?.omittedChunks ?? 0 },
       options: r.opt,
       lights: r.lights.map((l) => ({
-        id: l.id, type: l.kind, x: +l.x.toFixed(3), y: +l.y.toFixed(3),
+        id: l.id, type: l.kind, fixture: l.fixture || l.kind,
+        x: +l.x.toFixed(3), y: +l.y.toFixed(3),
         orientation: l.kind === 'large'
           ? (l.axis === 'v' ? 'on vertical grid line' : 'on horizontal grid line')
           : 'cell centre',
@@ -118,7 +123,7 @@ export function toJSON(rooms, meta = {}) {
 }
 
 export function toCSV(rooms, { pxPerFt } = {}) {
-  const rows = [['space', 'id', 'type', 'x_ft', 'y_ft', 'x_ft_in', 'y_ft_in']];
+  const rows = [['space', 'id', 'type', 'fixture', 'x_ft', 'y_ft', 'x_ft_in', 'y_ft_in']];
   const ftin = (v) => {
     const f = Math.floor(v); const i = Math.round((v - f) * 12);
     return i === 12 ? `${f + 1}'-0"` : `${f}'-${i}"`;
@@ -128,7 +133,8 @@ export function toCSV(rooms, { pxPerFt } = {}) {
   const q = (v) => (/[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v);
   for (const r of laidOut(rooms, pxPerFt)) {
     for (const l of r.lights) {
-      rows.push([q(r.name || 'Space'), l.id, l.kind, l.x.toFixed(3), l.y.toFixed(3), ftin(l.x), ftin(l.y)]);
+      rows.push([q(r.name || 'Space'), l.id, l.kind, l.fixture || l.kind,
+                 l.x.toFixed(3), l.y.toFixed(3), ftin(l.x), ftin(l.y)]);
     }
   }
   return rows.map((r) => r.join(',')).join('\n');
@@ -240,8 +246,12 @@ export function toDXF(rooms, { pxPerFt, heightPx } = {}) {
     }
 
     for (const l of r.lights) {
-      const layer = l.kind === 'large' ? 'LIGHT-LARGE' : 'LIGHT-SMALL';
-      const rad = l.kind === 'large' ? 0.5 : 0.29;
+      // A SEPARATE LAYER, because that is how a DXF says "different fitting" to
+      // the person who opens it: they turn one off and count the other.
+      const narrow = (l.fixture || l.kind) === 'small-narrow';
+      const layer = l.kind === 'large' ? 'LIGHT-LARGE'
+        : narrow ? 'LIGHT-SMALL-NARROW' : 'LIGHT-SMALL';
+      const rad = (l.kind === 'large' ? 0.5 : 0.29) * (narrow ? 0.8 : 1);
       out = out.concat(dxfCircle(layer, l.x, fy(l.y), rad));
       out = out.concat(dxfLine(layer, l.x - rad, fy(l.y), l.x + rad, fy(l.y)));
       out = out.concat(dxfLine(layer, l.x, fy(l.y) - rad, l.x, fy(l.y) + rad));
@@ -433,7 +443,8 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
   // --- spots: the recessed schedule, ambient and aimed alike
   for (const r of rooms) {
     for (const l of r?.plan?.lightsPx || []) {
-      marker(LY_S, l, l.kind === 'large' ? 0.5 : 0.29);
+      marker(LY_S, l, (l.kind === 'large' ? 0.5 : 0.29)
+        * ((l.fixture || l.kind) === 'small-narrow' ? 0.8 : 1));
     }
   }
 

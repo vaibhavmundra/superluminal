@@ -239,10 +239,35 @@ export const expectsBed = (projectId, typeId) => !!roomTypeIn(projectId, typeId)
  * Both are refusals with reasons attached rather than silent failures, so a
  * kitchen that comes out wrong will say why.
  */
-export const TARGET_AREA_BY_TYPE = { kitchen: 25 };
+export const TARGET_AREA_BY_TYPE = { kitchen: 25, toilet: 18 };
 
 /** The override for a type, or null for "lit like anywhere else". */
 export const targetAreaFor = (typeId) => TARGET_AREA_BY_TYPE[typeId] ?? null;
+
+/**
+ * WHICH CATALOGUE LINE A ROOM'S GRID LIGHTS ARE BOUGHT AS.
+ *
+ * The planner emits `small` and `large`, and those are GEOMETRY — a small light
+ * is one centred in a cell, a large one serves a pair. Nothing about the layout
+ * says what you buy, and the two questions have been conflated because for most
+ * rooms there is only one answer.
+ *
+ * A toilet is where they come apart. Its cells are 18 sqft rather than 50, which
+ * is a cell about 4.2 ft square, and a 36-degree 7 W fitting over a cell that
+ * size throws most of its cone onto the walls. So the same position gets a
+ * NARROWER, SMALLER lamp: 5 W at 30 degrees. The grid is unchanged — this maps a
+ * light that already exists onto a different product.
+ *
+ * Keyed by the planner's kind so a type can override one and not the other. The
+ * fallback is the kind itself, which is what every other room gets.
+ */
+export const FIXTURE_BY_TYPE = {
+  toilet: { small: 'small-narrow' },
+};
+
+/** What to buy for a light of `kind` in a room of `typeId`. */
+export const fixtureFor = (typeId, kind) =>
+  FIXTURE_BY_TYPE[typeId]?.[kind] ?? kind;
 
 // --- the prompt -------------------------------------------------------------
 

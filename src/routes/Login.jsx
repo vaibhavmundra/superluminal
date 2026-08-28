@@ -96,7 +96,7 @@ export default function Login() {
           </>
         ) : stage === 'email' ? (
           <>
-            <h1>Sign in to keep your plans</h1>
+            <h1>Sign in to start designing</h1>
             <p className="auth-sub">
               {uploadName
                 ? <>We will email you a six-digit code, then open <b>{uploadName}</b>.</>

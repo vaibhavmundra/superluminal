@@ -148,7 +148,7 @@
      head is the thinnest thing on any screen here and needs 550 to hold up; a
      20px heading has all the presence it needs at 500 and looks clumsy heavier.
      So the scale runs the opposite way to the type size. */
-  --w-body:500;             /* the default. Medium, not Regular. */
+  --w-body:400;             /* the default. Medium, not Regular. */
   --w-strong:600;           /* emphasis inside a sentence, and a value */
   /* 550 with static cuts resolves to the 600 face (CSS font matching prefers
      the nearest weight at or above the request in this range), which is what
@@ -232,7 +232,11 @@ table.boq td,table.boq th{font-variant-numeric:tabular-nums}
   font-family:var(--display);font-size:15px;line-height:1;letter-spacing:.02em;
   text-transform:uppercase;color:var(--ink);white-space:nowrap;
 }
-.brand .sep{width:1px;height:15px;background:var(--border);flex:0 0 auto;transform:rotate(15deg)}
+/* THE SEPARATOR, UNSCOPED. It was written as `.brand .sep`, so the identical
+   span in `.plan-head` — the editor's own top bar — rendered as an empty
+   element and drew nothing at all. Three bars use this mark now; it belongs to
+   the mark, not to one of them. */
+.sep{width:1px;height:15px;background:var(--border);flex:0 0 auto;transform:rotate(15deg)}
 .brand .where{
   font-size:12px;color:var(--text-muted);font-weight:var(--w-body);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;
@@ -498,6 +502,43 @@ input:focus,select:focus,textarea:focus{
 .tracer-hud .chip.snap{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
 .outline-row{padding:5px 6px;border-radius:7px;margin-bottom:3px;border:1px solid transparent}
 .outline-row.on{background:var(--accent-soft);border-color:var(--accent-line)}
+/* THE WHOLE ROW IS THE CONTROL. It was a button around the name with everything
+   else outside it, so half of something that plainly reads as one row did
+   nothing when clicked. `.row-pick` is on the row itself; the controls inside it
+   stop the click so each still means its own thing. */
+.row-pick{cursor:pointer}
+.row-pick:hover{background:var(--surface-3)}
+.row-pick.on:hover{background:var(--accent-soft)}
+/* Keyboard only. A mouse user clicking a row does not want a focus ring left
+   behind on it, and a keyboard user cannot navigate without one. */
+.row-pick:focus{outline:none}
+.row-pick:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+/* The chunking mark, at the right-hand end of the row. Quiet until the row is
+   under the pointer — it is a property of the space, not a call to action, and
+   a list of eight rooms with eight dark glyphs down the edge reads as a column
+   of buttons. */
+/* THE TEXT AND THE ICON, SIDE BY SIDE AND VERTICALLY CENTRED. The two text
+   lines are one block so the icon centres on the item's full height rather than
+   on the name's line — which is where it sat when it lived inside the name row,
+   riding high against the top edge of a two-line item. `min-width:0` on the text
+   block so a long space name still ellipses instead of shoving the icon out. */
+.row-top{display:flex;align-items:center;gap:9px}
+.row-main{flex:1 1 auto;min-width:0}
+.row-icon{
+  display:inline-flex;align-items:center;justify-content:center;
+  flex:0 0 auto;width:26px;height:26px;
+  border:0;background:none;padding:0;cursor:pointer;
+  color:var(--text-faint);line-height:0;border-radius:6px;
+}
+/* A hit area larger than the mark, which is the point of the fixed box above:
+   the glyph is 19px and the target is 26px, so it is comfortable to hit without
+   the icon itself growing loud enough to compete with the space's name. */
+.row-icon:hover{background:var(--surface)}
+.outline-row.on .row-icon:hover{background:rgba(255,255,255,0.6)}
+.outline-row:hover .row-icon{color:var(--text-muted)}
+.outline-row.on .row-icon{color:var(--accent)}
+.row-icon:hover{color:var(--accent)}
+.row-icon:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px}
 .outline-pick{
   display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:7px;align-items:center;
   width:100%;border:0;background:none;font:inherit;cursor:pointer;padding:0;text-align:left;
@@ -508,6 +549,9 @@ input:focus,select:focus,textarea:focus{
    swatch there would be a lie. Without this variant the name landed in the
    10px dot column and every room read as "R.". */
 .outline-pick.plain{grid-template-columns:minmax(0,1fr) auto}
+/* `.outline-pick` is a div now, not a button — the row above it took that job.
+   It keeps the grid and loses the reset that only a button needed. */
+.outline-pick{cursor:inherit}
 .outline-meta{
   display:flex;justify-content:space-between;align-items:center;gap:6px;
   font-size:10px;color:var(--text-subtle);margin-top:3px;
@@ -666,6 +710,23 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
    with three answers and a dropdown would hide two of them behind a click. */
 .door-widths{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 .door-widths .btn{width:100%;padding:7px 4px;text-align:center}
+
+/* THE FOURTH WAY IN, and it is deliberately not a fourth button in that grid.
+   The three presets are one choice between three equals; a typed width is the
+   exception you reach for when the drawing tells you something better. Full
+   width and quieter says "or, if you know" rather than adding a fourth equal. */
+.door-custom-open{width:100%;margin-top:6px;font-size:11.5px;color:var(--text-muted)}
+.door-custom{margin-top:6px;padding:8px;border-radius:var(--r);
+  background:var(--surface-3);border:1px solid var(--border)}
+.door-custom > label{display:block;font-size:11px;color:var(--text-subtle);
+  margin-bottom:4px}
+.door-custom-row{display:flex;align-items:center;gap:6px}
+.door-custom-row input{flex:1;min-width:0}
+/* The unit sits OUTSIDE the field rather than as placeholder text, so it is
+   still visible once something has been typed — which is exactly when the
+   question "was that millimetres?" arises. */
+.door-custom-unit{font-size:11.5px;color:var(--text-subtle)}
+.door-custom-row .btn{flex:0 0 auto}
 
 /* --- the Design / BOQ tab pair -------------------------------------------- */
 /* A segmented pair rather than two buttons: they are one choice with two
@@ -969,12 +1030,12 @@ table.boq tfoot tr:hover{background:transparent}
 .home-err{max-width:48ch}
 .home-foot{
   flex:0 0 auto;display:flex;justify-content:space-between;padding:16px 22px;
-  border-top:1px solid var(--border);font-size:11px;color:var(--text-subtle);
+  border-top:1px solid var(--border);font-size:11px;color:var(--text-subtle); background-color: #FFFFFF;
 }
 
 /* ---------- login ---------- */
 .auth{min-height:100%;display:flex;flex-direction:column;align-items:center}
-.auth-top{width:100%;height:56px;display:flex;align-items:center;padding:0 22px;border-bottom:1px solid var(--border)}
+.auth-top{width:100%;height:56px;display:flex;align-items:center;padding:0 22px;border-bottom:1px solid var(--border); background-color: #FFFFFF}
 .auth-card{
   width:min(420px,92%);margin:auto;background:var(--surface);border:1px solid var(--border);
   border-radius:var(--r-lg);padding:30px 28px;box-shadow:var(--shadow);
@@ -1038,6 +1099,37 @@ input.otp{
 .rail-menu button.danger:hover{background:var(--danger-soft)}
 .rail-sep{height:1px;background:var(--border);margin:4px 0}
 
+/* THE SHELL'S SECOND CELL, WHEN IT CARRIES A BAR. Two rows — bar, then the
+   scrolling body — and `min-height:0` is the line that matters: a grid item
+   defaults to `min-height:auto`, which means it refuses to be shorter than its
+   content, so the body would never overflow and the page would scroll as a
+   whole, taking the bar with it. */
+.shell-col{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0}
+
+/* THE SAME BAR AS THE EDITOR'S `.topbar`, in flow rather than overlaid. The
+   editor's is absolute because it floats over a canvas that scrolls beneath it;
+   this one is a row of its own grid, so it holds its place without a z-index or
+   a matching top padding on the body. Same height, same translucency, same
+   hairline — the two screens are one product. */
+.detail-bar{
+  height:56px;flex:0 0 auto;display:flex;align-items:center;padding:0 30px;
+  background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(12px);
+  border-bottom:1px solid var(--border);
+}
+/* Held to the same measure as `.shell-inner` below it, and to the same 30px
+   gutter, so the back arrow lines up with the first card's left edge and the
+   button with the last card's right. A bar running to the window edge over a
+   centred grid reads as a different page. */
+.detail-bar-inner{
+  width:100%;max-width:1180px;margin-inline:auto;
+  display:flex;align-items:center;gap:12px;min-width:0;
+}
+.detail-bar .plan-name{max-width:40ch}
+/* The bar answers "where am I"; the body opens on what is in here. Without the
+   h1 the first line of the page is the count, so it gets a little air above it
+   and reads a step up from a caption. */
+.page-sub.lead{margin-top:0;font-size:13px}
+
 .shell-body{overflow-y:auto;padding:26px 30px 60px;width:100%}
 /* THE MEASURE, and it is on the content rather than on its container.
    
@@ -1068,14 +1160,13 @@ input.otp{
 .back:hover{color:var(--ink)}
 .back span{font-size:13px}
 .back.small{margin:0;font-size:12px;white-space:nowrap}
-/* An editable heading says so on hover and not before — a permanent dotted
-   underline on a project name is a form field pretending to be a title. */
-h1.editable{cursor:text;border-radius:4px;padding:0 4px;margin-left:-4px}
-h1.editable:hover{background:var(--surface-3);box-shadow:inset 0 -1px 0 var(--border-strong)}
-.title-input{
-  font:inherit;font-size:26px;font-weight:var(--w-display);letter-spacing:-.03em;
-  padding:0 4px;margin-left:-4px;width:min(460px,100%);
-}
+/* `h1.editable` AND `.title-input` ARE GONE, and they were dead twice over.
+   The project name moved into the top bar, where it is a `.plan-name` — the
+   same control the editor uses for a plan's name, which is the point of moving
+   it. Nothing rendered either class afterwards.
+   `.title-input` had also been declared TWICE, forty lines apart, with the
+   second setting a border and a height the first knew nothing about. Two rules
+   for one name is a coin toss decided by source order. */
 
 /* ---------- cards ---------- */
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
@@ -1188,14 +1279,6 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
 
 /* The project heading, edited in place. It is a 26px display face, so it sets
    its own type size and takes only the height. */
-.title-input{
-  height:var(--field-h);padding:0 8px;font-size:26px;
-  /* It was inheriting the browser's default border — which is not a style, it is
-     the lack of one, and it is why an edited heading looked like a form field
-     from a different decade. */
-  border:1px solid var(--border-strong);border-radius:var(--r);
-  background:var(--surface);color:var(--text);
-}
 
 
 /* ===========================================================================

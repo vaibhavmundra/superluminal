@@ -68,27 +68,25 @@ export default function Home() {
       >
         <h1 className="home-h1">Create lighting layouts<br />in minutes</h1>
         <p className="home-sub">
-          Drop a floor plan. Super Luminal finds the rooms, works out the scale from a
-          door, and lays out the ambient grid, the accents and the task spots — with the
-          schedule that comes with them.
+          Lighting layouts used to take hours. Our trained AI models understand your space, the use case and create fully functional layouts in a matter of minutes.
         </p>
 
         <div className="home-cta">
           <button className="btn primary big"
             onClick={() => inputRef.current?.click()}>
-            Upload a floor plan
+            + Upload a floor plan
           </button>
           <input ref={inputRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
             onChange={(e) => accept(e.target.files?.[0])} />
-          <span className="home-hint">or drop it anywhere on this page · DXF or an image</span>
+          <span className="home-hint">or drop it anywhere on this page · DXF, PDF or image</span>
         </div>
 
         {err && <p className="note err home-err">{err}</p>}
       </main>
 
       <footer className="home-foot">
-        <span>Black, white, and one blue.</span>
-        <span>Designopolis</span>
+        <span></span>
+        <span></span>
       </footer>
     </div>
   );

@@ -53,6 +53,46 @@ export const DOOR_WIDTHS = [
   { mm: 1200, label: '1200mm', note: 'hall, entrance or a double leaf' },
 ];
 
+/**
+ * The bounds on a HAND-TYPED door width, in millimetres.
+ *
+ * The three presets exist because a person can tell a bathroom door from a hall
+ * door on a drawing and cannot tell 850 from 900. But a drawing that STATES a
+ * width — a dimension string, a door schedule, a joinery detail — has better
+ * information than the list does, and refusing to accept it is refusing the one
+ * input more reliable than the guess.
+ *
+ * SO IT IS BOUNDED RATHER THAN FREE. This one number sets the scale for the
+ * entire plan: every cell, every fitting, every metre of strip and the whole
+ * BOQ divide by it. A typed 90 where 900 was meant does not fail, it produces a
+ * plan at ten times the scale that looks superficially plausible until somebody
+ * orders from it. 450mm is narrower than any door a person fits through and
+ * 3000mm is wider than any single opening a leaf-plus-swing box describes, so
+ * anything outside that is a typo rather than an unusual door.
+ */
+export const CUSTOM_DOOR_MM = { min: 450, max: 3000 };
+
+/** A typed width, or null with the reason it was refused. */
+export function parseDoorWidth(text, o = CUSTOM_DOOR_MM) {
+  const raw = String(text ?? '').trim();
+  if (!raw) return { ok: false, mm: null, why: '' };
+  // A bare number is millimetres. Someone who types 0.9 or 2.5 has answered in
+  // metres or feet, and silently reading that as "2.5 mm" would be the worst
+  // available outcome — so it is named rather than clamped.
+  const n = Number(raw.replace(/[, ]/g, '').replace(/mm$/i, ''));
+  if (!Number.isFinite(n)) return { ok: false, mm: null, why: 'That is not a number.' };
+  if (n < o.min) {
+    return { ok: false, mm: null,
+      why: n < 20
+        ? `Doors are measured in millimetres here — did you mean ${Math.round(n * 1000)}?`
+        : `${n}mm is narrower than ${o.min}mm, which is narrower than any door.` };
+  }
+  if (n > o.max) {
+    return { ok: false, mm: null, why: `${n}mm is wider than ${o.max}mm — is that one leaf?` };
+  }
+  return { ok: true, mm: Math.round(n), why: '' };
+}
+
 export const MM_PER_FT = 304.8;
 
 export const DOOR_DEFAULTS = {

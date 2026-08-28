@@ -1807,11 +1807,30 @@ building.
 
 **A door is the ruler that is already on the plan.** Its real width is one of
 three or four values in the entire built world: 750mm to a bathroom, 900mm to a
-room, 1200mm to a hall or a double leaf. Nothing else on a floor plan is that
+room, 1200mm to a hall or a double leaf — and, where the drawing states one,
+whatever it says. Nothing else on a floor plan is that
 standard — a sofa is anything from 1500 to 2400, a bed is a choice, a wall is 4
 inches or 9 or 12. And it asks the user to **recognise** rather than to measure,
 which is the real win: anyone looking at a plan can tell a bathroom door from a
 room door, and nobody can hold a two-click measurement to a pixel.
+
+**And a fourth option, for a drawing that says.** The three presets are a
+recognition task, and that is their strength — but a plan carrying a dimension
+string, a door schedule or a joinery detail *knows* its width, and that is better
+information than the list. So there is an **"Enter a custom width…"** field below
+the three. It goes through `scaleFromDoor` unchanged; there is no second scale
+path to drift.
+
+It is **bounded, at 450–3000mm** (`CUSTOM_DOOR_MM`), and the bounds are not
+fussiness. This number divides the entire plan, and a typed `90` where `900` was
+meant fails nowhere downstream — it produces a drawing at ten times the scale
+that looks plausible until somebody orders from it. `parseDoorWidth` accepts
+`825`, `750mm`, `1,200` and rounds a fraction, and refuses the two typos that
+matter **by name**: a dropped zero (*"90mm is narrower than 450mm, which is
+narrower than any door"*) and an answer in metres (*"Doors are measured in
+millimetres here — did you mean 900?"*). The panel also shows the resulting
+px/ft before it is applied, because that is the number a person can sanity-check
+at a glance.
 
 **Which side of the box.** A door in plan is a leaf plus a quarter-circle swing,
 and the swing's radius *is* the leaf length — so both sides of a clean detection
@@ -2752,11 +2771,20 @@ whatever number the model volunteered was about a category we then rejected, and
 carrying it forward would display as "90% sure this is Other", a confident-
 sounding claim about the one case where we know nothing.
 
-### A kitchen is lit twice as hard
+### A kitchen is lit twice as hard, and a toilet nearly three times
 
 The type decides the ceiling's density as well as its layers. `TARGET_AREA_BY_TYPE`
-in `roomTypes.js` overrides what one cell should cover, and there is one entry in
-it: **kitchen, 25 sqft** against everywhere else's 50.
+in `roomTypes.js` overrides what one cell should cover, against everywhere else's
+50 sqft:
+
+| type | cell | accepted between |
+|---|---|---|
+| **kitchen** | 25 sqft | 18.75 – 31.25 |
+| **toilet** | 18 sqft | 13.5 – 22.5 |
+
+**The tolerance is the shared one.** `areaTol` is a single ±25% applied to
+whatever `targetArea` is, so neither of these gets a band of its own — that is
+the point of stating the override as an area rather than as a number of lights.
 
 The only lever this engine has for "more light" is the size of a cell. Halve the
 area a cell covers and you double the number of fittings over it, which doubles
@@ -2798,6 +2826,47 @@ of work; this is the one number that buys most of it today.
 Nothing else about a kitchen changes: it still gets no accents and no task spots,
 and the grid is still centred and uniform, which is the [known
 limit](#known-limits-v1) worth reading before trusting it in a galley.
+
+### A wet room gets a different lamp in the same grid
+
+A toilet at 18 sqft a cell is a cell about 4.2 ft square, and **a 36° 7 W fitting
+over a cell that size throws most of its cone at the walls**. So the grid is
+unchanged and the product is not: a toilet's ambient downlights are **5 W at 30°**,
+drawn **20% smaller** than the standard fitting.
+
+What this required was separating two things the app had been treating as one:
+
+- **`kind` is geometry.** `small` means one light centred in a cell, `large`
+  means one serving a pair. The planner deals only in this and never in products.
+- **`fixture` is what you buy.** Resolved from the room's type by `fixtureFor`
+  in `roomTypes.js`, stamped onto each light in `App.jsx` — the one place that
+  knows both the layout and the type — and read by the canvas, the BOQ and every
+  exporter.
+
+For every other room the two are the same string, which is why they had never
+needed separating. A light with no `fixture` at all — a plan saved before this
+existed — falls back to its `kind`, and there is a test for it.
+
+**It is a separate catalogue line from the directional spot**, though the lamp
+is identical (5 W, 30°, 450 lm). A spot is aimed at a task surface and this is
+ambient; merging them would give a schedule the electrician wiring a WC cannot
+read. On the drawing they stay distinguishable by size and symbol; in the DXF the
+narrow downlights get their own `LIGHT-SMALL-NARROW` layer, so they can be
+isolated and counted. The BOQ shows a **Small 5W** column only on plans that have
+any.
+
+What it does, on plain rectangles:
+
+| toilet | at 50 sqft | at 18 sqft |
+|---|---|---|
+| 4 × 5 | 1 light | 1 light |
+| 5 × 7 | 1 light | 2 lights |
+| 6 × 8 | 1 light | 3 lights |
+| 6 × 10 | 1 light | 4 lights |
+
+The small end does not change, and should not: a 4 × 5 WC has never wanted more
+than one fitting. It is the 6 × 10 that was being under-lit by a grid sized for
+a living room.
 
 ## The pipeline, and the loading screen that is its progress
 
@@ -2906,6 +2975,40 @@ the ambient layout instead of wherever the pointer happened to be. `surfacesPx`
 and `accentZonesPx` each merge two sources into one list, and nothing downstream
 — canvas, schedule, exports, drag handles — knows or needs to know which source a
 fitting came from.
+
+> **That last sentence was true of every reader and false of both writers, and
+> it cost two bugs.** A hand-placed strip or sconce **could not be moved and
+> could not be deleted**. It drew correctly, it selected, its grips appeared,
+> the drag armed — and nothing happened.
+>
+> Reading merges the two stores. Writing did not. `accentResults[roomId].zones`
+> holds what the accent pass produced and `manualAccents` is a flat list of what
+> the palette placed; every edit went `setAccentResults(...)`, where a `man-…`
+> id simply is not. In a room with **no accent pass at all** it was worse — the
+> updater's first line is `if (!res?.zones) return m`, so it bailed before
+> looking. Delete had the same shape with an extra twist: the id went into
+> `accentDismissed`, and `accentZonesPx` only ever filtered the *pass's* zones
+> through that list, appending the manual ones unfiltered right after.
+>
+> The fix is `updateAccentZone(roomId, id, fn)`: **both** updaters run, and each
+> returns its own state by reference when the id is not one of its own, so a
+> miss is a no-op and never a re-render. Deliberately not "look up which store,
+> then write" — that lookup has to happen outside a setState updater, against a
+> possibly stale copy, which is the same class of bug one level down.
+>
+> **Delete keeps two verbs on purpose.** `accentDismissed` is a persisted record
+> of *"the detector proposed this and I said no"*, and it has to persist because
+> the pass can run again and must not put the fitting back. A hand-placed
+> fitting has no generator to come back from, so it is **removed** instead —
+> parking its id in that list would suppress something that no longer exists for
+> the life of the plan. The merge still honours the dismissed list for both, so
+> a plan saved while this was broken stays deleted rather than resurrecting.
+>
+> The lesson worth keeping: **a merged read is a promise that every write has to
+> keep too.** Merging two sources at the point of display makes them look like
+> one collection to everything downstream, and every writer then has to be told
+> that they are still two. If the merge is the interface, the write belongs
+> behind the same function as the read.
 
 The sconce is the clearest case: the click says which wall and roughly where
 along it, and `placeZone` — the same function the detector's output goes through
@@ -3327,6 +3430,37 @@ Five layers, and nothing else in the file:
 
 No grid, no cells, no no-light zones, no chunk boundaries. Those are the
 planner's working, not the drawing.
+
+### The space outline is off on the layout screen
+
+`LAYER_DEFAULTS` in `App.jsx` starts `region: false`. It is the one layer on that
+screen that is **scaffolding rather than deliverable**: it says where the boundary
+somebody traced is, which is the question of the *tracer* screen and a settled
+fact by the time fittings are being placed. On a plan with eight spaces it is
+eight heavy closed curves laid over the drawing the fittings have to be read
+against. It stays a checkbox, because confirming a fitting sits inside its own
+space is a real thing to want to do.
+
+Two consequences worth knowing, because neither is obvious from the change:
+
+- **It comes out of the PNG and SVG too.** Those two exports serialise the live
+  canvas, so every layer toggle is also an export toggle. That is the intended
+  direction here — a client sheet should not carry the traced boundary — and the
+  **DXF is unaffected**, because it is built from data rather than from the
+  screen and puts the outline on its own `ROOM` layer regardless.
+- **Focus is no longer shown on the canvas.** `focusId` was used in exactly one
+  place: drawing the focused space's outline heavier. Survivable, because focus
+  is *assigned* rather than chosen — it falls back to the first room when
+  nothing is picked — so it was never a reliable signal of intent, and the panel
+  already names the space it is editing. If focus needs a canvas signal later, it
+  should be one that does not depend on a layer the user can turn off.
+
+**A saved plan keeps its own value**, and fixing that surfaced a latent bug.
+Restoring used to do `set.setLayers(p.ui.layers)` — a wholesale assignment — so
+**every layer added after a plan was saved came back `undefined` on that plan**.
+Falsy, so off, with nothing on screen to say why one drawing was missing a whole
+category of fitting. It now merges over `LAYER_DEFAULTS`, so a new layer arrives
+switched on and an explicitly saved preference still wins.
 
 ### The layers follow the trade, not the pass that made the thing
 

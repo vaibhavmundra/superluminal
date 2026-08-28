@@ -14,7 +14,10 @@
 
 import { PROJECT_TYPES, PROJECT_BY_ID, roomsFor, roomTypeIn, wantsAccents,
          wantsSpots, buildRoomTypePrompt, buildRoomTypeRequest, normaliseRoomType,
-         roomTypeFromReply } from '../src/lib/roomTypes.js';
+         roomTypeFromReply, targetAreaFor, fixtureFor,
+         TARGET_AREA_BY_TYPE, FIXTURE_BY_TYPE } from '../src/lib/roomTypes.js';
+import { DEFAULTS, resolveOptions, planLights } from '../src/lib/planner.js';
+import { FIXTURE_BY_ID } from '../src/lib/boq.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
@@ -138,6 +141,66 @@ console.log('\n-- the image goes at a detail the furniture survives --');
   ok(img.image_url.detail === 'high',
     `detail=${img.image_url.detail} — "low" downsamples to 512px, at which a bed is a grey rectangle and every room comes back "other"`);
 }
+
+console.log('\n-- how densely a type is lit, and what with --');
+{
+  ok(targetAreaFor('toilet') === 18, 'a toilet is gridded at 18 sqft a cell');
+  ok(targetAreaFor('kitchen') === 25, 'a kitchen at 25');
+  ok(targetAreaFor('bedroom') === null, 'and everything else takes the 50 sqft default');
+
+  // THE TOLERANCE IS THE ONE EVERY OTHER CELL GETS. `areaTol` is a single
+  // number applied to whatever `targetArea` is, so a toilet's acceptance band
+  // is 18 +/- 25% = 13.5 to 22.5. This asserts it was not special-cased.
+  const tol = DEFAULTS.areaTol;
+  ok(tol === 0.25, `areaTol is still the shared +/-${tol * 100}%`);
+  const lo = 18 * (1 - tol), hi = 18 * (1 + tol);
+  ok(Math.abs(lo - 13.5) < 1e-9 && Math.abs(hi - 22.5) < 1e-9,
+    `so a toilet cell is accepted between ${lo} and ${hi} sqft`);
+
+  // AND IT ACTUALLY LAYS OUT. A target is only useful if real wet-room shapes
+  // resolve against it: these are the sizes a toilet is actually drawn at.
+  const opt = resolveOptions({ ...DEFAULTS, targetArea: 18 });
+  const rect = (w, h) => [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
+  for (const [w, h, n] of [[4, 5, 1], [5, 7, 2], [6, 8, 3], [6, 10, 4], [3.5, 6, 1]]) {
+    const r = planLights(rect(w, h), [], opt, []);
+    ok(r.ok && r.lights.length === n,
+      `${w} x ${h} ft toilet lays out as ${r.ok ? r.lights.length : 'FAILED'} light(s), wanted ${n}`);
+  }
+
+  // WHAT IT IS BOUGHT AS. The planner emits `small` for a toilet exactly as for
+  // a bedroom — the kind is geometry — and the type maps it onto a product.
+  ok(fixtureFor('toilet', 'small') === 'small-narrow',
+    "a toilet's small light is the narrow-beam lamp");
+  ok(fixtureFor('toilet', 'large') === 'large',
+    '...and a large one is unchanged, because nothing said otherwise');
+  ok(fixtureFor('bedroom', 'small') === 'small', 'every other room is untouched');
+  ok(fixtureFor(undefined, 'small') === 'small',
+    'and an unclassified space falls back to the kind rather than throwing');
+
+  const nb = FIXTURE_BY_ID['small-narrow'];
+  ok(nb && nb.watts === 5 && nb.beam === 30, '5 W at 30 degrees');
+  ok(nb.unit === 'nos' && /grid/.test(nb.note),
+    'catalogued as an ambient grid fitting, not as an aimed spot');
+
+  // EVERY ID THIS MAP CAN PRODUCE MUST EXIST IN THE CATALOGUE. A typo here does
+  // not throw — `buildBOQ` counts into a key nothing bills, the light vanishes
+  // from the schedule, and the plan is short by however many wet rooms it has.
+  for (const [type, kinds] of Object.entries(FIXTURE_BY_TYPE)) {
+    for (const [kind, id] of Object.entries(kinds)) {
+      ok(!!FIXTURE_BY_ID[id],
+        `FIXTURE_BY_TYPE.${type}.${kind} points at a real catalogue line: ${id}`);
+    }
+  }
+  // ...and every type it names must be a type the classifier can return.
+  const everyType = new Set(PROJECT_TYPES.flatMap((p) => p.rooms.map((r) => r.id)));
+  for (const type of Object.keys(FIXTURE_BY_TYPE)) {
+    ok(everyType.has(type), `and at a type the classifier can actually return: ${type}`);
+  }
+  for (const type of Object.keys(TARGET_AREA_BY_TYPE)) {
+    ok(everyType.has(type), `same for TARGET_AREA_BY_TYPE: ${type}`);
+  }
+}
+
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');
 process.exit(fail ? 1 : 0);

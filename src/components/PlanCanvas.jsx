@@ -71,7 +71,7 @@ const C = {
 
 const PlanCanvas = forwardRef(function PlanCanvas(
   { src, vector = null, wallLayers = null,
-    width, height, plans = [], focusId = null,
+    width, height, plans = [], focusId = null, selectedId = null,
     fansPx = [], pxPerFt, layers, zoom, measure, onCanvasClick, toPx,
     zones = [], draftZone = null, zoneMode = false, onZoneDown, onZoneMove, onZoneUp,
     accents = [], objMode = false, selObjId = null, onObjPointerDown,
@@ -242,10 +242,24 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             <polygon points={points(r.plan.polygonPx)}
               fill="none" stroke={C.region}
               /* The room the panel is talking about is drawn heavier. With eight
-                 green outlines on one sheet, "which one is Bedroom 2" is
-                 otherwise a question the drawing cannot answer. */
+                 outlines on one sheet, "which one is Bedroom 2" is otherwise a
+                 question the drawing cannot answer. */
               strokeWidth={lw * (r.id === focusId && laid.length > 1 ? 3.6 : 2.4)}
               strokeLinejoin="round" />
+          )}
+          {/* THE SELECTED SPACE, and this is a different thing from the layer
+              above. That one is the OUTLINE — scaffolding, off by default,
+              ink-coloured because it is part of the drawing. This is SELECTION:
+              blue because blue is state on this canvas, thin because it is not
+              competing with the fittings, and drawn whether or not the outline
+              layer is on. Without it, turning the outline off left the canvas
+              with no way at all to say which space the panel was describing.
+              `strokeSelected` and not a fill: a wash over the space would sit
+              between the plan and the fittings and dull both. */}
+          {r.id === selectedId && (
+            <polygon points={points(r.plan.polygonPx)}
+              className="lp-sel" fill="none" stroke={C.lit}
+              strokeWidth={lw * 1.6} strokeLinejoin="round" pointerEvents="none" />
           )}
         </g>
       ))}
@@ -462,11 +476,20 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       {layers.lights && laid.map((r) => (
         <g key={'l' + r.id}>
           {r.plan.lightsPx.map((l, li) => {
-            const R = (l.kind === 'large' ? 0.52 : 0.3) * s;
+            // THE SYMBOL IS SIZED BY THE PRODUCT, NOT BY THE GEOMETRY. A
+            // toilet's grid light is the same `kind: 'small'` as a bedroom's —
+            // one per cell — but it is a 5 W 30-degree lamp rather than a 7 W
+            // 36-degree one, and a drawing on which two different fittings are
+            // the same circle is a drawing the person ordering them cannot use.
+            // 20% smaller, which is enough to read as deliberate next to a
+            // standard downlight and not so much that it reads as a spot.
+            const fx = l.fixture || l.kind;
+            const R = (l.kind === 'large' ? 0.52 : 0.3)
+              * (fx === 'small-narrow' ? 0.8 : 1) * s;
             const col = l.kind === 'large' ? C.large : C.small;
             const warm = hot === l.id;
             return (
-              <g key={l.id} {...feel(l.id, specsFor(l.kind))}>
+              <g key={l.id} {...feel(l.id, specsFor(fx))}>
                 {/* THE POOL OF LIGHT. Under the symbol, wider than it, and
                     breathing. The stagger is deliberate and it is the whole
                     difference between a lit ceiling and a blinking one: forty
