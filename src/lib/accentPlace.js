@@ -35,11 +35,22 @@ export const PLACE_DEFAULTS = {
   maxWallDistFrac: 0.28,
   // A run shorter than this is not a strip, it is a rounding error.
   minRunFrac: 0.04,
-  // How far past the end of a bed a bedside sconce sits, as a fraction of the
-  // bed's own width along the wall. A bedside table is about a quarter of a
-  // double bed's width, and the sconce goes over it. Expressed as a fraction
-  // rather than in feet so this file stays unit-free: it works in plan pixels
-  // and in feet without being told which.
+  // How far past the end of a bed a bedside sconce sits, IN FEET, measured from
+  // the edge of the bed's bounding box along the wall.
+  //
+  // ABSOLUTE, NOT A FRACTION, and that is a deliberate reversal. It used to be
+  // 0.24 of the bed's own width along the wall, on the reasoning that a bedside
+  // table is about a quarter of a double bed and the sconce goes over it — which
+  // keeps this file unit-free but makes the offset scale with the BED. A single
+  // bed then puts its sconces closer to it than a king does, and the thing being
+  // lit — a person's shoulder, a book, a nightstand — is the same size in both
+  // rooms. A bedside sconce is a real distance from the mattress, so it is
+  // stated as one.
+  //
+  // Needs `pxPerFt` to be usable, and falls back to the fraction below when
+  // there is no scale yet. See flankingSconces.
+  bedsideOffsetFt: 1.0,
+  // The fallback, for a caller with no scale. Same number as before.
   bedsideOffsetFrac: 0.24,
   // The same for a basin, where the pair sits much closer in — flanking the
   // mirror rather than standing off past the counter.
@@ -204,10 +215,16 @@ export function placeZone(zone, polygon, opts = {}) {
     // fixed step past the furniture's own end, which is what "either side of
     // the bed" actually means and is symmetric by construction. A zone without
     // one is a bare box, and the middle of it is the best reading available.
+    //
+    // `offsetAbs` is a distance in the same units as the polygon (plan pixels),
+    // and it WINS over the fraction when present — a bedside sconce is one foot
+    // from the mattress whatever size the mattress is. The fraction remains for
+    // the basin rule and for any caller with no scale to convert with.
+    const step = zone.offsetAbs != null
+      ? zone.offsetAbs
+      : (p.t1 - p.t0) * (zone.offsetFrac ?? o.bedsideOffsetFrac);
     const t = zone.side
-      ? (zone.side < 0
-          ? p.t0 - (p.t1 - p.t0) * (zone.offsetFrac ?? o.bedsideOffsetFrac)
-          : p.t1 + (p.t1 - p.t0) * (zone.offsetFrac ?? o.bedsideOffsetFrac))
+      ? (zone.side < 0 ? p.t0 - step : p.t1 + step)
       : (p.t0 + p.t1) / 2;
     const tc = Math.max(0, Math.min(p.wallLength, t));
     const point = add(p.origin, mul(p.u, tc));
@@ -323,8 +340,16 @@ export function placeZones(zones, polygon, opts = {}) {
 export const PLACEMENT_RULES = [
   {
     id: 1, see: 'bed', label: 'a bed',
-    does: 'a sconce on both sides, as a symmetric pair',
-    emit: (item, o) => flankingSconces(item, o.bedsideOffsetFrac, 'bedside', 'rule 1 — a bed'),
+    does: 'a sconce on both sides, one foot clear of the bed',
+    // THE RECT IS THE BED-FILTER BOUNDING BOX, not the accent pass's own idea of
+    // where the bed is — App.jsx substitutes it before calling this, and drops
+    // the bed entirely when there is no authoritative box. A sconce is a real
+    // fitting on a real wall; deriving it from a second, looser opinion about
+    // the bed's position is how two answers about one mattress both end up on
+    // the drawing.
+    emit: (item, o) => flankingSconces(
+      item, o.bedsideOffsetFrac, 'bedside', 'rule 1 — a bed, one foot clear either side',
+      o.pxPerFt ? o.bedsideOffsetFt * o.pxPerFt : null),
   },
   {
     id: 2, see: 'sofa', label: 'a sofa',
@@ -373,12 +398,12 @@ export const RULE_BY_FURNITURE = Object.fromEntries(PLACEMENT_RULES.map((r) => [
  * sentence, from the same code, instead of quietly producing two sconces on
  * whichever wall happened to be nearest.
  */
-function flankingSconces(item, offsetFrac, group, why) {
+function flankingSconces(item, offsetFrac, group, why, offsetAbs = null) {
+  const label = FURNITURE_BY_ID[item.type]?.label.toLowerCase() ?? item.type;
+  const common = { rect: item.rect, group, offsetFrac, offsetAbs, why };
   return [
-    { type: 'sconce', side: -1, offsetFrac, rect: item.rect, group,
-      what: `left of the ${FURNITURE_BY_ID[item.type]?.label.toLowerCase() ?? item.type}`, why },
-    { type: 'sconce', side: +1, offsetFrac, rect: item.rect, group,
-      what: `right of the ${FURNITURE_BY_ID[item.type]?.label.toLowerCase() ?? item.type}`, why },
+    { ...common, type: 'sconce', side: -1, what: `left of the ${label}` },
+    { ...common, type: 'sconce', side: +1, what: `right of the ${label}` },
   ];
 }
 

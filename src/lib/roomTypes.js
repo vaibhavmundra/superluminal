@@ -24,10 +24,46 @@
 
 import { extractJson, DEFAULT_MODEL } from './openaiDetect.js';
 
+/**
+ * THE OUTPUT CAP, AND WHY IT IS 8000 FOR A REPLY THAT IS OFTEN 200 TOKENS LONG.
+ *
+ * `max_completion_tokens` on a reasoning model is a budget for REASONING PLUS
+ * OUTPUT, and the reasoning is invisible. Set it to a number that looks generous
+ * for the answer and the model thinks its way through the whole allowance, emits
+ * nothing, and returns 200 OK with an empty `content`. Every parser downstream
+ * reads that as "found nothing" — which is indistinguishable from a plan with no
+ * beds in it.
+ *
+ * WE WATCHED THIS HAPPEN. A ten-bedroom resort sheet: the bed route (capped at
+ * 1500) returned no beds on eight of ten room crops, and the furniture route
+ * (capped at 3000) found the beds in those same crops on the same model. The
+ * failures correlated perfectly with LATENCY — the calls that answered took 13
+ * and 20 seconds, every call that came back empty took 21 to 26, and in the
+ * furniture route the only two empty replies were the two slowest of the batch
+ * at 47s. Slower means more reasoning; more reasoning means the budget is spent
+ * before the answer starts.
+ *
+ * A CAP IS A CEILING, NOT A SPEND. Nothing is billed for headroom, so the number
+ * should be far above the largest plausible reply rather than tuned close to it.
+ * A cap that occasionally truncates is not a small inefficiency here — it is a
+ * silent wrong answer.
+ */
+const MAX_OUT = 8000;
+
 export { DEFAULT_MODEL };
 
 /** Shorthand: the four things a habitable, decorated room gets. */
 const FULL = { accent: true, spots: true };
+// A ROOM THAT MUST CONTAIN A BED. Not "might" — a bedroom with no bed in it is a
+// failed detection, not an unusual bedroom, and that is exactly what makes this
+// flag useful: it is the only place in the app that knows the difference between
+// "we found nothing" and "we found nothing and that is impossible". The bed
+// fallback in App.jsx reads it and asks again, room by room, on a crop.
+//
+// Held here rather than as a list of ids in the pipeline for the reason in this
+// file's header: the vocabulary and the rules that act on it cannot be allowed
+// to drift apart.
+const SLEEPS = { bed: true };
 const NONE = { accent: false, spots: false };
 // A toilet gets its basin sconces and nothing aimed: there is no task surface
 // in a WC that a directional spot would help with, and one over a basin is
@@ -59,7 +95,7 @@ export const PROJECT_TYPES = [
     id: 'residential', label: 'Residential',
     blurb: 'A flat, a house, a villa',
     rooms: [
-      { id: 'bedroom', label: 'Bedroom', ...FULL,
+      { id: 'bedroom', label: 'Bedroom', ...FULL, ...SLEEPS,
         plan: 'a bed — a plain rectangle with pillows along one short edge — usually with a wardrobe against a wall' },
       { id: 'living_space', label: 'Living space', ...FULL,
         plan: 'the family space: sofas, a coffee table, a TV unit, or a dining table with chairs round it. Living, dining and family rooms are all this one type' },
@@ -99,9 +135,9 @@ export const PROJECT_TYPES = [
     id: 'hotel', label: 'Hotel',
     blurb: 'Guest floors, lobby, banquet',
     rooms: [
-      { id: 'guest_room', label: 'Guest room', ...FULL,
+      { id: 'guest_room', label: 'Guest room', ...FULL, ...SLEEPS,
         plan: 'a bed with a wardrobe and usually its own toilet off it. One of many similar rooms along a corridor' },
-      { id: 'suite', label: 'Suite', ...FULL,
+      { id: 'suite', label: 'Suite', ...FULL, ...SLEEPS,
         plan: 'a guest room with a separate sitting area — a sofa and a coffee table as well as the bed' },
       { id: 'lobby', label: 'Lobby', ...FULL,
         plan: 'a large public space with a reception counter and loose seating groups' },
@@ -160,6 +196,15 @@ export const roomTypeIn = (projectId, typeId) =>
 /** The two gates. Unknown type means we know nothing, so we do nothing. */
 export const wantsAccents = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.accent;
 export const wantsSpots = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.spots;
+/**
+ * Should this kind of space contain a bed?
+ *
+ * Used for one thing: deciding that "no beds found here" is a CONTRADICTION
+ * rather than a result. On a whole-floor plan both detectors routinely miss beds
+ * — a six-bedroom villa downscaled to 1600px gives each mattress a few dozen
+ * pixels — and the fallback re-asks on a crop of just that room.
+ */
+export const expectsBed = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.bed;
 
 /**
  * WHAT ONE CELL SHOULD COVER, where it is not the usual 50 sqft.
@@ -261,7 +306,7 @@ Return ONLY a JSON object. No prose, no markdown fence.
 }
 
 export function buildRoomTypeRequest({ plan, projectId, room = null,
-                                       model = DEFAULT_MODEL, maxTokens = 300 } = {}) {
+                                       model = DEFAULT_MODEL, maxTokens = MAX_OUT } = {}) {
   if (!plan?.base64) throw new Error('No plan image to look at.');
   return {
     model,

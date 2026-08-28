@@ -1,0 +1,22 @@
+{
+  "comment": "VERBATIM from the bed-filter workflow on public/samples/FLOOR_PLAN_03.png. Kept because the class name is 'bed2' — see tools/test-beds.mjs. Trimmed to the fields the parser reads.",
+  "outputs": [
+    {
+      "predictions": {
+        "image": { "width": 1042, "height": 1642 },
+        "predictions": [
+          {
+            "width": 238,
+            "height": 265,
+            "x": 291,
+            "y": 1117.5,
+            "confidence": 0.9628621339797974,
+            "class_id": 2,
+            "class": "bed2",
+            "detection_id": "ea0c2fa0-3be9-4f35-9528-2f78eacd23f7"
+          }
+        ]
+      }
+    }
+  ]
+}

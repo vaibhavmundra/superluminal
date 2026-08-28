@@ -608,9 +608,10 @@ within a tenth of the plan's height are one row, ordered left to right, so
 
 ### There is no GPT alternative to this one
 
-The bed detector has two providers because a bed's box only has to be roughly
-right to be a useful obstacle. A room outline that is roughly right puts every
-light in the wrong place. Asking a general vision model for a boundary is asking
+The bed detector takes a second opinion because a bed's box only has to be
+roughly right to be a useful obstacle, so two readings can be compared and one
+chosen. A room outline that is roughly right puts every light in the wrong
+place. Asking a general vision model for a boundary is asking
 it to measure, which is the one thing it cannot do — so this is the trained
 segmenter or nothing, and *nothing* is survivable: you trace by hand, which is
 what you did before this existed.
@@ -1017,6 +1018,184 @@ were looking at slid off the bottom-right every time you pressed +.
 `F` fits, `0` is actual size, `+`/`−` step, and middle-drag pans — the same keys
 as the tracer, so the two screens do not have to be learned separately.
 
+### A bed is a known size — and a bed PAIR is too
+
+The size gate in `BED_FT` measures a detection in feet rather than as a fraction
+of the sheet, which is the only measurement that means anything: the same bed is
+0.2% of an A0 resort drawing and 4% of a one-room plan, so any percentage
+threshold is simultaneously too tight for one and too loose for the other.
+
+**Its first version rejected every bed on a hotel plan.** Eleven boxes came back
+from the whole-sheet pass and all eleven were dropped, each reported as "that is
+a room, not a bed", against a single `maxSide: 8.5`. They were not rooms. Ten of
+those rooms have twin beds, and **asked about the whole drawing at once the
+detector boxes the PAIR** — both beds and the gap between them, about 5 feet deep
+and 10 to 11 feet across. The per-room pass, looking at one crop, separates them
+and returns two; which is why the accent pass reported *"bed, bed"* about the
+very rooms the zone pass reported nothing about. A gate calibrated on the second
+pass's output was being applied to the first's.
+
+**The repair is not a bigger number, it is the right measurement.** The long side
+cannot separate a 5 × 10 pair from a 12 × 16 room without rejecting the pair —
+but the SHORT side can, because a bed is shallow whether there is one of it or
+two. So `maxShortSide` does the room-rejecting, `maxLongSide` allows a pair, and
+the aspect ratio still catches planks and corridors. A room fails on its depth
+and always will, whatever its width is doing.
+
+### One box per bed, and where the tight boxes come from
+
+The whole-sheet pass cannot give you an exact bed outline, and no prompt will fix
+it. It looks at a ~1300px image of a resort floor — about **17 pixels to the
+foot** — where a single bed is 45px across and two twins are one grey smudge. Its
+box around a pair is not a misunderstanding, it is the honest answer to a
+question the image cannot resolve.
+
+**The accent pass asks the same question at four times the resolution.** It sends
+ONE room at 700×700, which for a 13ft room is nearer **54 pixels to the foot**, and
+on the same drawing and the same model it comes back `bed, bed` — two boxes,
+separated, tight. Those boxes were already in plan pixels, and they were only
+being used to hang sconces off.
+
+So they are now the geometry too. A room that has been looked at closely **owns
+its own beds**: the whole-sheet boxes for that room are dropped rather than merged,
+because merging a tight pair with the loose box that swallowed both just puts the
+loose one back on the ceiling — and dedupe cannot save you, since a box around
+two beds genuinely does overlap each of them. The whole-sheet pass drops back to
+what it is good at: saying WHICH rooms have beds.
+
+The prompts changed to match, in the one place they were working against this.
+The instruction was a blanket *"err generous rather than tight"*, which is right
+for a wardrobe — its extent sets how long the strip runs — and exactly wrong for
+a bed, whose extent becomes ceiling that gets no light. It is now split by piece:
+generous for the run-defining furniture, **mattress-only for a bed** — no
+nightstands, no blanket box, no rug — with *one box per bed, never one around
+two* stated explicitly in both prompts.
+
+**Three sources, one winner per space, in a stated order.** The same bed can
+arrive from more than one place, and merging them is never right: a loose box
+round a pair genuinely overlaps each tight box, so an IoU dedupe cannot separate
+them. You get one big rectangle and two small ones stacked on the same mattress
+— **39 zones over eight beds**, which is what this looked like before there was
+an order. Best evidence first:
+
+1. **`bed-filter`, whole plan** — one call to a segmenter trained on beds. The
+   primary path for every bed on every plan.
+2. **GPT, one bedroom crop** — the fallback, and the only thing GPT does with
+   beds now. It runs on a space the classifier called a bedroom and the whole-plan
+   pass left empty, and nowhere else.
+**The accent pass is not a third source, and used to be.** Its bed boxes no
+longer reach this list at all — not the chunking, not the no-light zones, not the
+sconce rule. It is a question about furniture in general, where a bed arrives as
+a side effect and its box only ever had to be roughly right, because all it was
+used for was picking a wall to hang a sconce on. Letting a box drawn to that
+standard compete with a measured one is how a single mattress ended up with a
+big rectangle and two small ones stacked on it. The count is still shown in the
+audit panel, as **accent pass (excluded)** — an exclusion you can see is a
+decision, an exclusion you cannot is a bug.
+
+Matched by `roomId`, which every per-room bed carries, so it is set membership
+rather than a point-in-polygon guess. The first version of this did guess by
+geometry, and it half-worked — the worst way for a filter to behave, because both
+sources survived and nothing said so.
+
+## Beds: one trained model, and a fallback
+
+**`bed-filter` is the bed detector.** One Roboflow workflow, one call, the whole
+sheet, no second opinion and no arbiter. On the FLOOR_PLAN_03 sample it returns a
+single box whose every edge is **within 5px of the hand-measured mattress** —
+6.0 × 6.6 ft at that plan's 40 px/ft — with the nightstands outside it. That is
+`tools/test-beds.mjs`, against a verbatim fixture of the real response.
+
+### What it replaced, and why there were three attempts
+
+Every previous arrangement was a way of compensating for a detector that could
+not resolve a bed on a whole sheet, and none of them fixed the resolution:
+
+| | why it went |
+|---|---|
+| `general-segmentation-api-4` asked for `classes=bed` | at ~17 px/ft a mattress is 45px and two twins are one smudge, so its boxes enclosed whole PAIRS |
+| Roboflow contested against GPT | Roboflow answered on **one of five** test plans — the one where the bed was 228×252px in frame. A contest with a silent side never reaches the judge |
+| two SAMPLES of GPT, contested and judged | better, but it bought confidence in an outline nobody trusted, at 2–3 calls per bedroom |
+
+A model that draws the mattress correctly on the first call makes all of that an
+expensive way to agree with itself. **The contest machinery is commented out, not
+deleted** — `contestFor`, `applyVerdict`, `computeBedFit`, `bedSets` and the
+superseded whole-plan pass are all intact. The pass sets `bedSets` to `null`,
+and every contested path is gated on it being non-null, so switching back on is
+one edit.
+
+### The one fallback, and its trigger
+
+**A space classified as a bedroom with no bed in it** is a contradiction between
+two answers already in hand, and it is the only thing that spends a GPT call.
+That room's crop — the one the classifier already built, so no extra render —
+goes to GPT at 700×700, which for a 13ft room is nearer **54 px/ft** against the
+whole sheet's 17. One call. No contest, no judge.
+
+A bedroom that has its bed does not come here. A space that is not a bedroom does
+not come here whatever the pass found. There is no plan-size branch: a threshold
+that skipped the whole-sheet pass on large plans made every bedroom empty, which
+made every bedroom get the expensive treatment, on a sheet where the cheap pass
+had not been allowed to try.
+
+> ### The class is `bed2`
+>
+> Not `bed`. It is the training project's second class, and nothing about the
+> workflow's name or purpose predicts it.
+>
+> `detectionsToZones` drops any prediction whose class is not in the wanted set.
+> On a general workflow that filter is what stops a sofa becoming a no-light
+> zone. On a workflow that answers exactly one question it is **a way to discard
+> the entire answer and report a plan with no beds on it** — and "the model found
+> nothing" and "we threw away everything the model found" look identical from
+> outside the function.
+>
+> So `detectBeds` passes `classes: []`, which disables the filter, and relabels
+> what comes back to `bed`. Everything that endpoint returns is a bed by
+> construction. The real payload is pinned as a fixture and a test asserts that
+> the old filter would have returned nothing from it, because this is exactly the
+> kind of thing that comes back silently.
+
+**The size gate did not go anywhere.** `plausibleBed` runs on the whole-plan
+answer and again in `detectedZones`. A better detector is not a reason to stop
+measuring what it returned — that gate is what caught the twin-pair boxes, it
+re-runs when the scale is corrected, and it costs nothing when the boxes are
+right.
+
+### The server log is bed-only
+
+`api/detect.js` and `api/accents.js` carry a `BED_LOG_ONLY` flag, on by default.
+Everything still runs; only bed work speaks. `task === 'beds'` is bed work by
+definition, so the new route is loud without needing a class check.
+
+The gate is keyed on the **request id**, not a module-level boolean, and that is
+not fussiness: door, room, type and furniture requests overlap and answer out of
+order, so a flag flipped by whichever request is in the handler would attribute
+one request's lines to another. Each request decides once on the way in and lands
+in a Set bounded at 64, because a handler with a dozen return paths has no good
+place to remember to forget an id.
+
+Set `BED_LOG_ONLY = false` to get everything back.
+
+> **And the first attempt at the per-room precedence crashed the app.** `bedsPerRoom` read `rooms`,
+> which threw *"Cannot access 'rooms' before initialization"* on load. The
+> temporal dead zone was only the symptom: `rooms` is the LAID-OUT plan and it
+> is computed from `zoneList`, which is computed from these very zones. A bed
+> moves the fittings around it, so the layout cannot be an input to the beds
+> without the beds being an input to themselves — reordering the declarations
+> would have swapped the crash for an infinite loop or a stale render. The
+> answer is that the beds never needed the layout, only the polygons: `outlines`
+> is plain state and `regionFromOutline` turns one into the same polygon the
+> beds pipeline already uses. **If a memo here wants `rooms`, that is the signal
+> to check whether it is upstream of the layout.**
+
+> **The thing that made this expensive was the silence.** Eleven detections
+> became zero with nothing on screen but `Bed zones 0` — indistinguishable from a
+> detector that found nothing, and the two want opposite fixes. The panel now
+> reports how many bed boxes were rejected and the commonest reason, so a gate
+> that eats a whole plan says so. Any threshold that can reject everything should
+> be able to account for itself.
+
 ## Marking up a plan
 
 One annotation is still read off a plan image (screenshot, scan, PDF export),
@@ -1324,7 +1503,16 @@ name comes back with every box, so `MASTER BEDROOM` arrives attached to the
 biggest bed, and when it finds nothing it says why in words — which is the only
 useful thing on the wire in that case, so its reply is relayed and shown.
 
-### A third model decides which of the two got it right
+### A third model decides which of the two got it right — SUPERSEDED
+
+> **This whole section is dormant.** Beds now come from the `bed-filter`
+> workflow in one call, with a single GPT crop as the fallback and no arbiter —
+> see **Beds: one trained model, and a fallback** above. Everything below still
+> exists in the code and is reachable only by switching the superseded
+> whole-plan pass back on. It is kept because the reasoning is the reasoning
+> that would apply again the day a second bed opinion is worth buying, and
+> because `contestFor`, `applyVerdict` and `computeBedFit` are all still there.
+
 
 `both` runs the two detectors and merges what they say. That is the right answer
 when they agree and quietly the wrong one when they do not, which is the case
@@ -1372,15 +1560,40 @@ regions* absorbs all of it. Whatever comes back, the rectangle that lands on the
 plan is one a detector measured. The worst case is that the wrong detector wins.
 There is no case where the zone is a rectangle nobody drew.
 
-**It is asked far less often than you would think.** Three of the four situations
-a room can be in are decided without a call:
+**Three of the four situations a room can be in are decided without a call:**
 
 | | |
 |---|---|
 | neither found a bed | nothing to judge |
 | only one found a bed | that answer stands — see below |
-| both found the same bed | not a disagreement. Same count, every box pairing above `agreeIou` (80%) |
+| both found the same bed | not a disagreement. Same count, every box pairing above `agreeIou` (**95%**) |
 | they genuinely differ | **this is the one that costs a call** |
+
+### Why `agreeIou` is 0.95 and not 0.80
+
+It was 0.80, and the reasoning was about cost: two runs tracing the same mattress
+land at 0.85–0.95, one that has taken in the bedside tables lands near 0.6, and
+0.80 sits in the gap between those two populations. Sound as far as it goes — and
+it buys the saving with the thing the box is FOR.
+
+**A bed box becomes ceiling that gets no light.** So a 0.85 match is not a
+rounding difference between two nearly-equal answers; at plan scale it is about a
+foot of ceiling, at the head of a bed, that one run wants dark and the other
+wants lit. That is a decision, and the judge exists to make exactly that decision
+with both pictures in front of it. Deciding it by threshold instead — silently,
+in favour of whichever run happens to be side A — was saving a call by guessing
+at the answer.
+
+At 0.95 only a genuinely identical reading settles itself. Everything else is
+asked about. It costs roughly one extra judge call per bedroom, and the `agreed`
+line in the log is now a much stronger claim when it appears.
+
+**Anything that reads this threshold must not reuse the dedupe one.** They look
+alike and mean opposite things: `agreeIou` asks "are these the same ANSWER, so
+that no one need choose", the 0.45 in `absorbBedRows` asks "are these the same
+MATTRESS, so that it is not listed twice". A room asked again legitimately
+returns a box at 0.5 against one already held — same bed, worth deduping, and
+nowhere near agreement.
 
 **An uncontested answer is taken as it stands.** The alternative — send the one
 overlay and ask "is this really a bed?" — is a different question with a
@@ -2803,11 +3016,52 @@ numbers nobody could estimate fall out of the drawing for free.
 `ROLE_BY_TYPE` — a model that mislabelled it would turn the wardrobe into a
 place to hang a sconce, and nothing on screen would say so.
 
+### Rule 1 takes its bed from the bed detector, and nowhere else
+
+**The accent pass does not decide where a bed is.** It is asked what furniture is
+in the room, and it answers about beds too, but that box is discarded before the
+rules run. `App.jsx` substitutes the **`bed-filter` bounding box** for that room —
+or, where bed-filter found nothing in a space the classifier called a bedroom,
+the box from the GPT bedroom crop. One furniture item per real bed.
+
+Two consequences, both intended:
+
+- **Two twins produce two symmetric pairs**, not one pair straddling both. The
+  substitution is per box, so the rule fires once per mattress.
+- **No detected bed means no sconces.** If neither bed pass put a bed in the
+  room, the accent pass's belief that there is one is not promoted to a
+  position. The room still gets its wardrobe strip and everything else; the bed
+  is not a bed until the bed detector says so.
+
+The reason is that the offset became a **measurement**. While a bedside sconce
+sat at `0.24` of the bed's own width, the bed box was a hint — near enough to
+pick the right wall, and nothing downstream cared about its edges. One foot from
+the mattress edge makes the box a dimension, and a dimension has to come from the
+thing that measures. A second, looser opinion about the same mattress competing
+with a measured one is how one bed became several stacked zones.
+
+### Why the bedside offset is one foot and not a fraction
+
+It was `bedsideOffsetFrac: 0.24` — about a quarter of a double bed's width,
+which is roughly where a nightstand sits. That keeps `accentPlace.js` unit-free,
+which was the point: it works in plan pixels and in feet without being told
+which.
+
+**But it makes the offset scale with the bed.** A 3ft single pulls its sconces in
+to 8.6 inches; a 6ft double pushes them out to 17. The thing being lit — a
+shoulder, a book, a nightstand — is the same size in both rooms. So it is now
+`bedsideOffsetFt: 1.0`, converted with `pxPerFt` at the call site, and
+`tools/test-accents.mjs` asserts that a 3ft bed and a 6ft bed get the same gap.
+
+The fraction survives as the fallback for a caller with no scale — a sconce in
+roughly the right place beats no sconce — and rule 3 (a basin) still uses a
+fraction, because a pair flanking a mirror really is proportional to the mirror.
+
 ### The rules are applied in code, and that is a repair
 
 The five house rules were in the prompt, stated to the model, and trusted:
 
-1. **a bed** — a sconce on both sides, as a symmetric pair
+1. **a bed** — a sconce on both sides, **one foot clear of the mattress**
 2. **a sofa** — nothing. Never a sconce beside a sofa
 3. **a bathroom basin** — a sconce on both sides, as a symmetric pair
 4. **a TV unit** — an LED strip, and only a strip. Never a sconce
@@ -3688,3 +3942,583 @@ loops, which are now simply ignored, and one of them (`nofan.png`) has no fan
 marker, so it is the one to check the "set the scale first" gate with. Plus
 `sample-2bhk.dxf` — a synthetic flat with door swings, dimension lines and
 furniture on their own layers.
+
+## The app around the editor: accounts, projects, and what gets kept
+
+Until now this was one screen. You dropped a file, you got a layout, and when you
+closed the tab it was gone — which is fine for a tool you are building and
+useless for a tool somebody works in. There are now five screens, one account
+system, and a database, and the interesting decisions are all about **what is
+worth storing and what is derived**.
+
+```
+/                    the promise, and the upload
+/login               an email and six digits
+/dashboard           every project
+/projects/:id        every plan in one project
+/plans/:id           the editor — what used to be the whole app
+```
+
+**The editor does not know Supabase exists.** `App.jsx` is three thousand lines
+of geometry and it stays a pure editor over a `File`: props in, callbacks out.
+`routes/Planner.jsx` is the only module that knows a plan has a row. That line is
+worth defending — the moment a `supabase.from(...)` appears inside a
+`useMemo` over the ceiling, the geometry stops being testable in Node, and
+`tools/` is twenty-five scripts that depend on it not being.
+
+**The upload comes before the sign-in, deliberately.** Asking for an email before
+showing what the app does is asking for trust nobody has yet; asking while a
+drawing is being read is asking at the only moment the answer is obviously worth
+it. So the file is held in memory across the login step (`pendingUpload.js` — a
+module variable, not localStorage, because a 30MB survey base64'd is both over
+quota and a copy of somebody's drawing left on a shared machine), and the moment
+a session exists it becomes a plan and the editor opens on it. A hard reload does
+lose it, and the login screen says so rather than pretending.
+
+**Email OTP, and the code rather than the link.** A magic link opens a *second*
+tab, and the drawing the user just dropped is in the first one's memory. Six
+digits typed into the tab that already holds the file keeps the upload alive.
+
+**The wordmark gave up the top-left corner.** On a screen you reach by choosing a
+plan inside a project, that corner has one job: say which plan this is and get
+you back out. So it is `← Back to Projects` and the plan's name, edited in place —
+a plan auto-named from a filename is a name nobody chose, and this is where
+anybody who cares about it is looking.
+
+### What is stored, and why it is three columns and not one
+
+A lighting layout is not the valuable artefact. The valuable artefact is the
+**pair**: what the segmenter proposed, and what a human then did about it. That
+is the whole reason `plans` looks the way it does.
+
+| column | what it is | written |
+| --- | --- | --- |
+| `editor_state` | every outline **as edited**, room types, no-light zones, ceiling objects, chunk picks, the accents that were rejected | on the autosave |
+| `design_json` | the finished layout in feet, in exactly the shape `exporters.toJSON` produces | on the autosave, once a layout exists |
+| `boq_json` | the schedule that was billed from it | with the design |
+| `stats` | six numbers, flat, so a list of eight plans never touches the jsonb | with everything |
+| `snapshot_path` | a PNG of the sheet | at milestones only |
+
+`design_json` is the **same shape as the JSON export** on purpose. A second
+serialisation of the same drawing would drift from the one people actually read
+inside a month.
+
+And `plan_revisions` is append-only, and it is the corpus rather than a backup.
+The columns above are the working copy, overwritten all day. A row is appended
+here only at the moments that mean something — `outlines` (the spaces were
+confirmed), `design` (the pipeline finished), `export` (somebody took it away,
+which is the strongest available signal that a design was considered finished).
+An autosave never writes one, or the table would be 95% pointer-moves.
+
+**What is deliberately not stored:** anything transient (drags, ghosts, hovers,
+the busy string), anything derived (`rooms`, the layouts, the BOQ, px/ft — all
+memos over what *is* stored), and anything huge and re-creatable (the accent
+detector's room crops, which are base64 images that would multiply the row size
+by ten for something re-made in a second).
+
+### The autosave, and the two bugs in it that were not obvious
+
+Debounced at 1.5 seconds of quiet, coalescing to the **latest** payload rather
+than a queue: an intermediate state halfway through dragging a strip has no
+value, only where it ended up does. Flushed on `beforeunload` and on unmount,
+which is what catches "Back to Projects" clicked half a second after the last
+nudge.
+
+Two things about it are load-bearing and neither is visible in the happy path:
+
+**The state object must be a memo with exact dependencies.** `onPersist` marks
+the route dirty, which re-renders the editor. If the state object were built
+fresh each render, the effect would fire again on that re-render — and that is a
+loop that writes to the database forever. Identity stability *is* the termination
+condition.
+
+**And the restore gate has to be state, not a ref.** Effects run in declaration
+order in one commit. The restore effect is near the top of the component and the
+autosave effect is near the bottom, so a ref set by the first is already true
+when the second runs *in the same pass* — while the serialised state still holds
+the pre-restore blank, because the setters have only been scheduled. The autosave
+would then write an empty plan over the saved one. A state flag cannot do that:
+it only reads true in a later render, which is the render that carries the
+restored values. There is a test for the round trip
+(`tools/test-plan-state.mjs`), and its last section walks the writer's own keys
+and asserts every one of them reaches a setter — because a field added to one
+half and forgotten in the other fails **silently**, and would not be noticed for
+weeks.
+
+**A reopened plan does not re-run the detectors.** Four model calls, real money,
+and the results would overwrite the corrections the user made last time. Each of
+the four auto-effects is guarded on `restoring.current && nonce === 0`; a
+non-zero nonce means the user pressed a re-run button, so it goes through.
+
+### Realtime, and the column list that makes it viable
+
+`projects` and `plans` are published, because the dashboard and the project page
+are lists that change from somewhere else — the autosave in another tab, a second
+window, a phone. Polling those is a request every few seconds forever for a
+change that happens twice an hour.
+
+**The publication carries a column list, and that is the whole trick.** `plans`
+holds three jsonb columns that are routinely megabytes, and the autosave writes
+them every couple of seconds while somebody drags a fitting. Replicating the
+whole row would push that entire payload down every open socket on every
+keystroke — the exact opposite of the performance this is for. So only the columns
+a card is drawn from are published; a client that needs the geometry fetches the
+row it is opening. (PG 15+, which Supabase is well past.)
+
+One consequence, and it changes the client: with the default replica identity, a
+`DELETE` event carries only the primary key — no `project_id`. A subscription
+filtered on `project_id` therefore never sees a deletion and the list keeps
+showing a plan that is gone. `replica identity full` would fix it and put the
+jsonb back on the wire, so instead `subscribePlans` is **unfiltered** and relies
+on RLS to scope the stream. A studio has tens of plans, not millions.
+
+### Running the migrations
+
+One file: `supabase/migrations/0001_init.sql`. Paste it into the SQL editor, or
+`supabase db push`. It is idempotent — every create is `if not exists` or dropped
+first — so re-running it after an edit is safe. It creates:
+
+- `profiles`, with a trigger on `auth.users` so the row exists before the client
+  could ask for it. Doing that from the browser after sign-in is the version that
+  silently fails, because the OTP flow can land a session in a tab that
+  immediately navigates.
+- `projects`, `plans`, `plan_revisions`, with the indexes each list actually
+  sorts by, and a partial index on `status = 'ready'` for the query a training
+  export starts with.
+- Triggers: `updated_at` maintenance; `plans.owner` taken **from the project**
+  rather than from the client, which is what lets every RLS policy be a cheap
+  `owner = auth.uid()` instead of a join; and a project's `updated_at` following
+  its plans, so the dashboard sorts by work rather than by renames.
+- One exemption in those triggers worth knowing about: **opening a plan is not
+  editing it.** `last_opened_at` moves on every open, and if that bumped
+  `updated_at` the dashboard would re-sort itself because somebody glanced at
+  something.
+- RLS on all four tables. The anon key ships in the browser bundle by design;
+  these policies are the actual security boundary, so read them as code and not
+  as configuration. `plan_revisions` has no update or delete policy, which is how
+  "append-only" is enforced — RLS denies what no policy permits, so there is
+  nothing to remember not to do.
+- Storage policies on the existing public `uploads` bucket. Paths are
+  `<user-id>/<plan-id>/…` and the first segment *is* the security model: a policy
+  compares `folder[1]` against `auth.uid()`. The bucket being public is a
+  deliberate, limited trade — it is what lets a DXF be re-fetched and a snapshot
+  shown in an `<img>` without minting signed URLs on every card. If drawings are
+  ever confidential, make the bucket private and swap `publicUrl()` in
+  `src/lib/supabase.js` for `createSignedUrl()`; that is the only call site.
+
+### Two config changes the router forced
+
+**`base: '/'` in `vite.config.js`, not `'./'`.** A relative base emits
+`./assets/index-abc.js`, which resolves against the *current path*. Fine for one
+screen served from the root; fatal the moment there are real URLs — open
+`/projects/8f2c…` directly and the browser asks for `/projects/assets/…` and the
+app is a white page with two 404s. The font URLs are unaffected: they are relative
+imports from inside `src/`, hashed and rewritten by the bundler.
+
+**`vercel.json`, with the API carved out.** Every path that is not a real file and
+not `/api/*` serves `index.html`, or a refresh on a deep link is a 404 from the
+CDN. The negative lookahead is load-bearing — `/api/detect` and `/api/accents` are
+functions and must not be handed the HTML shell.
+
+### The environment, and the one place VITE_ is correct
+
+Everything else in this repo that touches a key is server-side and deliberately
+unprefixed. These two are the opposite — they are designed to ship in the bundle:
+
+```
+VITE_SUPABASE_URL=https://<project-id>.supabase.co   # or VITE_SUPABASE_PROJECT_ID
+VITE_SUPABASE_ANON_KEY=<the anon / publishable key>
+```
+
+`SUPABASE_SECRET_KEY`, already in `.env.local`, bypasses RLS entirely and must
+never be given a `VITE_` prefix.
+
+### When the login screen sits on "Sending…"
+
+Two very different bugs share that symptom, and `node tools/check-supabase.mjs
+you@studio.com` tells them apart in about ten seconds. It bypasses the app
+entirely — plain `fetch`, no supabase-js, no React — and prints the status and
+the timing of the exact call `signInWithOtp` makes, plus whether the anon key's
+project ref actually matches `VITE_SUPABASE_URL` (a mismatch 401s everything with
+a famously unhelpful message).
+
+**If that call hangs there too, it is not the app.** `signInWithOtp` waits for
+the email to be *sent* before it answers, so a wedged or throttled mailer leaves
+the HTTP request pending — and supabase-js ships no timeout, which is why the
+button used to sit there forever. Every auth call now has a 30-second ceiling and
+a sentence explaining what to look at; `Logs → Auth` in the dashboard will name
+the actual failure. The built-in mailer allows only a handful of emails an hour,
+so custom SMTP is the fix for anything beyond testing.
+
+**Three settings that break this flow specifically:**
+
+- **Authentication → Emails → Magic Link must contain `{{ .Token }}`.** The
+  default template sends a *link*, not a code. It will appear to work — an email
+  arrives, nothing is broken — and there will be no six digits to type into the
+  form. This is the one people lose an evening to.
+- **Email provider enabled**, under Authentication → Providers.
+- **New sign-ups allowed.** `signInWithOtp` is called with
+  `shouldCreateUser: true`, because the whole point is that somebody who just
+  dropped a drawing does not have an account yet. With sign-ups disabled, a
+  first-time email is rejected outright.
+
+**"Error sending confirmation email"** is the next station along, and it is good
+news: the request reached Supabase and Supabase answered. Its mailer then failed,
+and it reports every SMTP failure through that one generic string, so the message
+itself tells you nothing. The real error is in **Logs → Auth**, and it is almost
+always one of four things: the sender address is not verified with the SMTP
+provider (Resend and SendGrid both refuse unverified domains outright); the
+username is wrong in a provider-specific way (`resend` for Resend, `apikey`
+literally for SendGrid, with the API key as the password); the port is wrong (465
+or 587 — 25 is blocked); or the email template has a Go-template syntax error,
+which is worth suspecting first if the template was just edited. `{{ .Token }}`
+with the spaces is valid; `{{ Token }}` or an unclosed brace fails the whole send.
+
+**The SMTP settings that actually work with Resend**, since a 535 cost an hour
+here: host `smtp.resend.com`, port `465`, username **`resend`** — the literal
+word, the same for every account — and the password is the API key beginning
+`re_`. The 535 is what you get for putting the email address or the API key in
+the username field, which is the obvious thing to do and wrong.
+
+One more, further down the same road: Resend will not send *from* an unverified
+domain. Until `designopolis.co.in` has its DNS records verified in Resend, set
+Supabase's sender address to `onboarding@resend.dev`, which works immediately but
+delivers only to the Resend account owner's own address — enough to test the
+whole login flow, not enough to sign anybody else in.
+
+## PDFs: rasterised, not parsed — and why that is not the DXF route
+
+A PDF is vector data, so the obvious move is to treat it like a DXF: pull the
+line work out, skip the detector, get exact geometry for free. That is a trap,
+and the reason is worth stating because it looks like the same problem and is not.
+
+**A DXF carries layers and units. A PDF carries neither.** The DXF path is not
+"vector data, therefore better" — it works because the file *names things*. It
+says this line is on `WALLS`, that one is on `DIM`, and one drawing unit is one
+millimetre. That naming is the entire value: `classifyLayers` reads it, the wall
+stroke weight is applied to it, and the scale comes out of the header without
+anyone measuring anything.
+
+A PDF has none of that. It is a picture that happens to be made of paths. A wall
+is two strokes; a dimension line is two strokes; a hatch is four hundred strokes;
+a title block is a hundred more. Nothing in the file distinguishes any of them.
+Extracting the paths would give us a *worse* image than rendering the page does —
+same pixels, minus the antialiasing, plus a parser to maintain.
+
+**And the scale is not in there either.** A page states its size in points, which
+is the size of the paper. An A1 sheet plotted at 1:50 and the same sheet at 1:100
+are identical files as far as the page box is concerned. Deriving feet from paper
+size would produce a plausible number that is wrong, which is the worst possible
+kind — a wrong scale still looks like a plan. So a PDF goes through the same
+door-width measurement an image does.
+
+So: **render page 1 at 2400px on the long edge, and from that moment it is a
+raster plan.** The room segmenter, the furniture pass, the door detector, the
+tracer, the planner — none of them know or care. That is the payoff of not
+building a third pipeline.
+
+Three details that are load-bearing:
+
+- **White is painted under the page before rendering.** A PDF page's background
+  is nothing at all, and transparent becomes *black* the moment it is encoded as
+  JPEG, handed to a detector, or composited by a model's preprocessing. Every
+  plan in this app is dark ink on light paper; this makes that true of PDFs.
+- **2400px is deliberately not "as large as possible."** Every detector
+  downscales its input anyway, the strokes are already sub-pixel crisp well below
+  that, and a 6000px render of an A0 sheet is 140MB of RGBA for no extra line
+  detail.
+- **The worker is bundled, not fetched.** pdf.js parses off the main thread;
+  letting it default would reach for a version-matched file over the network, and
+  this app is meant to work on a site-office laptop with no connection.
+
+**A drawing set asks which sheet.** One page opens silently. More than one and
+you get thumbnails — because six sheets of which one is the plan and the rest are
+elevations, a section and a door schedule is the normal case, and silently taking
+page 1 would light the title block and then report finding no rooms as if the
+drawing were at fault. The thumbnails come from the same render path at a twelfth
+of the size, so what is previewed is exactly what will be used. The chosen page is
+saved in `editor_state.pdfPage` and read straight off the row when the plan is
+reopened, so a set never asks twice.
+
+`source_kind` gains `'pdf'` (migration `0002_pdf_source.sql`). The editor turns
+the file into a raster, but the object in the bucket is a PDF with twenty possible
+pages, re-rendered on every open — recording it as `'raster'` would be a lie in
+the one column whose job is to say what arrived.
+
+## The upload is a background job
+
+The first version blocked: drop a drawing, watch "Uploading…", get taken to the
+editor once Supabase had the whole file. That is the wrong shape for this app, and
+not by a little.
+
+**Everything the editor does first is local.** The File is already in memory. A
+DXF is parsed in the browser; a PDF is rendered in the browser; a raster is
+decoded in the browser. The room segmenter, the door pass and the furniture pass
+each send their own downscaled snapshot to their own endpoint and never touch the
+bucket. So the upload is not a prerequisite for anything the user is about to do —
+it is durability, running alongside. Blocking on it meant watching a spinner while
+a 30MB survey crawled up, when the drawing could have been on screen and
+segmenting a second after the drop.
+
+**The plan id comes from the client**, which is what makes that possible. The
+editor needs a URL, a URL needs an id, and waiting for the database to mint one is
+a round trip before anything can be drawn. `crypto.randomUUID()` is exactly as
+unique as `gen_random_uuid()`; the server was only adding latency.
+
+So `lib/uploads.js` owns the sequence as a job, the pages navigate on the next
+line, and `createPlanFromFile` — which did all three steps in one await — is gone.
+
+**Two milestones, not one, and the distinction is load-bearing.** The ROW appears
+after one fast insert; from that moment the autosave can write, so the user's
+tracing is being persisted while the drawing itself is still going up. The FILE
+lands whenever it lands, and only matters for reopening the plan later. A job
+reports `rowReady` separately from `done`, and the only place the editor route
+blocks is a write, which awaits `rowReady` — otherwise the first edits of a fast
+tracer would hit an UPDATE against a row that does not exist yet and be reported
+as a save failure.
+
+They are also reported separately in the top bar, because they fail
+independently and mean different things: the autosave protects the *work*, the
+upload protects the *drawing*. "Uploading drawing…" beside "Saved" is a normal,
+honest state. A failed upload leaves a Retry pill and does not touch the saved
+work.
+
+**A module-level registry holds the jobs**, which is deliberate rather than lazy:
+the job must survive the navigation from dashboard to editor, and must hand the
+editor the very File the user chose — which cannot go in a URL and must not go to
+the bucket and back down again. React state cannot span that; a module singleton
+can, because the navigation is a route change and not a page load. Finished jobs
+are released when the editor unmounts, or a long session ends up holding every
+drawing the user has opened.
+
+### One bug that was hiding behind this
+
+"Stuck on uploading" turned out to have two causes, and only one of them was the
+blocking design. The other: `uid()` called `supabase.auth.getUser()`, which is
+**not** a local read — it posts the JWT to `/auth/v1/user` for validation and takes
+the auth lock while doing so. Every upload therefore began with a network round
+trip that could queue behind any other auth call, and when it hung it hung *before
+a single byte had been sent*, with the button reporting progress on a request that
+had not started. `getSession()` reads what is already in memory; the token it
+returns is signed, and the server verifies it on the next request anyway, which is
+the only place verification actually matters.
+
+`owner` columns are no longer sent from the client at all — `projects.owner`
+defaults to `auth.uid()` and the `plans`/`plan_revisions` triggers derive theirs
+from the parent row, which is the only source that cannot disagree with the row it
+belongs to.
+
+## Three changes: the fan detector goes, an admin overlay, and a second look for empty bedrooms
+
+### The red-circle fan detector is gone
+
+It scanned the raster for round red blobs, called each one a ceiling fan, and for
+a while used their blade circles as the drawing's **ruler**. Both halves are
+retired: the scale comes from a door, and a fan is placed by hand from the ceiling
+palette, in feet, like every other object up there.
+
+It was deleted rather than switched off because it guessed from **colour**, which
+is the least reliable signal on a drawing — a red dimension leader, a north arrow,
+a revision cloud, a hatched WC are all round-ish and red-ish on some office's
+sheet. A detector nobody trusts still fills a state array that eight other things
+read from, and it silently placed obstacles the user never asked for. Gone with
+it: `lib/detect.js` (moved to `_to_delete/`), `FAN_DETECT`, `scaleFromFan` /
+`scaleFromFans`, the `fans` and `fanReason` state, the "Quick-place fans" button
+(the ceiling palette already places fans properly, in feet, with a blade sweep),
+and the second fan list the BOQ had to add up.
+
+**What deliberately stays** is everything downstream: `fanClearance`, the
+chunker's preference for holding an obstacle clear, `cellIsAwkward`. Those never
+cared where an obstacle came from — `planner.js` calls them all "fans" because
+that was the first kind it met, and renaming forty call sites would be churn with
+no behaviour attached.
+
+### An admin overlay for role 1
+
+`profiles.role === 1` marks an owner of this app rather than a user of it, and
+unlocks one checkbox at the foot of the right panel: **show what was identified**.
+It draws the task surfaces the detector marked and the bed zones the judge settled
+on, plus counts of how many were re-asked and judged.
+
+Both of those marks were on the drawing once and were deliberately removed —
+working, drawn over a client's sheet. This does not undo that; it gates it behind
+a role. The overlay is **magenta**, the only place in this app that breaks the
+ink-and-one-blue rule, and that is the point: it must be unmistakable in a
+screenshot that what is being looked at is working rather than a deliverable.
+
+The bed zones are the interesting half. They are the one reading with no visible
+consequence anywhere else: the planner obeys them — no downlight lands over a
+mattress — but `drawnZones` excludes them, so a wrong bed is invisible except as
+an unexplained hole in the grid.
+
+**This is a UI gate and nothing more.** `role` arrives through RLS so a user can
+only read their own, but a determined person can flip a boolean in a console — and
+the answer is that it reveals nothing they don't already have, since the overlay
+draws detections already in that browser's memory. Anything that must actually be
+restricted belongs in a policy.
+
+### A bedroom with no bed is a contradiction, so we ask again
+
+The bed pass runs once, on upload, against the whole sheet downscaled to 1600px.
+That is the right default — one call for however many bedrooms there are, answered
+before anyone has traced anything. But on a six-bedroom villa each mattress is
+left with a few dozen pixels and **both** detectors quietly drop beds: Roboflow
+returns nothing above threshold, and GPT is looking at a picture where the bed is
+genuinely hard to see.
+
+Once a space has been classified, "no bed in this bedroom" stops being a result
+and becomes a failed detection — and it matters more than any other miss, because
+a bed is the one piece of furniture that changes the ceiling. Nothing goes over
+it; whoever is lying there looks straight up into the fitting. A missed bed is a
+downlight in somebody's eyes.
+
+So there is a new pipeline step, **2b**, after the classification and before the
+accents: for every space whose type `expectsBed` (bedroom, guest room, suite —
+the flag lives in `roomTypes.js` with the vocabulary it belongs to) and which came
+back empty, send the **room crop** to both providers again, asking only for beds.
+
+Three things make it cheap and consistent rather than a second system:
+
+- **The crop already exists.** The classifier built it and the accent and task
+  passes reuse it; this reuses the same one, so the re-ask costs no extra canvas
+  render or JPEG encode.
+- **The thresholds land in the right frame.** `detectionsToZones` measures area
+  fractions against the image it is given, so on a room crop a bed is judged as a
+  share of the *room*. That is why the whole-plan pass has to allow up to 60% and
+  this one does not have to fight it.
+- **The same judge settles it.** `contestFor` decides whether the two readings
+  differ enough to be worth asking about; only then does the judge see the two
+  pictures, exactly as in the first pass. Both empty is a real answer — some
+  rooms labelled bedroom are studies with a desk — and costs nothing. Provider is
+  forced to `both` regardless of the user's setting, since the whole value here is
+  a second opinion and one detector agreeing with itself is not one.
+
+Verdicts from this step carry `refound: true`, which is the flag the admin panel
+counts and the single most interesting thing about the row for anything training
+on this later: the whole-plan pass missed this bed and a crop found it.
+
+## The bed pass, and the day it turned out not to be a vision problem
+
+Ten-bedroom resort sheet. Eight beds found out of fifteen. The obvious suspects
+were all wrong — it was not resolution, not the colour of the drawing, not the
+title block eating pixels, and not the models being weak. The console said so
+plainly once we looked at it properly.
+
+**The bed route was starving on output tokens.** `max_completion_tokens` on a
+reasoning model is a budget for reasoning *plus* output, and the reasoning is
+invisible. The bed route was capped at 1500 and the furniture route at 3000 — and
+on the *same room crops, the same model, the same minute*, the furniture route
+found twelve beds while the bed route found none in eight of ten rooms and
+returned an empty `content` with a 200 OK. Every parser downstream reads that as
+"no beds", which is indistinguishable from a room with no bed in it.
+
+The proof is the latency correlation, and it is exact. The two bed calls that
+answered took **13s and 20s** — the least reasoning, so budget left to speak.
+Every call that came back empty took **21–26s**. In the furniture route at 3000,
+the only two empty replies in the whole batch were the two slowest calls, at
+**47s**. In both routes, every silent answer was a slow one.
+
+So every cap is now 8000 (`MAX_OUT`, stated once per module with the reasoning).
+**A cap is a ceiling, not a spend** — nothing is billed for headroom, so the
+number belongs far above the largest plausible reply rather than tuned close to
+it. Tuning it close is not a small inefficiency; it is a silent wrong answer.
+
+**And Roboflow was never in the bed game at all.** Every call to the segmentation
+workflow returned `predictions: []` with `"image":{"width":null,"height":null}`,
+whole sheet and room crop alike — including a 63KB single-room crop where GPT
+found four beds at 0.95 in the same request. So it is not a small-object problem.
+Both "visualisation" images it returns are byte-for-byte the same length as each
+other, which means nothing was drawn on either: the model block produced nothing.
+The prime suspect is the `classes` parameter — we send the string `"bed"` where a
+text-prompted block (Grounding DINO, YOLO-World) expects the list `["bed"]`.
+
+It is deliberately still in the pipeline: on a clean drawing it is excellent, and
+on this same sheet it returned 29 rooms at 0.94–0.97 and 13 doors at 1.00 in one
+to seven seconds. It is superb at what it is trained for. But until that workflow
+is fixed, "two readings and a judge" has been running on one detector — which is
+also why the judge had never once fired.
+
+### Big plans are asked one bedroom at a time
+
+Over `LARGE_PLAN_SQFT` (3000 sqft of **built area** — the sum of the spaces, not
+the sheet, so the same building on A1 and A0 is the same size) the whole-sheet bed
+answer is not trusted at all, and every bedroom is asked about on its own crop.
+Under it, the cheap path stands: the whole-sheet pass runs on upload and only the
+bedrooms it left empty get a second look.
+
+One step, two scopes, decided by the size of the plan rather than by a flag
+anybody sets. On a large plan a bedroom is re-asked *even if the first pass
+claimed to find something there*, because at that scale a hit is as likely to be a
+mis-attributed neighbour as a real bed.
+
+Which raises the last fix: **beds are attributed by containment, not by which crop
+found them.** A crop carries a margin, so a room's picture routinely includes its
+neighbour's bed — that is how one call came back with four beds labelled ROOM 8
+and ROOM 9. Unattributed, they double-count the neighbour and let a room test as
+"has a bed" on somebody else's mattress. Fresh finds are also deduped against
+what the room already holds at the same iou 0.45 the whole-sheet merge uses.
+
+The upload-time pass still runs once on a first upload even for a big plan, and
+that is deliberate rather than an oversight: the built area is not knowable until
+there is a scale, which on a raster means until a door has been measured — after
+that effect has run. One wasted call on the first upload beats a bed pass that
+waits for the tracer on every plan, large or small. Re-runs and reopened plans
+skip it correctly.
+
+## "Randomly logged out" was our bug, and the freeze underneath it was the lock
+
+Two faults stacked, and the visible one was ours.
+
+**The logout.** The initial session read was wrapped in a 12-second ceiling, and
+its catch did `setSession(null)` — on the reasoning, written in the comment at the
+time, that a failed read was "true enough" to treat as signed out. It is not true
+at all. It turned a slow network into a logout while a perfectly good session sat
+in localStorage. A read that does not answer means *we could not find out*, and
+those are completely different facts.
+
+So there are three states now, not two:
+
+| state | what the app does |
+| --- | --- |
+| signed in | render |
+| signed out — an actual `SIGNED_OUT` event | go to /login |
+| **cannot tell**, and storage holds a session | say "Reconnecting", offer a retry |
+
+Only `SIGNED_OUT` and `USER_DELETED` may clear the session. Nothing else — not a
+timeout, not a network error, not a hung lock. And `onAuthStateChange` is now
+subscribed *first* and treated as the bootstrap, since supabase-js fires it with
+`INITIAL_SESSION` once it has read storage; `getSession()` is only a backstop
+that can add a session but never remove one.
+
+**The freeze.** supabase-js serialises auth calls behind a Web Lock so two tabs
+cannot refresh one token at once. Good idea, one nasty failure mode: if the holder
+never finishes, the lock is never released and every later auth call waits on it
+*forever* — not slowly, forever, with no error. `getSession()` hangs;
+`signInWithOtp()` queues behind it and hangs too. Which is exactly what the
+Supabase logs showed: `/auth/v1/token` preflighted and then nothing, and every
+auth call afterwards silent.
+
+The usual trigger is a tab the browser put to sleep mid-refresh — Safari is
+especially quick to suspend a background tab — so the symptom is "I came back to
+a tab I left open and it had logged me out."
+
+Two changes make it survivable. `softLock` bounds the wait: if the lock cannot be
+taken in 4 seconds it runs unlocked and says so in the console. What that gives up
+is cross-tab serialisation — two tabs could try to refresh at the same moment and
+one could present an already-used refresh token, which Supabase tolerates with a
+grace window. A rare retry is a much better failure than a permanent freeze. And
+returning to the tab is now itself the retry: `visibilitychange` and `online` call
+`refreshSession()` when the state looks stalled.
+
+**And one dev-only cause worth knowing.** The client is now stored on `globalThis`
+rather than at module scope, because Vite's HMR re-evaluates the module whenever
+anything it imports changes — and a second `createClient` means a second
+GoTrueClient competing for the same storage key and the same lock as the first.
+Two clients fighting over one lock produces the identical freeze, and only on a
+machine running the dev server. If the console ever prints "Multiple GoTrueClient
+instances detected", that global has stopped working.
+
+`signOut` is the mirror image of all this: it is the one place where clearing the
+session is correct, so it is bounded at 8 seconds and clears local state whether
+or not the network confirms. A "Log out" that leaves you looking signed in is its
+own kind of broken, and on a shared machine it is worse than that.

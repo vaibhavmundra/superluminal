@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "//": "SPA FALLBACK, WITH THE API CARVED OUT. Every path that is not a real file and not /api/* serves index.html, because /projects/:id and /plans/:id exist only in the client router — without this, a refresh on a deep link is a 404 from the CDN. The negative lookahead is load-bearing: /api/detect and /api/accents are serverless functions and must not be handed the HTML shell. Vercel checks the filesystem before rewrites, so /assets/* still resolves to the hashed bundle.",
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

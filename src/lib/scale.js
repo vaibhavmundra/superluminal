@@ -38,22 +38,15 @@ export const REFERENCES = [
   { id: 'custom',    group: 'Other',  label: 'Custom length…',                  ft: null },
 ];
 
-export function scaleFromFan(fan, sweepFt = 3.94) {
-  if (!fan || !fan.r) return null;
-  return (fan.r * 2) / sweepFt; // px per foot
-}
-
-/**
- * With several fans on the plan, take the MEDIAN of the per-fan scales. They
- * are the same fitting, so the spread is measurement noise — the median throws
- * out a marker drawn sloppily without averaging its error into the result.
- */
-export function scaleFromFans(fans, sweepFt = 3.94) {
-  const vals = (fans || []).map((f) => scaleFromFan(f, sweepFt)).filter(Boolean).sort((a, b) => a - b);
-  if (!vals.length) return null;
-  const m = Math.floor(vals.length / 2);
-  return vals.length % 2 ? vals[m] : (vals[m - 1] + vals[m]) / 2;
-}
+// scaleFromFan / scaleFromFans — REMOVED WITH THE DETECTOR THAT FED THEM.
+//
+// The idea was sound and the input was not: a ceiling fan has a standard blade
+// sweep, so a fan's drawn diameter is a ruler. But it required FINDING the fan,
+// which meant trusting round red blobs on somebody else's drawing — and a wrong
+// ruler is the worst failure this app has, because every room comes out the
+// wrong size while still looking exactly like a plan. A door is standard too,
+// and asking a person to point at one is a question anybody can answer
+// correctly. See doors.js and the note in settings.js.
 
 export function scaleFromReference(pixelLength, realFeet) {
   if (!pixelLength || !realFeet) return null;

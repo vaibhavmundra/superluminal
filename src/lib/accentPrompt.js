@@ -42,6 +42,32 @@
 
 import { extractJson, DEFAULT_MODEL } from './openaiDetect.js';
 
+/**
+ * THE OUTPUT CAP, AND WHY IT IS 8000 FOR A REPLY THAT IS OFTEN 200 TOKENS LONG.
+ *
+ * `max_completion_tokens` on a reasoning model is a budget for REASONING PLUS
+ * OUTPUT, and the reasoning is invisible. Set it to a number that looks generous
+ * for the answer and the model thinks its way through the whole allowance, emits
+ * nothing, and returns 200 OK with an empty `content`. Every parser downstream
+ * reads that as "found nothing" — which is indistinguishable from a plan with no
+ * beds in it.
+ *
+ * WE WATCHED THIS HAPPEN. A ten-bedroom resort sheet: the bed route (capped at
+ * 1500) returned no beds on eight of ten room crops, and the furniture route
+ * (capped at 3000) found the beds in those same crops on the same model. The
+ * failures correlated perfectly with LATENCY — the calls that answered took 13
+ * and 20 seconds, every call that came back empty took 21 to 26, and in the
+ * furniture route the only two empty replies were the two slowest of the batch
+ * at 47s. Slower means more reasoning; more reasoning means the budget is spent
+ * before the answer starts.
+ *
+ * A CAP IS A CEILING, NOT A SPEND. Nothing is billed for headroom, so the number
+ * should be far above the largest plausible reply rather than tuned close to it.
+ * A cap that occasionally truncates is not a small inefficiency here — it is a
+ * silent wrong answer.
+ */
+const MAX_OUT = 8000;
+
 export { DEFAULT_MODEL };
 
 export const ACCENT_TYPES = [
@@ -132,11 +158,25 @@ where 0,0 is the top-left corner and 1,1 is the bottom-right. Answer in
 fractions, not pixels — you do not need to work out any real-world size or
 count any pixels. Just the four edges.
 
-BOX THE WHOLE PIECE, all four sides of it. Downstream the box's own extent is
-used to work out how long a fitting runs and where either end of it falls, so a
-box that clips half the wardrobe produces a fitting half the length of the
-wardrobe. Err generous rather than tight — a box slightly too big is fine, a box
-that stops short is not.
+HOW TIGHT THE BOX SHOULD BE DEPENDS ON THE PIECE, because the boxes are used
+for two opposite purposes.
+
+For a WARDROBE, a TV UNIT or a SOFA: box the whole piece, all four sides. The
+box's extent decides how long a fitting runs and where either end of it falls,
+so a box that clips half the wardrobe produces a fitting half the length of the
+wardrobe. Err generous rather than tight.
+
+For a BED: box the MATTRESS ONLY, as tightly as you can. Not the side tables or
+nightstands, not the bench or blanket box at the foot, not the rug under it, not
+the circulation space around it. The four edges of the mattress and nothing
+else. This box becomes a piece of ceiling that is kept clear, so every inch
+of it that is not bed is ceiling given up for no reason.
+
+ONE BOX PER BED. If the room has two beds — twins side by side, or a pair in a
+hotel room — return TWO boxes, one for each mattress, with the gap between them
+left out. Never one box around both. A pair boxed as one is the single most
+common way this goes wrong, and it is always wrong: the floor between two beds
+is ordinary floor, and the ceiling over it is ordinary ceiling.
 
 BE WILLING TO ANSWER. If a rectangle against a bedroom wall is long, shallow and
 about the size of a wardrobe, it is a wardrobe — say so with a confidence that
@@ -161,7 +201,7 @@ Return ONLY a JSON object. No prose, no markdown fence, no explanation.
 // --- the request ------------------------------------------------------------
 
 export function buildAccentRequest({ plan, room = null, ceilingFt = null,
-                                     model = DEFAULT_MODEL, maxTokens = 3000 } = {}) {
+                                     model = DEFAULT_MODEL, maxTokens = MAX_OUT } = {}) {
   if (!plan?.base64) throw new Error('No plan image to look at.');
   return {
     model,

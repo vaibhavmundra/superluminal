@@ -135,7 +135,7 @@
      not optional anywhere a column of numbers has to be read down; see the rule
      below. `--mono` stays as a name so the twenty-odd rules that ask for it do
      not all have to change, and it now resolves to the app face. */
-  --mono:'Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --mono:'The Neue Montreal','Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
 
   /* --- WEIGHT, STATED ONCE.
      It was stated NOWHERE, which is the bug: `body` set family, size,
@@ -158,6 +158,19 @@
 
   --r:6px;                  /* the radius. One value, and a larger one for cards. */
   --r-lg:10px;
+
+  /* THE FIELD HEIGHT, STATED ONCE — and it applies to the PAGES, not to the
+     editor. A form somebody meets once (an email, a six-digit code, a project
+     name) wants a generous target: it is the only thing on the screen, it is
+     often typed on a laptop trackpad in a hurry, and 48px is the size a control
+     has to be before it stops feeling like a footnote.
+     
+     THE EDITOR IS THE OPPOSITE CASE and keeps its own smaller fields. Its panel
+     is 340px holding thirty controls, and a dense instrument panel is a
+     deliberate choice there — see the design language at the top of this file.
+     Two different jobs, two different sizes, and the split is by CONTAINER so
+     neither can quietly drift into the other. */
+  --field-h:48px;
   --shadow:0 1px 2px rgba(0,0,0,.04);
   --shadow-pop:0 8px 30px rgba(0,0,0,.12);
 }
@@ -206,21 +219,15 @@ table.boq td,table.boq th{font-variant-numeric:tabular-nums}
    radial gradient and a circle, and an SVG of that is smaller than the PNG and
    takes the ink colour with it. */
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
-.mark{
-  width:19px;height:19px;flex:0 0 auto;border-radius:50%;
-  /* THE FAVICON, IN CSS. It is a lit aperture: a bright disc in a dark field
-     with the glow living in the gap between them. Two radial stops do the
-     falloff, which is smaller than the PNG, sharp at any pixel density, and
-     inverts cleanly if this ever gets a dark mode. */
-  background:
-    radial-gradient(circle at 50% 50%,
-      #ffffff 0 30%,
-      rgba(255,255,255,.72) 38%,
-      rgba(255,255,255,.26) 48%,
-      rgba(255,255,255,.06) 60%,
-      transparent 72%),
-    var(--ink);
-}
+/* `.mark` — THE CSS LIT APERTURE — IS GONE, ON PURPOSE.
+   
+   It was the favicon's artwork drawn a second time and used as the logo in four
+   places. That conflates two different jobs: a favicon is a 16px identifier that
+   has to survive being one of thirty in a tab strip, and a logo is the brand's
+   signature at whatever size the layout gives it. The favicon is declared in
+   index.html and appears nowhere else; the logo is superluminal_logo.png and is
+   the only thing that stands in for the brand inside the product. See `.logo`
+   below, and the header of components/Wordmark.jsx. */
 .wordmark{
   font-family:var(--display);font-size:15px;line-height:1;letter-spacing:.02em;
   text-transform:uppercase;color:var(--ink);white-space:nowrap;
@@ -281,12 +288,22 @@ svg.plan.pan{cursor:default}
 .row label{color:var(--text-muted);flex:1;min-width:0}
 .row .val{font-family:var(--mono);font-size:11px;color:var(--text);min-width:44px;text-align:right}
 input[type=range]{flex:1.1;max-width:130px;accent-color:var(--accent);height:18px}
-input[type=number],input[type=text],input[type=password],select{
+/* EVERY TEXT-ENTRY TYPE, AND THE LIST IS THE BUG THAT WAS HERE.
+   
+   It read `number, text, password` — written when the app had no forms in it,
+   only an instrument panel. An attribute selector matches the ATTRIBUTE and not
+   the browser's default, so `type=email` matched nothing here: the login field
+   was raw OS chrome, at the OS's own size, which is why it looked tiny next to
+   everything around it. The types that can be typed into are all listed now, so
+   a new field cannot silently arrive unstyled again. */
+input[type=number],input[type=text],input[type=email],input[type=password],
+input[type=search],input[type=tel],input[type=url],select{
   font:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);
   border-radius:var(--r);background:var(--input-bg);color:var(--text);width:100%;
   transition:border-color .12s,box-shadow .12s;
 }
-input[type=number]:hover,input[type=text]:hover,select:hover{border-color:var(--border-strong)}
+input[type=number]:hover,input[type=text]:hover,input[type=email]:hover,
+input[type=password]:hover,input[type=search]:hover,select:hover{border-color:var(--border-strong)}
 /* THE FOCUS RING IS THE ACCENT, and it is a ring rather than a glow: 1px border
    plus a 3px halo at low alpha. Anything softer stops being a focus indicator
    and starts being a decoration. */
@@ -902,4 +919,475 @@ table.boq tfoot tr:hover{background:transparent}
 .fixture-tip p{
   margin:8px 0 0; padding-top:7px; border-top:1px solid rgba(0,0,0,.08);
   font-size:10.5px; line-height:1.4; color:var(--text-subtle);
+}
+
+/* ===========================================================================
+   THE SCREENS AROUND THE EDITOR.
+   
+   Home, login, dashboard, project detail. Written after the editor and against
+   its palette rather than beside it, which is the reason there is not one new
+   colour in here: every rule below resolves to a token defined at the top of
+   this file. A second design language for the pages that lead to the drawing
+   would be two products.
+   
+   ONE STRUCTURAL IDEA, USED THREE TIMES: a 56px rail on the left with the mark
+   at the top and the account at the bottom, and the page in the rest. It is the
+   same silhouette as the editor (chrome at one edge, subject filling the frame),
+   so moving between them does not feel like moving between apps.
+   =========================================================================== */
+
+/* ---------- home ---------- */
+.home{min-height:100%;display:flex;flex-direction:column}
+.home-top{
+  height:56px;flex:0 0 auto;display:flex;align-items:center;gap:14px;padding:0 22px;
+  border-bottom:1px solid var(--border);background:rgba(255,255,255,.72);
+  backdrop-filter:saturate(180%) blur(12px);
+}
+.brand-link{display:flex;align-items:center;gap:10px;text-decoration:none}
+/* THE WHOLE PAGE IS THE DROP TARGET, and the border only appears when something
+   is over it. A permanent dashed box around the viewport would be a diagram of
+   a feature nobody has used yet. */
+.home-main{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:64px 24px;gap:6px;
+  border:2px solid transparent;transition:border-color .15s,background .15s;
+}
+.home-main.over{border-color:var(--accent);background:var(--accent-soft)}
+/* CLAMPED, NOT FIXED. This is the one string on the site that has to land at
+   any width, and 4.4vw between the two bounds means it breaks over two lines on
+   a laptop and stays two lines on a phone. */
+.home-h1{
+  margin:0 0 10px;font-size:clamp(34px,4.4vw,58px);line-height:1.04;
+  font-weight:var(--w-display);letter-spacing:-.035em;max-width:22ch;
+}
+.home-sub{margin:0 0 26px;color:var(--text-muted);max-width:56ch;font-size:14px;line-height:1.6}
+.home-cta{display:flex;flex-direction:column;align-items:center;gap:12px}
+/* The upload button is the only large control in the app, and it is large
+   because it is the only thing on this screen anybody is meant to press. */
+.btn.big{font-size:14px;padding:12px 22px;border-radius:8px}
+.home-hint{font-size:11.5px;color:var(--text-subtle)}
+.home-err{max-width:48ch}
+.home-foot{
+  flex:0 0 auto;display:flex;justify-content:space-between;padding:16px 22px;
+  border-top:1px solid var(--border);font-size:11px;color:var(--text-subtle);
+}
+
+/* ---------- login ---------- */
+.auth{min-height:100%;display:flex;flex-direction:column;align-items:center}
+.auth-top{width:100%;height:56px;display:flex;align-items:center;padding:0 22px;border-bottom:1px solid var(--border)}
+.auth-card{
+  width:min(420px,92%);margin:auto;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-lg);padding:30px 28px;box-shadow:var(--shadow);
+}
+.auth-card h1{margin:0 0 8px;font-size:22px;font-weight:var(--w-display);letter-spacing:-.03em}
+.auth-sub{margin:0 0 22px;color:var(--text-muted);font-size:12.5px;line-height:1.6}
+.auth-form{display:flex;flex-direction:column;gap:8px}
+.auth-label{font-size:10px;font-weight:var(--w-head);letter-spacing:.11em;text-transform:uppercase;color:var(--text-subtle)}
+.auth-form .btn{margin-top:8px}
+/* THE CODE FIELD IS WIDE-TRACKED AND CENTRED because six digits typed into a
+   normal text input read as a word, and the thing being checked is a sequence of
+   characters one at a time. */
+input.otp{
+  font-size:24px;letter-spacing:.42em;text-align:center;padding:12px 8px;
+  font-variant-numeric:tabular-nums;
+}
+.auth-alt{display:flex;justify-content:space-between;gap:12px;margin-top:12px}
+.linkish{
+  border:0;background:none;font:inherit;font-size:11.5px;color:var(--link);
+  cursor:pointer;padding:0;text-decoration:none;
+}
+.linkish:hover{text-decoration:underline}
+.linkish:disabled{color:var(--text-faint);cursor:default;text-decoration:none}
+.linkish.danger{color:var(--danger-ink)}
+
+/* ---------- the shell: rail + page ---------- */
+.shell{display:grid;grid-template-columns:56px 1fr;height:100%}
+.rail{
+  border-right:1px solid var(--border);background:var(--surface);
+  display:flex;flex-direction:column;align-items:center;padding:18px 0 14px;gap:10px;
+}
+.rail-mark{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px}
+.rail-mark:hover{background:var(--surface-3)}
+.rail-spacer{flex:1}
+.rail-account{position:relative}
+/* ONE LETTER, and the ring is what makes it a control rather than a label. */
+.bubble{
+  width:32px;height:32px;border-radius:50%;border:1px solid var(--border-strong);
+  background:var(--surface-3);color:var(--ink);font:inherit;font-size:13px;
+  font-weight:var(--w-strong);cursor:pointer;display:grid;place-items:center;
+  transition:background .12s,border-color .12s,box-shadow .12s;
+}
+.bubble:hover{background:var(--surface);border-color:var(--ink)}
+.bubble.on{background:var(--ink);border-color:var(--ink);color:#fff}
+/* Opens UPWARD and to the right, because the bubble is at the bottom of a
+   56px column and a menu that opens down is a menu off the screen. */
+.rail-menu{
+  position:absolute;bottom:0;left:44px;width:210px;z-index:20;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  box-shadow:var(--shadow-pop);padding:6px;display:flex;flex-direction:column;gap:2px;
+}
+.rail-who{padding:8px 9px 10px;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid var(--border);margin-bottom:4px}
+.rail-who b{font-size:12.5px;font-weight:var(--w-strong)}
+.rail-who span{font-size:11px;color:var(--text-subtle);overflow:hidden;text-overflow:ellipsis}
+.rail-menu button{
+  text-align:left;border:0;background:none;font:inherit;font-size:12.5px;
+  padding:7px 9px;border-radius:var(--r);cursor:pointer;color:var(--ink);
+}
+.rail-menu button:hover{background:var(--surface-3)}
+.rail-menu button.danger{color:var(--danger-ink)}
+.rail-menu button.danger:hover{background:var(--danger-soft)}
+.rail-sep{height:1px;background:var(--border);margin:4px 0}
+
+.shell-body{overflow-y:auto;padding:26px 30px 60px;width:100%}
+/* THE MEASURE, and it is on the content rather than on its container.
+   
+   `.shell-body` carried `max-width:1180px` with no auto margins, so on anything
+   wider than that the whole page was pinned to the left of the grid column with
+   a third of the screen empty — which is what it looked like, because that is
+   what it was. Two separate mistakes in one declaration: a block with a max-width
+   and no `margin-inline:auto` is left-aligned by definition, and putting the
+   limit on the SCROLL AND DROP surface meant the empty third would not accept a
+   dropped file either. So the body fills the column and this centres the
+   content. */
+.shell-inner{width:100%;max-width:1180px;margin-inline:auto}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin:6px 0 26px}
+.page-head h1{margin:0;font-size:26px;font-weight:var(--w-display);letter-spacing:-.03em}
+.page-sub{margin:6px 0 0;color:var(--text-muted);font-size:12.5px}
+.page-sec{margin-bottom:34px}
+.page-sec h3{
+  margin:0 0 12px;font-size:10px;font-weight:var(--w-head);letter-spacing:.11em;
+  text-transform:uppercase;color:var(--text-subtle);
+}
+/* THE BACK BUTTON IS TEXT WITH AN ARROW, not a bordered button. It is a
+   direction, not an action, and every screen that has one has it in the same
+   place — top-left, above the title. */
+.back{
+  border:0;background:none;font:inherit;font-size:12px;color:var(--text-muted);
+  cursor:pointer;padding:4px 0;display:inline-flex;align-items:center;gap:7px;margin-bottom:14px;
+}
+.back:hover{color:var(--ink)}
+.back span{font-size:13px}
+.back.small{margin:0;font-size:12px;white-space:nowrap}
+/* An editable heading says so on hover and not before — a permanent dotted
+   underline on a project name is a form field pretending to be a title. */
+h1.editable{cursor:text;border-radius:4px;padding:0 4px;margin-left:-4px}
+h1.editable:hover{background:var(--surface-3);box-shadow:inset 0 -1px 0 var(--border-strong)}
+.title-input{
+  font:inherit;font-size:26px;font-weight:var(--w-display);letter-spacing:-.03em;
+  padding:0 4px;margin-left:-4px;width:min(460px,100%);
+}
+
+/* ---------- cards ---------- */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.card-grid.plans{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  overflow:hidden;cursor:pointer;display:flex;flex-direction:column;
+  transition:border-color .12s,box-shadow .12s,transform .12s;
+}
+.card:hover{border-color:var(--border-strong);box-shadow:var(--shadow)}
+.card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.card-body{padding:13px 14px;flex:1}
+.card-body h4{margin:0 0 6px;font-size:13.5px;font-weight:var(--w-strong);letter-spacing:-.01em}
+.card-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:var(--text-muted)}
+.dotsep{color:var(--text-faint)}
+.card-stats{display:flex;gap:14px;margin-top:10px;font-size:11px;color:var(--text-muted)}
+.card-stats b{font-weight:var(--w-strong);color:var(--ink);font-variant-numeric:tabular-nums}
+.card-foot{padding:8px 14px;border-top:1px solid var(--border);display:flex;justify-content:flex-end}
+.project-card .card-body{padding-top:15px}
+/* THE SNAPSHOT IS THE CARD. 4:3, cropped, on the page's own grey so a drawing
+   that does not fill it does not look broken. */
+.plan-shot{
+  aspect-ratio:4/3;background:var(--surface-2);border-bottom:1px solid var(--border);
+  display:grid;place-items:center;overflow:hidden;
+}
+.plan-shot img{width:100%;height:100%;object-fit:cover;display:block}
+.plan-shot-empty{
+  font-size:10px;font-weight:var(--w-head);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--text-faint);
+}
+
+/* ---------- waiting ---------- */
+.skeleton-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.skel-card{height:150px;border-radius:var(--r-lg);background:var(--surface-3);animation:sl-breathe 1.6s ease-in-out infinite}
+@keyframes sl-breathe{0%,100%{opacity:.55}50%{opacity:1}}
+.page-centre{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px}
+/* A RING WITH ONE GAP, in the accent, because that is the same statement about
+   liveness the rest of the app makes with this colour. */
+.spinner{
+  width:26px;height:26px;border-radius:50%;
+  border:2px solid var(--border);border-top-color:var(--accent);
+  animation:sl-spin .8s linear infinite;
+}
+@keyframes sl-spin{to{transform:rotate(360deg)}}
+.notice-card{
+  width:min(460px,92%);background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-lg);padding:24px;text-align:center;
+}
+.notice-card h2{margin:0 0 10px;font-size:18px;font-weight:var(--w-display);letter-spacing:-.025em}
+.notice-card p{margin:0 0 14px;color:var(--text-muted);font-size:12.5px;line-height:1.6}
+.notice-card code{font-family:var(--mono);font-size:11px;background:var(--surface-3);padding:1px 4px;border-radius:3px}
+
+/* ---------- the editor's new top-left ---------- */
+.plan-head{display:flex;align-items:center;gap:12px;min-width:0}
+/* The name is a button that looks like text until you point at it, which is the
+   same trick as the project heading and for the same reason. */
+.plan-name{
+  border:0;background:none;font:inherit;font-size:13.5px;font-weight:var(--w-strong);
+  color:var(--ink);cursor:text;padding:3px 6px;border-radius:var(--r);
+  max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.plan-name:hover{background:var(--surface-3);box-shadow:inset 0 -1px 0 var(--border-strong)}
+.plan-name-input{font:inherit;font-size:13.5px;font-weight:var(--w-strong);width:26ch;padding:3px 6px}
+
+
+/* ===========================================================================
+   FIELDS ON THE PAGES OUTSIDE THE EDITOR.
+   
+   Scoped to `.auth-card` and `.shell-body` rather than written as a global
+   `input` rule, and that is the whole point: the editor's sidebar and its top
+   bar are untouched, so a 48px form cannot leak into the instrument panel. The
+   types are listed rather than using a bare `input`, because a bare selector
+   would also catch the hidden file inputs and the checkboxes, which have their
+   own sizes for their own reasons.
+   =========================================================================== */
+.auth-card input[type=text],
+.auth-card input[type=email],
+.auth-card input[type=password],
+.auth-card input[type=number],
+.auth-card select,
+.shell-body input[type=text],
+.shell-body input[type=email],
+.shell-body input[type=password],
+.shell-body input[type=number],
+.shell-body select{
+  height:var(--field-h);
+  /* PADDING GOES HORIZONTAL-ONLY once the height is fixed. Vertical padding on
+     top of an explicit height is how a field ends up 48px tall with its text
+     sitting off-centre, or clipped on Safari, which resolves the two in the
+     other order. */
+  padding:0 14px;
+  /* 12px type in a 48px box reads as a small label floating in a large box. 14px
+     is the size that makes the field look intended. */
+  font-size:14px;
+}
+/* The chevron needs room, and a select with 14px of right padding puts the arrow
+   on top of the last character. */
+.auth-card select,.shell-body select{padding-right:34px}
+
+/* THE BUTTON MATCHES THE FIELD. A 48px input above a 45px button is a
+   misalignment of three pixels, which is exactly the amount that looks like a
+   mistake rather than a choice. */
+.btn.big{height:var(--field-h);padding:0 22px;display:inline-flex;align-items:center;justify-content:center}
+.auth-form .btn.big{width:100%}
+
+/* The code field keeps its own type size — it is six characters read as
+   characters — but takes the same height as the email field above it, because
+   the two are the same control in two steps of one sentence. */
+input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
+
+/* The project heading, edited in place. It is a 26px display face, so it sets
+   its own type size and takes only the height. */
+.title-input{
+  height:var(--field-h);padding:0 8px;font-size:26px;
+  /* It was inheriting the browser's default border — which is not a style, it is
+     the lack of one, and it is why an edited heading looked like a form field
+     from a different decade. */
+  border:1px solid var(--border-strong);border-radius:var(--r);
+  background:var(--surface);color:var(--text);
+}
+
+
+/* ===========================================================================
+   THE LOGO, CROPPED IN CSS.
+   
+   superluminal_logo.png is a stacked two-line wordmark on a transparent 500×500
+   canvas, and the ink occupies x 41→392, y 191→313 — three quarters of the file
+   is empty space. That padding is invisible but not free: as a plain <img> the
+   asset is either a square box far taller than the bar it sits in, or, scaled to
+   fit that height, a logotype rendered at a quarter of the available width.
+   
+   So the WRAPPER is the size of the ink and the image is scaled and offset
+   inside it. Every number is derived from that one measurement and expressed
+   against `--logo-w`, so a usage sets one width and the crop follows:
+   
+     ink aspect     352 / 123          → height factor 0.349432
+     scale          500 / 352          → 1.420455
+     x offset      -41  / 352          → -0.116477
+     y offset      -191 / 352          → -0.542614
+   
+   All four are multiples of --logo-w rather than percentages, because a
+   percentage `top` resolves against the wrapper's HEIGHT — which is itself
+   derived from the width — and that indirection is exactly where this kind of
+   arithmetic goes wrong. Re-export the artwork with different padding and these
+   four numbers change; nothing else does.
+   =========================================================================== */
+.logo{
+  --logo-w:104px;
+  position:relative;overflow:hidden;flex:0 0 auto;display:block;
+  width:var(--logo-w);
+  height:calc(var(--logo-w) * 0.349432);
+}
+.logo img{
+  position:absolute;display:block;
+  width:calc(var(--logo-w) * 1.420455);height:auto;
+  left:calc(var(--logo-w) * -0.116477);
+  top:calc(var(--logo-w) * -0.542614);
+  /* The artwork is black ink. On a dark surface it would need inverting, and
+     when that day comes it is one filter here rather than a second asset. */
+}
+.rail-mark{width:auto;height:auto;padding:5px 3px;border-radius:8px}
+
+/* ===========================================================================
+   THE SECONDARY BUTTON, NAMED.
+   
+   White, one hairline, ink text. It already existed as the bare `.btn` — but a
+   style with no name is a style nobody can ask for, which is how a page ends up
+   with three primary buttons and no hierarchy. `.btn.secondary` is now the
+   explicit second tier: the deliberate route, the tidier option, Cancel. Black
+   stays for the one act a screen is actually for.
+   =========================================================================== */
+.btn.secondary{
+  background:var(--surface);color:var(--ink);border:1px solid var(--border-strong);
+  font-weight:var(--w-strong);
+}
+.btn.secondary:hover{background:var(--surface-2);border-color:var(--ink)}
+.btn.secondary:active{background:var(--surface-3)}
+/* The plus is set slightly larger and optically raised — a `+` sits high in its
+   own em box, so matching it to the label's size makes it read as small. */
+.btn .plus{font-size:1.18em;line-height:0;position:relative;top:.055em;margin-right:1px}
+.btnrow.centre{justify-content:center;margin-top:22px}
+
+/* ===========================================================================
+   THE EMPTY SCREEN.
+   
+   It was a 560px box pinned to the left margin under a column head reading ALL
+   PROJECTS — a placeholder in a layout built for a grid, rather than an
+   invitation. An empty state has one job: say what to do next, in the middle, at
+   a size that reads as intentional. So the section centres itself in whatever
+   height is left and the dropzone gets the room to be the subject of the page.
+   =========================================================================== */
+.page-sec.empty{
+  min-height:min(58vh,560px);
+  display:flex;align-items:center;justify-content:center;
+}
+.dropzone.hero{
+  width:min(760px,100%);padding:76px 56px;border-radius:16px;
+  border:1.5px dashed var(--border-strong);
+}
+.dropzone.hero h2{font-size:32px;letter-spacing:-.035em;margin-bottom:12px}
+.dropzone.hero p{font-size:14px;line-height:1.65;max-width:52ch}
+@media (max-width:700px){
+  .dropzone.hero{padding:48px 24px}
+  .dropzone.hero h2{font-size:24px}
+}
+
+/* ---------- the account bubble, in the accent ---------- */
+/* #0070F3 means "the live thing" everywhere else in this app, and on a page whose
+   subject is a grid of drawings the account is the only genuinely interactive
+   object in the chrome. Grey-on-grey read as a label. */
+.bubble{
+  background:var(--accent);border-color:var(--accent);color:#fff;
+  font-weight:var(--w-strong);
+}
+.bubble:hover{background:var(--accent-hover);border-color:var(--accent-hover);color:#fff}
+.bubble.on{background:var(--ink);border-color:var(--ink);color:#fff}
+
+/* ---------- the new-project dialog ---------- */
+.modal.wide{width:min(620px,94vw)}
+.modal-gap{height:18px}
+.modal-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}
+/* SELECTED, not merely hovered. The category grid is a radio group wearing
+   buttons, and without a held state the form cannot tell you what it is about to
+   do — which is the difference between a choice and a click. */
+.proj-btn.on{
+  border-color:var(--accent);background:var(--accent-soft);
+  box-shadow:0 0 0 1px var(--accent) inset;
+}
+.proj-btn.on b{color:var(--accent)}
+.cat-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}
+
+
+/* ---------- the PDF page picker ---------- */
+/* A GRID OF SHEETS, sized so a six-page set is one glance and a forty-page set
+   scrolls rather than shrinking each page into illegibility. The tiles hold their
+   aspect ratio while empty, so the grid does not reflow under the cursor as
+   thumbnails land one by one. */
+.pdf-pages{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(122px,1fr));gap:10px;
+  max-height:min(52vh,440px);overflow-y:auto;padding:2px;
+}
+.pdf-page{
+  border:1px solid var(--border);background:var(--surface);border-radius:var(--r);
+  padding:7px;cursor:pointer;font:inherit;display:flex;flex-direction:column;gap:6px;
+  transition:border-color .12s,background .12s;
+}
+.pdf-page:hover{border-color:var(--accent);background:var(--accent-soft)}
+.pdf-thumb{
+  aspect-ratio:1/1.35;background:var(--surface-3);border:1px solid var(--border);
+  border-radius:3px;display:grid;place-items:center;overflow:hidden;
+}
+/* WHITE BEHIND THE THUMBNAIL, matching the white the full render paints under the
+   page. A transparent PDF background on a grey tile looks like a grey drawing,
+   which is exactly the bug the fill in pdfPlan.js exists to prevent — and this is
+   where it would first be visible. */
+.pdf-thumb img{width:100%;height:100%;object-fit:contain;display:block;background:#fff}
+.pdf-thumb-wait{
+  width:16px;height:16px;border-radius:50%;
+  border:2px solid var(--border-strong);border-top-color:var(--accent);
+  animation:sl-spin .8s linear infinite;
+}
+.pdf-page-no{
+  font-size:10.5px;font-weight:var(--w-head);letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-subtle);text-align:center;
+}
+
+/* A pill that is also a control. Used for "the drawing did not upload · Retry",
+   which has to be as quiet as a status and as clickable as a button. */
+.pill.as-btn{font-family:var(--mono);cursor:pointer;border-width:1px;font-size:10.5px}
+.pill.as-btn:hover{background:var(--danger-line)}
+
+
+/* ---------- admin, at the foot of the panel ---------- */
+/* VISIBLY NOT PART OF THE WORKFLOW. A heavier top rule than the sections above
+   it and a tinted well, because this is the one block on the screen that belongs
+   to whoever is tuning the models rather than to whoever is lighting the flat —
+   and somebody with it switched on needs to notice that they have. */
+.sec.admin{
+  border-top:1px solid var(--border-strong);margin-top:20px;padding-top:14px;
+}
+.sec.admin h3{color:#C026D3}
+.admin-counts{
+  margin-top:10px;padding:9px 10px;border-radius:var(--r);
+  background:var(--surface-3);border:1px solid var(--border);
+  display:flex;flex-direction:column;gap:5px;
+}
+.admin-counts .kv{margin:0}
+
+/* THE REASONS, FOLDED AWAY. One line per space saying why the judge was or was
+   not called. Collapsed by default because on a good run it says the same
+   uninteresting thing three times, and open in one click on the run where the
+   counts look wrong — which is the only time anybody wants it. */
+.bed-why{margin-top:4px;border-top:1px solid var(--border);padding-top:6px}
+.bed-why > summary{
+  cursor:pointer;font-size:11.5px;color:var(--text-subtle);
+  list-style:none;user-select:none;
+}
+.bed-why > summary::-webkit-details-marker{display:none}
+.bed-why > summary::before{content:'▸ ';font-size:9px}
+.bed-why[open] > summary::before{content:'▾ '}
+.bed-why > summary:hover{color:var(--text-muted)}
+.bed-why .note{margin:6px 0 0;font-size:11px;line-height:1.5}
+
+/* ---------- the crash card ---------- */
+.notice-card.crash{width:min(560px,94%);text-align:left}
+.notice-card.crash h2{text-align:center}
+.notice-card.crash > p{text-align:center}
+/* THE MESSAGE, VERBATIM AND SELECTABLE. A paraphrased error is a error nobody
+   can act on; this is the one string worth putting on screen unedited. */
+.crash-msg{
+  margin:14px 0;padding:10px 12px;border-radius:var(--r);
+  background:var(--danger-soft);border:1px solid var(--danger-line);
+  color:var(--danger-ink);font-family:var(--mono);font-size:11.5px;line-height:1.5;
+  white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto;
 }

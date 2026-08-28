@@ -77,6 +77,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     accents = [], objMode = false, selObjId = null, onObjPointerDown,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [],
+    // THE AUDIT LAYER — off for everybody except an owner of this app. See the
+    // block near the bottom of this file for what it draws and why the marks it
+    // restores were removed from the drawing proper.
+    audit = false, auditZones = [],
     onFixture = null, draftRun = null,
     placeSnap = null, sconceGhost = null, cursor = null },
   ref
@@ -794,6 +798,57 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             fill={C.region} opacity="0.65">{r.name || 'Space'}</text>
         );
       })}
+
+      {/* --- THE AUDIT LAYER ------------------------------------------------
+          What the models decided, drawn over the plan for the person tuning
+          them. Everything here was on the drawing once and was deliberately
+          removed — see the two notes below — so this does not reinstate it; it
+          gates it behind a role.
+          
+          MAGENTA, AND NOT THE ACCENT. Every other mark on this canvas obeys the
+          ink-and-one-blue rule, and the whole point of this layer is that it is
+          NOT part of the drawing: it has to be unmistakable at a glance, and it
+          has to be obvious in a screenshot that what is being looked at is
+          working rather than a sheet. A hue that appears nowhere else does both.
+          It is the only place in this app where that is the right answer. */}
+      {audit && (
+        <g className="audit">
+          {/* The beds. These are the one reading with no visible consequence
+              anywhere else on the sheet: the planner obeys them — a downlight
+              never lands over a mattress — but `drawnZones` deliberately
+              excludes them, so a wrong bed is invisible unless you know to look
+              for the hole it left in the grid. */}
+          {auditZones.map((z, i) => (
+            <g key={'az' + i}>
+              <rect x={z.x0} y={z.y0} width={z.x1 - z.x0} height={z.y1 - z.y0}
+                fill="#C026D3" fillOpacity="0.06" stroke="#C026D3"
+                strokeWidth={lw * 1.6} strokeDasharray={`${lw * 4} ${lw * 3}`} />
+              <text x={z.x0 + lw * 3} y={z.y0 - lw * 2} fill="#C026D3"
+                fontSize={Math.max(width, height) / 130} fontFamily="Neue Montreal, sans-serif">
+                bed
+              </text>
+            </g>
+          ))}
+          {/* The task surfaces, with the box the detector marked. The spot that
+              came out of it is already on the drawing; this is the evidence
+              behind it. */}
+          {surfaces.map((sf) => {
+            if (!sf.rect) return null;
+            const r = sf.rect;
+            return (
+              <g key={'as' + sf.id} opacity={sf.rejected ? 0.35 : 1}>
+                <rect x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0}
+                  fill="#C026D3" fillOpacity="0.05" stroke="#C026D3"
+                  strokeWidth={lw * 1.6} strokeDasharray={`${lw * 6} ${lw * 3}`} />
+                <text x={r.x0 + lw * 3} y={r.y0 - lw * 2} fill="#C026D3"
+                  fontSize={Math.max(width, height) / 130} fontFamily="Neue Montreal, sans-serif">
+                  {sf.label || sf.type || 'surface'}{sf.rejected ? ' (rejected)' : ''}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      )}
 
       {/* --- task surfaces: FOUND, AND NO LONGER DRAWN -----------------------
           They were a dashed box with corner ticks — a reading of the plan, put

@@ -25,7 +25,25 @@ import { buildRoomTypeRequest, roomTypeFromReply } from '../src/lib/roomTypes.js
 import { buildBedFitRequest, bedFitFromReply } from '../src/lib/bedFit.js';
 import { textFromResponse } from '../src/lib/openaiDetect.js';
 
-const log = (id, arrow, msg) => console.log(`[accents ${id}] ${arrow} ${msg}`);
+/*
+ * ONLY THE JUDGE TALKS. Same reasoning as api/detect.js: this route serves
+ * roomtype, furniture, surfaces and bedfit, and while the bed pipeline is the
+ * thing being watched the other three bury it. `bedfit` is the judge, and the
+ * judge is bed work. Set BED_LOG_ONLY to false to hear the rest.
+ *
+ * Keyed on the request id rather than a flag, because these calls run two at a
+ * time and answer out of order.
+ */
+export const BED_LOG_ONLY = true;
+const loudIds = new Set();
+const markLoud = (id) => {
+  loudIds.add(id);
+  if (loudIds.size > 64) loudIds.delete(loudIds.values().next().value);
+};
+const log = (id, arrow, msg) => {
+  if (BED_LOG_ONLY && !loudIds.has(id)) return;
+  console.log(`[accents ${id}] ${arrow} ${msg}`);
+};
 
 /** Same rule as api/detect.js: an upstream that echoes the request back on a
  *  validation error must not hand the key to somebody's devtools. */
@@ -131,6 +149,7 @@ export default async function handler(req, res) {
   } : null;
   const ceilingFt = Number(body.ceilingFt) > 0 ? Number(body.ceilingFt) : null;
 
+  if (task === 'bedfit') markLoud(id);
   log(id, '->', `${(bytes / 1024).toFixed(0)}KB${images.length > 1 ? ` x${images.length}` : ''} — room ${w}x${h}`
     + `, task=${task}${projectId ? `/${projectId}` : ''}`
     + `, room="${room?.name ?? '?'}", ${model}`);

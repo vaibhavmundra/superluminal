@@ -22,6 +22,32 @@
 import { extractJson, DEFAULT_MODEL } from './openaiDetect.js';
 import { itemList, rectFromEntry, toPixels, describe, num } from './accentPrompt.js';
 
+/**
+ * THE OUTPUT CAP, AND WHY IT IS 8000 FOR A REPLY THAT IS OFTEN 200 TOKENS LONG.
+ *
+ * `max_completion_tokens` on a reasoning model is a budget for REASONING PLUS
+ * OUTPUT, and the reasoning is invisible. Set it to a number that looks generous
+ * for the answer and the model thinks its way through the whole allowance, emits
+ * nothing, and returns 200 OK with an empty `content`. Every parser downstream
+ * reads that as "found nothing" — which is indistinguishable from a plan with no
+ * beds in it.
+ *
+ * WE WATCHED THIS HAPPEN. A ten-bedroom resort sheet: the bed route (capped at
+ * 1500) returned no beds on eight of ten room crops, and the furniture route
+ * (capped at 3000) found the beds in those same crops on the same model. The
+ * failures correlated perfectly with LATENCY — the calls that answered took 13
+ * and 20 seconds, every call that came back empty took 21 to 26, and in the
+ * furniture route the only two empty replies were the two slowest of the batch
+ * at 47s. Slower means more reasoning; more reasoning means the budget is spent
+ * before the answer starts.
+ *
+ * A CAP IS A CEILING, NOT A SPEND. Nothing is billed for headroom, so the number
+ * should be far above the largest plausible reply rather than tuned close to it.
+ * A cap that occasionally truncates is not a small inefficiency here — it is a
+ * silent wrong answer.
+ */
+const MAX_OUT = 8000;
+
 export { DEFAULT_MODEL };
 
 /**
@@ -143,7 +169,7 @@ Return ONLY a JSON object. No prose, no markdown fence, no explanation.
 }
 
 export function buildSurfaceRequest({ plan, room = null,
-                                      model = DEFAULT_MODEL, maxTokens = 2000 } = {}) {
+                                      model = DEFAULT_MODEL, maxTokens = MAX_OUT } = {}) {
   if (!plan?.base64) throw new Error('No plan image to look at.');
   return {
     model,

@@ -70,6 +70,32 @@
 
 /** Default model. Overridable everywhere; `--list-models` in the eval says
  *  what a given key can actually see, which beats trusting this constant. */
+/**
+ * THE OUTPUT CAP, AND WHY IT IS 8000 FOR A REPLY THAT IS OFTEN 200 TOKENS LONG.
+ *
+ * `max_completion_tokens` on a reasoning model is a budget for REASONING PLUS
+ * OUTPUT, and the reasoning is invisible. Set it to a number that looks generous
+ * for the answer and the model thinks its way through the whole allowance, emits
+ * nothing, and returns 200 OK with an empty `content`. Every parser downstream
+ * reads that as "found nothing" — which is indistinguishable from a plan with no
+ * beds in it.
+ *
+ * WE WATCHED THIS HAPPEN. A ten-bedroom resort sheet: the bed route (capped at
+ * 1500) returned no beds on eight of ten room crops, and the furniture route
+ * (capped at 3000) found the beds in those same crops on the same model. The
+ * failures correlated perfectly with LATENCY — the calls that answered took 13
+ * and 20 seconds, every call that came back empty took 21 to 26, and in the
+ * furniture route the only two empty replies were the two slowest of the batch
+ * at 47s. Slower means more reasoning; more reasoning means the budget is spent
+ * before the answer starts.
+ *
+ * A CAP IS A CEILING, NOT A SPEND. Nothing is billed for headroom, so the number
+ * should be far above the largest plausible reply rather than tuned close to it.
+ * A cap that occasionally truncates is not a small inefficiency here — it is a
+ * silent wrong answer.
+ */
+const MAX_OUT = 8000;
+
 export const DEFAULT_MODEL = 'gpt-5.5';
 
 /** Grid pitch in pixels of the image AS SENT. ~100px on a 1600px plan gives a
@@ -178,6 +204,11 @@ Do NOT include:
 - the wardrobe, dresser or study table in the same room
 - sofas, daybeds in a living room, or a dining table
 
+ONE BOX PER BED, never one box around two. Twin beds side by side, or a pair in
+a hotel room, are TWO beds and want two boxes with the gap between them left
+out. Boxing a pair as a single object is the commonest mistake on a plan like
+this, and it is always wrong: the floor between two beds is ordinary ceiling.
+
 Include EVERY bed on the whole drawing, even in rooms that look unimportant —
 a plan can have three bedrooms and all of them matter.
 
@@ -264,7 +295,7 @@ ${OUTPUT_RULES}
  * degrade rather than fail.
  */
 export function buildRequest({ arm = DEFAULT_ARM, base64, mime = 'image/jpeg', w, h, spec = null,
-                               model = DEFAULT_MODEL, jsonMode = true, maxTokens = 1500 } = {}) {
+                               model = DEFAULT_MODEL, jsonMode = true, maxTokens = MAX_OUT } = {}) {
   if (!base64) throw new Error('No image to look at.');
   const prompt = buildPrompt(arm, { w, h, spec });
   return {

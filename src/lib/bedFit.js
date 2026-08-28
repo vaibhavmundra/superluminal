@@ -59,6 +59,32 @@ import { iou, rectCentre } from './furniture.js';
 import { pointInPolygon } from './geometry.js';
 import { num } from './accentPrompt.js';
 
+/**
+ * THE OUTPUT CAP, AND WHY IT IS 8000 FOR A REPLY THAT IS OFTEN 200 TOKENS LONG.
+ *
+ * `max_completion_tokens` on a reasoning model is a budget for REASONING PLUS
+ * OUTPUT, and the reasoning is invisible. Set it to a number that looks generous
+ * for the answer and the model thinks its way through the whole allowance, emits
+ * nothing, and returns 200 OK with an empty `content`. Every parser downstream
+ * reads that as "found nothing" — which is indistinguishable from a plan with no
+ * beds in it.
+ *
+ * WE WATCHED THIS HAPPEN. A ten-bedroom resort sheet: the bed route (capped at
+ * 1500) returned no beds on eight of ten room crops, and the furniture route
+ * (capped at 3000) found the beds in those same crops on the same model. The
+ * failures correlated perfectly with LATENCY — the calls that answered took 13
+ * and 20 seconds, every call that came back empty took 21 to 26, and in the
+ * furniture route the only two empty replies were the two slowest of the batch
+ * at 47s. Slower means more reasoning; more reasoning means the budget is spent
+ * before the answer starts.
+ *
+ * A CAP IS A CEILING, NOT A SPEND. Nothing is billed for headroom, so the number
+ * should be far above the largest plausible reply rather than tuned close to it.
+ * A cap that occasionally truncates is not a small inefficiency here — it is a
+ * silent wrong answer.
+ */
+const MAX_OUT = 8000;
+
 export { DEFAULT_MODEL };
 
 /**
@@ -85,11 +111,18 @@ export const BED_SOURCES = [
 export const BOX_COLOUR = '#DC2626';
 
 export const BEDFIT_DEFAULTS = {
-  // Above this, two boxes are the same box. Deliberately loose: the question is
-  // "is this a disagreement worth paying to settle", not "are these identical".
-  // Two detectors tracing the same mattress land at 0.85-0.95; one that has
-  // taken in the bedside tables lands near 0.6, and that IS worth settling.
-  agreeIou: 0.80,
+  // Above this, two boxes are the same box — and only then is the judge skipped.
+  //
+  // TIGHT ON PURPOSE. It was 0.80, chosen as "is this disagreement worth paying
+  // to settle": two runs tracing the same mattress land at 0.85-0.95, one that
+  // took in the bedside tables lands near 0.6, and 0.80 sat in the gap. That
+  // reasoning was about saving calls, and it bought the saving with the thing
+  // the box is FOR. A bed box becomes ceiling that gets no light, so a 0.85
+  // match is not a rounding difference — it is a foot of ceiling, at the head of
+  // a bed, that one run wants dark and the other wants lit. At 0.95 only a
+  // genuinely identical answer settles itself and everything else is asked
+  // about, which is roughly one extra judge call per bedroom.
+  agreeIou: 0.95,
   // Below this the judge's own answer is not acted on and the fallback is used.
   // A model that is 30% sure which image is better has told us the two are the
   // same, at which point the deterministic fallback is the better answer
@@ -174,9 +207,16 @@ export function sameAnswer(a, b, opts = {}) {
  */
 export function contestFor(a, b, opts = {}) {
   const o = { ...BEDFIT_DEFAULTS, ...opts };
+  // What the two sides are CALLED, for the `why` string only. The slots are
+  // still 'roboflow' and 'openai' because that is what the judge's verdict
+  // letters mean, but the two sides are no longer two vendors: the per-room
+  // pass sends the same crop to the same model twice, so a message reading
+  // "only Roboflow found a bed here" would be a lie about a GPT run. Whoever
+  // holds the two lists names them.
+  const nm = { a: 'Roboflow', b: 'GPT', ...(o.names || {}) };
   if (!a.length && !b.length) return { kind: 'none', ask: false, winner: [], pick: null, why: 'no bed in this room' };
-  if (!a.length) return { kind: 'uncontested', ask: false, winner: b, pick: 'openai', why: 'only GPT found a bed here' };
-  if (!b.length) return { kind: 'uncontested', ask: false, winner: a, pick: 'roboflow', why: 'only Roboflow found a bed here' };
+  if (!a.length) return { kind: 'uncontested', ask: false, winner: b, pick: 'openai', why: `only ${nm.b} found a bed here` };
+  if (!b.length) return { kind: 'uncontested', ask: false, winner: a, pick: 'roboflow', why: `only ${nm.a} found a bed here` };
   if (sameAnswer(a, b, o)) {
     const pick = o.fallback === 'openai' ? 'openai' : 'roboflow';
     return { kind: 'agreed', ask: false, winner: pick === 'openai' ? b : a, pick,
@@ -184,6 +224,52 @@ export function contestFor(a, b, opts = {}) {
   }
   return { kind: 'contest', ask: true, winner: null, pick: null,
            why: `${a.length} box${a.length === 1 ? '' : 'es'} vs ${b.length}, in different places` };
+}
+
+/**
+ * WHAT HAPPENED IN ONE SPACE, in one sentence.
+ *
+ * This exists because a count on its own reads as a bug when it is not: first it
+ * was "3 spaces re-asked, 1 judged", and there was nothing on screen or in the
+ * log that could say why the other two settled without a call. The panel and the
+ * console print the SAME sentence from here rather than two paraphrases that
+ * drift apart.
+ *
+ * The `gpt` and `none` cases are the live ones — one call to the room crop, no
+ * arbitration. The contest cases below them are reachable only if the superseded
+ * whole-plan pass is switched back on; they are kept for that reason.
+ */
+export function judgeNote(rec = {}, { names = { a: 'run A', b: 'run B' } } = {}) {
+  const n = rec.counts || {};
+  const a = n.roboflow ?? n.a ?? 0;
+  const b = n.openai ?? n.b ?? 0;
+  const tossed = rec.rejected ? `, ${rec.rejected} rejected by the size gate` : '';
+  switch (rec.kind) {
+    // --- the live path: bed-filter missed this space, so GPT was asked ------
+    case 'gpt':
+      return `GPT found ${b} bed(s) in the crop${tossed}`
+        + ' — one call, no second opinion, nothing to arbitrate';
+    case 'none':
+      return 'no bed here — the whole-plan pass missed it and GPT found nothing in the crop'
+        + ` either${tossed}. A space classified as a bedroom with no bed in either`
+        + ' answer is worth looking at by hand.';
+
+    // --- reachable only with the superseded contested pass switched on ------
+    case 'uncontested':
+      return `no judge — only ${a ? names.a : names.b} found a bed, and one opinion cannot be`
+        + ` contested (${names.a} ${a}, ${names.b} ${b})`;
+    case 'agreed':
+      return `no judge — both runs put the bed in the same place, within the ${
+        BEDFIT_DEFAULTS.agreeIou} IoU that counts as agreement (${names.a} ${a}, ${names.b} ${b})`;
+    case 'judged':
+      if (rec.failed) return `judge FAILED — fell back to ${rec.pick}`;
+      if (rec.fellBack) return `judged, but it hedged below the ${BEDFIT_DEFAULTS.minConfidence}`
+        + ` confidence floor, so the ${BEDFIT_DEFAULTS.fallback} fallback stands`;
+      return `judged — picked ${rec.pick === 'openai' ? names.b : names.a} at ${
+        Math.round((rec.confidence ?? 0) * 100)}% — ${rec.why || 'no reason given'}`;
+    default:
+      return rec.why || 'this space was never re-asked';
+  }
 }
 
 /** The judge's letter -> the list it chose. */
@@ -252,7 +338,7 @@ Answer with JSON and nothing else:
 }
 
 export function buildBedFitRequest({ plans, room = null, counts = null,
-                                     model = DEFAULT_MODEL, maxTokens = 800 } = {}) {
+                                     model = DEFAULT_MODEL, maxTokens = MAX_OUT } = {}) {
   if (!Array.isArray(plans) || plans.length < 2) {
     throw new Error('The bed-fit judge needs two images.');
   }

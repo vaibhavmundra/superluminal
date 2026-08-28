@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { BED_SOURCES, BEDFIT_DEFAULTS, splitByProvider, label, bedsIn,
-         sameAnswer, contestFor, applyVerdict, bedFitFromReply,
+         sameAnswer, contestFor, judgeNote, applyVerdict, bedFitFromReply,
          buildBedFitPrompt, buildBedFitRequest } from '../src/lib/bedFit.js';
 import { dedupe } from '../src/lib/furniture.js';
 
@@ -96,15 +96,38 @@ console.log('\n-- three of the four situations need no call --');
   ok(onlyA.kind === 'uncontested' && !onlyA.ask && onlyA.pick === 'roboflow',
     'only Roboflow committed: likewise');
 
-  const agree = contestFor(a, [box(51, 51, 111, 131)]);
+  // 60x80 shifted by ONE pixel: IoU 0.967, which is what "the same box" now has
+  // to mean. Under the old 0.80 this fixture was shifted by one in BOTH axes
+  // (IoU 0.944) and still counted as agreement — the exact case the tighter
+  // threshold now sends to the judge, because at plan scale that difference is
+  // ceiling at the head of a bed.
+  const agree = contestFor(a, [box(51, 50, 111, 130)]);
   ok(agree.kind === 'agreed' && !agree.ask, 'both found the same bed: no call');
   ok(agree.pick === BEDFIT_DEFAULTS.fallback,
     `and the tie goes to the documented fallback (${BEDFIT_DEFAULTS.fallback}), not to list order`);
+
+  const near = contestFor(a, [box(51, 51, 111, 131)]);
+  ok(near.kind === 'contest' && near.ask,
+    `a 0.94 overlap is NOT agreement any more — ${BEDFIT_DEFAULTS.agreeIou} is the line`);
 
   const fight = contestFor(a, b);
   ok(fight.kind === 'contest' && fight.ask && fight.winner === null,
     'genuinely different: THIS is the one that costs a call');
   ok(/different places/.test(fight.why), `and it says why: "${fight.why}"`);
+}
+
+console.log('\n-- the two sides can be renamed, because they are not always two vendors --');
+{
+  // The per-room pass sends the SAME crop to the SAME model twice. The slots
+  // stay 'roboflow'/'openai' because that is what the judge's verdict letters
+  // mean, but a log line naming a vendor would be false about a GPT run.
+  const b = [box(120, 50, 180, 130)];
+  const named = contestFor([], b, { names: { a: 'run A', b: 'run B' } });
+  ok(named.pick === 'openai', 'the slot is unchanged');
+  ok(named.why === 'only run B found a bed here',
+    `and the reason uses the caller's names: "${named.why}"`);
+  ok(contestFor([], b).why === 'only GPT found a bed here',
+    'while the default still speaks vendor, for the sheet-wide pass');
 }
 
 console.log('\n-- the verdict picks a list, never a rectangle --');
@@ -192,5 +215,40 @@ console.log('\n-- the letters --');
     'and neither carries a colour — identical ink is what keeps the comparison about the geometry');
 }
 
-console.log(fail ? `\n${fail} FAILED` : '\nall good');
+console.log('\n-- every space says what happened in it --');
+{
+  // The bug this fixes was on SCREEN, not in the geometry: a count with nothing
+  // anywhere saying what produced it. First "3 spaces re-asked, 1 judged".
+  const note = (rec) => judgeNote({ counts: { roboflow: 1, openai: 1 }, ...rec });
+
+  // The live path: bed-filter is primary, GPT is the per-room fallback, and
+  // nothing is arbitrated.
+  ok(/one call, no second opinion/.test(note({ kind: 'gpt' })),
+    'a GPT fallback says plainly that it was one call');
+  ok(/2 bed\(s\)/.test(note({ kind: 'gpt', counts: { openai: 2 } })),
+    'and how many it found');
+  ok(/rejected by the size gate/.test(note({ kind: 'gpt', rejected: 3 })),
+    'a box thrown out by BED_FT is reported, not silently dropped');
+  const empty = note({ kind: 'none' });
+  ok(/missed it and GPT found nothing/.test(empty),
+    'both passes empty: says BOTH were empty, which is the actionable version');
+  ok(/by hand/.test(empty),
+    'and that this one is worth a human look — it is a declared bedroom with no bed');
+
+  // The contested outcomes survive for the superseded whole-plan pass.
+  ok(/one opinion cannot be contested/.test(
+      note({ kind: 'uncontested', counts: { roboflow: 1, openai: 0 } })),
+    'uncontested still explains itself, for when the old pass is switched back on');
+  ok(/same place/.test(note({ kind: 'agreed' })), 'so does agreement');
+  ok(/picked run B at 90%/.test(
+      note({ kind: 'judged', pick: 'openai', confidence: 0.9, why: 'A took in the nightstand' })),
+    'and a verdict names the winner, the confidence and the reason');
+  ok(/hedged/.test(note({ kind: 'judged', fellBack: true })),
+    'a hedge is distinguished from a clean pick');
+  ok(/FAILED/.test(note({ kind: 'judged', failed: true, pick: 'roboflow' })),
+    'and an unreachable judge is not silently a verdict');
+
+  ok(note({}) === 'this space was never re-asked', 'an unknown record does not throw');
+}
+
 process.exit(fail ? 1 : 0);

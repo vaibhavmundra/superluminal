@@ -47,7 +47,20 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react(), apiRoutes(env)],
-    base: './',
+    // '/' AND NOT './', AND THE ROUTER IS WHY.
+    //
+    // A relative base emits `./assets/index-abc.js` in index.html, which
+    // resolves against the CURRENT PATH. That is fine for a single-screen app
+    // served from the root and fatal the moment there are real URLs: open
+    // /projects/8f2c… directly, the host serves index.html (see vercel.json),
+    // the browser asks for /projects/assets/index-abc.js, and the app is a
+    // white page with two 404s. An absolute base is the only thing that is
+    // correct at every depth.
+    //
+    // The font URLs are unaffected — they are relative imports from inside
+    // src/, hashed and rewritten by the bundler. See the header of styles.css
+    // for why that matters and what it used to break.
+    base: '/',
     server: { port: 5178, host: true },
   };
 });

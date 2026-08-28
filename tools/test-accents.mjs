@@ -98,11 +98,48 @@ const tv       = { type:'tv_unit',  rect:{ x0: 80, y0: 112, x1: 130, y1: 120 }, 
 const r1 = zonesFromFurniture([bed], room);
 ok(r1.zones.length === 2 && r1.zones.every((z) => z.type === 'sconce'), 'rule 1: a bed makes two sconces');
 ok(r1.zones.every((z) => !z.rejected && near(z.point.y, 0)), 'both land on the headboard wall');
-// bed spans x 70..130 along the top wall; offset 24% of 60 = 14.4 -> 55.6 and 144.4
+// WITH NO SCALE, the old fraction still applies: 24% of the bed's 60px span.
 ok(near(r1.zones[0].point.x, 70 - 60 * 0.24) && near(r1.zones[1].point.x, 130 + 60 * 0.24),
-  `and a fixed step past either end of the bed: ${r1.zones.map(z=>z.point.x.toFixed(1)).join(' / ')}`);
+  `with no px/ft it falls back to the fraction: ${r1.zones.map(z=>z.point.x.toFixed(1)).join(' / ')}`);
 const mid = (r1.zones[0].point.x + r1.zones[1].point.x) / 2;
 ok(near(mid, 100), 'symmetric about the bed by construction, not by correction');
+
+// ONE FOOT FROM THE BOX, WHEN THERE IS A SCALE. This is the rule as stated: a
+// sconce sits a real distance from the mattress edge, not a share of the
+// mattress. 10 px/ft, so one foot is 10px past either end of the 70..130 box.
+const S = 10;
+const r1ft = zonesFromFurniture([bed], room, { pxPerFt: S });
+ok(near(r1ft.zones[0].point.x, 70 - S) && near(r1ft.zones[1].point.x, 130 + S),
+  `one foot clear of either end: ${r1ft.zones.map(z=>z.point.x.toFixed(1)).join(' / ')}`);
+ok(near((r1ft.zones[0].point.x + r1ft.zones[1].point.x) / 2, 100),
+  'still symmetric — an absolute step is symmetric for the same reason a fraction was');
+
+// THE POINT OF MAKING IT ABSOLUTE. A single bed and a king get their sconces
+// the same distance from the mattress; under the fraction the narrower bed
+// pulled its pair in with it, and the thing being lit is the same size in both.
+const single = { type:'bed', rect:{ x0: 85, y0: 0, x1: 115, y1: 70 }, confidence:.9 };
+const rSingle = zonesFromFurniture([single], room, { pxPerFt: S });
+ok(near(rSingle.zones[0].point.x, 85 - S) && near(rSingle.zones[1].point.x, 115 + S),
+  'a 3ft bed gets the same one-foot gap as a 6ft one');
+const gapKing = 70 - r1ft.zones[0].point.x;
+const gapSingle = 85 - rSingle.zones[0].point.x;
+ok(near(gapKing, gapSingle),
+  `the gap does not scale with the bed: ${gapKing} vs ${gapSingle}`);
+const oldKing = 60 * 0.24, oldSingle = 30 * 0.24;
+ok(!near(oldKing, oldSingle),
+  `...whereas the fraction it replaces gave ${oldKing} and ${oldSingle} — the bug`);
+
+// TWO TWINS ARE TWO PAIRS. App.jsx substitutes one furniture item per
+// bed-filter box, so a room with two beds produces two symmetric pairs rather
+// than one pair straddling both.
+const twinA = { type:'bed', rect:{ x0: 30, y0: 0, x1: 70, y1: 60 }, confidence:.9 };
+const twinB = { type:'bed', rect:{ x0: 110, y0: 0, x1: 150, y1: 60 }, confidence:.9 };
+const twins = zonesFromFurniture([twinA, twinB], room, { pxPerFt: S });
+ok(twins.zones.filter((z) => z.type === 'sconce' && !z.rejected).length === 4,
+  'two beds, four sconces');
+ok(near(twins.zones[0].point.x, 30 - S) && near(twins.zones[1].point.x, 70 + S)
+   && near(twins.zones[2].point.x, 110 - S) && near(twins.zones[3].point.x, 150 + S),
+  'each pair one foot clear of ITS OWN bed');
 
 // The symbol stands off its wall, so it needs to know which side is the room.
 ok(r1.zones.every((z) => z.inward && pointInPolygon(

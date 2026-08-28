@@ -49,7 +49,6 @@ const PLAN = {
   ],
   spots: [{ roomId: 'r1' }, { roomId: 'r1' }],
   objects: [{ kind: 'fan' }, { kind: 'chandelier' }, { kind: 'ac' }],
-  fans: [{ r: 30 }],
   pxPerFt: PX,
   plan: 'FLOOR_PLAN_03.png',
 };
@@ -175,14 +174,14 @@ console.log('\n-- the connected load, and what it leaves out --');
 console.log('\n-- ceiling items are counted and NOT billed --');
 {
   const c = (id) => boq.coordination.find((x) => x.id === id);
-  ok(c('fan').qty === 2, `a placed fan and a detected one are both fans: ${c('fan').qty}`);
+  ok(c('fan').qty === 1, `the placed fan is counted: ${c('fan').qty}`);
   ok(c('chandelier').qty === 1, 'chandeliers are counted');
   ok(c('ac').qty === 1, 'and AC units');
   ok(!boq.coordination.find((x) => x.id === 'trapdoor'), 'and none of what is not there');
   ok(!boq.lines.some((l) => ['fan', 'chandelier', 'ac'].includes(l.id)),
     'none of them appear as a billed line — a lighting BOQ that quotes an AC unit is not trusted');
   // ...and none of them touch the load.
-  const noObjects = buildBOQ({ ...PLAN, objects: [], fans: [] });
+  const noObjects = buildBOQ({ ...PLAN, objects: [] });
   ok(near(noObjects.totals.watts, boq.totals.watts, 1e-9),
     'removing every ceiling object changes the connected load not at all');
 }

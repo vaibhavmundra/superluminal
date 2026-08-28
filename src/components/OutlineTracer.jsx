@@ -130,7 +130,7 @@ export default function OutlineTracer({
   onMovePoint, onInsertPoint, onRemovePoint, onProceed,
   detectState = null, onRedetect = null,
   unitId, unitCandidates, onUnitChange,
-  scale: scaleUI, fans = [],
+  scale: scaleUI,
 }) {
   const wrapRef = useRef(null);
   const stageRef = useRef(null);
@@ -559,7 +559,7 @@ export default function OutlineTracer({
   return (
     <div className="picker tracer">
       <div className="picker-head">
-        <h2 classname="wordmark">{headline}</h2>
+        <h2 className="wordmark">{headline}</h2>
         <p>
           {measuring
             ? <>Click the two ends of something you can name, then say what it is.</>
@@ -625,12 +625,6 @@ export default function OutlineTracer({
                         strokeWidth={1} strokeScaleEnabled={false} opacity={0.6} />
                     ))}
                   </>}
-              {/* Fan markers found on the image — the ruler, when the scale
-                  comes off a fan, so it has to be visible while measuring. */}
-              {isRaster && fans.map((f, i) => (
-                <Circle key={'f' + i} x={f.x} y={f.y} radius={f.r} stroke="#404040"
-                  strokeWidth={1.4} strokeScaleEnabled={false} dash={[5, 4]} opacity={0.85} />
-              ))}
             </Layer>
 
             {/* the outlines: traced by hand, or proposed by the detector */}

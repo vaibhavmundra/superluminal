@@ -50,7 +50,46 @@ export const WALL_WEIGHT_IN = 2;
 export const OTHER_STROKE_PX = 1.6;
 
 /** Red fan-marker detection on an image. */
-export const FAN_DETECT = { redSat: 0.30, link: 8 };
+/**
+ * WHEN A PLAN IS TOO BIG TO ASK ABOUT ALL AT ONCE, in square feet of built area.
+ *
+ * The bed pass was designed to run once, on upload, against the whole sheet: one
+ * call for however many bedrooms there are, answered before anybody has traced
+ * anything. On a flat that is exactly right. On a 10-room resort floor it finds
+ * nothing at all — each mattress is left with a few dozen pixels of a 1600px
+ * image, and the model is being asked fifteen questions in one breath.
+ *
+ * Past this size the whole-sheet answer stops being trusted and every bedroom is
+ * asked about on its own crop instead. It costs one call per bedroom and it is
+ * the only version that works.
+ *
+ * 3000 SQFT IS A JUDGEMENT, NOT A MEASUREMENT — roughly a large 4BHK, or the
+ * point at which a sheet stops being one home. The number that actually matters
+ * is pixels-per-bed, but built area is what a user can reason about and what the
+ * app knows exactly, so it is the dial.
+ */
+/* REMOVED: LARGE_PLAN_SQFT.
+ *
+ * It did two things and both were wrong. It skipped the whole-sheet bed pass on
+ * a plan over 3000 sqft — which made every bedroom on that plan empty, which
+ * made every bedroom get zoomed into, two model calls apiece, on a sheet where
+ * the cheap pass had not been allowed to try. And it re-asked every bedroom on
+ * a large plan regardless of whether anyone doubted the answer.
+ *
+ * The rule now has no size in it: the whole sheet goes to both detectors on
+ * every plan and the judge settles the disagreement; a room is looked at on its
+ * own only when the classifier has called it a bedroom and it has no bed. */
+
+// FAN_DETECT — REMOVED. It tuned the red-blob search (saturation threshold and
+// blob linking distance) for a detector that no longer exists: fans are placed
+// by hand from the ceiling palette, and the scale comes from a door. Colour is
+// the least reliable signal on a drawing — a red dimension leader, a north
+// arrow and a revision cloud are all round-ish and red-ish on some office's
+// sheet — and an obstacle the user never placed is worse than no obstacle.
+//
+// `fanClearance` in PLAN_OPTIONS is unaffected and still does its job: it is
+// about keeping a downlight away from a fan that IS on the ceiling, whoever put
+// it there.
 
 /**
  * Use the room's bounding rectangle instead of its traced outline. Only ever

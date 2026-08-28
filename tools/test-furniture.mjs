@@ -15,6 +15,7 @@
 import {
   collectPredictions, rectFromPrediction, rescaleRect, className, iou, dedupe,
   detectionsToZones, zonesFromDetections, looksLikePrediction, FURNITURE_DEFAULTS,
+  plausibleBed,
 } from '../src/lib/furniture.js';
 
 let fails = 0, checks = 0;
@@ -416,5 +417,46 @@ console.log('furniture — rendering a DXF for the detector');
   ok(!withCircles.svg.includes('<path d=""'), 'a layer with no line work emits no empty path');
 }
 
-console.log(`\n${checks - fails}/${checks} checks passed (incl. vector render)`);
+
+// --- the size gate, and the plan it was calibrated wrong on -----------------
+//
+// A hotel sheet where the plan-wide pass returned ELEVEN beds and the gate
+// dropped all eleven, calling each one "a room, not a bed". They were bed
+// PAIRS. Ten of those rooms have twin beds, and asked about the whole drawing
+// at once the detector boxes both of them and the gap between as one object —
+// about 5 feet deep and 10 to 11 feet across. The per-room pass separates them
+// and returns two, which is why the accent pass reported "bed, bed" about the
+// same rooms this reported nothing about. A gate calibrated on the second
+// pass's output was being applied to the first's.
+//
+// The fix is not a bigger number, it is the right measurement: the SHORT side
+// is what says "room". A bed is shallow whether there is one of it or two.
+console.log('furniture — is that shape a bed');
+{
+  const PXFT = 17.3;                        // ~900mm doors on that sheet
+  const box = (wFt, hFt) => ({ x0: 0, y0: 0, x1: wFt * PXFT, y1: hFt * PXFT });
+
+  // The shapes that plan actually produced, in feet at its own scale.
+  for (const [w, h] of [[4.9, 8.0], [5.2, 10.6], [5.0, 10.5], [5.3, 7.1]]) {
+    ok(plausibleBed(box(w, h), PXFT).ok, `${w} × ${h} ft is a bed`);
+  }
+
+  // ...and the boxes the gate exists to throw out, which must still go.
+  for (const [what, w, h] of [['a 12 × 16 room', 12, 16],
+                              ['the whole floor', 60, 40],
+                              ['a corridor', 4, 30]]) {
+    ok(!plausibleBed(box(w, h), PXFT).ok, `${what} is not a bed`);
+  }
+
+  // A ROOM FAILS ON ITS DEPTH, and that distinction is the whole repair: no
+  // threshold on the long side can separate a 5 × 10 pair from a 12 × 16 room
+  // without also rejecting the pair.
+  ok(/deep/.test(plausibleBed(box(12, 16), PXFT).why),
+     'a room is rejected for its depth, not its width');
+  ok(plausibleBed(box(99, 99), null).ok, 'with no scale, nothing is judged');
+  ok(/×/.test(plausibleBed(box(5, 6.5), PXFT).why),
+     'and a kept box reports the size it measured');
+}
+
+console.log(`\n${checks - fails}/${checks} checks passed`);
 if (fails) process.exit(1);

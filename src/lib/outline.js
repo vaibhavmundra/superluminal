@@ -46,6 +46,17 @@ export function nextOutlineName(existing = []) {
  * was a tidy-up or a rewrite.
  */
 export function resolveOutline(outline, pxPerFt) {
+  // AN OUTLINE WITHOUT RESOLVED POINTS IS A CALLER'S MISTAKE, and it used to be
+  // a fatal one: the points live in drawing units on the stored object and are
+  // resolved into pixels by whoever is about to measure them, so a raw outline
+  // arriving here reached ensureCCW(undefined) and threw. Throwing from geometry
+  // called during a render unmounts the React tree — the app goes white, several
+  // features away from the actual bug. An empty answer is wrong in a way that is
+  // visible and survivable; a crash is neither.
+  if (!outline?.pointsPx?.length) {
+    console.warn('[outline] resolveOutline got no pointsPx — resolve pointsDu first', outline?.id);
+    return { polygonPx: [], rawPx: [], rectified: false, movedFt: 0 };
+  }
   const raw = ensureCCW(outline.pointsPx);
   if (!outline.rectify || raw.length < 4) {
     return { polygonPx: raw, rawPx: raw, rectified: false, movedFt: 0 };

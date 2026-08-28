@@ -33,6 +33,88 @@ export const DETECTABLE = [
 /** The ones we turn into no-light zones without being asked. */
 export const ZONE_CLASSES = DETECTABLE.filter((d) => d.zone).map((d) => d.id);
 
+/**
+ * A BED IS A KNOWN SIZE. This is the gate that should always have been here.
+ *
+ * Everything else in this file measures a detection as a FRACTION OF THE IMAGE,
+ * and that is meaningless: the same bed is 0.2% of an A0 resort sheet and 4% of
+ * a one-room plan, so any threshold is simultaneously too tight for one drawing
+ * and too loose for another. It failed in both directions on the same project —
+ * `minAreaFrac: 0.004` silently rejected real beds on a large sheet, and no
+ * upper bound in real units let ROOM-SIZED boxes through as beds.
+ *
+ * Once there is a scale there is no reason to guess. A bed is between about 2½
+ * and 8½ feet on a side, 12 to 60 square feet, and never more than three times
+ * longer than it is wide. Furniture that is 13 feet across is a room.
+ *
+ * THE NUMBERS ARE GENEROUS ON PURPOSE. A detection traces the drawn mattress
+ * plus whatever the drawing puts around it — a padded headboard, a valance, two
+ * pillows overhanging — so the upper bounds sit well above a real king (6'6" ×
+ * 7'). The lower bound allows a child's single at 2'6". What they exclude is not
+ * an unusual bed; it is a box that cannot be a bed at all.
+ */
+/*
+ * ONE NUMBER DOES THE ROOM-REJECTING, AND IT IS THE SHORT SIDE.
+ *
+ * The first cut of this had a single `maxSide: 8.5`, on the reasoning that
+ * nothing longer than eight and a half feet is a bed. On a hotel sheet that
+ * rejected every bed on the plan — eleven of eleven — and said "that is a room,
+ * not a bed" about each one.
+ *
+ * It was not a room. THE PLAN-WIDE PASS BOXES A PAIR. Ten rooms on that drawing
+ * have twin beds in them, and asked about the whole sheet at once the detector
+ * returns one object per room covering both beds and the gap between them:
+ * about 5 feet deep and 10 to 11 feet across. The per-room pass, looking at one
+ * crop, separates them and returns two — which is why the accent pass reported
+ * "bed, bed" for the same rooms the zone pass reported nothing at all. A gate
+ * calibrated on the second pass's output was applied to the first's.
+ *
+ * So the long side has to allow a pair, and the discriminating measurement is
+ * the SHORT one. A bed is shallow: a single is 3 feet, a king 6'6", and eight
+ * is generous even with a padded headboard. Anything shallow enough to be a bed
+ * and up to two beds across is a bed or a bed group. A 12' × 16' room fails on
+ * its short side and always will, whatever its long side is doing; a corridor
+ * survives the short-side test and dies on the aspect ratio.
+ *
+ * THE NUMBERS ARE GENEROUS ON PURPOSE. What they exclude is not an unusual bed;
+ * it is a box that cannot be a bed at all.
+ */
+export const BED_FT = {
+  minSide: 2.2,
+  /** How deep a bed can be. This is the test that says "not a room". */
+  maxShortSide: 8.0,
+  /** How wide a bed GROUP can be: two twins and the gap between them. */
+  maxLongSide: 15.0,
+  minAreaSqft: 10,
+  /** A pair, padded. A single bed is ~30 sqft; two plus a nightstand is ~110. */
+  maxAreaSqft: 125,
+  /** Unchanged: a bed group is still roughly bed-shaped, never a plank. */
+  maxAspect: 3.0,
+};
+
+/**
+ * Could this rectangle be a bed, given the scale? Pure, and returns WHY not —
+ * the reason is the whole value when a detector has just returned 121 of them.
+ */
+export function plausibleBed(rect, pxPerFt, o = BED_FT) {
+  if (!pxPerFt || !rect) return { ok: true, why: 'no scale — not judged' };
+  const w = Math.abs(rect.x1 - rect.x0) / pxPerFt;
+  const h = Math.abs(rect.y1 - rect.y0) / pxPerFt;
+  const long = Math.max(w, h), short = Math.min(w, h);
+  const area = w * h;
+  const ft = (v) => `${v.toFixed(1)}ft`;
+
+  if (short < o.minSide) return { ok: false, why: `${ft(short)} short side — too narrow for a bed` };
+  if (short > o.maxShortSide) return { ok: false, why: `${ft(short)} deep — that is a room, not a bed` };
+  if (long > o.maxLongSide) return { ok: false, why: `${ft(long)} across — wider than two beds` };
+  if (area < o.minAreaSqft) return { ok: false, why: `${area.toFixed(0)} sqft — too small` };
+  if (area > o.maxAreaSqft) return { ok: false, why: `${area.toFixed(0)} sqft — too large` };
+  if (short > 0 && long / short > o.maxAspect) {
+    return { ok: false, why: `${(long / short).toFixed(1)}:1 — too long and thin` };
+  }
+  return { ok: true, why: `${ft(w)} × ${ft(h)}` };
+}
+
 export const FURNITURE_DEFAULTS = {
   minConfidence: 0.35,
   // A bed box that covers the whole room is a failed detection, not a big bed.
@@ -175,7 +257,8 @@ export function rectCentre(r) {
  *             A whole-floor plan has three bedrooms on it and only one of them
  *             is being lit; the other two beds are not obstacles here.
  */
-export function detectionsToZones(payload, { image, polygon = null, classes = ZONE_CLASSES, ...o } = {}) {
+export function detectionsToZones(payload, { image, polygon = null, classes = ZONE_CLASSES,
+                                             pxPerFt = null, ...o } = {}) {
   const opt = { ...FURNITURE_DEFAULTS, ...o };
   const want = new Set((classes || []).map((c) => String(c).toLowerCase()));
   const area = image.w * image.h;
@@ -197,8 +280,17 @@ export function detectionsToZones(payload, { image, polygon = null, classes = ZO
 
     if (want.size && !want.has(cls)) { why('not a class we zone'); continue; }
     if (conf < opt.minConfidence) { why(`confidence ${conf.toFixed(2)} below ${opt.minConfidence}`); continue; }
-    if (frac > opt.maxAreaFrac) { why(`covers ${Math.round(frac * 100)}% of the plan`); continue; }
-    if (frac < opt.minAreaFrac) { why('too small to be furniture'); continue; }
+    // REAL SIZE WINS WHENEVER IT IS KNOWN. The fraction gates below are a crude
+    // stand-in for a scale and are only consulted when there isn't one — see the
+    // header of BED_FT for why a percentage of an arbitrary sheet cannot decide
+    // whether something is a bed.
+    if (pxPerFt) {
+      const fit = plausibleBed(r, pxPerFt);
+      if (!fit.ok) { why(fit.why); continue; }
+    } else {
+      if (frac > opt.maxAreaFrac) { why(`covers ${Math.round(frac * 100)}% of the plan`); continue; }
+      if (frac < opt.minAreaFrac) { why('too small to be furniture'); continue; }
+    }
     if (polygon && !pointInPolygon(rectCentre(r), polygon)) { why('outside the space being lit'); continue; }
 
     kept.push({ cls, conf, rect: r });
@@ -294,6 +386,57 @@ export async function detectFurniture({ base64, mime = 'image/png', classes = ZO
   try { json = JSON.parse(text); } catch { throw new Error(`Detector returned non-JSON (${res.status}): ${text.slice(0, 180)}`); }
   if (!res.ok) throw new Error(json.error || `Detector failed (${res.status}).`);
   return json;
+}
+
+/**
+ * ASK THE BED WORKFLOW. One trained segmenter, one call, no second opinion.
+ *
+ * A SEPARATE FUNCTION AND NOT A `classes: ['bed']` CALL TO detectFurniture,
+ * because two things differ and both are easy to get silently wrong:
+ *
+ *   NO CLASS FILTER ON THE WAY BACK. `detectionsToZones` drops anything whose
+ *   class is not in the wanted set, and a dedicated workflow may label its
+ *   output 'bed', 'Bed', 'mattress' or the name of the training project. On a
+ *   general workflow that filter is what stops a sofa becoming a no-light zone;
+ *   on this one it is a way to throw the entire answer away and report zero
+ *   detections. Everything this endpoint returns is a bed by construction, so
+ *   the class is RELABELLED rather than checked.
+ *
+ *   THE SIZE GATE STILL APPLIES. `plausibleBed` runs downstream exactly as
+ *   before. A better detector is not a reason to stop measuring what it
+ *   returned — that gate is what caught the twin-pair boxes, and it costs
+ *   nothing when the boxes are right.
+ *
+ * Returns the same { kept, rejected } shape as detectionsToZones, so callers do
+ * not branch on where the beds came from.
+ */
+export async function detectBeds({ base64, mime = 'image/png', endpoint = '/api/detect',
+                                   signal, w = null, h = null, image = null,
+                                   polygon = null, pxPerFt = null } = {}) {
+  if (!base64) throw new Error('No image to look at.');
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: base64, mime, task: 'beds', w, h }),
+    signal,
+  });
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); } catch {
+    throw new Error(`Bed detector returned non-JSON (${res.status}): ${text.slice(0, 180)}`);
+  }
+  if (!res.ok) throw new Error(json.error || `Bed detector failed (${res.status}).`);
+
+  // `classes: []` disables the class filter in detectionsToZones — see above.
+  const out = detectionsToZones(json.result, {
+    image: image ?? { w: w || 1000, h: h || 1000 },
+    polygon, pxPerFt, classes: [],
+  });
+  return {
+    ...out,
+    kept: out.kept.map((d) => ({ ...d, cls: 'bed' })),
+    payload: json,
+  };
 }
 
 // --- browser-only: shrink before sending ------------------------------------

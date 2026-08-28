@@ -99,7 +99,7 @@ export const BILLED_IDS = FIXTURES.map((f) => f.id);
  * but not measured — which is the honest outcome of not having a scale.
  */
 export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
-                           fans = [], pxPerFt = null, plan = null } = {}) {
+                           pxPerFt = null, plan = null } = {}) {
   const lit = rooms.filter((r) => r.plan?.ok);
 
   // --- per room
@@ -158,11 +158,10 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
 
   // --- the coordination items
   const coord = COORDINATION.map((c) => {
-    let n = objects.filter((o) => o.kind === c.id).length;
-    // The detector's red fan markers are fans too, and they are held somewhere
-    // else entirely. A drawing with three detected fans and one placed by hand
-    // has four fans on it.
-    if (c.id === 'fan') n += fans.length;
+    // ONE SOURCE. There used to be two — these, and whatever the red-circle
+    // detector found — and the schedule had to add them up. The detector is
+    // gone; every fan on the ceiling is one somebody placed.
+    const n = objects.filter((o) => o.kind === c.id).length;
     return { ...c, qty: n };
   }).filter((c) => c.qty > 0);
 

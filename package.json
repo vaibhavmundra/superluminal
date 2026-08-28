@@ -7,17 +7,25 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tools/test-planner.mjs && node tools/test-chunking.mjs && node tools/test-rooms.mjs && node tools/test-dxf.mjs && node tools/test-snap.mjs && node tools/test-outline.mjs && node tools/test-vector-flow.mjs && node tools/test-furniture.mjs && node tools/test-detect-api.mjs && node tools/test-detect-flow.mjs && node tools/test-openai-detect.mjs && node tools/test-room-booleans.mjs && node tools/test-rooms-detect.mjs && node tools/test-accents.mjs && node tools/test-accent-edit.mjs && node tools/test-surfaces.mjs && node tools/test-spots.mjs && node tools/test-cad-export.mjs && node tools/test-roomtypes.mjs && node tools/test-api-accents.mjs && node tools/test-bedfit.mjs && node tools/test-doors.mjs && node tools/test-boq.mjs && node tools/test-ceiling.mjs"
+    "lint": "eslint src api tools --no-warn-ignored",
+    "test": "eslint src api tools --no-warn-ignored --quiet && node tools/test-planner.mjs && node tools/test-chunking.mjs && node tools/test-rooms.mjs && node tools/test-dxf.mjs && node tools/test-snap.mjs && node tools/test-outline.mjs && node tools/test-vector-flow.mjs && node tools/test-furniture.mjs && node tools/test-detect-api.mjs && node tools/test-detect-flow.mjs && node tools/test-openai-detect.mjs && node tools/test-room-booleans.mjs && node tools/test-rooms-detect.mjs && node tools/test-accents.mjs && node tools/test-accent-edit.mjs && node tools/test-surfaces.mjs && node tools/test-spots.mjs && node tools/test-cad-export.mjs && node tools/test-roomtypes.mjs && node tools/test-api-accents.mjs && node tools/test-bedfit.mjs && node tools/test-doors.mjs && node tools/test-boq.mjs && node tools/test-ceiling.mjs && node tools/test-plan-state.mjs && node tools/test-beds.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
     "dxf-parser": "^1.1.2",
     "konva": "^10.3.1",
+    "pdfjs-dist": "^6.2.108",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-konva": "^18.2.16"
+    "react-konva": "^18.2.16",
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.11.0",
     "vite": "^5.4.11"
   }
 }

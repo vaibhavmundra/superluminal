@@ -52,6 +52,23 @@ const DEFAULT_ROOMS_URL = 'https://serverless.roboflow.com/baibhav-mundra/workfl
 // to be a RULER. See src/lib/doors.js for what is done with the boxes.
 const DEFAULT_DOORS_URL = 'https://serverless.roboflow.com/baibhav-mundra/workflows/detect-and-count-objects-in-image-2';
 
+// The BED workflow, and after this change the ONLY thing that looks for beds.
+//
+// It is a segmentation model trained on beds specifically, and on the
+// FLOOR_PLAN_03 sample it returns one tight box around the mattress with the
+// nightstands left outside it — which is the thing every previous arrangement
+// was trying and failing to buy. What it replaces:
+//
+//   * the general-segmentation workflow asked for `classes=bed`, whose boxes at
+//     sheet resolution enclosed whole twin PAIRS;
+//   * the GPT whole-sheet pass;
+//   * the two-sample GPT contest per bedroom, and the judge that settled it.
+//
+// None of that is deleted. `general-segmentation-api-4` is still DEFAULT_URL and
+// still serves the wardrobe/sofa/task-surface questions; only the bed question
+// has moved off it.
+const DEFAULT_BEDS_URL = 'https://serverless.roboflow.com/baibhav-mundra/workflows/bed-filter';
+
 // Roboflow has published two shapes for this route over time. If the
 // configured one 404s we try the other before believing the workflow is gone,
 // because "wrong URL shape" and "no such workflow" are the same status code
@@ -101,7 +118,38 @@ function scrub(node, key, depth = 0) {
  *
  * Never log the key. Never log the base64 either — it is megabytes of noise.
  */
-const log = (id, arrow, msg) => console.log(`[detect ${id}] ${arrow} ${msg}`);
+/*
+ * ONLY THE BEDS TALK.
+ *
+ * This route serves three jobs — rooms, doors and furniture — and while the bed
+ * pipeline is being worked on the other two are pure noise: a bed run on a
+ * ten-space plan is a dozen lines buried in fifty about walls and door swings
+ * nobody is asking about. Set BED_LOG_ONLY to false to make the route loud
+ * again.
+ *
+ * A SET OF IDS AND NOT A FLAG, because these requests overlap. Doors, rooms and
+ * furniture go out together and answer out of order, so a module-level "am I
+ * loud" boolean set at the top of one handler is read by another handler two
+ * lines later. The id is already threaded through every log call for exactly
+ * this reason; keying off it costs nothing and cannot cross wires.
+ *
+ * Never log the key. Never log the base64 either — it is megabytes of noise.
+ */
+export const BED_LOG_ONLY = true;
+const loudIds = new Set();
+/** Bounded, because a handler has a dozen return paths and none of them is a
+ *  good place to remember to forget an id. A Set keeps insertion order, so
+ *  dropping the oldest is one line and the memory cannot creep. */
+const markLoud = (id) => {
+  loudIds.add(id);
+  if (loudIds.size > 64) loudIds.delete(loudIds.values().next().value);
+};
+const isBedTask = (task, classes) => task === 'beds'
+  || (task === 'furniture' && String(classes ?? '').toLowerCase().includes('bed'));
+const log = (id, arrow, msg) => {
+  if (BED_LOG_ONLY && !loudIds.has(id)) return;
+  console.log(`[detect ${id}] ${arrow} ${msg}`);
+};
 
 /** Pull a short human summary out of whatever Roboflow returned. */
 function summarise(parsed) {
@@ -424,10 +472,11 @@ export default async function handler(req, res) {
   // rooms, so an outline can be proposed instead of traced by hand. They are
   // different workflows and different models; the only thing they share is
   // this endpoint, the key and the scrubbing.
-  const task = ['rooms', 'doors'].includes(body.task) ? body.task : 'furniture';
+  const task = ['rooms', 'doors', 'beds'].includes(body.task) ? body.task : 'furniture';
   const furnitureUrl = process.env.ROBOFLOW_WORKFLOW_URL || DEFAULT_URL;
   const roomsUrl = process.env.ROBOFLOW_ROOMS_WORKFLOW_URL || DEFAULT_ROOMS_URL;
   const doorsUrl = process.env.ROBOFLOW_DOORS_WORKFLOW_URL || DEFAULT_DOORS_URL;
+  const bedsUrl = process.env.ROBOFLOW_BEDS_WORKFLOW_URL || DEFAULT_BEDS_URL;
 
   const provider = ['roboflow', 'openai', 'both'].includes(body.provider) ? body.provider : 'roboflow';
   // The arm is NOT taken from the body. The two grid arms need a measuring grid
@@ -457,6 +506,7 @@ export default async function handler(req, res) {
     return send(500, { error: 'ROBOFLOW_INFERENCE_KEY is not set on the server.' });
   }
 
+  if (isBedTask(task, classes)) markLoud(id);
   log(id, '->', `${(bytes / 1024).toFixed(0)}KB ${body.mime || 'image'}, task=${task}`
     + (task !== 'furniture' ? '' : `, classes="${classes}", provider=${provider}`
         + `${provider !== 'roboflow' ? ` (${model}, ${arm})` : ''}`));
@@ -485,6 +535,43 @@ export default async function handler(req, res) {
     });
     if (rf.error) return send(rf.code ?? 502, { ...rf.body, id });
     return send(200, { meta: { id, task: 'rooms', ...rf.meta, bytes }, result: rf.payload });
+  }
+
+  // --- beds ----------------------------------------------------------------
+  //
+  // ONE MODEL, NO SECOND OPINION, NO JUDGE. Every previous arrangement here was
+  // a way of compensating for a detector that could not resolve a bed on a whole
+  // sheet: two vendors contested, then two samples of one vendor contested, then
+  // an arbiter to settle them. A model that draws the mattress correctly the
+  // first time makes all of that machinery an expensive way to agree with
+  // itself.
+  //
+  // NO CLASS LIST, and the first variant is image-only for that reason: a
+  // workflow that answers exactly one question does not need telling what to
+  // look for, and a stock workflow rejects an input it never declared. The
+  // second variant exists only in case this one was built to take the list.
+  //
+  // Everything it returns IS a bed — the class name is not filtered on the way
+  // out (see detectBeds in furniture.js), because a dedicated workflow may label
+  // its output anything and 'not a class we zone' would silently eat the whole
+  // answer.
+  if (task === 'beds') {
+    if (!key) return send(500, { error: 'ROBOFLOW_INFERENCE_KEY is not set on the server.' });
+    const rf = await callRoboflow({
+      id, b64, key, classes, url: bedsUrl, tag: 'beds',
+      variants: [
+        { image: { type: 'base64', value: b64 } },
+        { image: { type: 'base64', value: b64 }, classes },
+      ],
+    });
+    if (rf.error) return send(rf.code ?? 502, { ...rf.body, id });
+    // The annotated overlay is stripped for the same reason as on the door
+    // route: it is a megabyte of picture the browser already has, and it buries
+    // the four numbers that matter.
+    return send(200, {
+      meta: { id, task: 'beds', ...rf.meta, bytes },
+      result: stripImages(rf.payload),
+    });
   }
 
   // --- doors ---------------------------------------------------------------
