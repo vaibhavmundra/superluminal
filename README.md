@@ -4252,7 +4252,13 @@ imports from inside `src/`, hashed and rewritten by the bundler.
 **`vercel.json`, with the API carved out.** Every path that is not a real file and
 not `/api/*` serves `index.html`, or a refresh on a deep link is a 404 from the
 CDN. The negative lookahead is load-bearing — `/api/detect` and `/api/accents` are
-functions and must not be handed the HTML shell.
+functions and must not be handed the HTML shell. Vercel checks the filesystem
+before rewrites, so `/assets/*` still resolves to the hashed bundle.
+
+The rewrite entry carries no `"//"` comment key: Vercel validates `vercel.json`
+against a closed schema and rejects any property it does not know, so a comment
+there fails the build with *`rewrites[0]` should NOT have additional property
+`//`*. This paragraph is where that explanation lives instead.
 
 ### The environment, and the one place VITE_ is correct
 
