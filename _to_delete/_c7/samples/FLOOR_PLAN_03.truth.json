@@ -1,7 +1,0 @@
-{
-  "_comment": "Hand-measured mattress bounds for FLOOR_PLAN_03.png, in ORIGINAL image pixels (1042x1642), corners not centres. Read off the drawing at 2x with a 20px ruler: the mattress rectangle only, excluding the two nightstands either side of the headboard. pxPerFt is DERIVED, not printed on the plan — the bed measures 236 x 265px, which is 1800 x 2000mm at 40 px/ft, and the bedroom door swing puts a 900mm leaf at ~37 px/ft. Treat it as +/- 8% and replace it the moment you have a dimension off the real drawing.",
-  "pxPerFt": 40,
-  "beds": [
-    { "x0": 175, "y0": 980, "x1": 411, "y1": 1245 }
-  ]
-}
