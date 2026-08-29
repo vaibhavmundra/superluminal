@@ -1460,3 +1460,166 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
   color:var(--danger-ink);font-family:var(--mono);font-size:11.5px;line-height:1.5;
   white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto
 }
+
+/* ===========================================================================
+   THE ADMIN CONSOLE
+   
+   ONE HUE FOR THE WHOLE OPERATOR SURFACE, and it is the magenta the audit
+   overlays already claimed (#C026D3, see `.sec.admin` above). The rule this app
+   runs on is that #0070F3 means "the live thing, the thing you are touching" —
+   so a second meaning could not be hung on it, and grey would have made the
+   most consequential screens in the app look like the least. Magenta appears
+   nowhere in the product; seeing it anywhere means you are looking at somebody
+   else's work.
+   =========================================================================== */
+
+:root{
+  --op:#C026D3;
+  --op-soft:#FDF2FE;
+  --op-line:#F0ABFC;
+}
+
+/* ---------- the door in the rail ---------- */
+.rail-admin{
+  display:flex;align-items:center;justify-content:center;
+  width:32px;height:32px;border-radius:8px;margin-top:8px;
+  color:var(--text-subtle);transition:background .12s,color .12s
+}
+.rail-admin:hover{background:var(--op-soft);color:var(--op)}
+
+/* ---------- "you are looking at somebody else's account" ---------- */
+.viewing-as{
+  display:flex;align-items:center;gap:11px;
+  padding:10px 14px;margin-bottom:22px;
+  border:1px solid var(--op-line);border-radius:var(--r);
+  background:var(--op-soft)
+}
+.viewing-dot{
+  width:8px;height:8px;border-radius:50%;background:var(--op);flex:none;
+  /* IT PULSES, AND ONLY THIS. Nothing else in the app moves on its own, which
+     is exactly why eight pixels of it in the corner of the eye is enough to
+     stop somebody forgetting which account they are in. */
+  animation:viewing-pulse 2.4s ease-in-out infinite
+}
+@keyframes viewing-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.viewing-dot{animation:none}}
+.viewing-text{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.viewing-text b{font-size:12.5px;color:var(--ink)}
+.viewing-text span{font-size:11.5px;color:var(--text-muted)}
+.viewing-links{display:flex;gap:14px;flex:none}
+.viewing-links .linkish{color:var(--op)}
+
+/* The pill in the editor's own top bar, where there is no room for a banner. */
+.pill.viewing{
+  border-color:var(--op-line);background:var(--op-soft);color:var(--op)
+}
+
+/* ---------- the user table ---------- */
+.admin-search{display:flex;align-items:center;gap:10px}
+.admin-search input{
+  width:230px;padding:7px 11px;border-radius:var(--r);
+  border:1px solid var(--border-strong);background:var(--surface-3);
+  font:inherit;font-size:12.5px;color:var(--ink)
+}
+.admin-search input:focus{outline:none;border-color:var(--ink);background:var(--surface)}
+
+.admin-sorts{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px}
+.admin-sorts button{
+  border:1px solid transparent;background:none;font:inherit;font-size:12px;
+  color:var(--text-muted);padding:5px 10px;border-radius:999px;cursor:pointer
+}
+.admin-sorts button:hover{background:var(--surface-3);color:var(--ink)}
+.admin-sorts button.on{background:var(--ink);color:#fff}
+
+.admin-table-wrap{
+  border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;
+  background:var(--surface);transition:opacity .15s
+}
+/* A REFETCH FADES, IT DOES NOT BLANK. Replacing the table with skeletons on
+   every sort change makes the page flash and loses your place; 60% opacity says
+   "this is the old answer, a new one is coming" without moving anything. */
+.admin-table-wrap.busy{opacity:.6}
+.admin-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.admin-table th{
+  text-align:left;font-weight:500;font-size:10.5px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--text-subtle);
+  padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2,transparent)
+}
+.admin-table th.num,.admin-table td.num{text-align:right;width:92px}
+.admin-table td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+.admin-table tbody tr:last-child td{border-bottom:none}
+.admin-table tbody tr[role=button]{cursor:pointer}
+.admin-table tbody tr[role=button]:hover{background:var(--op-soft)}
+.admin-table tbody tr[role=button]:focus-visible{outline:2px solid var(--op);outline-offset:-2px}
+.admin-table td.muted{color:var(--text-subtle);font-family:var(--mono)}
+.admin-table td.strong{color:var(--ink);font-family:var(--mono);font-weight:500}
+.admin-table .dash{color:var(--text-subtle)}
+.admin-empty{text-align:center;color:var(--text-subtle);padding:36px 14px}
+
+.admin-who{display:flex;align-items:center;gap:10px}
+.admin-who > div{display:flex;flex-direction:column;gap:1px;min-width:0}
+.admin-who b{font-size:12.5px;font-weight:500}
+.admin-who span{font-size:11px;color:var(--text-subtle);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:34ch}
+/* The rail's bubble at list size. Not a button here — it is an initial, and
+   giving it the hover states of a control would promise a menu that is not
+   there. */
+.bubble.sm{
+  width:26px;height:26px;font-size:11.5px;flex:none;cursor:inherit;
+  background:var(--surface-3);border-color:var(--border-strong);color:var(--text-muted)
+}
+.admin-table tbody tr:hover .bubble.sm{border-color:var(--op);color:var(--op)}
+.tag.admin{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+  padding:2px 6px;border-radius:999px;
+  border:1px solid var(--op-line);background:var(--op-soft);color:var(--op)
+}
+
+.skel-row td{padding:0}
+.skel-row span{
+  display:block;height:47px;
+  background:linear-gradient(90deg,var(--surface-3) 25%,var(--surface) 50%,var(--surface-3) 75%);
+  background-size:400% 100%;animation:skel 1.3s ease-in-out infinite
+}
+@keyframes skel{0%{background-position:100% 0}100%{background-position:0 0}}
+
+/* ---------- pagination ---------- */
+.pager{display:flex;align-items:center;justify-content:center;gap:16px;margin:24px 0 8px}
+.pager-at{font-size:12px;color:var(--text-subtle);font-family:var(--mono);min-width:16ch;text-align:center}
+
+/* ---------- the read-only viewer ---------- */
+/* A COLUMN: the banner takes what it needs, the editor takes the rest. The
+   editor's own layout assumes it owns the viewport height, so the stage below
+   needs `min-height:0` for the same reason `.shell-col` does — without it the
+   grid row grows to the content and the canvas pushes the banner off screen. */
+.viewer-shell{display:grid;grid-template-rows:auto minmax(0,1fr);height:100%}
+.viewer-shell .viewing-as{margin:0;border-radius:0;border-width:0 0 1px 0}
+.viewer-stage{min-height:0;position:relative}
+.viewer-stage > .app{height:100%}
+
+.plan-name.is-static{
+  font:inherit;font-size:13px;color:var(--ink);padding:4px 0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38ch
+}
+
+.viewer-tiles{display:flex;gap:8px;margin-top:10px}
+.viewer-tile{
+  flex:1;padding:9px 10px;border-radius:var(--r);
+  background:var(--surface-3);border:1px solid var(--border);
+  display:flex;flex-direction:column;gap:1px
+}
+.viewer-tile b{font-family:var(--mono);font-size:16px;line-height:1.1}
+.viewer-tile span{font-size:10.5px;color:var(--text-subtle)}
+
+.viewer-rooms{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+.viewer-room{
+  display:flex;flex-direction:column;gap:1px;text-align:left;
+  padding:7px 9px;border-radius:var(--r);border:1px solid transparent;
+  background:none;font:inherit;cursor:pointer;transition:background .12s,border-color .12s
+}
+.viewer-room:hover{background:var(--surface-3)}
+.viewer-room.on{background:var(--surface-3);border-color:var(--accent)}
+.viewer-room-name{font-size:12.5px;color:var(--ink)}
+.viewer-room-n{font-size:11px;color:var(--text-subtle);font-family:var(--mono)}
+
+.viewer-layers{display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;margin-top:8px}

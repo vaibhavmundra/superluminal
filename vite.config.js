@@ -10,16 +10,27 @@ function apiRoutes(env) {
   // than a third branch of the first — see the header of api/accents.js — so it
   // needs mounting here too, and mounting it by hand a second time is how the
   // dev server and production quietly end up with different route lists.
-  const ROUTES = [['/api/detect', '/api/detect.js'], ['/api/accents', '/api/accents.js']];
+  const ROUTES = [['/api/detect', '/api/detect.js'], ['/api/accents', '/api/accents.js'],
+                  ['/api/admin', '/api/admin.js']];
   return {
     name: 'api-routes',
     configureServer(server) {
       // Every server-side name the handlers read. A key missing here does not
       // fail loudly — it fails as "the provider is not configured" on a machine
       // where .env.local plainly contains it, which is a bad hour.
+      // THE SUPABASE NAMES ARE HERE TOO, AND TWO OF THEM LOOK WRONG UNTIL YOU
+      // READ api/admin.js. That handler needs three things the browser half
+      // never gives it: the project URL, the SERVICE key (which bypasses RLS and
+      // must never be prefixed), and the ANON key — the last only to ask
+      // Supabase to validate the caller's token, which is a public operation.
+      // The VITE_-prefixed pair is listed as a fallback because .env.local
+      // already carries them and making somebody write the same URL twice is how
+      // the two drift apart.
       for (const k of ['ROBOFLOW_INFERENCE_KEY', 'ROBOFLOW_WORKFLOW_URL',
                        'ROBOFLOW_ROOMS_WORKFLOW_URL',
-                       'OPENAI_API_KEY', 'OPENAI_VISION_MODEL']) {
+                       'OPENAI_API_KEY', 'OPENAI_VISION_MODEL',
+                       'SUPABASE_URL', 'SUPABASE_PROJECT_ID', 'SUPABASE_SECRET_KEY',
+                       'SUPABASE_ANON_KEY', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY']) {
         if (env[k] && !process.env[k]) process.env[k] = env[k];
       }
       for (const [route, file] of ROUTES) {

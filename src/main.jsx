@@ -8,6 +8,10 @@ import Login from './routes/Login.jsx';
 import Dashboard from './routes/Dashboard.jsx';
 import ProjectDetail from './routes/ProjectDetail.jsx';
 import Planner from './routes/Planner.jsx';
+import AdminUsers from './routes/AdminUsers.jsx';
+import AdminUserView from './routes/AdminUserView.jsx';
+import AdminUserProject from './routes/AdminUserProject.jsx';
+import AdminPlanViewer from './routes/AdminPlanViewer.jsx';
 import './styles.css';
 
 // ---------------------------------------------------------------------------
@@ -18,6 +22,22 @@ import './styles.css';
 //   /dashboard        every project
 //   /projects/:id     every plan in one project
 //   /plans/:id        the editor — what used to be the whole app
+//
+// AND FOUR MORE FOR THE OPERATOR, which are a mirror of the middle three plus a
+// list at the top:
+//
+//   /admin/users                          who is using this, and what they made
+//   /admin/users/:userId                  their dashboard, as they see it
+//   /admin/users/:userId/projects/:id     their plans in one project
+//   /admin/plans/:planId                  one plan on the real canvas, read only
+//
+// THEY ARE WRAPPED IN RequireAuth AND NOTHING MORE, and that is not an oversight.
+// A route guard that also checked `isAdmin` would be checking a value the browser
+// computes from a row it fetched — worth doing for the RAIL, where the cost of
+// being wrong is a link that leads nowhere, and worth nothing as security. The
+// real gate is in api/admin.js, server-side, on every request. A non-admin who
+// types one of these URLs gets the screen and then an honest "This is an
+// admin-only screen." where the data would have been.
 //
 // BROWSER ROUTER, NOT HASH ROUTER, and that decision reaches into vite.config.js
 // and vercel.json: real paths need the host to serve index.html for a URL that
@@ -39,6 +59,12 @@ createRoot(document.getElementById('root')).render(
           <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
           <Route path="/projects/:projectId" element={<RequireAuth><ProjectDetail /></RequireAuth>} />
           <Route path="/plans/:planId" element={<RequireAuth><Planner /></RequireAuth>} />
+
+          <Route path="/admin/users" element={<RequireAuth><AdminUsers /></RequireAuth>} />
+          <Route path="/admin/users/:userId" element={<RequireAuth><AdminUserView /></RequireAuth>} />
+          <Route path="/admin/users/:userId/projects/:projectId"
+            element={<RequireAuth><AdminUserProject /></RequireAuth>} />
+          <Route path="/admin/plans/:planId" element={<RequireAuth><AdminPlanViewer /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>

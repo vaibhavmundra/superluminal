@@ -26,7 +26,7 @@ import { Logo } from './Wordmark.jsx';
 // button is a menu that gets left open behind a dialog.
 // ---------------------------------------------------------------------------
 export default function ProfileRail() {
-  const { initial, displayName, user, signOut } = useAuth();
+  const { initial, displayName, user, signOut, isAdmin } = useAuth();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   const nav = useNavigate();
@@ -53,6 +53,37 @@ export default function ProfileRail() {
         <Logo width={38} />
       </Link> */}
 
+      {/* THE ADMIN DOOR, and it is the only thing that has ever earned a place
+          in the middle of this rail.
+
+          VISIBLE ONLY TO ROLE 1, and that is a courtesy rather than a control:
+          the console it opens asks /api/admin, which re-checks the role
+          server-side against the database on every single request. Hiding the
+          link stops it cluttering everybody else's rail; it is not what stops
+          anybody else reading the data. See the header of api/admin.js.
+
+          MAGENTA, NOT THE ACCENT. #0070F3 on these screens means "the live
+          thing, the thing you are touching", and it is already spoken for by
+          the account bubble below. The audit overlays in the editor's panel
+          already use magenta for exactly this idea — working, not product — so
+          the operator's surfaces read as one thing across the app. */}
+      {isAdmin && (
+        <Link to="/admin/users" className="rail-admin" title="Users (admin)"
+          aria-label="Users (admin)">
+          {/* Three figures. Drawn rather than loaded for the same reason the
+              lit-aperture mark is: it takes the ink colour with it and stays
+              sharp at any density. */}
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none"
+            stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+            strokeLinejoin="round" aria-hidden="true">
+            <path d="M15.5 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H5.9A3.4 3.4 0 0 0 2.5 18.4V20" />
+            <circle cx="9" cy="7.6" r="3.4" />
+            <path d="M21.5 20v-1.6a3.4 3.4 0 0 0-2.6-3.3" />
+            <path d="M16 4.2a3.4 3.4 0 0 1 0 6.6" />
+          </svg>
+        </Link>
+      )}
+
       <div className="rail-spacer" />
 
       <div className="rail-account" ref={wrapRef}>
@@ -68,6 +99,11 @@ export default function ProfileRail() {
             <button role="menuitem" onClick={() => { setOpen(false); nav('/'); }}>
               New plan
             </button>
+            {isAdmin && (
+              <button role="menuitem" onClick={() => { setOpen(false); nav('/admin/users'); }}>
+                Users (admin)
+              </button>
+            )}
             <div className="rail-sep" />
             <button role="menuitem" className="danger"
               onClick={async () => { setOpen(false); await signOut(); nav('/', { replace: true }); }}>

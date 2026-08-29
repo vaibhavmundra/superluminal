@@ -20,6 +20,7 @@ import ChunkIcon from './components/ChunkIcon.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
+import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
 import { buildBOQ } from './lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
@@ -124,6 +125,34 @@ export default function App({
   initialProjectType = null, initialPdfPage = null, uploadState = null, isAdmin = false,
   onRename = null, onPersist = null, onMilestone = null, onBack = null,
   onRetryUpload = null,
+  // ---------------------------------------------------------------------
+  // READ-ONLY MODE — the viewer an admin gets on somebody else's plan.
+  //
+  // ONE PROP, AND IT WAS THE RIGHT UNIT OF CHANGE. The alternative was a
+  // second component that re-derived the drawing from `design_json`: a
+  // parallel PlanCanvas call site, a parallel BOQ, a parallel set of memos
+  // over the same geometry. Two renderers of one drawing drift within a
+  // month, and the ONE thing this viewer must guarantee is that what the
+  // operator sees is what the user sees. So it is this component, with the
+  // writes taken out.
+  //
+  // WHAT IT TURNS OFF, all of it below and each marked `readOnly`:
+  //   · the three detectors, which would spend model calls on a stored plan
+  //   · the mutating keyboard shortcuts (Delete, Escape-to-disarm)
+  //   · the tracer and the chunk picker, both of which exist to edit
+  //   · rename, and the project-type dialog
+  //   · every interaction handler on the canvas except hover
+  //   · the entire editing panel, replaced by ViewerPanel
+  //
+  // WHAT IT DELIBERATELY LEAVES ON: pan, zoom, layer switches, the fixture
+  // tooltip, the BOQ tab and every export. None of them write, and without
+  // them this is a screenshot rather than a viewer.
+  //
+  // THE AUTOSAVE NEEDS NO GUARD. The route simply does not pass onPersist or
+  // onMilestone, and both are already `if (!onPersist) return;` at the top.
+  // Belt and braces would be a third check that hides the real contract.
+  // ---------------------------------------------------------------------
+  readOnly = false,
 } = {}) {
   // TWO WAYS IN, one pipeline — and since the outline became something you
   // draw, the two have very nearly converged. BOTH kinds of plan are read for
@@ -2255,13 +2284,18 @@ export default function App({
     : !litIds.length ? 'trace'
     : pickingId ? 'chunks'
     : 'plan';
-  const showTrace = step === 'trace';
+  // NEVER THE TRACER IN READ-ONLY. `step` is 'trace' whenever nothing has been
+  // lit yet, which is a perfectly normal state for a plan somebody abandoned —
+  // and the tracer is an editing surface end to end. The viewer shows the drawing
+  // with whatever outlines exist instead, and the panel says plainly that there
+  // is no layout.
+  const showTrace = step === 'trace' && !readOnly;
   // The BOQ tab takes the whole stage. Gated on `source` as well as on the tab
   // so that a stale `view` cannot survive a Clear and render a schedule of a
   // plan that is no longer loaded.
   const boqOpen = view === 'boq' && !!source;
   const picking = pickingId ? rooms.find((r) => r.id === pickingId) : null;
-  const showPicker = step === 'chunks' && !zoneMode && !!picking;
+  const showPicker = step === 'chunks' && !zoneMode && !!picking && !readOnly;
 
 
   // --- interactions ---------------------------------------------------------
@@ -2653,10 +2687,15 @@ export default function App({
         setFocusId(null);
       }
     };
+    // READ-ONLY: not bound at all. Every branch of this handler deletes
+    // something — a fitting, a ceiling object, a space's layout — so the fix is
+    // not to guard the branches but to never listen. The zoom keys are a second,
+    // separate handler and they stay.
+    if (readOnly) return undefined;
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [objMode, armed, selObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
-      manualAccents, focusId]);
+      manualAccents, focusId, readOnly]);
 
   const onCanvasClick = (e) => {
     // Ceiling objects are handled entirely in the pointer events — see the note
@@ -3087,6 +3126,11 @@ export default function App({
     // on top of it. Re-running would cost a model call and throw those away.
     // The nonce is the user asking again, explicitly.
     if (restoring.current && roomNonce === 0) return;
+    // READ-ONLY: never. This is a stored plan belonging to somebody else, and
+    // re-running the rooms detector on it would spend a model call to recompute
+    // an answer that is already in the row — and then hold a different one in
+    // memory from the one the user is looking at on their own screen.
+    if (readOnly) return;
     let alive = true;
     const ctl = new AbortController();
 
@@ -3223,6 +3267,11 @@ export default function App({
     // on top of it. Re-running would cost a model call and throw those away.
     // The nonce is the user asking again, explicitly.
     if (restoring.current && doorNonce === 0) return;
+    // READ-ONLY: never. This is a stored plan belonging to somebody else, and
+    // re-running the doors detector on it would spend a model call to recompute
+    // an answer that is already in the row — and then hold a different one in
+    // memory from the one the user is looking at on their own screen.
+    if (readOnly) return;
     let alive = true;
     const ctl = new AbortController();
 
@@ -3283,6 +3332,11 @@ export default function App({
     // on top of it. Re-running would cost a model call and throw those away.
     // The nonce is the user asking again, explicitly.
     if (restoring.current && detectNonce === 0) return;
+    // READ-ONLY: never. This is a stored plan belonging to somebody else, and
+    // re-running the beds detector on it would spend a model call to recompute
+    // an answer that is already in the row — and then hold a different one in
+    // memory from the one the user is looking at on their own screen.
+    if (readOnly) return;
     // A BIG PLAN DOES NOT GET ASKED ALL AT ONCE. Over LARGE_PLAN_SQFT the answer
     // to this question is reliably "no beds" — fifteen mattresses at forty pixels
     // each — and every bedroom is asked about on its own crop in the pipeline
@@ -3643,7 +3697,7 @@ export default function App({
     <div className="app">
       {/* ONE QUESTION, BEFORE ANYTHING ELSE. Shown the moment a plan is
           readable and dismissed only by answering — see ProjectTypeDialog. */}
-      {source && (!projectId || doorState.status === 'running') && (
+      {source && !readOnly && (!projectId || doorState.status === 'running') && (
         <ProjectTypeDialog planName={source.name} onPick={setProjectId}
           busy={doorState.status === 'running' ? 'Looking for doors…' : null}
           note="A door is a standard width, so one of them is the drawing's ruler." />
@@ -3687,7 +3741,11 @@ export default function App({
               <span aria-hidden="true">←</span> Back to Projects
             </button>
             <span className="sep" aria-hidden="true" />
-            {nameDraft == null ? (
+            {readOnly ? (
+              /* A SPAN, NOT A DISABLED BUTTON. The name is not a control here and
+                 dressing it as a dead one invites the click that does nothing. */
+              <span className="plan-name is-static">{planName || 'Untitled plan'}</span>
+            ) : nameDraft == null ? (
               <button className="plan-name" title="Rename this plan"
                 onClick={() => setNameDraft(planName || '')}>
                 {planName || 'Untitled plan'}
@@ -3715,6 +3773,11 @@ export default function App({
           </div>
         )}
         <div className="spacer" />
+        {/* THE STANDING REMINDER. The stage below is pixel-for-pixel the editor,
+            so the only thing separating "looking at their plan" from "editing
+            mine" is this pill and the banner on the way in. It is magenta for the
+            same reason everything else operator-facing is. */}
+        {readOnly && <div className="pill viewing">Read only · viewer</div>}
         {busy && <div className="pill">{busy}</div>}
         {/* Only where there is somewhere for a save to go. */}
         {onPersist && SAVE_LABEL[saveState] && (
@@ -3833,30 +3896,45 @@ export default function App({
                  nothing when they have picked nothing. */
               selectedId={focusId}
               fansPx={obstaclesPx} pxPerFt={pxPerFt} layers={layers} zoom={zoom}
-              objMode={objMode} selObjId={selObjId} onObjPointerDown={objPointerDown}
+              /* READ-ONLY: EVERY HANDLER OFF, AND `onFixture` BELOW LEFT ON.
+                 PlanCanvas treats each of these as optional — a null
+                 onObjPointerDown is a fan you cannot pick up, a false objMode is
+                 a canvas with no grips — so the read-only canvas is the same
+                 component drawing the same geometry with nothing to grab. Hover
+                 is not a mutation and it is the entire reason to open this
+                 screen, so `onFixture` is untouched. */
+              objMode={!readOnly && objMode}
+              selObjId={readOnly ? null : selObjId}
+              onObjPointerDown={readOnly ? null : objPointerDown}
               objDragMode={objDrag?.moved ? objDrag.mode : null}
-              guides={guides} ghost={ghost} clearanceFt={opt.fanClearance}
-              selAccId={selAccId} onAccPointerDown={accPointerDown}
+              guides={readOnly ? [] : guides} ghost={readOnly ? null : ghost}
+              clearanceFt={opt.fanClearance}
+              selAccId={readOnly ? null : selAccId}
+              onAccPointerDown={readOnly ? null : accPointerDown}
               surfaces={surfacesPx} taskSpots={taskSpotsPx}
-              measure={null} onCanvasClick={onCanvasClick}
+              measure={null} onCanvasClick={readOnly ? null : onCanvasClick}
               /* Crosshair only where a click would actually do something. Off
                  the ceiling it reverts to a pointer, which is the cursor's job:
                  saying what the click will do before it is spent. */
-              cursor={objDrag || accDrag ? 'grabbing'
+              cursor={readOnly ? null
+                : objDrag || accDrag ? 'grabbing'
                 : (armed || addTool) ? (overRoom ? 'crosshair' : 'pointer')
                 : null}
-              zones={drawnZones} draftZone={draftZone} zoneMode={zoneMode}
-              onZoneDown={onZoneDown} onZoneMove={onZoneMove} onZoneUp={onZoneUp}
+              zones={drawnZones} draftZone={readOnly ? null : draftZone}
+              zoneMode={!readOnly && zoneMode}
+              onZoneDown={readOnly ? null : onZoneDown}
+              onZoneMove={readOnly ? null : onZoneMove}
+              onZoneUp={readOnly ? null : onZoneUp}
               accents={accentZonesPx} onFixture={setTip}
               /* The audit layer. `auditZones` is the BED set specifically — the
                  zones the planner obeys but the drawing does not show, which is
                  the one reading with no visible consequence anywhere else. */
               audit={isAdmin && audit}
               auditZones={detectedZones}
-              draftRun={addTool === 'strip' && stripFrom && addAt
+              draftRun={!readOnly && addTool === 'strip' && stripFrom && addAt
                 ? [stripFrom, addAt] : null}
-              placeSnap={addTool === 'strip' ? addSnap : null}
-              sconceGhost={addTool === 'sconce' ? addGhost : null} />
+              placeSnap={!readOnly && addTool === 'strip' ? addSnap : null}
+              sconceGhost={!readOnly && addTool === 'sconce' ? addGhost : null} />
             <FixtureTip tip={tip} />
           </div>
         )}
@@ -3903,6 +3981,54 @@ export default function App({
             <button className="btn" style={{ marginTop: 12, width: '100%' }}
               onClick={() => setView('design')}>← Back to the drawing</button>
           </div>
+        ) : readOnly ? (
+          /* THE READING, NOT THE CONTROLS. See ViewerPanel for why the editing
+             panel is removed rather than disabled. The exports are wired here
+             rather than inside that component because every one of them needs
+             something that only exists in this closure — `svgRef` for the two
+             raster formats, the room-to-feet mapping for the two DXFs — and
+             threading six values through a prop to rebuild the same three calls
+             on the other side would be a second export path to keep in step
+             with this one.
+
+             NO MILESTONE ON THE DXF. In the editor that button records an
+             `export` revision, on the sound reasoning that somebody taking a
+             file away is the strongest signal a design is finished. An operator
+             downloading somebody else's drawing is not that signal, and writing
+             a revision row would put a fictional milestone in the training
+             corpus — and a write on a screen that promises it does not write. */
+          <ViewerPanel
+            rooms={rooms} totals={totals} boq={boq}
+            layers={layers} onToggleLayer={toggle}
+            focusId={focusId} onFocus={setFocusId}
+            surfaceCount={surfacesPx.length}
+            accentCount={accentZonesPx.length}
+            spotCount={taskSpotsPx.length}
+            isVector={isVector}
+            onOpenBOQ={() => setView('boq')}
+            onExport={(kind) => {
+              if (kind === 'cad') {
+                download(`${exportBase}-superluminal.dxf`, toSuperluminalDXF({
+                  source,
+                  rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
+                  objects: obstaclesPx, accents: accentZonesPx, spots: taskSpotsPx,
+                }), 'application/dxf');
+                return;
+              }
+              if (kind === 'dxf') {
+                download(`${exportBase}-lights.dxf`,
+                  toDXF(rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
+                        { pxPerFt, heightPx: source.h }), 'application/dxf');
+                return;
+              }
+              if (kind === 'svg') {
+                download(`${exportBase}-lights.svg`, svgString(svgRef.current), 'image/svg+xml');
+                return;
+              }
+              svgToPNG(svgRef.current, source.w)
+                .then((png) => download(`${exportBase}-lights.png`, png))
+                .catch((err) => console.error('[viewer] png export failed', err));
+            }} />
         ) : (
           /* WHILE THE PIPELINE RUNS, THE PANEL SAYS NOTHING ELSE. Every section
              below reads results the run is in the middle of replacing — half of
