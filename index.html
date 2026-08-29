@@ -15,6 +15,33 @@
          which is exactly the thing that broke: the bundler hashes these files,
          so their real URLs are not knowable here. A stale preload is a wasted
          request at best and a misleading 404 in the network panel at worst. -->
+
+    <!-- THE SHARE CARD. Everything here is DUPLICATED ON PURPOSE — og:* is what
+         Facebook, WhatsApp, LinkedIn and Slack read, twitter:* is what X reads,
+         and neither falls back to the other reliably. The URLs are ABSOLUTE
+         because scrapers do not resolve relative paths: a "/superluminal-og.jpg"
+         here is a card with no picture on every platform, silently. -->
+    <link rel="canonical" href="https://superluminal.design/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Super Luminal" />
+    <meta property="og:url" content="https://superluminal.design/" />
+    <meta property="og:title" content="AI Powered lighting layouts in minutes" />
+    <meta property="og:description" content="Lighting layouts used to take hours. Our trained AI models understand your space, the use case and create fully functional layouts in a matter of minutes." />
+    <meta property="og:image" content="https://superluminal.design/superluminal-og.jpg" />
+    <meta property="og:image:secure_url" content="https://superluminal.design/superluminal-og.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="A floor plan in the Super Luminal editor with the lighting laid out over it — ambient downlights, accents and a fan, with the ceiling and fixture panel open alongside." />
+    <meta property="og:locale" content="en_US" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AI Powered lighting layouts in minutes" />
+    <meta name="twitter:description" content="Lighting layouts used to take hours. Our trained AI models understand your space, the use case and create fully functional layouts in a matter of minutes." />
+    <meta name="twitter:image" content="https://superluminal.design/superluminal-og.jpg" />
+    <meta name="twitter:image:alt" content="A floor plan in the Super Luminal editor with the lighting laid out over it — ambient downlights, accents and a fan, with the ceiling and fixture panel open alongside." />
+
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/favicon.png" />
     <meta name="theme-color" content="#ffffff" />
