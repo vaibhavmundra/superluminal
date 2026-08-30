@@ -454,6 +454,11 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
     // A strip is its RUN — the two ends are the whole specification, and they
     // are the numbers the derivation existed to produce.
     if (a.run) add(dxfPolyline(LY_T, a.run.map(P), false));
+    // A COVE IS ITS PERIMETER, and it closes. Same layer and same product —
+    // it is the same tape — but drawn as a closed polyline so the run that
+    // comes off this file into a CAD package is one continuous circuit rather
+    // than four pieces somebody has to join up by eye.
+    else if (a.loop) add(dxfPolyline(LY_T, a.loop.map(P), true));
     // A sconce goes at its wall point, not at the offset the drawing hangs the
     // symbol out to: the mounting position is what gets set out on site.
     else if (a.point) marker(LY_D, a.point, 0.3);

@@ -38,6 +38,67 @@ export const FITTING_LUMENS = {
 };
 
 /**
+ * HOW MUCH AMBIENT LIGHT A SPACE IS OWED, in lumens per square foot.
+ *
+ * This is the first number in the app that states the brief DIRECTLY. Every
+ * other lever is a proxy for it — `targetArea` says "one 900 lm fitting per
+ * 50 sqft", which IS 18 lm/sqft, but it says it in the currency of the grid
+ * rather than in the currency of the standard. The proxy is fine while the only
+ * thing being placed is a grid of identical downlights. It stops being fine the
+ * moment a second kind of source is in the room: a cove delivers lumens by the
+ * FOOT OF RUN, a grid delivers them by the CELL, and the only place those two
+ * can be compared is here.
+ *
+ * Keyed by PROJECT type, because that is the question already asked of the user
+ * before anything is laid out, and because the standards are written that way:
+ *
+ *   Residential and hospitality   20 lm/sqft   homes, hotels, restaurants —
+ *                                              spaces people relax in, lit to
+ *                                              be comfortable rather than to be
+ *                                              worked in
+ *   Commercial and institutional  50 lm/sqft   offices and schools — task light
+ *                                              across the whole floor, and a
+ *                                              standard somebody signs off
+ *
+ * 20 is a little above what the ordinary 50 sqft cell delivers (18), which is
+ * the right way round: the criterion is the target and the grid is what tries
+ * to meet it.
+ */
+export const LUMEN_CRITERIA = {
+  residential: 20,
+  hotel: 20,        // hospitality
+  restaurant: 20,   // hospitality
+  office: 50,       // commercial
+  educational: 50,  // institutional
+};
+
+/** The fallback for a project type nobody has given a figure. The gentler of
+ *  the two, because over-lighting a space nobody specified is the error that
+ *  gets built and paid for. */
+export const LUMEN_CRITERIA_DEFAULT = 20;
+
+/**
+ * THE TWO ROOMS THAT ARE NOT LIT LIKE THE REST OF THEIR BUILDING, and these are
+ * the same two the grid already treats specially — see TARGET_AREA_BY_TYPE in
+ * roomTypes.js. The figures here are DERIVED FROM THAT and must stay derived,
+ * or the app would hold two different opinions about how bright a kitchen is:
+ *
+ *   kitchen   900 lm over a 25 sqft cell   = 36 lm/sqft
+ *   toilet    450 lm over an 18 sqft cell  = 25 lm/sqft
+ *
+ * A toilet's number looks low next to a kitchen's and is correct: its cell is
+ * small AND its fitting is the 5 W narrow lamp, which is the whole point of
+ * FIXTURE_BY_TYPE.
+ */
+export const LUMEN_CRITERIA_BY_ROOM = { kitchen: 36, toilet: 25 };
+
+/** What this space is owed. Room type wins where it has an opinion. */
+export const lumenCriteriaFor = (projectId, roomTypeId) =>
+  LUMEN_CRITERIA_BY_ROOM[roomTypeId]
+  ?? LUMEN_CRITERIA[projectId]
+  ?? LUMEN_CRITERIA_DEFAULT;
+
+/**
  * How a DXF is rendered into a raster before being sent to the bed detector.
  *
  * Wall weight is in INCHES, not pixels, because px/ft varies from 6 on a site

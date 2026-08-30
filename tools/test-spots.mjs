@@ -221,7 +221,11 @@ console.log('\n-- the tolerance is a dial --');
 
 console.log('\n-- the wall rule is the SPOT\'s, not the large light\'s --');
 {
-  ok(SPOT_DEFAULTS.wallDistance === 2, `2 ft, not the ambient 5: ${SPOT_DEFAULTS.wallDistance}`);
+  // PINNED ONLY AS "LESS THAN THE AMBIENT RULE". The figure itself is a dial
+  // and gets tuned — it went 5 -> 2 -> 1 as the cases came in — so what these
+  // check is that a spot keeps its OWN rule and that the rule is the looser one.
+  const WD = SPOT_DEFAULTS.wallDistance;
+  ok(WD != null && WD < 5, `a spot keeps ${WD} ft, not the ambient light's 5`);
 
   // In a big room 5 ft does not refuse outright — it PUSHES the spot away from
   // the surface onto a segment further off, which is the quieter half of the
@@ -232,7 +236,7 @@ console.log('\n-- the wall rule is the SPOT\'s, not the large light\'s --');
     `inheriting 5 ft pushes it off the near segment to ${inherited.spot?.x},${inherited.spot?.y}`);
   const own = placeTaskSpot(table, { ...base, opt: { fanClearance: 1, minWallDistance: 5 } });
   ok(own.spot && near(own.spot.x, 4) && near(own.spot.y, 8),
-    `the spot own 2 ft keeps the near segment: ${own.spot?.x},${own.spot?.y}`);
+    `the spot's own ${WD} ft keeps the near segment: ${own.spot?.x},${own.spot?.y}`);
   ok(rectDistance({ x: own.spot.x, y: own.spot.y }, table)
      < rectDistance({ x: inherited.spot.x, y: inherited.spot.y }, table),
     'so the spot ends up nearer what it is lighting');
@@ -249,7 +253,7 @@ console.log('\n-- the wall rule is the SPOT\'s, not the large light\'s --');
   ok(!dead.spot && /5 ft to a wall/.test(dead.rejected ?? ''),
     `in a 13x10 room the ambient rule refuses everything: "${dead.rejected}"`);
   const alive = placeTaskSpot(t2, { ...ctx, opt: { fanClearance: 1, minWallDistance: 5 } });
-  ok(!!alive.spot, 'and 2 ft finds a spot — which is the bug this number fixes');
+  ok(!!alive.spot, `and ${WD} ft finds a spot — which is the bug this number fixes`);
 }
 
 console.log('\n-- EACH SURFACE AGAINST ITS OWN CHUNK --');

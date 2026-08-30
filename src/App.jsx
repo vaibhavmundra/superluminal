@@ -6,9 +6,10 @@ import { parseDXF, UNITS, classifyLayers } from './lib/dxf.js';
 import { vectorSource, rasterSource } from './lib/planSource.js';
 import { makeOutline, nextOutlineName, regionFromOutline, outlineStats } from './lib/outline.js';
 import { PLAN_OPTIONS, FITTING_LUMENS, WALL_WEIGHT_IN, OTHER_STROKE_PX,
-         SIMPLIFY_ROOM_TO_RECTANGLE } from './lib/settings.js';
+         SIMPLIFY_ROOM_TO_RECTANGLE, lumenCriteriaFor } from './lib/settings.js';
 import { planLights } from './lib/planner.js';
 import { enumerateChunkings, findChunking } from './lib/chunking.js';
+import { planWithCove, coveRectOptions } from './lib/cove.js';
 import { bbox, pointInPolygon } from './lib/geometry.js';
 import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, DOOR_WIDTHS } from './lib/doors.js';
@@ -22,7 +23,7 @@ import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
 import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
-import { buildBOQ } from './lib/boq.js';
+import { buildBOQ, FIXTURE_BY_ID } from './lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
 import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, targetAreaFor, fixtureFor } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
@@ -64,6 +65,21 @@ const UPLOAD_LABEL = { creating: 'Preparing…', uploading: 'Uploading drawing�
 const ftin = (v) => {
   const f = Math.floor(v), i = Math.round((v - f) * 12);
   return i === 12 ? `${f + 1}'0"` : `${f}'${i}"`;
+};
+
+/**
+ * WHICH RUNG OF THE LADDER THE COVE STOPPED ON, in two words.
+ *
+ * It is the one thing about a cove that is not visible on the drawing at a
+ * glance — whether there are downlights inside it at all — and it belongs on
+ * the row rather than in a paragraph under it. Everything else the ladder
+ * worked out (what the space is owed, what the strip delivers, how long the run
+ * is) is arithmetic somebody can ask for; this is the decision.
+ */
+const STAGE_SAY = {
+  cove: 'cove only',      // the strip carries the space; no downlights inside
+  inner: 'plus inside',   // ...and a grid within the cove line
+  band: 'plus band',      // ...and the band outside it as well
 };
 
 /**
@@ -279,6 +295,20 @@ export default function App({
   // slider. Keyed by outline id, and absent means "whatever is recommended" —
   // which is what makes lighting eight rooms one act instead of eight choices.
   const [chunkPicks, setChunkPicks] = useState({});
+  /**
+   * WHAT KIND OF CEILING EACH SPACE HAS. outline id -> 'standard' | 'cove'.
+   *
+   * ABSENT MEANS STANDARD, and nothing writes 'standard' into this map — the
+   * flat ceiling with a grid of downlights on it is what this app has always
+   * produced and it stays the default that costs no state. Only a space
+   * somebody has deliberately coved has an entry.
+   *
+   * `covePicks` is the second half of the same decision: WHICH of the
+   * rectangles that fit in the space the cove is set out in. Absent means the
+   * largest, which is the answer nearly always — see coveRectOptions.
+   */
+  const [ceilingKinds, setCeilingKinds] = useState({});
+  const [covePicks, setCovePicks] = useState({});
   const [pickingId, setPickingId] = useState(null);   // the room whose chunking is being chosen
 
   // The room detector. Runs on upload, like the bed one, and for the same
@@ -411,6 +441,7 @@ export default function App({
     setMeasure({ a: null, b: null }); setZoom(1);
     setZones([]); setZoneMode(false); setDraftZone(null);
     setChunkPicks({}); setPickingId(null);
+    setCeilingKinds({}); setCovePicks({});
     setDetections([]); setDetectState({ status: 'idle' }); setDismissed([]);
     setRoomState({ status: 'idle' });
     setAccentRoomId(null); setAccentResults({});
@@ -598,7 +629,7 @@ export default function App({
       setPdfPage,
       setRoomTypes, setDetections, setDismissed, setBedVerdicts, setProvider, setZones,
       setDoors, setDoorState, setDetectState,
-      setCeilingObjs, setChunkPicks,
+      setCeilingObjs, setChunkPicks, setCeilingKinds, setCovePicks,
       setAccentResults, setAccentDismissed, setManualAccents,
       setSurfaceResults, setSurfaceDismissed, setManualSurfaces,
       // MERGED OVER THE DEFAULTS, not assigned. See LAYER_DEFAULTS.
@@ -1054,6 +1085,29 @@ export default function App({
           const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
           return { x0: a.x, y0: a.y, x1: c.x, y1: c.y };
         }),
+        // THE SAME ROOM, WITHOUT THE FURNITURE. A bed is a no-light zone and a
+        // no-light zone carves the room up — which is right for the grid (a
+        // downlight over a pillow is the thing this app exists to avoid) and
+        // wrong for a cove. A cove is BUILDING: a band dropped round the
+        // perimeter, set out before anyone chose a bed and unaffected by which
+        // wall it ends up against. Chunk a bedroom with the bed in it and the
+        // "largest chunk" is whatever L-shaped remainder the mattress left, and
+        // the cove would be drawn round that.
+        //
+        // So the cove is laid out on the room as BUILT — hand-drawn zones and
+        // enclosed spaces kept, because those are holes in the ceiling itself,
+        // and the detected beds dropped. The beds are still passed to the
+        // planner as no-light zones, so the fittings inside the cove keep off
+        // them exactly as they always did; it is only the SETTING OUT that
+        // ignores them.
+        coveZonesFt: [
+          ...zones.filter((z) => pointInPolygon(
+            { x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 }, polygonPx)),
+          ...enclosedZones(o),
+        ].map((z) => {
+          const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
+          return { x0: a.x, y0: a.y, x1: c.x, y1: c.y };
+        }),
       };
 
       // A KITCHEN IS LIT HARDER THAN A LIVING ROOM, and the only lever this
@@ -1081,8 +1135,68 @@ export default function App({
         : null;
       const chosenId = picked ?? chunking.recommendedId ?? null;
 
-      const res = planLights(geo.polygonFt, geo.fixturesFt,
-        { ...roomOpt, chunkStrategy: chosenId || 'auto' }, geo.zonesFt);
+      /** What a light of this geometric kind is BOUGHT as in this room. */
+      const roomFixture = (kind) => fixtureFor(roomTypes[o.id]?.type, kind);
+
+      // --- THE CEILING ITSELF -------------------------------------------
+      //
+      // Standard until somebody says otherwise. A cove replaces the whole of
+      // the step above for this space: its own decomposition (bed-free, see
+      // geo.coveZonesFt), its own chunk plan with the cove line cut into it,
+      // and up to three passes of the planner as the ladder in cove.js decides
+      // how much light the strip has already accounted for.
+      //
+      // IT CAN DECLINE. A space too narrow to inset has no cove, and the
+      // fallback is not an error state — it is the standard ceiling, with the
+      // reason carried on `cove` so the panel can say why.
+      const wantsCove = ceilingKinds[o.id] === 'cove';
+      let coveOptions = [], covePick = 0, cove = null, res = null;
+      if (wantsCove) {
+        // THE RECTANGLES THAT FIT IN THIS ROOM, largest first. Asked of the room
+        // as BUILT — `coveZonesFt`, which keeps the holes in the ceiling and
+        // drops the furniture standing under it.
+        coveOptions = coveRectOptions(geo.polygonFt, geo.coveZonesFt, roomOpt);
+        // CLAMPED, NOT TRUSTED. The list is derived, so it can shrink under a
+        // pick somebody made — correct the scale, redraw the outline, and
+        // option 4 may not exist any more. Falling back to the largest is the
+        // same rule the chunking picker follows.
+        covePick = Math.min(Math.max(covePicks[o.id] ?? 0, 0),
+                            Math.max(0, coveOptions.length - 1));
+        const out = planWithCove({
+          polygonFt: geo.polygonFt,
+          fixturesFt: geo.fixturesFt,
+          zonesFt: geo.zonesFt,
+          coveZonesFt: geo.coveZonesFt,
+          opt: roomOpt,
+          chunkOpt: roomChunkOpt,
+          options: coveOptions,
+          rect: coveOptions[covePick] ?? null,
+          criteria: lumenCriteriaFor(projectId, roomTypes[o.id]?.type),
+          fixtureFor: roomFixture,
+        });
+        cove = out.cove;
+        if (out.plan?.ok) res = out.plan;
+      }
+      if (!res) {
+        res = planLights(geo.polygonFt, geo.fixturesFt,
+          { ...roomOpt, chunkStrategy: chosenId || 'auto' }, geo.zonesFt);
+      }
+
+      // WHICH CATALOGUE LINE ONE LIGHT IS, now that a chunk can have an opinion
+      // of its own. The band outside a cove is lit with the 5 W narrow lamp
+      // where it is too shallow for a 7 W — that is a property of the chunk the
+      // light sits in, not of the room, so it wins over the room's own mapping.
+      // See bandFixtureFor in cove.js.
+      const lightFixture = (l) => {
+        const ci = l.kind === 'small' ? l.cell?.chunk : l.chunk;
+        return res.chunks?.[ci]?.coveFixture ?? roomFixture(l.kind);
+      };
+
+      /** A feet-space rectangle as its four corners in plan pixels, in order.
+       *  Both the cove line and the tape round it are drawn as closed runs, and
+       *  a closed run is a point list rather than a box. */
+      const corners = (R) => [{ x: R.x0, y: R.y0 }, { x: R.x1, y: R.y0 },
+                              { x: R.x1, y: R.y1 }, { x: R.x0, y: R.y1 }].map(toPx);
 
       const rectToPx = (c) => ({ ...c,
         x0: c.x0 * pxPerFt + origin.x, x1: c.x1 * pxPerFt + origin.x,
@@ -1093,8 +1207,7 @@ export default function App({
         // The same stamp on the feet-space list, because the BOQ reads
         // `plan.lights` and the canvas reads `plan.lightsPx`, and a fixture that
         // is drawn small but billed as the 7 W line is the worst of both.
-        lights: res.lights.map((l) => ({ ...l,
-          fixture: fixtureFor(roomTypes[o.id]?.type, l.kind) })),
+        lights: res.lights.map((l) => ({ ...l, fixture: lightFixture(l) })),
         polygonFt: geo.polygonFt, polygonPx, origin, toPx,
         chunksPx: res.chunks.map((ch) => ({
           ...rectToPx(ch),
@@ -1106,7 +1219,7 @@ export default function App({
         // place that knows both the layout and the room's type. The planner
         // deals in `kind` (geometry) and never in products; see FIXTURE_BY_TYPE.
         lightsPx: res.lights.map((l) => ({ ...l, ...toPx(l),
-          fixture: fixtureFor(roomTypes[o.id]?.type, l.kind),
+          fixture: lightFixture(l),
           centrePx: l.cell ? toPx({ x: l.cell.cx, y: l.cell.cy }) : null,
           coverPx: l.cells.map((id) => {
             const c = res.cells.find((x) => x.id === id);
@@ -1122,17 +1235,59 @@ export default function App({
         // scale. See roomInFeet in exporters.js.
         zonesPx: myZones,
         fansPx: mine,
+        // THE COVE'S OWN SETTING-OUT LINE, in plan pixels. It rides on the plan
+        // rather than being handed to the canvas separately because everything
+        // else the canvas draws for a room already does — one prop, one room,
+        // one shape — and because a cove line without the layout it cut is a
+        // rectangle floating over somebody's drawing.
+        covePx: cove?.ok ? { line: corners(cove.line), offset: cove.offset } : null,
       };
+
+      /**
+       * THE COVE AS A FITTING, in the plan's own pixels.
+       *
+       * ONE ZONE AND NOT FOUR. A cove turns the corner and carries on, so it is
+       * one continuous run of tape — `loop` holds the four corners and whatever
+       * draws it closes the circuit. Four separate runs would look right until
+       * you counted them: the schedule bills strip by the metre AND reports the
+       * number of pieces, because pieces is what tells a contractor how many
+       * drivers and end caps to buy, and a single cove is one of each.
+       *
+       * It is shaped like every other accent zone on purpose — same `type`,
+       * same `rect`, same `runLength` — so the canvas, the schedule and the
+       * exporters all take it without knowing a cove exists.
+       */
+      const coveStrip = (cove?.ok && res.ok) ? (() => {
+        // THE TAPE, NOT THE LINE — see STRIP_OFFSET_FT in cove.js. The run is
+        // three inches outside the setting-out line, in the pocket, which is
+        // both where it is installed and the length that gets billed.
+        const pts = corners(cove.strip);
+        const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+        return {
+          id: `cove-${o.id}`, type: 'strip', kind: 'cove', roomId: o.id,
+          source: 'cove', label: 'Cove LED strip',
+          loop: pts,
+          runLength: cove.perimeterFt * pxPerFt,
+          rect: { x0: Math.min(...xs), y0: Math.min(...ys),
+                  x1: Math.max(...xs), y1: Math.max(...ys) },
+        };
+      })() : null;
 
       out.push({
         id: o.id, outline: o, region, geo, chunking, plan,
         chosenId, chunkingChosenBy: picked ? 'user' : 'recommended',
+        // The ceiling, and everything the cove decided. `cove` is null on a
+        // standard ceiling and carries `ok:false` with a reason when a cove was
+        // asked for and could not be drawn.
+        ceiling: cove?.ok ? 'cove' : 'standard',
+        cove, coveOptions, covePick, coveStrip,
         stats: outlineStats(o, pxPerFt),
       });
     }
     return out;
-  }, [source, pxPerFt, litOutlines, useBoundingRect, obstaclesPx, zoneList,
-      chunkOpt, chunkPicks, opt, enclosedZones, roomTypes]);
+  }, [source, pxPerFt, litOutlines, useBoundingRect, obstaclesPx, zoneList, zones,
+      chunkOpt, chunkPicks, opt, enclosedZones, roomTypes, projectId,
+      ceilingKinds, covePicks]);
 
   // What the canvas draws: every zone, whoever it belongs to. The planner sees
   // the per-room subsets above; this is only for the eye.
@@ -1156,6 +1311,11 @@ export default function App({
   const drawnZones = useMemo(
     () => [...zones, ...rooms.flatMap((r) => enclosedZones(r.outline))],
     [zones, rooms, enclosedZones]);
+
+  /** Every space that actually ended up with a cove on it. Derived, so a space
+   *  whose cove could not be drawn drops out of the list on its own rather than
+   *  sitting in it with nothing to say. */
+  const coved = useMemo(() => rooms.filter((r) => r.cove?.ok), [rooms]);
 
   /** The room the right-hand panel and the chunk picker are talking about. */
   const focus = useMemo(
@@ -1668,6 +1828,10 @@ export default function App({
         fixtures: r.geo.fixturesFt,
         chandeliers: r.geo.fixturesFt.filter((f) => f.kind === 'chandelier'),
         zones: r.plan.zones ?? [],
+        // The cove line, where there is one, so a spot keeps off it for the
+        // same reason every other fitting does. `plan.opt` is the resolved
+        // options the layout was actually built with, coves included.
+        coves: r.plan.opt?.coves ?? [],
         opt,
       });
 
@@ -1707,6 +1871,12 @@ export default function App({
       if (!res?.zones) continue;
       for (const z of res.zones) if (!accentDismissed.includes(z.id)) out.push(z);
     }
+    // THE COVES. Derived, not placed — they exist because the ceiling is a cove,
+    // so there is nothing to dismiss and nothing to drag. They go in here
+    // rather than into `manualAccents` for exactly that reason: this list is
+    // what the drawing and the schedule read, and `manualAccents` is a store of
+    // things a person made.
+    for (const r of rooms) if (r.coveStrip) out.push(r.coveStrip);
     const live = new Set(rooms.map((r) => r.id));
     // THE DISMISSED FILTER APPLIES HERE TOO. Deleting a hand-placed fitting now
     // removes it outright, so nothing new lands in `accentDismissed` — but a
@@ -1728,15 +1898,29 @@ export default function App({
    */
   const totals = useMemo(() => {
     const done = rooms.filter((r) => r.plan?.ok);
-    const lumens = done.reduce((s, r) =>
-      s + r.plan.stats.large * FITTING_LUMENS.large
-        + r.plan.stats.small * FITTING_LUMENS.small, 0);
+    // PER FITTING, THROUGH THE CATALOGUE — not two counts times two constants.
+    // The counts were `stats.small` and `stats.large`, which are GEOMETRY, and
+    // the moment a room could contain a 5 W narrow lamp in a toilet or in the
+    // band outside a cove they stopped matching what is actually specified. The
+    // BOQ's own catalogue is the single place a fitting's output lives, so the
+    // headline figure and the schedule cannot drift apart.
+    const lumensOfLight = (l) =>
+      FIXTURE_BY_ID[l.fixture]?.lumens
+      ?? (l.kind === 'large' ? FITTING_LUMENS.large : FITTING_LUMENS.small);
+    const gridLumens = done.reduce(
+      (t, r) => t + r.plan.lights.reduce((u, l) => u + lumensOfLight(l), 0), 0);
+    // AND THE COVES, which are the reason this had to change: a cove can be the
+    // only ambient source in a space, and a lm/sqft figure that ignored it
+    // would report a coved living room as unlit.
+    const coveLumens = done.reduce((t, r) => t + (r.cove?.ok ? r.cove.coveLumens : 0), 0);
+    const lumens = gridLumens + coveLumens;
     const areaSqft = done.reduce((s, r) => s + r.plan.stats.areaSqft, 0);
     return {
       rooms: done.length,
       failed: rooms.length - done.length,
       lights: done.reduce((s, r) => s + r.plan.lights.length, 0),
-      areaSqft, lumens,
+      coves: done.filter((r) => r.cove?.ok).length,
+      areaSqft, lumens, gridLumens, coveLumens,
       perSqft: lumens / Math.max(1, areaSqft),
     };
   }, [rooms]);
@@ -1785,7 +1969,14 @@ export default function App({
     const st = r.plan.stats;
     if (st.unserved > 0) return [{ name, msg: `${st.unserved} cell${st.unserved > 1 ? 's have' : ' has'} no light at all — that should not happen.` }];
     if (st.clashes > 0) return [{ name, msg: `${st.clashes} light${st.clashes > 1 ? 's sit' : ' sits'} inside a fan's clearance or a no-light zone, because the cell has nowhere else to go.` }];
-    if (st.ceded > 0) return [{ name, msg: `${st.ceded} cell${st.ceded > 1 ? 's are' : ' is'} left to the fan — no light fits clear of the blades.` }];
+    // A CEDED CELL IS A CELL THE OBSTACLE WON, and which obstacle matters. The
+    // message named the fan unconditionally, which was true while a fan was the
+    // only thing that could take a cell — a cove ceiling changed that, because
+    // its chunk plan carries the beds as no-light zones rather than carving them
+    // out, so a cell can now be ceded to a mattress in a room with no fan in it.
+    if (st.ceded > 0) return [{ name, msg: st.fans
+      ? `${st.ceded} cell${st.ceded > 1 ? 's are' : ' is'} left to the fan — no light fits clear of the blades.`
+      : `${st.ceded} cell${st.ceded > 1 ? 's have' : ' has'} no light — the whole middle of ${st.ceded > 1 ? 'each' : 'it'} is a no-light zone.` }];
     if (st.outsideBand > 0) return [{ name, msg: `${st.outsideBand} light${st.outsideBand > 1 ? 's sit' : ' sits'} off its cell centre.` }];
     return [];
   }), [rooms]);
@@ -3602,14 +3793,15 @@ export default function App({
     projectType: projectId, roomTypes, pdfPage,
     detections, dismissed, bedVerdicts, provider, zones,
     doors,
-    ceilingObjs, chunkPicks,
+    ceilingObjs, chunkPicks, ceilingKinds, covePicks,
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
        detections, dismissed, bedVerdicts, provider, zones, doors,
-       ceilingObjs, chunkPicks, accentResults, accentDismissed, manualAccents,
+       ceilingObjs, chunkPicks, ceilingKinds, covePicks,
+       accentResults, accentDismissed, manualAccents,
        surfaceResults, surfaceDismissed, manualSurfaces, layers, zoom, view]);
 
   const stats = useMemo(() => statsFrom({ totals, rooms, boq }), [totals, rooms, boq]);
@@ -4195,6 +4387,119 @@ export default function App({
               </button>
             )}
           </div>
+
+          {/* --- the ceiling itself ---------------------------------------
+              THE FIRST DECISION THAT IS ABOUT THE CEILING RATHER THAN ABOUT
+              THE LIGHTS. Everything else in this panel takes a flat slab as
+              given and arranges fittings on it. This says what the slab is.
+
+              ON THE SELECTED SPACE, one space at a time, because it IS a
+              per-space decision — a coved living room off a flat corridor is
+              the normal case, not the exception — and because the readout
+              underneath is a paragraph of arithmetic that belongs to one room.
+              The Spaces list above is the selector; this is what it selects.
+
+              STANDARD IS THE DEFAULT AND COSTS NO STATE. Picking it deletes the
+              entry rather than writing 'standard', so a plan full of ordinary
+              ceilings saves nothing about them. */}
+          <div className="sec">
+            <h3>Ceiling{focus ? ` · ${focus.outline.name || 'Space'}` : ''}</h3>
+            <div className="btnrow">
+              <button className={'btn' + (focus && ceilingKinds[focus.id] !== 'cove' ? ' accent' : '')}
+                disabled={!focus}
+                title="A flat ceiling with the ambient grid on it"
+                onClick={() => focus && setCeilingKinds((m) => {
+                  if (!(focus.id in m)) return m;
+                  const n = { ...m }; delete n[focus.id]; return n;
+                })}>
+                Standard
+              </button>
+              <button className={'btn' + (focus && ceilingKinds[focus.id] === 'cove' ? ' accent' : '')}
+                disabled={!focus}
+                title="A dropped band round the perimeter with a concealed LED strip in it"
+                onClick={() => focus && setCeilingKinds((m) => ({ ...m, [focus.id]: 'cove' }))}>
+                Cove
+              </button>
+            </div>
+
+            {focus && ceilingKinds[focus.id] === 'cove' && !focus.cove?.ok && (
+              <p className="note warn" style={{ marginTop: 8 }}>
+                {focus.cove?.reason ?? 'No cove here — the layout fell back to a standard ceiling.'}
+              </p>
+            )}
+
+            {focus && ceilingKinds[focus.id] !== 'cove' && (
+              <p className="note" style={{ marginTop: 8 }}>
+                A flat ceiling with the ambient grid on it.
+              </p>
+            )}
+          </div>
+
+          {/* --- every cove on the plan -----------------------------------
+              A LIST, LIKE THE SPACES LIST, AND FOR THE SAME REASON. A cove is
+              not a fitting you nudge — it is a rectangle set out in a room, and
+              the only decision left once the ceiling is coved is WHICH
+              rectangle. That decision needs to be visible for every coved space
+              at once: on a flat with three of them the question "is the cove in
+              the right place" is asked of all three together, and a control
+              that only ever described the selected space made you click through
+              them one at a time to find the one that was wrong.
+
+              WHAT EACH ROW SHOWS is the rectangle in use, what the cove
+              delivers against what the space is owed, and the row of
+              alternatives. The alternatives are real rectangles that fit —
+              largest first, near-duplicates dropped — so picking one is picking
+              a shape rather than a number. */}
+          {coved.length > 0 && (
+            <div className="sec">
+              <h3>Coves · {coved.length}</h3>
+              {coved.map((r) => {
+                const c = r.cove;
+                const n = r.coveOptions.length;
+                return (
+                  <div key={r.id} role="button" tabIndex={0}
+                    className={'outline-row row-pick' + (r.id === focusId ? ' on' : '')}
+                    onClick={() => setFocusId(r.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFocusId(r.id); }
+                    }}>
+                    <div className="row-top">
+                      <div className="row-main">
+                        <div className="outline-pick plain">
+                          <span className="outline-name">{r.outline.name || 'Space'}</span>
+                        </div>
+                        <div className="outline-meta">
+                          <span>
+                            {ftin(c.host.w)} × {ftin(c.host.h)} · {ftin(c.offset)} inset
+                            {' '}· {STAGE_SAY[c.stage] ?? c.stage}
+                          </span>
+                        </div>
+                      </div>
+                      {/* THE SAME MARK THE SPACES LIST USES FOR CHUNKING, doing
+                          the same job: this rectangle is one reading of the
+                          space and there are others. CLICK TO CYCLE rather than
+                          click to open a picker — there are rarely more than
+                          three or four rectangles, the drawing shows you each
+                          one the instant it is chosen, and cycling in place
+                          beats a panel that covers the thing you are judging.
+                          Wraps round, so it can never be a dead end. */}
+                      {n > 1 && (
+                        <button className="row-icon"
+                          title={`Rectangle ${r.covePick + 1} of ${n} — click for the next`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCovePicks((m) => ({ ...m, [r.id]: (r.covePick + 1) % n }));
+                            setFocusId(r.id);
+                          }}>
+                          <ChunkIcon title="Try the next rectangle" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* --- what is already on the ceiling --------------------------- */}
           {/* One section for all of them, because to the layout they ARE all

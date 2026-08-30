@@ -98,6 +98,12 @@ export function serialiseEditor(s) {
     // --- the ceiling as edited
     ceilingObjs: s.ceilingObjs,
     chunkPicks: s.chunkPicks,
+    // WHAT KIND OF CEILING EACH SPACE HAS, and which of the rectangles that fit
+    // in it the cove is set out in. Two small maps keyed by outline id, and they must be kept: the
+    // layout is a memo over them, so a plan reopened without these comes back
+    // as flat ceilings everywhere and silently loses every cove in the job.
+    ceilingKinds: s.ceilingKinds,
+    covePicks: s.covePicks,
 
     // --- the two model-proposed layers, and the fittings added by hand
     accentResults: s.accentResults,
@@ -163,6 +169,8 @@ export function applyEditor(p, set) {
 
   set.setCeilingObjs(p.ceilingObjs ?? []);
   set.setChunkPicks(p.chunkPicks ?? {});
+  set.setCeilingKinds(p.ceilingKinds ?? {});
+  set.setCovePicks(p.covePicks ?? {});
 
   set.setAccentResults(p.accentResults ?? {});
   set.setAccentDismissed(p.accentDismissed ?? []);
@@ -187,6 +195,7 @@ export function statsFrom({ totals, rooms, boq }) {
     rooms: totals?.rooms ?? 0,
     roomsFailed: totals?.failed ?? 0,
     lights: totals?.lights ?? 0,
+    coves: totals?.coves ?? 0,
     areaSqft: totals?.areaSqft != null ? +totals.areaSqft.toFixed(1) : 0,
     lumens: totals?.lumens ?? 0,
     fittingLines: boq?.lines?.length ?? boq?.rows?.length ?? 0,

@@ -40,6 +40,18 @@ export const SPOT_DEFAULTS = {
   // Two lights closer together than this do not have a segment worth standing
   // in the middle of.
   minSegment: 1.6,
+  // HOW FAR ALONG ITS OWN SEGMENT A SPOT MAY SLIDE, as a fraction either side
+  // of the midpoint. The midpoint is the home and stays the home — it is the
+  // point that reads as deliberate, halfway between two fittings — but a
+  // segment whose exact middle is unavailable is not a segment with nothing on
+  // it. A bed covers one end of a run; the cove's clearance eats the outer
+  // quarter of every run inside the line. Refusing the whole segment over
+  // either of those threw away the nearest grid to the surface and left the
+  // desk unlit, which is worse than a spot a foot off centre.
+  //
+  // 0.3 keeps the point inside the middle 60% of the run, so it can never
+  // crowd the fitting or the edge at either end.
+  slideSpan: 0.3,
   // How far a spot must stand off the surface it is aimed at. A spot ON the
   // table has no direction to point in, and the arrow is half the drawing.
   minStandoff: 0.75,
@@ -47,7 +59,7 @@ export const SPOT_DEFAULTS = {
   // ambient aligner already snapped the lights into rows; this only has to be
   // looser than the residue that leaves behind.
   alignTol: 0.15,
-  // The wall rule, and it is 2 ft rather than the ambient layer's 5.
+  // The wall rule, and it is 1 ft rather than the ambient layer's 5.
   //
   // This is why it was made a separate dial in the first place. 5 ft is what a
   // LARGE LIGHT keeps, because its cone lands on the wall and scallops it. A
@@ -57,8 +69,15 @@ export const SPOT_DEFAULTS = {
   // in the worked example came back "closer than 5 ft to a wall" and got no
   // spot at all.
   //
+  // A FOOT, NOT TWO. Two was the first cautious step away from five and it was
+  // still a rule about a fitting this one is not: it kept a spot out of every
+  // band of ceiling narrower than four feet, which is most of the places a task
+  // surface actually sits — a desk against a wall, a counter, the ceiling
+  // outside a cove line. A foot is the real constraint, which is the trim of
+  // the fitting itself and the plasterboard edge behind it.
+  //
   // Set to null to fall back to the ambient figure.
-  wallDistance: 2.0,
+  wallDistance: 1.0,
   // A chandelier this close to a surface is already lighting it, so no spot is
   // added. Measured from the chandelier's own BODY to the surface's outline —
   // not centre to centre, which would let a five-foot fitting hang directly
@@ -93,6 +112,25 @@ function lanes(values, tol) {
 }
 
 /**
+ * The centre of every cell in a chunk — the positions the ambient layer would
+ * have used, whether or not it did. `xLines`/`yLines` are what the planner
+ * writes onto a chunk when it grids it; a chunk that never got one has neither
+ * and produces nothing, which is the honest answer.
+ */
+function cellCentres(chunk) {
+  const X = chunk?.xLines, Y = chunk?.yLines;
+  if (!X || !Y || X.length < 2 || Y.length < 2) return [];
+  const out = [];
+  for (let i = 0; i < X.length - 1; i++) {
+    for (let j = 0; j < Y.length - 1; j++) {
+      out.push({ x: (X[i] + X[i + 1]) / 2, y: (Y[j] + Y[j + 1]) / 2,
+                 id: `cell-${i},${j}`, virtual: true });
+    }
+  }
+  return out;
+}
+
+/**
  * The secondary grid for one chunk: its lines, and the segments along them.
  *
  * `lights` is every fitting inside the chunk. Containment rather than the
@@ -102,9 +140,25 @@ function lanes(values, tol) {
  */
 export function secondaryGrid(chunk, lights, opt = {}) {
   const o = { ...SPOT_DEFAULTS, ...opt };
-  const inside = lights.filter((l) =>
+  const found = lights.filter((l) =>
     l.x >= chunk.x0 - o.alignTol && l.x <= chunk.x1 + o.alignTol &&
     l.y >= chunk.y0 - o.alignTol && l.y <= chunk.y1 + o.alignTol);
+
+  // A CHUNK WITH NO FITTINGS IN IT STILL HAS A GRID.
+  //
+  // The secondary grid is described above as the ambient layer's skeleton made
+  // explicit — lines through the lights that are already there. That reading
+  // quietly assumed there always ARE lights, and a cove broke it: where the
+  // strip carries the space on its own the room has a full grid of cells and
+  // not one downlight, so a desk in it got no spot at all and a sentence about
+  // the chunk holding fewer than two lights.
+  //
+  // But a cell centre is WHERE A LIGHT WOULD HAVE GONE. It is the same
+  // geometry, arrived at from the other end, so it makes the same skeleton and
+  // a spot standing on it reads as part of the layout for exactly the reasons
+  // in the header. So: the fittings where there are fittings, and the cells
+  // they would have occupied where there are none.
+  const inside = found.length ? found : cellCentres(chunk);
 
   const rows = lanes(inside.map((l) => l.y), o.alignTol);
   const cols = lanes(inside.map((l) => l.x), o.alignTol);
@@ -153,7 +207,7 @@ export function secondaryGrid(chunk, lights, opt = {}) {
  * "every segment near it is inside a fan's clearance" is.
  */
 export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
-                                         zones = [], usedSegments = null,
+                                         zones = [], coves = [], usedSegments = null,
                                          opt = {} } = {}) {
   const o = { ...SPOT_DEFAULTS, ...opt };
   const wallMin = o.wallDistance ?? opt.minWallDistance ?? 0;
@@ -162,7 +216,7 @@ export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
 
   const grid = secondaryGrid(chunk, lights, o);
   if (!grid.segments.length) {
-    return { rejected: 'No secondary grid in this chunk — it holds fewer than two lights.' };
+    return { rejected: 'This piece of ceiling has no grid to stand a spot on.' };
   }
 
   const reasons = new Set();
@@ -180,6 +234,18 @@ export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
     }
     if (distanceToBoundary(p, polygon) + EPS < wallMin) {
       reasons.add(`closer than ${wallMin} ft to a wall`); return false;
+    }
+    // THE COVE'S OWN CLEARANCE. A spot is a downlight in the same ceiling, and
+    // one crowding the pocket flattens the cove's glow exactly as an ambient
+    // fitting would. Same figures, from the same place: see opt.coves.
+    for (const cv of coves) {
+      const within = p.x > cv.x0 && p.x < cv.x1 && p.y > cv.y0 && p.y < cv.y1;
+      const need = within ? cv.inside : cv.outside;
+      const dx = Math.max(cv.x0 - p.x, 0, p.x - cv.x1);
+      const dy = Math.max(cv.y0 - p.y, 0, p.y - cv.y1);
+      const d = (dx > 0 || dy > 0) ? Math.hypot(dx, dy)
+        : Math.min(p.x - cv.x0, cv.x1 - p.x, p.y - cv.y0, cv.y1 - p.y);
+      if (d < need - EPS) { reasons.add('crowding the cove'); return false; }
     }
     // A spot standing ON its surface has no direction to point in.
     if (rectDistance(p, surface) < EPS && Math.hypot(p.x - centre.x, p.y - centre.y) < o.minStandoff) {
@@ -201,16 +267,21 @@ export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
       // before the geometry — no point reporting "inside a clearance" about a
       // segment that was never available.
       if (usedSegments?.has(segmentKey(s))) { reasons.add('already used by another surface'); continue; }
-      if (!legal(s.mid)) continue;
-      const dx = centre.x - s.mid.x, dy = centre.y - s.mid.y;
+      const p = standIn(s, o, legal, surface);
+      if (!p) continue;
+      const dx = centre.x - p.x, dy = centre.y - p.y;
       const len = Math.hypot(dx, dy) || 1;
       return {
         spot: {
-          x: s.mid.x, y: s.mid.y,
+          x: p.x, y: p.y,
           aim: { x: dx / len, y: dy / len },
           angle: Math.atan2(dy, dx),
           target: centre,
           via: kind, segment: s, distance: d,
+          // How far off the middle of its own run it had to stand, in feet. 0
+          // for the ordinary case, and worth carrying because a spot that slid
+          // is a spot the drawing should be able to explain.
+          slid: Math.hypot(p.x - s.mid.x, p.y - s.mid.y),
         },
         grid,
       };
@@ -223,6 +294,33 @@ export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
       ? `Every segment near this surface is ${[...reasons].join(', or ')}.`
       : 'No segment near this surface is long enough to stand a spot in.',
   };
+}
+
+/**
+ * Where on this segment the spot actually stands.
+ *
+ * The midpoint if it will have it, and otherwise the position nearest the
+ * midpoint that is legal — ties going to whichever of the two sides is closer
+ * to the surface, since a spot that had to move should move TOWARDS the thing
+ * it is lighting. Returns null when nothing on the run works, which is the old
+ * behaviour and still the right answer for a segment that is genuinely spent.
+ */
+function standIn(seg, o, legal, surface) {
+  if (legal(seg.mid)) return seg.mid;
+  const span = o.slideSpan;
+  if (!(span > 0)) return null;
+  const ax = seg.b.x - seg.a.x, ay = seg.b.y - seg.a.y;
+  const at = (t) => ({ x: seg.a.x + ax * t, y: seg.a.y + ay * t });
+  const N = 6;
+  const tries = [];
+  for (let k = 1; k <= N; k++) {
+    const d = (k / N) * span;
+    for (const t of [0.5 - d, 0.5 + d]) tries.push({ t, off: d, p: at(t) });
+  }
+  tries.sort((p, q) => (p.off - q.off)
+    || (rectDistance(p.p, surface) - rectDistance(q.p, surface)));
+  for (const c of tries) if (legal(c.p)) return c.p;
+  return null;
 }
 
 /**
@@ -288,9 +386,41 @@ export function planTaskSpots(surfaces, ctx = {}) {
         + ` already lights this surface.` };
       continue;
     }
-    const chunk = chunkFor({ x: (s.x0 + s.x1) / 2, y: (s.y0 + s.y1) / 2 }, chunks);
+    const centre = { x: (s.x0 + s.x1) / 2, y: (s.y0 + s.y1) / 2 };
+    const chunk = chunkFor(centre, chunks);
     if (!chunk) { out[i] = { rejected: 'This surface is not in any chunk of ceiling.' }; continue; }
-    const res = placeTaskSpot(s, { ...ctx, chunk, usedSegments });
+    let res = placeTaskSpot(s, { ...ctx, chunk, usedSegments });
+
+    // THE NEAREST GRID THAT WILL TAKE IT.
+    //
+    // A surface's own chunk is the right first answer and stays the only answer
+    // in an ordinary room — see the note above about the dining table placed
+    // against the coffee table's grid. But "its own chunk" and "a chunk a spot
+    // can stand in" are not the same thing, and a cove is where they come
+    // apart: a desk against the wall sits in the BAND outside the cove line,
+    // which is three feet of ceiling with a wall on one side and the pocket on
+    // the other. Nothing legal fits in it, and the honest consequence used to
+    // be no spot at all.
+    //
+    // So a refusal falls through to the other chunks, nearest first, and the
+    // first grid that will take a fitting gets it. The spot then stands just
+    // inside the cove line and AIMS OUT at the desk, which is how the fitting
+    // is drawn and how it would actually be installed. Nearest-first matters:
+    // it is what keeps the spot beside the thing it is lighting rather than
+    // wherever the first chunk in the list happens to be.
+    if (!res.spot) {
+      const others = chunks
+        .filter((c) => c !== chunk)
+        .map((c) => ({ c, d: rectDistance(centre, c) }))
+        .sort((a2, b2) => a2.d - b2.d);
+      for (const { c } of others) {
+        const alt = placeTaskSpot(s, { ...ctx, chunk: c, usedSegments });
+        if (!alt.spot) continue;
+        res = { ...alt, spot: { ...alt.spot, viaChunk: 'nearest' } };
+        break;
+      }
+    }
+
     if (res.spot) usedSegments.add(segmentKey(res.spot.segment));
     out[i] = res;
   }

@@ -261,6 +261,26 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               className="lp-sel" fill="none" stroke={C.lit}
               strokeWidth={lw * 1.6} strokeLinejoin="round" pointerEvents="none" />
           )}
+
+          {/* THE COVE'S SETTING-OUT LINE.
+              The visible edge of the dropped band: where the plaster stops and
+              the higher ceiling begins. It is not the tape — that runs three
+              inches behind it, in the pocket, and is drawn with the strip
+              fittings further down — so it is drawn as what it is, a line
+              somebody sets out to. Dotted, thin, and in the fittings' blue
+              rather than in the grid's grey, because a cove IS the lighting
+              design for the space it is in: on a room where the cove carries
+              the whole ambient load this rectangle is the only mark on the
+              drawing, and drawing it as scaffolding would say the opposite.
+              Under the lights and over the grid, like every other room layer,
+              and pointer-transparent because there is nothing here to grab —
+              the cove follows the ceiling, and the ceiling is set in the panel. */}
+          {r.plan.covePx && (
+            <polygon points={points(r.plan.covePx.line)}
+              fill="none" stroke={C.lit} strokeWidth={lw * 1.6}
+              strokeDasharray={`${lw * 5} ${lw * 4}`}
+              strokeLinejoin="round" opacity="0.85" pointerEvents="none" />
+          )}
         </g>
       ))}
 
@@ -613,6 +633,42 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 FITTING is the visible consequence, the region is working, and
                 the region is still on the zone for anything that wants it.
                 Only the lights show. */}
+
+            {/* THE COVE: A CLOSED RUN, WITH NO ENDS AND NO HANDLES.
+                Every other strip on this drawing is a segment somebody placed
+                and can drag — two points, two grips, two end caps. A cove is
+                none of those things: it is the perimeter of a band that has
+                been built, it turns all four corners, and moving it would mean
+                moving the ceiling. So it is drawn as a closed circuit and it is
+                drawn HERE rather than as four ordinary strips, because four
+                strips would put an end cap at every corner and read as tape
+                that had been cut — which is precisely the detail a coving
+                drawing exists to deny.
+                Same ink, same dotted idiom and same breathing glow as every
+                other run, because it is the same tape. */}
+            {a.loop && (() => {
+              const S = STRIP_STYLE;
+              const boost = hot === a.id ? S.hoverBoost : 0;
+              const dot = lw * S.dash, gapl = lw * S.gap;
+              const d = a.loop.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ') + ' Z';
+              return (
+                <g>
+                  <path d={d} fill="none" stroke={acol}
+                    strokeWidth={lw * (S.glow + boost * 2)} strokeLinejoin="round"
+                    opacity={S.glowOpacity} filter="url(#lp-strip-glow)"
+                    pointerEvents="none" className="lp-breathe"
+                    style={{ '--lp-glow-o': S.glowOpacity,
+                             '--lp-w0': `${lw * (S.glow + boost * 2) * (1 - S.glowSwell)}px`,
+                             '--lp-w1': `${lw * (S.glow + boost * 2) * (1 + S.glowSwell)}px`,
+                             animationDuration: `${S.pulseMs}ms`,
+                             animationDelay: `${((ai * 137) % 1000) / 1000 * -S.pulseMs}ms`,
+                             animationPlayState: hot === a.id ? 'paused' : 'running' }} />
+                  <path d={d} fill="none" stroke={acol}
+                    strokeWidth={lw * (S.stroke + boost)} strokeLinecap="round"
+                    strokeDasharray={`${dot} ${gapl}`} className="lp-flow hit" />
+                </g>
+              );
+            })()}
 
             {/* the run: a strip, with the ends the object gave it */}
             {a.run && (() => {

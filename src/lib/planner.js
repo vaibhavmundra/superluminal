@@ -54,6 +54,25 @@ export { normalizeZone, prepareZones, enumerateChunkings };
  *
  * Any of the three can still be passed explicitly to override its derivation.
  */
+/**
+ * WHAT A FOOT OF COVE PUTS ON THE ROOM, in lumens.
+ *
+ * NOT the tape's own output. A cove is an INDIRECT source: the strip is hidden
+ * in a pocket, fires at the ceiling, and what reaches the room is what the
+ * ceiling and the pocket's own walls give back. 120 lm/ft is that delivered
+ * figure — a 850 lm/m tape (see the BOQ catalogue, which is where the product
+ * is) run through a plaster pocket, after the reflection and the maintenance
+ * losses have been taken. It is the number to change when the tape or the
+ * pocket detail changes, and it is stated here rather than derived because a
+ * drawing cannot know either.
+ *
+ * REVERSE COVES ARE NOT THIS. A reverse cove throws light downward onto the
+ * wall instead of upward onto the ceiling, delivers far more of it and does a
+ * different job. Nothing in this file plans one; if one is ever added it needs
+ * its own figure rather than a factor on this one.
+ */
+export const COVE_LUMENS_PER_FT = 120;
+
 export const MIN_SIDE_RATIO = 2 / 3;
 export const MAX_SIDE_RATIO = 4 / 3;
 
@@ -97,6 +116,19 @@ export const DEFAULTS = {
   chunkPlan: null,        // ...or an explicit { chunks, omitted } handed in
                           //   whole, for a decomposition that came from
                           //   somewhere other than the strategy list.
+  coves: [],              // cove outlines in THIS space's feet, as rectangles.
+                          //   A cove is not a wall and not a no-light zone: the
+                          //   ceiling carries straight on across it. What it is
+                          //   is a LINE NOTHING MAY SIT NEAR, because a
+                          //   downlight crowding the pocket washes the cove out
+                          //   and one just outside it is lost in the pocket's
+                          //   own glow. See coveInside / coveOutside.
+  coveInside: 2.0,        // ft — no fitting this close to a cove line, on the
+                          //   room side of it
+  coveOutside: 1.0,       // ft — ...or this close on the pocket side. Smaller,
+                          //   because the band out there is narrow by
+                          //   construction and a fitting in it is lighting the
+                          //   perimeter rather than competing with the cove.
   minWallDistance: 5.0,   // ft — a large light must be this far from the NEAREST
                           //      wall in every direction. Zone edges are walls.
                           //      The design rule is 6 ft; 5 ft is that rule with
@@ -208,6 +240,40 @@ function rectEdgeDistance(p, z) {
   const dy = Math.max(z.y0 - p.y, 0, p.y - z.y1);
   if (dx > 0 || dy > 0) return Math.hypot(dx, dy);
   return Math.min(p.x - z.x0, z.x1 - p.x, p.y - z.y0, z.y1 - p.y);
+}
+
+/**
+ * The coves an option asked for, in the one shape the rest of this file uses.
+ *
+ * Sorted corners and the two clearances resolved per cove, so every reader
+ * downstream — the small-light search, the large-light candidates, the
+ * alignment pass — asks the same question of the same object rather than each
+ * re-deriving it from `opt`.
+ */
+function prepareCoves(coves, opt) {
+  return (coves || []).map((c) => ({
+    x0: Math.min(c.x0, c.x1), x1: Math.max(c.x0, c.x1),
+    y0: Math.min(c.y0, c.y1), y1: Math.max(c.y0, c.y1),
+    inside: c.inside ?? opt.coveInside,
+    outside: c.outside ?? opt.coveOutside,
+  }));
+}
+
+/** How far into a cove's dead band a point sits — 0 when clear of every one. */
+function coveDepth(p, coves) {
+  let v = 0;
+  for (const cv of coves) {
+    const within = p.x > cv.x0 && p.x < cv.x1 && p.y > cv.y0 && p.y < cv.y1;
+    const need = within ? cv.inside : cv.outside;
+    const d = rectEdgeDistance(p, cv);
+    if (d < need - 1e-9) v += need - d;
+  }
+  return v;
+}
+
+/** The same question as a yes/no, for the passes that only need to refuse. */
+function coveBlocked(p, opt) {
+  return coveDepth(p, opt.coves || []) > 1e-9;
 }
 
 // --- which decomposition do we lay the grid on? -----------------------------
@@ -631,6 +697,13 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   // surfaceDistance. `fanClearance` is now literally what it says.
   const fanBlocked = (q) => fans.some((f) => surfaceDistance(f, q) < opt.fanClearance);
   const zones = prepareZones(noLightZones);
+  // A COVE IS A LINE, NOT A HOLE. The zones above are subtracted from the room
+  // — the ceiling stops at them. A cove does not stop the ceiling; it draws a
+  // rectangle on it and forbids fittings within a couple of feet either side.
+  // So it never reaches the chunker, and instead rides on `opt` for the three
+  // passes that place or move a fitting. Normalised onto `opt` so those passes
+  // ask one prepared object rather than each re-deriving the clearances.
+  opt.coves = prepareCoves(opt.coves, opt);
 
   // 1+2. carve the zones out, then adopt ONE of the ways what remains can be
   // cut into rectangles. See resolveChunking: the choice is made elsewhere and
@@ -659,8 +732,17 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   for (const f of fixtures) { softX.push(f.x); softY.push(f.y); }
 
   // 3. each chunk gets its own grid and cells
+  //
+  // A DARK CHUNK STILL GETS ITS GRID. `ch.dark` says a chunk is laid out but
+  // not lit — the band outside a cove, when the cove alone is carrying the
+  // room. The grid is drawn because it is the false-ceiling setting-out and a
+  // person reads it; the fittings are absent because that is the design. It is
+  // NOT the same as an omitted chunk (too small to light, dropped by the
+  // chunker) and not the same as a ceded cell (a light was wanted and would not
+  // fit): both of those are failures with a reason, and this is an intention.
   const cells = [];
   const byId = new Map();
+  const darkCells = new Set();
   chunks.forEach((ch, ci) => {
     ch.id = ci;
     const grid = chooseChunkGrid(ch, softX, softY, fans, opt);
@@ -677,6 +759,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
         };
         cells.push(cell);
         byId.set(cell.id, cell);
+        if (ch.dark) darkCells.add(cell.id);
         ch.cellAt.set(`${i},${j}`, cell);
       }
     }
@@ -689,6 +772,10 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   // boxes, and pretending otherwise would double-light them.
   const TOUCH = 1e-6;
   const cellsAt = (p) => cells.filter((c) =>
+    // A dark cell is never lit, not even incidentally: a light sitting on a
+    // chunk boundary would otherwise claim the box on the unlit side and count
+    // it as served.
+    !darkCells.has(c.id) &&
     p.x >= c.x0 - TOUCH && p.x <= c.x1 + TOUCH &&
     p.y >= c.y0 - TOUCH && p.y <= c.y1 + TOUCH).map((c) => c.id);
 
@@ -700,6 +787,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   const centred = new Map();  // cell id -> spot within the centre band, or null
   const awkward = new Set();
   for (const c of cells) {
+    if (darkCells.has(c.id)) continue;   // nothing is going there, awkward or not
     const spot = findSmallSpot(c, polygon, fans, zones, opt, opt.centreBand);
     if (spot.ok) centred.set(c.id, spot);
     else awkward.add(c.id);
@@ -717,6 +805,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   const candidates = [];
   const pairSpots = new Map();   // every valid position for a given pair
   for (const ch of chunks) {
+    if (ch.dark) continue;
     const longAxis = ch.w >= ch.h ? 'x' : 'y';
     // the coordinates the rest of the layout actually uses: the row and column
     // centres the small lights sit on, and the grid lines themselves
@@ -805,6 +894,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
           const wall = wallDist(p);
           if (wall + 1e-9 < opt.minWallDistance) continue;
           if (fanBlocked(p)) continue;
+          if (coveBlocked(p, opt)) continue;
 
           // weight: deeper into the room is better, the long axis is better,
           // lining up with a fixture is better, a squarer pair is better.
@@ -1031,6 +1121,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
 
     for (const c of cells) {
       if (used.has(c.id)) continue;
+      if (darkCells.has(c.id)) continue;   // laid out, deliberately unlit
       // Inside the centre band: the ordinary case.
       let spot = centred.get(c.id);
       if (!spot) {
@@ -1152,8 +1243,12 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     omittedChunks: omitted.length,
     cells: cells.length,
     served: served.size,
+    // Cells nobody ever meant to light — see `ch.dark` above. Counted so the
+    // line below can subtract them: a dark cell is not an unserved one, and
+    // reporting it as one would put a fault on every cove in the job.
+    dark: darkCells.size,
     // a ceded cell is a decision, not a hole; `unserved` must stay at zero
-    unserved: cells.length - served.size - ceded.length,
+    unserved: cells.length - served.size - ceded.length - darkCells.size,
     nudged: lights.filter((l) => l.nudged).length,
     awkward: awkward.size,
     rescued: [...awkward].filter((id) => used.has(id)).length,
@@ -1198,6 +1293,10 @@ function findSmallSpot(cell, polygon, fans, zones, opt, maxFrac) {
   // fallback then lands where it intrudes on the pair least, not just on one.
   const violation = (q) => {
     let v = zoneDepth(q, zones);
+    // The cove's dead band, priced the same way — as a DEPTH rather than a
+    // refusal, so a cell squeezed against a cove line still lands as far off it
+    // as the cell allows instead of falling back to its own dead centre.
+    v += coveDepth(q, opt.coves || []);
     for (const f of fans) {
       v += Math.max(0, opt.fanClearance - surfaceDistance(f, q));
     }
@@ -1245,6 +1344,7 @@ function reseatOnCellAxis(lights, polygon, fans, zones, opt) {
   const legal = (q) => {
     if (!pointInPolygon(q, polygon)) return false;
     if (inAnyZone(q, zones)) return false;
+    if (coveBlocked(q, opt)) return false;
     return !fans.some((f) => surfaceDistance(f, q) < opt.fanClearance);
   };
   // An offset is EARNED when it is the light's own forced position, or when it
@@ -1390,6 +1490,7 @@ function alignAxis(lights, axis, polygon, opt, fans = [], zones = [], wallDist =
     if (g.kind === 'large' && dist(trial) + 1e-9 < opt.minWallDistance) return false;
     if (fans.some((f) => surfaceDistance(f, trial) < opt.fanClearance)) return false;
     if (inAnyZone(trial, zones)) return false;
+    if (coveBlocked(trial, opt)) return false;
     // Aligning must not undo the spacing repair that ran before it, nor create
     // a crowded pair of its own — a chunk's cells can differ in size, so two
     // small lights 4.5 ft apart become 3.75 ft apart if a snap pulls one of
