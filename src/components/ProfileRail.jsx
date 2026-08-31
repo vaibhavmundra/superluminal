@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
-import { Logo } from './Wordmark.jsx';
 
 // ---------------------------------------------------------------------------
 // THE RAIL. Fifty-six pixels wide, and it holds two things: the mark at the top
@@ -45,13 +44,31 @@ export default function ProfileRail() {
 
   return (
     <aside className="rail">
-      {/* THE STACKED WORDMARK IS WHAT MAKES A 56px RAIL POSSIBLE. A horizontal
-          logotype would need three times this width; two lines fit the column
-          the rail already is, so the asset being stacked is a piece of luck
-          worth using rather than working around. */}
-      {/* <Link to="/dashboard" className="rail-mark" title="Dashboard" aria-label="Dashboard">
-        <Logo width={38} />
-      </Link> */}
+      {/* HOME, AT THE TOP, AND IT IS A HOUSE RATHER THAN THE WORDMARK.
+          The stacked logotype used to live here and was commented out, which
+          left the rail's top empty and the admin door — a thing most people
+          never see — as the first mark on the page. A rail with nothing at the
+          top reads as a rail that failed to load.
+          A HOUSE AND NOT THE MARK, because the two say different things. A
+          logo in the corner is branding and is only incidentally a link; every
+          screen in this app already carries the wordmark somewhere it belongs.
+          What this position is FOR is the way out, and the icon everybody
+          already reads as "the way out to the start" is a house.
+          IT IS GREY UNTIL IT IS TOUCHED, like the admin door under it. Blue in
+          this rail is spoken for by the account bubble — the one genuinely
+          interactive object in the chrome — and two blues would say neither. */}
+      <Link to="/dashboard" className="rail-home" title="Dashboard"
+        aria-label="Dashboard">
+        {/* Drawn rather than loaded, for the reason the mark is: it takes the
+            ink colour with it and stays sharp at any density. */}
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none"
+          stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+          strokeLinejoin="round" aria-hidden="true">
+          <path d="M3.4 10.2 12 3.5l8.6 6.7" />
+          <path d="M5.4 9v10.1a1.4 1.4 0 0 0 1.4 1.4h10.4a1.4 1.4 0 0 0 1.4-1.4V9" />
+          <path d="M9.9 20.5v-5.4a1.2 1.2 0 0 1 1.2-1.2h1.8a1.2 1.2 0 0 1 1.2 1.2v5.4" />
+        </svg>
+      </Link>
 
       {/* THE ADMIN DOOR, and it is the only thing that has ever earned a place
           in the middle of this rail.

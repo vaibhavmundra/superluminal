@@ -1454,8 +1454,15 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
   min-height:min(58vh,560px);
   display:flex;align-items:center;justify-content:center
 }
+/* FULL MEASURE, NOT A CENTRED CARD. It was capped at 760px inside a 1180px
+   shell, which put a narrow box in the middle of a wide page and left two bands
+   of empty grid either side of it — and those bands are part of the drop target,
+   so the drawn box was telling the truth about where you may drop and lying
+   about how much of the page that is. The zone is the page's subject here;
+   spanning the same measure the plan cards will occupy also means the empty
+   state and the full one are the same shape. */
 .dropzone.hero{
-  width:min(760px,100%);padding:76px 56px;border-radius:16px;
+  width:100%;padding:76px 56px;border-radius:16px;
   border:1.5px dashed var(--border-strong)
 }
 .dropzone.hero h2{font-size:32px;letter-spacing:-.035em;margin-bottom:12px}
@@ -1653,6 +1660,17 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
   --op-soft:#FDF2FE;
   --op-line:#F0ABFC;
 }
+
+/* ---------- home, at the top of the rail ----------
+   The same 32px target as the admin door under it, so the rail reads as one
+   column of equals rather than as a stack of differently-sized things. */
+.rail-home{
+  display:flex;align-items:center;justify-content:center;
+  width:32px;height:32px;border-radius:8px;flex:0 0 auto;
+  color:var(--text-subtle);transition:background .12s,color .12s
+}
+.rail-home:hover{background:var(--surface-3);color:var(--ink)}
+.rail-home:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 /* ---------- the door in the rail ---------- */
 .rail-admin{
