@@ -3204,13 +3204,35 @@ The five house rules were in the prompt, stated to the model, and trusted:
 1. **a bed** — a sconce on both sides, **one foot clear of the mattress**
 2. **a sofa** — nothing. Never a sconce beside a sofa
 3. **a bathroom basin** — a sconce on both sides, as a symmetric pair
-4. **a TV unit** — an LED strip, and only a strip. Never a sconce
+4. **a TV unit** — nothing here. The render pass lights the wall it stands against
 5. **a wardrobe in a bedroom** — an LED strip
 
 To stop the model inventing work around them, the prompt also said *"where none
 of the rules applies, recommend NOTHING"* and *"an empty list is a valid and
 often correct answer"*. **Those two sentences broke it.** Rooms that had been
 producing a scheme started coming back empty.
+
+**Rule 4 used to emit a strip, and now emits nothing.** On a plan-only app that
+was the best available answer: a TV unit is a long shallow box against a wall,
+the same shape as a wardrobe, so it got the same fitting. It stopped being the
+best answer when the render pass arrived. The wall behind a TV is exactly what
+that pass reads off a photograph, and it comes back with what is *actually*
+there — shelving round the screen, panelling behind it, art beside it — and
+lights each with the right fitting. A strip laid along the unit from the plan is
+a guess at one of those three, made without seeing the room, and it lands on the
+same wall as whatever the render pass then puts there.
+
+**The wardrobe keeps its strip**, and the difference is not arbitrary: a
+wardrobe *is* the thing being lit — the tape goes on its own carcass, under the
+top or behind the shutter line — and a photograph would not change that answer.
+A TV unit is furniture in front of a **wall**, and the wall is the design.
+
+The TV unit is still **detected**, and deleting it would be the wrong shape
+twice over: the model would stop being asked about TV units, which is what the
+render pass's `ANCHORS` block uses to say which wall *"the wall with the TV"*
+means — and the panel would lose the difference between "no TV unit here" and "a
+TV unit, deliberately left to the render pass". Same argument as rule 2: an
+absence you can see is a decision, an absence you cannot is a bug.
 
 The suppression was the escape hatch, not the cause. The cause is that the
 prompt asked for three jobs in one call — identify the furniture, apply five
@@ -3606,6 +3628,455 @@ drag-and-drop.
 ```
 
 **Wall features** in the View list turns the marks off.
+
+### Lighting the art: one spot per two feet
+
+The first thing the render pass feeds. A **painting** or a piece of **wall art**
+gets narrow-beam directional spots — **one for every two feet of its width**. A
+five-foot installation gets two.
+
+**Two, not three.** `Math.round(5 / 2)` is 3 in JavaScript, and the rule is a
+spot for each *complete* two feet, so the count is a floor with a minimum of one.
+That example is the specification and `test-art-spots.mjs` asserts it by name.
+
+The width is the **documented** one — what PROMPT 01 read off the photograph
+("2ft high and 5ft wide"), parsed by `widthFtFrom`. That is a measurement of the
+artwork. The cell run is PROMPT 02's answer to a different question, quantised to
+whole feet and clamped to the wall; it is the fallback when the dimension could
+not be read, and the panel already flags it when the two disagree by more than a
+couple of feet.
+
+**24 degrees, not the task spot's 30**, and it is a separate line on the
+schedule. A task spot lights a plane you work at from three or four feet above
+it and the pool should be wider than the desk; a picture is lit from a metre or
+more off the wall at an angle, and the beam has to land *on* the piece — a wider
+cone throws a bright halo on the plaster around the frame and washes it out. The
+lamp and the wattage are the same COB. The optic is not, and the optic is the
+specification, so it is its own catalogue line for the same reason
+`small-narrow` is one: a schedule that merges two beam angles cannot be ordered
+from.
+
+#### A row is one placement, all or nothing
+
+**Two spots lighting one picture are read together.** On site they are one row
+on one setting-out line; on the drawing they have to look like it. So a group is
+placed as a rigid formation:
+
+- **on one line**, and that line runs **parallel to the wall being lit** — every
+  spot therefore stands the same distance off the wall and grazes the piece at
+  the same angle, which is the only way a row of them lights it evenly;
+- **1 ft apart** along that line, centred on the artwork;
+- and if no line will take the whole row, it is **dropped**, with a sentence
+  saying why. Not thinned, not spread out, not moved to a wall it is not on.
+
+*This is a correction.* The first version handed the placer one target per spot
+and let it place them independently, so each went to whatever grid segment was
+nearest its own share of the artwork — and a pair came out several feet apart on
+two different lines, aimed at the same wall from two directions. That is not a
+near miss; it is a different and worse design, and it read as a bug on the plan
+because it was one.
+
+The **lines come from the secondary grid**, exactly as they do for a task spot,
+and for the reason in `taskSpots.js`'s header: those lines are the ambient
+layout's own skeleton, so a fitting standing on one reads as part of the design
+rather than as an offset nobody chose. What is different is that the row is not
+on a *segment* of that grid — a segment is the four-foot gap between two
+downlights and a one-foot row does not divide it — it is at a chosen point
+*along* a line. The line is the part shared with the layout; the spacing within
+the row is the row's own business.
+
+Three dials, all in `ART_SPOT`:
+
+| | |
+|---|---|
+| `spacingFt` = 1 | between fittings in a row |
+| `maxStandoffFt` = 4 | how far off the wall the row may stand. The minimum is the ceiling's own `wallDistance`. Past four feet a spot is a downlight pointed at a wall, so "the nearest line that works" cannot quietly mean a line in the middle of the room |
+| `clearOfFittingFt` = 1 | from anything already there. The lines this row stands on run **through** the ambient downlights, so without this the tidy answer — nearest parallel line, centred — puts a spot in the same hole as a downlight surprisingly often, and it draws as one circle |
+
+The row may **slide up to 1.5 ft** along its line to get clear of something,
+because refusing a whole group over one downlight is the mistake
+`taskSpots.js`'s own `slideSpan` note describes. Bounded, because a row that has
+slid three feet is no longer lighting what it was centred on.
+
+**The spots are not all aimed at the centre.** The row is tight and the artwork
+is not, so the piece is divided into as many parts as there are spots and each
+takes its own share of the width — which is how a pair lights a five-foot piece
+evenly instead of twice-lighting the middle.
+
+#### Two passes, one ceiling
+
+Task surfaces are placed first, then the art rows, and the two share the list of
+**positions already taken** — the ambient downlights included, because the lines
+an art row stands on are the ones those downlights define.
+
+They used to go into one `planTaskSpots` call on the reasoning that one placer
+with one used-once ledger is what stops two fittings landing on one point. That
+was right about the goal and became wrong about the mechanism: an art row does
+not stand on a segment, so the segment ledger says nothing about it. Positions
+are what have to be shared.
+
+Task surfaces still go first, and that is still the same judgement — a dining
+table is a bigger commitment than a picture and is harder to light from anywhere
+else.
+
+The five rules that decide whether a fitting is buildable at all — inside the
+room, out of the no-light zones, clear of the fan's sweep, off the wall, off the
+cove — are one exported predicate, `spotLegality`, used by both passes. Not a
+faithful copy: a copy would be five chances for a spot aimed at a painting to be
+legal by rules the ambient layer stopped obeying two commits ago.
+
+#### What it does not light
+
+**Panelling, wallpaper and shelves get nothing from this rule, on purpose.**
+The render pass's five types divide between three rules, and the division is
+about optics rather than tidiness:
+
+| | | |
+|---|---|---|
+| painting, wall art | `artSpots.js` | a narrow beam pointed **at** it |
+| panelling, wallpaper | `reverseCove.js` | a slot at the wall washing **down** it |
+| shelves | `shelfStrip.js` | a strip **in** it, lighting what stands on it |
+
+A row of spots down a panelled wall scallops it; a spot aimed at a shelf lights
+the front edge and nothing on it. Each gets the fitting it wants. The panel says nothing about spots on those rows
+rather than reporting "0 spots", which would read as the feature having failed
+on them.
+
+A row that could not be placed reports as **"2 spots dropped —"** plus the
+reason, not as "0 of 2": the latter invites somebody to go looking for the one
+that did land, and there is never a partial row.
+
+#### On the drawing and in the schedule
+
+The **same symbol** as a task spot — a circle with an aim arrow. An installer
+sets the two out identically and a second glyph would claim they are different
+things on site. What differs is the optic, which is a specification rather than a
+drawing, so it lives on the hover card and on the schedule. Hovering an art spot
+outlines the **whole piece** it lights, not the slice that was its aim point.
+
+The schedule carries `Directional spot — artwork, narrow beam` at 24° as its own
+line, and the space breakdown grows an **Art spots** column — in the eighth slot
+that was always reserved and always blank, and only on a plan that has any. The
+spreadsheet's self-check covers the new column too.
+
+### Panelling and wallpaper: the reverse cove
+
+The other thing the render pass feeds. Where the pass finds **panelling** or
+**wallpaper** on a wall, the ceiling over it gets a **reverse cove**.
+
+An ordinary cove (`cove.js`) is a band dropped round the perimeter with the tape
+hidden *behind* it, throwing light up and back onto the slab so the ceiling
+appears to float. A reverse cove is that detail turned to face the other way — a
+slot at the wall with the tape at its inner lip, washing *down* the wall. You
+build one when the wall is the thing worth looking at, which is exactly what
+panelling and wallpaper are: a surface, running the length of a wall, that a
+spot would scallop and a downlight would flatten.
+
+The rule is three lines, all in `reverseCove.js`:
+
+- **8 inches wide on plan**, measured in from the wall face. A real dimension,
+  not a fraction of anything and not a line — the slot is as wide as the fitting
+  and the shadow gap need, and that does not change because the room got bigger.
+- **As long as the panelled run** — *unless* that run is **70% or more** of the
+  wall **segment**, in which case it runs the whole segment. The threshold is
+  inclusive, and it is about how a drawing reads rather than about lighting: a
+  slot that runs 71% of a wall and stops looks like somebody mis-set it out; one
+  that runs the whole wall looks like a decision.
+- **A door divides the wall for measuring** — each side is a segment, judged
+  against the 70% rule on its own — **but the cove itself may cross it.** A door
+  head is about 7 ft and a ceiling is 9 or more, so the slab over an opening is
+  ordinary continuous ceiling.
+- **The band sits at the wall**, anchored on the room's edge rather than on the
+  cells the model returned. Rule A says these runs hug a wall, but the model does
+  not always put one on row 1 or row *n* — an open-plan space has walls the
+  bounding box does not — and a slot floating in the middle of the ceiling is not
+  a detail.
+
+#### A door cuts the wall, and the reasoning with it
+
+**This is what makes the 70% rule mean anything on a real plan.** A twenty-foot
+wall with a door two thirds of the way along it is not a twenty-foot wall: it is
+thirteen feet and five, with an opening between them. Panelling filling the
+thirteen is 65% of the *wall* and 100% of the *segment it is actually on* — under
+the threshold by the first reading and over it by the second, and the second is
+the one a person would give. The ceiling detail cannot cross an opening, so
+neither can the arithmetic about it.
+
+`wallSegments` cuts the wall at its doors — the same detections this app already
+found to set the scale, filtered to the ones whose box reaches this wall line and
+lands inside this room. A door's box is the leaf plus its swing and is drawn
+straddling the wall, so "reaches the wall line" is a 1.5 ft tolerance rather than
+a touch test: wider than any wall this app will meet, far narrower than anything
+that could be mistaken for a door standing in the room. Two overlapping boxes — a
+double leaf detected twice — are one opening. **No doors is one segment, the whole
+wall**, which is exactly what happened before any of this existed.
+
+Panelling that crosses a door coves **both** sides, each judged on what it
+actually holds. A sliver of wall between two doors gets nothing: a six-inch slot
+with a driver and two end caps is not a detail anybody builds, and billing one is
+worse than leaving it out.
+
+#### …but the cove crosses the door
+
+**The division is for measuring, not a barrier**, and the code used to confuse the
+two. There is two feet of wall above a door frame and continuous slab above that,
+so nothing over an opening interrupts a slot. Two consequences:
+
+- **Where the segments either side are both full, the coves bridge** into one run
+  through. A break in the slot over a door with cove on both sides is a detail
+  somebody would have to be told to build. Only when *both* are full: a cove
+  stopping part-way along its own segment is stopping where the panelling stops,
+  which is a real edge with a reason, and running it on across a door would
+  invent a length neither side asked for.
+- **A hand-drag is clamped to the wall, not the segment.** Each cove carries two
+  sets of bounds — `seg`, the piece of wall it was *measured* against and what the
+  panel quotes, and `bounds`, how far it may be *stretched*.
+
+**A shelf strip is the opposite case** and keeps the hard stop: shelving cannot
+stand in a doorway. It carries no `bounds`, so the clamp falls back to its
+segment — one field, and the two fittings behave correctly for their own reasons.
+
+The arithmetic is on the drawing rather than in a paragraph: the slot runs the
+segment or it does not, and you can see which. The prompts-and-replies dialog
+carries the model's own words and the worksheet that produced them.
+
+#### A no-draw area, enforced in one place
+
+A reverse cove is eight inches of ceiling that is now a slot with tape in it, so
+nothing else goes there. That is **not** a new rule added to each of the four
+placers — they would drift. The band simply **becomes a no-light zone**, joining
+the list of rectangles every placer in this app already keeps out of: the ambient
+grid plans around it, the chunker cuts around it, and task spots and art rows are
+refused inside it by the same `spotLegality` predicate that keeps them out of a
+fan's sweep.
+
+It also joins `coveZonesFt`, so an **ordinary cove is set out around it** rather
+than through it. That is the distinction that block was already drawing — a bed
+is furniture and is dropped from the cove's setting-out; a reverse cove is
+*built*, like a hole for a beam — and two coving details in the same plasterboard
+is not something to draw.
+
+#### On the drawing and in the schedule
+
+**Two marks for one detail**, exactly as an ordinary cove gets two. The **band**
+is drawn as a filled 8-inch strip **in the fittings' own blue**, with its inner
+lip heavier (the lip is what gets set out; the other side is the wall), and the
+**tape** down the middle is drawn by the accents layer as an ordinary run.
+
+The fill is solid enough to read as a filled shape rather than a rectangle with
+a tint in it — every other blue on this sheet is a fitting or a selection, and
+that is exactly what this is: eight inches of ceiling that is now lighting. It
+stays transparent because the plan's own line work — the wall, the door jamb,
+whatever the slot is set out against — has to stay readable underneath. A solid
+band would hide the very edges it is dimensioned from. Both hide together under **Accent
+lighting** — the band without the strip is a rectangle nobody can interpret, and
+the strip without the band is a run floating eight inches off a wall for no
+visible reason.
+
+The tape is emitted as an ordinary accent zone — same `type: 'strip'`, same
+`runLength` — which is the same trick `coveStrip` uses, so **the schedule, the
+canvas and the DXF take it without any of them knowing what a reverse cove is**.
+It is billed in the LED strip line by the metre and counted as one run (one
+driver, one pair of end caps). `run` rather than `loop`: a perimeter cove turns
+four corners and this one turns none.
+
+A wall that comes back **both panelled and papered** — fluted timber to the dado,
+paper above — is one wall and two honest answers. The two bands land in the same
+eight inches, so they are **merged into their union**: drawn once, billed once,
+and the survivor remembers both elements it came from.
+
+**Computed from the outlines, not from `rooms`.** A reverse cove is a no-light
+zone, no-light zones go into the planner, and the planner builds `rooms` — so a
+memo over `rooms` would be a cycle. It does not need one: the grid comes from the
+room's outline and the scale, both of which exist long before anything is lit.
+
+### Shelves: a strip in the joinery
+
+A shelf is not a surface you graze and not an object you point at. It is a
+horizontal plane with things standing on it, and the light belongs under the
+shelf above — concealed at the front lip, throwing down onto the tier below.
+Linear product, bought by the metre, running the length of the unit.
+
+So `shelfStrip.js` is the shortest of the three rules: **the run is as long as
+the shelving is**, cut at doors like everything else on a wall, and that is all.
+
+**No 70% rule here, and its absence is deliberate.** That rule exists for the
+reverse cove because a ceiling is continuous and a slot stopping short of the end
+of a wall reads as a mistake *in the ceiling*. A shelf strip is inside a piece of
+furniture: it is exactly as long as the joinery, and running it to the end of the
+wall would put tape on plaster. The same 11-of-12-ft run is a 12 ft cove as
+panelling and an 11 ft strip as shelving, and a test asserts both side by side.
+
+**The tape sits on the shelving's own band, not on the wall line.** A reverse
+cove is a slot in the ceiling *at* the wall; this is tape inside joinery standing
+a foot into the room. Draw both on the wall line and a wall with shelves and
+panelling gets two fittings on top of each other, reading as one.
+
+**What the plan can and cannot say**, stated rather than papered over: PROMPT 02's
+rule D makes stacked shelves share the same cells — three shelves one above
+another are *one run in plan view*, because a plan is a horizontal cut. So the
+length is the plan's answer and it is right; the number of **tiers** is a
+specification decision the drawing does not hold, and the panel says so instead
+of multiplying by a number nobody measured.
+
+It is emitted as an ordinary accent zone like the two coves before it, so the
+schedule bills it in the LED strip line by the metre and counts it as a run.
+Three sources of strip on this drawing now — a perimeter cove, a reverse cove and
+a run of shelving — and all three are the same tape, which is why none of them
+needs the canvas or the schedule to know it exists.
+
+### Changing a length by hand
+
+Grab either end of a reverse cove or a shelf strip on the drawing and drag. The
+ends resize along the run's own axis; three-inch increments, Shift for the exact
+position. **Reset** in the panel puts it back to what the rule worked out.
+
+**No body handle**, unlike an ordinary strip. A reverse cove is a slot at a wall
+and a shelf strip is inside joinery — neither is a thing somebody placed, so
+neither can be picked up and put somewhere else. What a person legitimately wants
+to change is how *long* it is. Offering a move handle that then refused would be
+worse than offering none: the cursor promises a gesture the drawing will not
+make.
+
+**A cove may be dragged the length of its wall, straight over any door in it** —
+see above. A shelf strip stops at its segment, because shelving cannot stand in a
+doorway.
+
+One bug worth recording, because it is the kind that looks like a wiring fault
+and is not. The grips rendered, highlighted on hover and showed a resize cursor —
+and could not be dragged. **SVG hit-testing is by paint order**, and the
+transparent select line is 1.6 grips wide and runs straight through both of them,
+so drawn *after* the grips it swallowed every press on them. The ordinary strip
+never had the problem because its move line was always drawn first. Both variants
+are now drawn in the same place, before the grips, and the only difference
+between them is what the press means.
+
+#### The edit is stored, not the result
+
+These runs are **derived** — from the cells the render pass returned, the doors in
+the wall and the scale — and that is what makes them move with the drawing when
+an outline is nudged or the scale is re-set. It is also what makes them awkward
+to edit: there is no stored rectangle to drag, and storing one would throw away
+everything the derivation buys.
+
+So what is saved is **two numbers per run, in feet**: how far each end was moved
+from where the rule put it. Everything else stays derived, so a trimmed cove
+still follows its wall when the room is re-traced, still stops at its door, and
+still redraws at the right size when the scale changes — none of which it would
+if the edit were a pair of pixel coordinates. Same argument as `runFt` in
+`boq.js`, one level up: **never store what you can derive, and never derive what
+somebody chose.**
+
+Two consequences worth knowing. A run dragged back to where the rule put it drops
+its entry entirely rather than storing `{a: 0, b: 0}` — otherwise it would read
+as hand-edited for ever and keep a row in the saved plan. And `trimWallRun`
+stamps the rule's own ends on every run whether or not there is a trim, because
+the drag measures from them; measuring from the trimmed end instead makes the
+grip creep away from the pointer on every frame.
+
+### The right-hand panel, rearranged
+
+The panel had grown to nine stacked sections, four of which silently described
+whichever space happened to be selected — Ceiling, Coves, Render pass — each
+with a heading that named the room again so you could tell. That is four places
+to look for one room's answer.
+
+**Everything per-space moved inside the space.** The Spaces list is an accordion
+now: clicking a space opens it and closes every other one, and the body holds
+what is a decision about *that* space — **Ceiling design** (Standard | Cove, with
+the cove's rectangle and a cycle button where there is one), then **Place lights
+according to renders**, which is the render pass with a drop target on it.
+Nothing below the list is per-space any more.
+
+The accordion is **`focusId`, not a second piece of state.** The app already had
+exactly one selected space and the canvas already outlines it in blue; a separate
+`expandedId` would be a second answer to "which room are we talking about", and
+the two would disagree the first time anything else set the focus.
+
+**Ceiling objects, No-light zones and Additional lighting became one `Edit`
+toolbox with three tabs.** They were three headings and a scroll for three
+answers to one question — what do I put on this drawing by hand — and the tabs
+are the honest shape, because the three are mutually exclusive in *use* as well
+as in layout: the canvas takes one armed tool at a time. Switching tab disarms
+whatever the last one armed, which the stacked version had to fake by having
+every palette clear the other two.
+
+**A tab strip, not three buttons.** Three buttons side by side say "three things
+you can do", and one of them being filled in reads as a thing already done. An
+underline says "one panel, three views of it" — which is what this is — and it
+costs no fill on a panel already several boxes deep. The topbar's segmented
+`.tabs` is right for two peers that switch a whole screen; this switches a panel
+inside a section. Proper `role="tablist"` wiring, because a control that looks
+like tabs and does not answer to a screen reader as tabs is worse than one that
+looks like buttons.
+
+**The no-light zone tab leads with the gesture, drawn.** "Draw a box" is a
+sentence about a *gesture*, and a sentence is a poor way to describe one — it has
+to be read and then imagined. The panel opens with a marquee being swept out: a
+dashed box, its origin dotted, and the pointer at the corner it is dragging to.
+Then the zones there are, and then the action — `+ Add a No Light Zone`, full
+width, last, because a button above a list of what it has already made reads as
+a header for them. The illustration stays after the first zone is drawn, minus
+its "None in the layout", because the tab is also where somebody comes to draw
+the second.
+
+Also: **Result moved up**, directly under the editing that changes it — it was
+below the View toggles, which put a settings panel between an action and its
+consequence. **View is a closed `<details>`**, since every control in it is a
+preference about the picture rather than a decision about the design. The
+**Plan** section went entirely: loading a different drawing from a panel that is
+describing the current one's layout is a destructive action one click from a
+list somebody is browsing. And Additional lighting's **"On the plan" count**
+went, because the Result panel three inches below says it again — two live
+readouts of one number is the same information asking to be reconciled.
+
+### The panel is a control, not a report
+
+Under the button there used to be a card per wall element — the type, the cell
+count, the wall and location in the model's own words, the dimension, the
+confidence, then a line for whatever fitting it produced — and above them five
+counts: features seen, features placed, reverse coves, shelf strips, art spots.
+
+All of it was real and all of it was right while the pass was being built. It is
+how you tell "it saw nothing" from "it saw it and could not place it", and how
+you check the rules fired. **None of it is the user's business on a finished
+plan.** What the pass decided is *on the drawing* — a filled slot along the
+panelled wall, tape in the shelving, a pair of spots at the picture — and a panel
+that also enumerates the reasoning is asking somebody to audit a decision they
+did not know was being made, in a column of text beside the drawing that already
+shows it.
+
+Same argument that emptied the accent and task-surface panels into "Additional
+lighting", and the same answer: the pass still runs and what it places is on the
+sheet and in the schedule. What went is the reporting.
+
+**Nothing was thrown away.** The counts are under Admin → *Show what was
+identified*, beside the bed boxes and task surfaces they are a sibling of; the
+model's own words are one click away under *Show the prompts & replies*, for
+anybody. What is left in the panel is about the RUN — what was sent, whether it
+failed and how, how long it took, and the two ways out — plus one line about
+dragging a length, because that is the only thing here a person did rather than a
+rule derived.
+
+### The grid cells are an admin overlay
+
+The shaded run of cells the render pass produces **left the View list** in the
+same move. It is a *reading*, not a fitting: shading the cells is how you check
+the model put the panelling on the wall you meant, which is exactly the question
+the bed boxes and the task surfaces answer — and exactly why those two live
+behind **Admin → Show what was identified**. This now joins them, with counts for
+what each reading turned into.
+
+On a finished sheet the cells were a coloured band along a wall beside the cove
+they produced: two marks where the drawing needs one, and the one that is not a
+fitting is the one to lose. **The consequences stay on the drawing for
+everybody** — the reverse cove, the shelf strip, the art spots. What went is the
+working.
+
+There is no `layers.wallitems` any more, in the canvas or in `LAYER_DEFAULTS`.
+The gating is done by the caller passing an empty list, so there is exactly one
+switch on a thing with one switch; a key left in the defaults would come back
+`true` on every saved plan and turn on nothing.
 
 ### Show the prompts & replies
 
@@ -4259,6 +4730,10 @@ node tools/test-furniture.mjs         # detection -> zones: centres, rescaling, 
 node tools/test-detect-api.mjs        # the proxy, network stubbed: refusals, key never leaks
 node tools/test-detect-flow.mjs       # response -> zone -> NO LIGHT OVER THE BED, as App.jsx wires it
 node tools/test-wall-pass.mjs         # the render pass: both prompts, the y flip, the worksheet, the join
+node tools/test-art-spots.mjs         # one spot per 2 ft of art: the count, the slicing, the 24° line
+node tools/test-reverse-cove.mjs      # 8 in wide, the 70% threshold, doors cutting the wall, the merge
+node tools/test-shelf-strip.mjs       # as long as the shelving, on its own band, cut at doors
+                                      # (test-reverse-cove.mjs also covers trimming a run by hand)
 node tools/test-openai-detect.mjs     # the GPT route: every reply shape, and the same bed claim
 node tools/test-room-booleans.mjs     # no two rooms overlap: nesting, carving, and 27 lattice arrangements
 node tools/test-rooms-detect.mjs      # room masks -> outlines -> a lit plan, and the sheet thrown away

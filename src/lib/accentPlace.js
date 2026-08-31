@@ -10,8 +10,8 @@
 // says nothing about where the line starts or stops — circle the wall behind a
 // TV and you have six feet of wall and no run.
 //
-// So the model is asked to box THE OBJECT the strip runs along — the TV unit,
-// the wardrobe, the vanity — and the run is derived from that object's own
+// So the model is asked to box THE OBJECT the strip runs along — the wardrobe —
+// and the run is derived from that object's own
 // extent. Project the object onto the wall it stands against, and the projection
 // IS the run: it starts where the wardrobe starts and stops where it stops,
 // because that is what the tape does. The two numbers nobody could estimate
@@ -367,9 +367,36 @@ export const PLACEMENT_RULES = [
   },
   {
     id: 4, see: 'tv_unit', label: 'a TV unit',
-    does: 'an LED strip, and only a strip — never a sconce',
-    emit: (item) => [{ type: 'strip', rect: item.rect, group: null,
-                       what: 'the TV unit', why: 'rule 4 — a TV unit takes a strip and never a sconce' }],
+    does: 'nothing here. The render pass lights the wall it stands against',
+    // THE SECOND PROHIBITION, AND IT IS A HANDOVER RATHER THAN A REFUSAL.
+    //
+    // This used to emit a strip along the unit, and on a plan-only app that was
+    // the best available answer: a TV unit is a long shallow box against a wall,
+    // which is the same shape as a wardrobe, so it got the same fitting.
+    //
+    // It is no longer the best available answer, because the wall behind a TV
+    // is exactly what the render pass reads. That pass looks at photographs of
+    // the finished room and comes back with what is actually ON that wall —
+    // shelving round the screen, panelling behind it, art beside it — and lights
+    // each with the right fitting: a strip in the joinery, a slot at the wall, a
+    // narrow beam at the picture. A strip laid along the unit from the PLAN is a
+    // guess at one of those three, made without seeing the room, and it lands on
+    // the same wall as whatever the render pass then puts there.
+    //
+    // THE WARDROBE KEEPS ITS STRIP, and the difference is not arbitrary: a
+    // wardrobe IS the thing being lit — the tape goes on its own carcass, under
+    // the top or behind the shutter line — and a photograph of the room would
+    // not change that answer. A TV unit is a piece of furniture in front of a
+    // WALL, and the wall is the design.
+    //
+    // IT STAYS A RULE AND A DETECTION. Deleting it would be the wrong shape
+    // twice over: the model would stop being asked about TV units, which is what
+    // the render pass's ANCHORS block uses to say which wall "the wall with the
+    // TV" means (see anchorLines in wallGrid.js) — and the panel would lose the
+    // difference between "no TV unit here" and "a TV unit, deliberately left to
+    // the render pass". Same argument as rule 2 and the same shape: an absence
+    // you can see is a decision, an absence you cannot is a bug.
+    emit: () => [],
   },
   {
     id: 5, see: 'wardrobe', label: 'a wardrobe',

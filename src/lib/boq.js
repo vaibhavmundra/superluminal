@@ -75,6 +75,19 @@ export const FIXTURES = [
     // STATED here for the same reason the wattage is: a drawing cannot know it.
     watts: 5,  beam: 30, lumens: 450,
     note: 'aimed at a task surface' },
+  { id: 'art-spot', label: 'Directional spot — artwork, narrow beam', unit: 'nos',
+    // A SEPARATE LINE AT 24 DEGREES, for the same reason `small-narrow` is a
+    // separate line from this one: a schedule that merges two fittings with
+    // different beam angles cannot be ordered from. The lamp and the wattage
+    // are the same COB; the optic is not, and the optic is the specification.
+    //
+    // 24 rather than 30 because of what it is aimed at. A task spot lights a
+    // plane you work at from three or four feet above it and the pool should be
+    // wider than the desk. A picture is lit from a metre or more off the wall at
+    // an angle, and the beam has to land ON the piece — a wider cone throws a
+    // bright halo on the plaster around the frame and washes it out.
+    watts: 5, beam: 24, lumens: 450,
+    note: 'aimed at wall art — one per 2 ft of width' },
   { id: 'sconce', label: 'Wall sconce', unit: 'nos',
     // NULL, NOT ZERO, and the difference matters downstream: zero would sum
     // into the connected load as a fitting that draws nothing, which is a
@@ -114,7 +127,8 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
 
   // --- per room
   const byRoom = lit.map((r) => {
-    const q = { small: 0, 'small-narrow': 0, large: 0, spot: 0, sconce: 0, strip: 0 };
+    const q = { small: 0, 'small-narrow': 0, large: 0, spot: 0, 'art-spot': 0,
+                sconce: 0, strip: 0 };
 
     // BY `fixture`, FALLING BACK TO `kind`. The planner only ever emits 'small'
     // and 'large' — those are geometry, not product — and the room's type then
@@ -126,7 +140,15 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
       if (q[id] == null) q[id] = 0;
       q[id]++;
     }
-    for (const s of spots) if (s.roomId === r.id) q.spot++;
+    // BY `fixture`, LIKE THE LIGHTS ABOVE. A spot aimed at a painting and one
+    // aimed at a desk are the same symbol on the drawing and two different lines
+    // on the schedule, and the spot itself is what knows which it is.
+    for (const s of spots) {
+      if (s.roomId !== r.id || s.rejected) continue;
+      const id = s.fixture || 'spot';
+      if (q[id] == null) q[id] = 0;
+      q[id]++;
+    }
 
     for (const z of accents) {
       if (z.roomId !== r.id || z.rejected) continue;
@@ -153,7 +175,8 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
   });
 
   // --- the totals, which are what actually gets ordered
-  const total = { small: 0, 'small-narrow': 0, large: 0, spot: 0, sconce: 0, strip: 0 };
+  const total = { small: 0, 'small-narrow': 0, large: 0, spot: 0, 'art-spot': 0,
+                  sconce: 0, strip: 0 };
   let stripRuns = 0;
   for (const r of byRoom) {
     for (const k of Object.keys(total)) total[k] += r.qty[k] ?? 0;
@@ -350,13 +373,22 @@ export function boqTable(boq, { perRoom = true } = {}) {
   if (perRoom && boq.rooms.length) {
     rows.push([]);
     rows.push(['SPACE BREAKDOWN']);
-    rows.push(['Space', 'Area (sqft)', 'Small', 'Large', 'Spots', 'Sconces', 'Strip (m)', '']);
+    // THE ART COLUMN IS THE TRAILING ONE, AND ONLY WHEN THERE IS ART. This
+    // breakdown has always been eight columns wide with the last one blank —
+    // the PDF's `rooms` layout reserves a share for it — so art spots go there
+    // rather than widening a grid three exporters agree on. Omitted entirely on
+    // a plan that never ran the render pass, because a column of zeros on every
+    // schedule is a question the reader has to ask and answer for themselves.
+    const artCol = boq.rooms.some((r) => (r.qty['art-spot'] ?? 0) > 0);
+    rows.push(['Space', 'Area (sqft)', 'Small', 'Large', 'Spots', 'Sconces', 'Strip (m)',
+               artCol ? 'Art spots' : '']);
     for (const r of boq.rooms) {
       rows.push([
         r.name,
         r.areaSqft == null ? '—' : String(round(r.areaSqft, 1)),
         String(r.qty.small), String(r.qty.large), String(r.qty.spot),
-        String(r.qty.sconce), r.qty.strip ? r.qty.strip.toFixed(2) : '—', '',
+        String(r.qty.sconce), r.qty.strip ? r.qty.strip.toFixed(2) : '—',
+        artCol ? String(r.qty['art-spot'] ?? 0) : '',
       ]);
     }
   }
@@ -547,15 +579,27 @@ export function boqSheets(boq) {
   rrows.push([txt('BY SPACE', 'title')]);
   rrows.push([txt('How a site is wired and how a contractor prices it.', 'sub')]);
   rrows.push(gap());
+  // SAME CONDITIONAL COLUMN AS boqTable, and it has to be built as a spec here
+  // rather than typed twice: this sheet computes its own totals and then CHECKS
+  // them against the schedule, so a column added by hand in three places is a
+  // column whose SUM() range or cross-check reference will eventually be one out.
+  const artCol = boq.rooms.some((r) => (r.qty['art-spot'] ?? 0) > 0);
+  const RCOLS = [
+    { head: 'Small',    id: 'small',     style: 'num',    w: 9 },
+    { head: 'Large',    id: 'large',     style: 'num',    w: 9 },
+    { head: 'Spots',    id: 'spot',      style: 'num',    w: 9 },
+    ...(artCol ? [{ head: 'Art spots', id: 'art-spot', style: 'num', w: 11 }] : []),
+    { head: 'Sconces',  id: 'sconce',    style: 'num',    w: 10 },
+    { head: 'Strip',    id: 'strip',     style: 'metres', w: 11, dp: 2 },
+  ];
   const rHead = rat();
-  rrows.push([txt('Space', 'h'), txt('Area', 'hr'), txt('Small', 'hr'), txt('Large', 'hr'),
-              txt('Spots', 'hr'), txt('Sconces', 'hr'), txt('Strip', 'hr')]);
+  rrows.push([txt('Space', 'h'), txt('Area', 'hr'),
+              ...RCOLS.map((c) => txt(c.head, 'hr'))]);
   const rFirst = rat();
   for (const r of boq.rooms) {
     rrows.push([
       txt(r.name, 'bold'), n(round(r.areaSqft, 0), 'area'),
-      n(r.qty.small, 'num'), n(r.qty.large, 'num'), n(r.qty.spot, 'num'),
-      n(r.qty.sconce, 'num'), n(round(r.qty.strip, 2), 'metres'),
+      ...RCOLS.map((c) => n(c.dp != null ? round(r.qty[c.id] ?? 0, c.dp) : (r.qty[c.id] ?? 0), c.style)),
     ]);
   }
   const rLast = rrows.length;
@@ -566,8 +610,9 @@ export function boqSheets(boq) {
   rrows.push([
     txt('Total', 'totBold'),
     tot(1, boq.totals.areaSqft, 'totArea'),
-    tot(2, sum('small')), tot(3, sum('large')), tot(4, sum('spot')),
-    tot(5, sum('sconce')), tot(6, round(sum('strip'), 2), 'totMetres'),
+    ...RCOLS.map((c, i) => tot(2 + i,
+      c.dp != null ? round(sum(c.id), c.dp) : sum(c.id),
+      c.style === 'metres' ? 'totMetres' : 'totNum')),
   ]);
 
   // THE CROSS-CHECK, and it is the reason this sheet is worth having as a sheet.
@@ -578,8 +623,15 @@ export function boqSheets(boq) {
     const i = boq.lines.findIndex((l) => l.id === id);
     return i < 0 ? null : `${SHEET_SCHEDULE}!C${schedule.refs.allRows[i]}`;
   };
-  const pairs = [[2, 'small'], [3, 'large'], [4, 'spot'], [5, 'sconce']]
-    .map(([c, id]) => { const cell = q(id); return cell ? `${colLetter(c)}${rTotal}=${cell}` : null; })
+  // Every counted column checks itself against its own schedule line. The strip
+  // is left out as it always was — it is metres here and metres there, and a
+  // float equality between two roundings is a check that fails for no reason.
+  const pairs = RCOLS
+    .filter((c) => c.style !== 'metres')
+    .map((c) => {
+      const cell = q(c.id);
+      return cell ? `${colLetter(2 + RCOLS.indexOf(c))}${rTotal}=${cell}` : null;
+    })
     .filter(Boolean);
   rrows.push(gap());
   if (pairs.length) {
@@ -588,12 +640,13 @@ export function boqSheets(boq) {
         f: `IF(AND(${pairs.join(',')}),"OK — matches the schedule","MISMATCH")` }]);
   }
 
+  const lastCol = colLetter(1 + RCOLS.length);
   const byRoom = {
     name: SHEET_ROOMS,
     rows: rrows,
-    merges: ['A1:G1', 'A2:G2'],
+    merges: [`A1:${lastCol}1`, `A2:${lastCol}2`],
     freeze: rHead,
-    cols: [26, 12, 9, 9, 9, 10, 11],
+    cols: [26, 12, ...RCOLS.map((c) => c.w)],
     refs: { rHead, rFirst, rLast, rTotal },
   };
 

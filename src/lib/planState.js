@@ -127,6 +127,11 @@ export function serialiseEditor(s) {
     // drag-and-drop. The cells drawn on the plan are what the next session
     // needs; the panel simply asks for the views again if it is re-run.
     wallResults: s.wallResults,
+    // ...and the lengths somebody dragged on the fittings the pass produced.
+    // Two numbers per run, in feet, and the only thing about a reverse cove or a
+    // shelf strip that a person chose rather than a rule derived — which is
+    // exactly the test for what belongs in this column. See trimWallRun.
+    runTrims: s.runTrims,
 
     // --- view preferences. Cheap, and jarring to lose.
     ui: { layers: s.layers, zoom: s.zoom, view: s.view },
@@ -194,6 +199,7 @@ export function applyEditor(p, set) {
   set.setSurfaceDismissed(p.surfaceDismissed ?? []);
   set.setManualSurfaces(p.manualSurfaces ?? []);
   set.setWallResults?.(p.wallResults ?? {});
+  set.setRunTrims?.(p.runTrims ?? {});
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);

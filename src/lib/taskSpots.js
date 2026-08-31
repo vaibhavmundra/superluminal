@@ -200,6 +200,55 @@ export function secondaryGrid(chunk, lights, opt = {}) {
 }
 
 /**
+ * CAN A FITTING STAND HERE? The ceiling's own rules, as one predicate.
+ *
+ * Pulled out of placeTaskSpot so that artSpots.js can ask the same question of
+ * the same ceiling. It has to be the same code and not a faithful copy: these
+ * five rules are the ones that decide whether a light is buildable — inside the
+ * room, out of the no-light zones, clear of the fan's sweep, off the wall, off
+ * the cove — and a second copy would be five chances for a spot aimed at a
+ * painting to be legal by rules the ambient layer stopped obeying two commits
+ * ago.
+ *
+ * `reasons` is an optional Set the caller passes in to collect WHY points were
+ * refused, because "no spot appeared" is not something anybody can act on and
+ * "every position is inside the fan's clearance" is.
+ */
+export function spotLegality({ polygon, zones = [], fixtures = [], coves = [],
+                               clearance = 0, wallMin = 0, reasons = null } = {}) {
+  const note = (s) => { reasons?.add(s); return false; };
+  return (p) => {
+    if (!pointInPolygon(p, polygon)) return note('outside the space');
+    for (const z of zones) {
+      if (p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1) {
+        return note('inside a no-light zone');
+      }
+    }
+    for (const f of fixtures) {
+      if (surfaceDistance(f, p) < clearance - EPS) {
+        return note('inside a ceiling object’s clearance');
+      }
+    }
+    if (distanceToBoundary(p, polygon) + EPS < wallMin) {
+      return note(`closer than ${wallMin} ft to a wall`);
+    }
+    // THE COVE'S OWN CLEARANCE. A spot is a downlight in the same ceiling, and
+    // one crowding the pocket flattens the cove's glow exactly as an ambient
+    // fitting would. Same figures, from the same place: see opt.coves.
+    for (const cv of coves) {
+      const within = p.x > cv.x0 && p.x < cv.x1 && p.y > cv.y0 && p.y < cv.y1;
+      const need = within ? cv.inside : cv.outside;
+      const dx = Math.max(cv.x0 - p.x, 0, p.x - cv.x1);
+      const dy = Math.max(cv.y0 - p.y, 0, p.y - cv.y1);
+      const d = (dx > 0 || dy > 0) ? Math.hypot(dx, dy)
+        : Math.min(p.x - cv.x0, cv.x1 - p.x, p.y - cv.y0, cv.y1 - p.y);
+      if (d < need - EPS) return note('crowding the cove');
+    }
+    return true;
+  };
+}
+
+/**
  * Place one spot for one surface.
  *
  * Returns `{ spot }` or `{ rejected }` — a sentence, as everywhere else in this
@@ -220,34 +269,12 @@ export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
   }
 
   const reasons = new Set();
+  const base = spotLegality({ polygon, zones, fixtures, coves, clearance, wallMin, reasons });
   const legal = (p) => {
-    if (!pointInPolygon(p, polygon)) { reasons.add('outside the space'); return false; }
-    for (const z of zones) {
-      if (p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1) {
-        reasons.add('inside a no-light zone'); return false;
-      }
-    }
-    for (const f of fixtures) {
-      if (surfaceDistance(f, p) < clearance - EPS) {
-        reasons.add('inside a ceiling object’s clearance'); return false;
-      }
-    }
-    if (distanceToBoundary(p, polygon) + EPS < wallMin) {
-      reasons.add(`closer than ${wallMin} ft to a wall`); return false;
-    }
-    // THE COVE'S OWN CLEARANCE. A spot is a downlight in the same ceiling, and
-    // one crowding the pocket flattens the cove's glow exactly as an ambient
-    // fitting would. Same figures, from the same place: see opt.coves.
-    for (const cv of coves) {
-      const within = p.x > cv.x0 && p.x < cv.x1 && p.y > cv.y0 && p.y < cv.y1;
-      const need = within ? cv.inside : cv.outside;
-      const dx = Math.max(cv.x0 - p.x, 0, p.x - cv.x1);
-      const dy = Math.max(cv.y0 - p.y, 0, p.y - cv.y1);
-      const d = (dx > 0 || dy > 0) ? Math.hypot(dx, dy)
-        : Math.min(p.x - cv.x0, cv.x1 - p.x, p.y - cv.y0, cv.y1 - p.y);
-      if (d < need - EPS) { reasons.add('crowding the cove'); return false; }
-    }
-    // A spot standing ON its surface has no direction to point in.
+    if (!base(p)) return false;
+    // A spot standing ON its surface has no direction to point in. THE ONE RULE
+    // THAT IS NOT SHARED, because it is about the thing being lit rather than
+    // about the ceiling, and the art cluster next door has its own version of it.
     if (rectDistance(p, surface) < EPS && Math.hypot(p.x - centre.x, p.y - centre.y) < o.minStandoff) {
       reasons.add('directly over the surface, with nothing to aim at'); return false;
     }

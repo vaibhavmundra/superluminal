@@ -36,6 +36,11 @@ import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
 import { WALL_BY_ID, joinPlacements } from './lib/wallPrompt.js';
 import { gridFor, anchorLines, cellsToPlanPx, cellsToRect } from './lib/wallGrid.js';
 import { fitAll, RENDER_DEFAULTS } from './lib/renderImage.js';
+import { sliceRect, artWidthFt, spotCountFor, litByArtSpots, planArtSpots,
+         ART_SPOT } from './lib/artSpots.js';
+import { reverseCovesFor, mergeReverseCoves, trimWallRun,
+         RUN_TRIM } from './lib/reverseCove.js';
+import { shelfStripsFor } from './lib/shelfStrip.js';
 import RenderPassPanel from './components/RenderPassPanel.jsx';
 import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone, RUN_EDIT } from './lib/accentPlace.js';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
@@ -136,9 +141,14 @@ const STAGE_SAY = {
  * plan was saved came back `undefined` — falsy, so off — on every existing plan,
  * with nothing to say why one drawing was missing a whole category of fitting.
  */
+// NO `wallitems` HERE ANY MORE. The render pass's grid cells were a public
+// layer and are now part of the admin overlay — see the canvas prop below and
+// the note in PlanCanvas. A key left in this object would come back true on
+// every saved plan and turn on nothing, which is the failure the comment above
+// is about, in the other direction.
 const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: true,
   lights: true, labels: false, fan: true, zones: true, accents: true,
-  objects: true, spots: true, wallitems: true };
+  objects: true, spots: true };
 
 export default function App({
   planName = null, initialFile = null, restore = null, saveState = 'idle',
@@ -369,6 +379,30 @@ export default function App({
   // of the plan, and it would be stale the moment anything was re-analysed. It
   // belongs to the session, like the renders it came from. See planState.js.
   const [wallTranscripts, setWallTranscripts] = useState({});
+  /**
+   * THE LENGTHS SOMEBODY CHANGED BY HAND. run id -> { a, b } in FEET.
+   *
+   * Reverse coves and shelf strips are derived, not placed — see trimWallRun for
+   * why the EDIT is stored rather than the result. Two numbers per run: how far
+   * each end was moved from where the rule put it. Everything else stays
+   * derived, so a trimmed cove still follows its wall when the outline moves and
+   * still redraws at the right size when the scale changes.
+   *
+   * Keyed by the run's own id rather than per room, because a room can hold
+   * several and they are edited one at a time.
+   */
+  const [runTrims, setRunTrims] = useState({});
+
+  /**
+   * WHICH CATEGORY OF THE EDIT TOOLBOX IS OPEN.
+   *
+   * A view preference and nothing else — it says which of three palettes is on
+   * screen and never reaches the drawing, which is why it is not in
+   * planState.js. Reopening a plan on the tab you left it on would be a nicety;
+   * reopening it with a tool armed under a tab you cannot see would be a bug,
+   * and the two arrive together the moment this is persisted.
+   */
+  const [editTab, setEditTab] = useState('objects');
 
   // Editing what the model proposed. A fitting is a starting point, not a
   // verdict — see the note in accentPlace.js.
@@ -479,7 +513,7 @@ export default function App({
     setRoomState({ status: 'idle' });
     setAccentRoomId(null); setAccentResults({});
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
-    setRenders({}); setWallResults({}); setWallTranscripts({});
+    setRenders({}); setWallResults({}); setWallTranscripts({}); setRunTrims({});
     setWallState({ status: 'idle', roomId: null }); setWallShot(null);
     setSelAccId(null); setAccDrag(null);
     // BACK TO THE PROJECT'S ANSWER, NOT TO NULL. This runs on every file load,
@@ -671,6 +705,9 @@ export default function App({
       // are a few hundred bytes of JSON and the renders are megabytes of
       // somebody's photographs, which do not belong in a jsonb column.
       setWallResults,
+      // ...and the lengths somebody dragged. Two numbers per run, and the only
+      // thing about these derived fittings a person actually chose.
+      setRunTrims,
       // MERGED OVER THE DEFAULTS, not assigned. See LAYER_DEFAULTS.
       setLayers: (saved) => setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
       setZoom, setView,
@@ -1028,10 +1065,108 @@ export default function App({
                         judged: !!ok[i].refound }));
   }, [detections, dismissed, source, pxPerFt, bedsPerRoom]);
 
+  /**
+   * THE REVERSE COVES, from the render pass's panelling and wallpaper.
+   *
+   * COMPUTED FROM THE OUTLINES AND NOT FROM `rooms`, and that is load-bearing
+   * rather than tidy. A reverse cove is a no-light zone, no-light zones go into
+   * the planner, and the planner is what builds `rooms` — so a memo over `rooms`
+   * would be a cycle. It does not need one: the grid a cove is measured against
+   * comes from the room's OUTLINE and the scale, both of which exist long before
+   * anything is lit, and `regionFromOutline` is the same call the layout makes.
+   *
+   * See reverseCove.js for the rule. Merged, because a wall that came back both
+   * panelled and papered is one wall and would otherwise get two bands in the
+   * same eight inches of ceiling — drawn as one, billed as two.
+   */
+  const reverseCoves = useMemo(() => {
+    if (!source || !pxPerFt) return [];
+    const out = [];
+    for (const o of litOutlines) {
+      const res = wallResults[o.id];
+      if (!res?.elements?.length) continue;
+      const region = regionFromOutline(o, pxPerFt);
+      if (!region?.ok) continue;
+      const polygonPx = useBoundingRect ? region.boundingRect : region.polygon;
+      const grid = gridFor(polygonPx, pxPerFt);
+      if (!grid) continue;
+      const mine = [];
+      for (const e of res.elements) {
+        // A LIST PER ELEMENT, because a wall with a door in it is two walls.
+        // `doors` is the whole sheet's detections — the ones already found to
+        // set the scale — and reverseCovesFor picks out the ones in this wall.
+        const got = reverseCovesFor(e, grid, { pxPerFt, doors });
+        got.forEach((rc, i) => mine.push({
+          ...rc, roomId: o.id, elementId: e.id,
+          id: `rcove-${e.id}-${i}`,
+        }));
+      }
+      // MERGE FIRST, THEN TRIM. The merge decides which coves exist and what
+      // their ids are; a trim is keyed to an id, so trimming before it would
+      // apply somebody's drag to a run that is about to be absorbed into
+      // another one.
+      for (const c of mergeReverseCoves(mine, { pxPerFt })) {
+        out.push(trimWallRun(c, runTrims[c.id], { pxPerFt }));
+      }
+    }
+    return out;
+  }, [source, pxPerFt, litOutlines, wallResults, useBoundingRect, doors, runTrims]);
+
+  /**
+   * ...and as no-light zones, which is how "a reverse cove is a no-draw area"
+   * is actually enforced.
+   *
+   * Not by a new rule in every placer — there are four of them and they would
+   * drift — but by the band joining the list of rectangles that every placer in
+   * this app already keeps out of. Eight inches of ceiling with tape in it is
+   * exactly the same kind of fact as a hole for a beam.
+   */
+  const reverseCoveZones = useMemo(
+    () => reverseCoves.map((c) => ({ id: c.id, roomId: c.roomId, ...c.rect,
+                                     kind: 'reverse-cove' })),
+    [reverseCoves]);
+
+  /**
+   * THE SHELF STRIPS, from the render pass's shelving.
+   *
+   * NOT A NO-DRAW AREA, unlike the reverse cove beside it, and the difference is
+   * the difference between the two fittings. A reverse cove is a slot cut in the
+   * CEILING: eight inches of it are gone and nothing else can go there. A shelf
+   * strip is tape inside a piece of joinery standing against the wall — the
+   * ceiling above it is ordinary ceiling, and a downlight in front of the unit is
+   * a perfectly good thing to have. So this list is drawn and billed and changes
+   * nothing about the layout.
+   *
+   * Same reason as the reverse coves for computing it off the OUTLINES: it does
+   * not need `rooms`, and not depending on it keeps the two memos independent.
+   */
+  const shelfStrips = useMemo(() => {
+    if (!source || !pxPerFt) return [];
+    const out = [];
+    for (const o of litOutlines) {
+      const res = wallResults[o.id];
+      if (!res?.elements?.length) continue;
+      const region = regionFromOutline(o, pxPerFt);
+      if (!region?.ok) continue;
+      const polygonPx = useBoundingRect ? region.boundingRect : region.polygon;
+      const grid = gridFor(polygonPx, pxPerFt);
+      if (!grid) continue;
+      for (const e of res.elements) {
+        shelfStripsFor(e, grid, { pxPerFt, doors }).forEach((st, i) => {
+          const id = `shelf-${e.id}-${i}`;
+          out.push(trimWallRun({ ...st, roomId: o.id, elementId: e.id, id },
+                               runTrims[id], { pxPerFt }));
+        });
+      }
+    }
+    return out;
+  }, [source, pxPerFt, litOutlines, wallResults, useBoundingRect, doors, runTrims]);
+
   // Hand-drawn zones and detected ones behave identically from here on — that
   // was the point of making a detection produce a rectangle rather than a new
-  // kind of obstacle.
-  const zoneList = useMemo(() => [...zones, ...detectedZones], [zones, detectedZones]);
+  // kind of obstacle. So do the reverse coves.
+  const zoneList = useMemo(() => [...zones, ...detectedZones, ...reverseCoveZones],
+    [zones, detectedZones, reverseCoveZones]);
 
   // Which layers are walls, for the detector's render. classifyLayers already
   // works this out for room extraction; the same answer decides which lines get
@@ -1096,8 +1231,18 @@ export default function App({
       // polygon is the test — a bed belongs to the room it is standing in.
       const mine = obstaclesPx.filter((f) => pointInPolygon({ x: f.x, y: f.y }, polygonPx));
       const myZones = [
-        ...zoneList.filter((z) => pointInPolygon(
-          { x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 }, polygonPx)),
+        // BY ROOM WHERE THE ZONE KNOWS ITS ROOM, and by containment otherwise.
+        // A hand-drawn box belongs to whatever it is drawn over, which is what
+        // the centre test is for. A reverse cove already knows: it was measured
+        // against THIS room's grid. That grid is the room's BOUNDING BOX, so on
+        // an L-shaped room a band along one bbox edge can have its centre out in
+        // the notch — containment would drop it and the slot would be drawn on
+        // the plan while the fittings walked straight through it. A zone outside
+        // the polygon is harmless to the planner; a zone silently discarded is
+        // not.
+        ...zoneList.filter((z) => (z.roomId
+          ? z.roomId === o.id
+          : pointInPolygon({ x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 }, polygonPx))),
         // This room's own enclosed rooms, which belong to it and to no other.
         ...enclosedZones(o),
       ];
@@ -1143,6 +1288,14 @@ export default function App({
           ...zones.filter((z) => pointInPolygon(
             { x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 }, polygonPx)),
           ...enclosedZones(o),
+          // AND THE REVERSE COVES, which belong here rather than with the beds
+          // precisely because of the distinction this block is drawing. A bed is
+          // furniture and is dropped; a reverse cove is BUILT — eight inches of
+          // ceiling that is now a slot — and an ordinary cove set out through
+          // one would be two details in the same plasterboard. So the perimeter
+          // band gets set out round it, which is what would be done on site.
+          ...reverseCoveZones.filter((z) => z.roomId === o.id
+            || pointInPolygon({ x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 }, polygonPx)),
         ].map((z) => {
           const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
           return { x0: a.x, y0: a.y, x1: c.x, y1: c.y };
@@ -1325,7 +1478,7 @@ export default function App({
     }
     return out;
   }, [source, pxPerFt, litOutlines, useBoundingRect, obstaclesPx, zoneList, zones,
-      chunkOpt, chunkPicks, opt, enclosedZones, roomTypes, projectId,
+      reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes, projectId,
       ceilingKinds, covePicks]);
 
   // What the canvas draws: every zone, whoever it belongs to. The planner sees
@@ -1351,10 +1504,10 @@ export default function App({
     () => [...zones, ...rooms.flatMap((r) => enclosedZones(r.outline))],
     [zones, rooms, enclosedZones]);
 
-  /** Every space that actually ended up with a cove on it. Derived, so a space
-   *  whose cove could not be drawn drops out of the list on its own rather than
-   *  sitting in it with nothing to say. */
-  const coved = useMemo(() => rooms.filter((r) => r.cove?.ok), [rooms]);
+  // THE PLAN-WIDE `coved` LIST IS GONE WITH THE SECTION IT FED. A cove is now
+  // described inside its own space's row in the Spaces list, which reads
+  // `r.cove` directly — so a list of every coved space on the plan is a
+  // derivation with nothing left to derive it for.
 
   /** The room the right-hand panel and the chunk picker are talking about. */
   const focus = useMemo(
@@ -2051,28 +2204,60 @@ export default function App({
    * the chunks, the lights and the clearance rules all already live in, and
    * back out to plan pixels for the canvas.
    */
+  /**
+   * THE ART ON THE WALLS, one entry per PIECE, in plan pixels.
+   *
+   * Per piece and not per spot, and that is the change the drawing asked for. A
+   * row of spots lighting one picture is placed as a formation — one line, a
+   * fixed spacing, all of it or none — so the unit handed to the placer has to
+   * be the picture, with the number of fittings it wants as a field. Handing it
+   * the fittings one at a time is what put a pair several feet apart on two
+   * different lines. See the header of the placement section in artSpots.js.
+   */
+  const artPiecesPx = useMemo(() => {
+    const out = [];
+    for (const r of rooms) {
+      const res = wallResults[r.id];
+      if (!res?.elements?.length || !r.plan?.ok) continue;
+      const grid = gridFor(r.plan.polygonPx, pxPerFt);
+      if (!grid) continue;
+      for (const e of res.elements) {
+        if (!litByArtSpots(e.type)) continue;
+        const rect = e.cells?.length ? cellsToRect(e.cells, grid) : null;
+        if (!rect) continue;
+        const { ft, from } = artWidthFt(e, grid);
+        out.push({
+          id: e.id, roomId: r.id, type: e.type,
+          label: WALL_BY_ID[e.type]?.label || e.type,
+          colour: WALL_BY_ID[e.type]?.colour || '#666',
+          rect,
+          // Which way the run lies, which is also which way the wall runs, which
+          // is also the axis the row of spots has to lie along.
+          horizontal: e.start && e.end ? e.start.y === e.end.y : true,
+          n: spotCountFor(ft), widthFt: ft, widthFrom: from,
+        });
+      }
+    }
+    return out;
+  }, [rooms, wallResults, pxPerFt]);
+
   const taskSpotsPx = useMemo(() => {
     const out = [];
     for (const r of rooms) {
       if (!r.plan?.ok) continue;
       const mine = surfacesPx.filter((sf) => sf.roomId === r.id);
-      if (!mine.length) continue;
+      const art = artPiecesPx.filter((a) => a.roomId === r.id);
+      if (!mine.length && !art.length) continue;
       const { toFt, toPx } = r.geo;
-      // ALL OF THIS ROOM'S SURFACES AT ONCE, not one at a time, because the
-      // rule that one spot lights one surface is a rule ABOUT THE SET: a
-      // segment can only be spent once, and that cannot be decided by a
-      // function looking at a single surface.
-      const inFt = mine.map((sf) => {
-        const a = toFt({ x: sf.rect.x0, y: sf.rect.y0 });
-        const b = toFt({ x: sf.rect.x1, y: sf.rect.y1 });
+      const rectFt = (rect) => {
+        const a = toFt({ x: rect.x0, y: rect.y0 });
+        const b = toFt({ x: rect.x1, y: rect.y1 });
         return { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y),
                  x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
-      });
-      // ALL the room's chunks. Which one a surface belongs to is decided per
-      // surface inside planTaskSpots — a living-dining room has its coffee
-      // table in one chunk and its dining table in another, and giving both the
-      // same grid puts one of them nowhere near what it is lighting.
-      const placed = planTaskSpots(inFt, {
+      };
+      // The ceiling as both passes see it. One object, so a rule added to one
+      // pass cannot quietly apply to only half the fittings in the room.
+      const ceiling = {
         chunks: r.plan.chunks,
         lights: r.plan.lights,
         polygon: r.plan.polygonFt,
@@ -2084,19 +2269,32 @@ export default function App({
         // options the layout was actually built with, coves included.
         coves: r.plan.opt?.coves ?? [],
         opt,
-      });
+      };
+
+      // --- 1. TASK SURFACES FIRST, unchanged, and first on purpose.
+      //
+      // ALL of this room's surfaces at once, not one at a time, because the rule
+      // that one spot lights one surface is a rule ABOUT THE SET: a segment can
+      // only be spent once, and that cannot be decided by a function looking at
+      // a single surface. ALL the room's chunks too — a living-dining room has
+      // its coffee table in one chunk and its dining table in another, and
+      // giving both the same grid puts one of them nowhere near what it is
+      // lighting.
+      const placed = mine.length
+        ? planTaskSpots(mine.map((sf) => rectFt(sf.rect)), ceiling) : [];
 
       mine.forEach((sf, k) => {
         const res = placed[k];
         if (!res?.spot) {
-          out.push({ id: `spot-${sf.id}`, surfaceId: sf.id, colour: sf.colour,
+          out.push({ id: `spot-${sf.id}`, surfaceId: sf.id, fixture: 'spot', colour: sf.colour,
                      rejected: res?.rejected, skipped: res?.skipped });
           return;
         }
         const p = toPx(res.spot);
         const t = toPx(res.spot.target);
         out.push({
-          id: `spot-${sf.id}`, surfaceId: sf.id, roomId: r.id,
+          id: `spot-${sf.id}`, surfaceId: sf.id, roomId: r.id, fixture: 'spot',
+          highlight: sf.rect,
           x: p.x, y: p.y,
           target: t,
           angle: Math.atan2(t.y - p.y, t.x - p.x),
@@ -2109,9 +2307,72 @@ export default function App({
           } : null,
         });
       });
+
+      if (!art.length) continue;
+
+      // --- 2. THEN THE ART, out of the way of everything already there.
+      //
+      // AFTER, AND NOT IN THE SAME CALL. They used to go in together on the
+      // reasoning that one placer sharing one used-once set is what stops two
+      // fittings landing on one point. That is right about the goal and wrong
+      // about the mechanism now: an art row does not stand on a SEGMENT, it
+      // stands at a chosen point along a LINE, so the segment ledger says
+      // nothing about it. What the two passes have to share is the list of
+      // POSITIONS already taken — the ambient downlights included, because the
+      // lines this row stands on are the ones those downlights define.
+      //
+      // Task surfaces still go first, and that is still the same judgement: a
+      // dining table is a bigger commitment than a picture and is harder to
+      // light from anywhere else.
+      const taken = [
+        ...r.plan.lights.map((l) => ({ x: l.x, y: l.y })),
+        ...placed.filter((q) => q?.spot).map((q) => ({ x: q.spot.x, y: q.spot.y })),
+      ];
+      const rows = planArtSpots(
+        art.map((a) => ({ ...a, rect: rectFt(a.rect) })),
+        { ...ceiling, taken });
+
+      art.forEach((a, k) => {
+        const res = rows[k];
+        if (!res?.spots) {
+          // ONE ENTRY FOR THE WHOLE ROW, because the row is what was refused.
+          // Pushing `n` identical rejections would report a five-foot picture as
+          // two separate failures with one cause.
+          // WITH ITS roomId, unlike a refused task spot. Nothing is billed for
+          // it — buildBOQ skips anything carrying `rejected` — and the panel
+          // needs it: the render pass is a per-space screen, and a refusal it
+          // cannot attribute to a space is a refusal it cannot show.
+          out.push({ id: `spot-${a.id}`, wallId: a.id, roomId: r.id,
+                     fixture: ART_SPOT.fixture, art: true, colour: a.colour,
+                     wanted: a.n, rejected: res?.rejected });
+          return;
+        }
+        // WHAT EACH ONE AIMS AT. The row is tight — a foot between fittings —
+        // and the artwork is not, so the spots are NOT all pointed at its
+        // centre: each takes its own share of the width, which is how a pair
+        // lights a five-foot piece evenly instead of twice-lighting the middle.
+        const aims = sliceRect(rectFt(a.rect), a.n, a.horizontal);
+        res.spots.forEach((sp, i) => {
+          const aim = aims[i] ?? rectFt(a.rect);
+          const t = toPx({ x: (aim.x0 + aim.x1) / 2, y: (aim.y0 + aim.y1) / 2 });
+          const p = toPx(sp);
+          out.push({
+            id: `spot-${a.id}-${i}`, wallId: a.id, roomId: r.id,
+            fixture: ART_SPOT.fixture, art: true, colour: a.colour,
+            highlight: a.rect,
+            x: p.x, y: p.y,
+            target: t,
+            angle: Math.atan2(t.y - p.y, t.x - p.x),
+            via: 'art-row',
+            standoff: sp.standoff, slid: sp.slid, index: i, of: sp.of,
+            segment: { a: toPx(sp.line.a), b: toPx(sp.line.b) },
+            grid: null,
+          });
+        });
+      });
     }
     return out;
-  }, [rooms, surfacesPx, opt]);
+  }, [rooms, surfacesPx, artPiecesPx, opt]);
 
   /** What the canvas draws: every accent zone still standing, in plan pixels. */
   /** The same two-source rule for strips and sconces. See surfacesPx. */
@@ -2128,6 +2389,41 @@ export default function App({
     // what the drawing and the schedule read, and `manualAccents` is a store of
     // things a person made.
     for (const r of rooms) if (r.coveStrip) out.push(r.coveStrip);
+    // THE REVERSE COVES' TAPE, on the same terms and for the same reason. A
+    // reverse cove is a slot with a strip in it, so it is billed by the metre
+    // like every other run — shaped as an ordinary accent zone, so the canvas,
+    // the schedule and the DXF take it without any of them knowing what a
+    // reverse cove is. `run` and not `loop`: this one does not turn a corner.
+    const litRooms = new Set(rooms.map((r) => r.id));
+    for (const c of reverseCoves) {
+      if (!litRooms.has(c.roomId)) continue;
+      out.push({
+        id: `rcove-strip-${c.id}`, type: 'strip', kind: 'reverse-cove', roomId: c.roomId,
+        source: 'reverse-cove', label: 'Reverse cove LED strip',
+        run: c.run, rect: c.rect, runLength: c.runLength,
+        // WHAT THE DRAG NEEDS. `derived` says this run has no stored geometry to
+        // edit — the ends write a trim instead — and the rest is what turns a
+        // pointer position into one: which way the run lies, where the RULE put
+        // its ends, and how far it may be stretched before it hits the door.
+        derived: 'reverse-cove', trimId: c.id, horizontal: c.horizontal,
+        base: c.base, seg: c.seg, bounds: c.bounds, trimmed: c.trimmed,
+      });
+    }
+    // ...and the shelves, on exactly the same terms. Three sources of strip on
+    // this drawing now — a perimeter cove, a reverse cove and a run of shelving
+    // — and all three are the same tape bought by the metre, which is why they
+    // are all shaped as ordinary accent zones and none of them needs the canvas
+    // or the schedule to know it exists.
+    for (const st of shelfStrips) {
+      if (!litRooms.has(st.roomId)) continue;
+      out.push({
+        id: `shelf-strip-${st.id}`, type: 'strip', kind: 'shelf', roomId: st.roomId,
+        source: 'shelf', label: 'Shelf LED strip',
+        run: st.run, rect: st.rect, runLength: st.runLength,
+        derived: 'shelf', trimId: st.id, horizontal: st.horizontal,
+        base: st.base, seg: st.seg, trimmed: st.trimmed,
+      });
+    }
     const live = new Set(rooms.map((r) => r.id));
     // THE DISMISSED FILTER APPLIES HERE TOO. Deleting a hand-placed fitting now
     // removes it outright, so nothing new lands in `accentDismissed` — but a
@@ -2135,7 +2431,7 @@ export default function App({
     // those fittings should stay deleted rather than reappearing on reload.
     return [...out, ...manualAccents.filter(
       (m) => live.has(m.roomId) && !accentDismissed.includes(m.id))];
-  }, [rooms, accentResults, accentDismissed, manualAccents]);
+  }, [rooms, accentResults, accentDismissed, manualAccents, reverseCoves, shelfStrips]);
 
   /**
    * What the canvas draws for the render pass: every placed wall feature, in
@@ -3034,6 +3330,22 @@ export default function App({
 
   const accPointerDown = (e, roomId, id, mode) => {
     if (e.button != null && e.button !== 0) return;   // middle button is the pan
+    // A DERIVED RUN HAS NO BODY DRAG. A reverse cove is a slot at a wall and a
+    // shelf strip is inside joinery: neither can be picked up and moved
+    // somewhere else, because neither is a thing somebody placed. Only the ends
+    // move, and they only move along the run's own axis. The canvas does not
+    // offer the body handle for these, and this is the second half of that —
+    // belt and braces on the one gesture that would silently do nothing.
+    const derived = accentZonesPx.find((z) => z.id === id && z.derived);
+    if (derived && mode !== 'end0' && mode !== 'end1') {
+      // ...but it is still SELECTABLE, and it has to be: without a body handle
+      // there would be nothing on it to click, and a fitting you cannot select
+      // is one you cannot find the grips of.
+      e.stopPropagation();
+      e.preventDefault();
+      setSelAccId(id); setSelObjId(null); setArmed(null);
+      return;
+    }
     e.stopPropagation();
     e.preventDefault();
     svgRef.current?.setPointerCapture?.(e.pointerId);
@@ -3045,7 +3357,15 @@ export default function App({
     // the cursor — grab a strip near one end and it stays grabbed near that end.
     // `origin` does not, because it is what the drag threshold is measured from.
     const at = svgPoint(e);
-    setAccDrag({ roomId, id, mode, pointerId: e.pointerId, from: at, origin: at, live: false });
+    setAccDrag({ roomId, id, mode, pointerId: e.pointerId, from: at, origin: at, live: false,
+                 // Carried on the GESTURE, not looked up per frame. The item is
+                 // rebuilt by a memo on every trim, so a fresh lookup mid-drag
+                 // would read the base off the run the last frame produced and
+                 // the end would run away from the pointer.
+                 derived: derived
+                   ? { trimId: derived.trimId, horizontal: derived.horizontal,
+                       base: derived.base }
+                   : null });
   };
 
   /**
@@ -3087,6 +3407,37 @@ export default function App({
       setAccDrag((d) => (d ? { ...d, live: true, from: d.origin } : d));
     }
 
+    // --- a derived run: the ends write a TRIM, and nothing else moves.
+    if (accDrag.derived) {
+      const { trimId, horizontal, base } = accDrag.derived;
+      if (!base || !(pxPerFt > 0)) return;
+      // Only the along-wall component of the pointer counts. A cove is on its
+      // wall and stays there, so the across component is not a degree of
+      // freedom — dragging away from the wall shortens nothing.
+      const v = horizontal ? p.x : p.y;
+      // Shift is the FINE drag here — the opposite hand of the same key on an
+      // ordinary strip, where it locks the axis. There is no axis to lock on a
+      // run that only moves along one, so the modifier is spent on the thing
+      // there is a use for: the exact position, off the setting-out increment.
+      const step = e?.shiftKey ? 0 : RUN_TRIM.snapFt;
+      const round = (ft) => (step > 0 ? Math.round(ft / step) * step : ft);
+      setRunTrims((m) => {
+        const cur = m[trimId] ?? { a: 0, b: 0 };
+        const next = accDrag.mode === 'end0'
+          ? { ...cur, a: round((v - base.lo) / pxPerFt) }
+          : { ...cur, b: round((base.hi - v) / pxPerFt) };
+        // BACK TO NOTHING RATHER THAN TO ZERO. A run dragged to where the rule
+        // put it is a run with no edit on it, and leaving {a:0,b:0} behind would
+        // mark it as hand-edited for ever and keep a row in the saved plan.
+        if (Math.abs(next.a) < 1e-6 && Math.abs(next.b) < 1e-6) {
+          if (!(trimId in m)) return m;
+          const out = { ...m }; delete out[trimId]; return out;
+        }
+        return { ...m, [trimId]: next };
+      });
+      return;
+    }
+
     const o = runOpts(accDrag.roomId, e);
     updateAccentZone(accDrag.roomId, accDrag.id, (z) => {
       if (accDrag.mode === 'slide') return slideSconceTo(z, p);
@@ -3101,6 +3452,9 @@ export default function App({
 
   const accPointerUp = () => {
     if (!accDrag) return;
+    // A derived run keeps no per-gesture state on itself — the trim is the whole
+    // of it — so there is nothing to tidy up.
+    if (accDrag.derived) { setAccDrag(null); return; }
     // The snap indicator is a property of the GESTURE, not of the fitting, so
     // it goes when the gesture does. Left on the zone it would draw a guide
     // line through a strip nobody is touching.
@@ -4085,14 +4439,15 @@ export default function App({
     ceilingObjs, chunkPicks, ceilingKinds, covePicks,
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces,
-    wallResults,
+    wallResults, runTrims,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
        detections, dismissed, bedVerdicts, provider, zones, doors,
        ceilingObjs, chunkPicks, ceilingKinds, covePicks,
        accentResults, accentDismissed, manualAccents,
-       surfaceResults, surfaceDismissed, manualSurfaces, wallResults, layers, zoom, view]);
+       surfaceResults, surfaceDismissed, manualSurfaces, wallResults, runTrims,
+       layers, zoom, view]);
 
   const stats = useMemo(() => statsFrom({ totals, rooms, boq }), [totals, rooms, boq]);
   const status = useMemo(() => statusFrom({ outlines, litIds, totals }), [outlines, litIds, totals]);
@@ -4394,7 +4749,20 @@ export default function App({
               selAccId={readOnly ? null : selAccId}
               onAccPointerDown={readOnly ? null : accPointerDown}
               surfaces={surfacesPx} taskSpots={taskSpotsPx}
-              wallCells={wallCellsPx}
+              /* THE GRID CELLS ARE A READING, NOT A FITTING, and they have
+                 moved to where the other readings live.
+                 They were a public layer while the render pass was being built,
+                 and that was right then: a shaded run of cells is how you check
+                 the model put the panelling on the wall you meant. On a finished
+                 sheet it is a coloured band along a wall beside the cove it
+                 produced — two marks where the drawing needs one, and the one
+                 that is not a fitting is the one to lose. The CONSEQUENCES stay
+                 on the drawing for everybody: the reverse cove, the shelf strip,
+                 the art spots. What went is the working.
+                 Same switch as the bed boxes and the task surfaces — "Show what
+                 was identified" under Admin. */
+              wallCells={isAdmin && audit ? wallCellsPx : []}
+              reverseCoves={reverseCoves}
               measure={null} onCanvasClick={readOnly ? null : onCanvasClick}
               /* Crosshair only where a click would actually do something. Off
                  the ceiling it reverts to a pointer, which is the cursor's job:
@@ -4545,108 +4913,205 @@ export default function App({
             </div>
           </div>
         ) : <>
-        <div className="sec">
-          <h3>Plan</h3>
-          <div className="btnrow">
-            <label className="btn">Load DXF or image
-              <input type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }} onChange={(e) => loadFile(e.target.files[0])} />
-            </label>
-            {source && <button className="btn" onClick={() => {
-              setImg(null); setDxf(null); setChunkPicks({}); setPickingId(null);
-              setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
-              setRoomState({ status: 'idle' }); setUnitId(null);
-            }}>Clear</button>}
-          </div>
-          {source && (
-            <div className="kv" style={{ marginTop: 8 }}>
-              <span>{isVector ? 'Drawing' : 'Image'}</span>
-              <b title={source.name}>{source.name.length > 22 ? source.name.slice(0, 20) + '…' : source.name}</b>
-            </div>
-          )}
-          {dxf?.error && <p className="note warn">{dxf.error}</p>}
-        </div>
-
         {source && step !== 'trace' && <>
-          {/* --- every room on the plan ----------------------------------- */}
-          {/* A list and not a dropdown. The whole plan is lit, so every room is
-              on screen and every one of them is a thing you might want to look
-              at the numbers for — a dropdown would hide seven of eight rooms
-              behind a click and still not say which was which. */}
+          {/* --- EVERY SPACE, AND EVERYTHING ABOUT ONE ------------------------
+              THIS LIST IS THE PANEL'S SPINE NOW. It used to be a selector with
+              four sections underneath it — Ceiling, Coves, Render pass — each
+              silently describing whichever space happened to be selected. That
+              is four places to look for one room's answer, and three of them
+              had a heading that named the room again so you could tell.
+
+              So the sections came INSIDE the row. Clicking a space opens it and
+              closes every other one, and everything that is a decision about
+              THAT space is in the space: what the ceiling is, which rectangle
+              the cove is set out in, and the renders it was lit from. Nothing
+              below this section is per-space any more.
+
+              THE ACCORDION IS `focusId` AND NOT A SECOND PIECE OF STATE. The
+              app already had exactly one selected space and the canvas already
+              outlines it in blue; a separate `expandedId` would be a second
+              answer to "which room are we talking about" and the two would
+              disagree the first time anything else set the focus. */}
           <div className="sec">
             <h3>Spaces · {rooms.length}</h3>
-            {/* THE WHOLE ROW IS THE TARGET. It used to be the name alone — a
-                button inside a div, with the dimensions, the type and the
-                controls outside it — so half of a row that plainly looks like
-                one thing did nothing when clicked. The row is the control now;
-                the chunking mark inside it stops the click so it can mean its
-                own thing.
-                NO LIGHT COUNT AND NO CROSS. The count was the one number here
-                nobody acts on — it is on the canvas, in the Result panel and in
-                the schedule — and it took the place where the chunking mark
-                belongs. The cross went because Delete does it, which is the key
-                every list answers to and one that does not need a 12px target. */}
             {rooms.map((r) => {
               const on = r.id === focusId;
               const chunked = r.chunking?.needsChoice;
+              const coved = ceilingKinds[r.id] === 'cove';
+              const c = r.cove;
+              const nRects = r.coveOptions?.length ?? 0;
               return (
-                <div key={r.id} role="button" tabIndex={0}
-                  className={'outline-row row-pick' + (on ? ' on' : '')}
-                  onClick={() => setFocusId(r.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFocusId(r.id); }
-                  }}>
-                  {/* THE ICON IS A SIBLING OF THE TEXT, NOT PART OF THE FIRST
-                      LINE. It used to sit inside `.outline-pick` beside the
-                      name, which centred it on the NAME's line — so on a row
-                      that is two lines tall it rode high against the top edge.
-                      The two text lines are one block now and the icon is the
-                      other half of a flex row, so `align-items:center` centres
-                      it on the whole item however tall that item gets. */}
-                  <div className="row-top">
-                    <div className="row-main">
-                      <div className="outline-pick plain">
-                        <span className="outline-name">{r.outline.name || 'Space'}</span>
+                <div key={r.id} className={'outline-row space-row' + (on ? ' on' : '')}>
+                  {/* THE HEAD IS THE CONTROL; THE BODY IS NOT. They were one
+                      element, and nesting a file input and four buttons inside
+                      a div whose own click selects the row is how a click on
+                      "Cove" also re-selects the room it is already in. */}
+                  <div role="button" tabIndex={0} className="space-head row-pick"
+                    onClick={() => setFocusId(on ? null : r.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault(); setFocusId(on ? null : r.id);
+                      }
+                    }}>
+                    <div className="row-top">
+                      <div className="row-main">
+                        <div className="outline-pick plain">
+                          <span className="outline-name">{r.outline.name || 'Space'}</span>
+                        </div>
+                        <div className="outline-meta">
+                          <span>
+                            {/* The classification, where it exists. It is the
+                                reason a room did or did not get accents, so it
+                                belongs next to the room rather than buried in a
+                                console log. */}
+                            {roomTypes[r.id] && (
+                              <b className="rtype" title={roomTypes[r.id].why}>
+                                {roomTypeIn(projectId, roomTypes[r.id].type)?.label ?? 'Other'}
+                              </b>
+                            )}
+                            {ftin(r.stats.widthFt)} × {ftin(r.stats.heightFt)}
+                            {' '}· {Math.round(r.stats.areaSqft)} sqft
+                            {coved && <b className="rtype">Cove</b>}
+                          </span>
+                        </div>
                       </div>
-                      <div className="outline-meta">
-                        <span>
-                          {/* The classification, where it exists. It is the
-                              reason a room did or did not get accents, so it
-                              belongs next to the room rather than buried in a
-                              console log. */}
-                          {roomTypes[r.id] && (
-                            <b className="rtype" title={roomTypes[r.id].why}>
-                              {roomTypeIn(projectId, roomTypes[r.id].type)?.label ?? 'Other'}
-                            </b>
-                          )}
-                          {ftin(r.stats.widthFt)} × {ftin(r.stats.heightFt)}
-                          {' '}· {Math.round(r.stats.areaSqft)} sqft</span>
-                      </div>
+                      {chunked && (
+                        <button className="row-icon"
+                          title={r.chunkingChosenBy === 'user'
+                            ? 'Change how this space is cut up'
+                            : `${r.chunking.options.length} ways to cut this space up — the recommended one is in use`}
+                          onClick={(e) => {
+                            // The row opens; this does something else entirely.
+                            e.stopPropagation();
+                            setPickingId(r.id); setFocusId(r.id); setZoneMode(false);
+                          }}>
+                          <ChunkIcon title={r.chunkingChosenBy === 'user'
+                            ? 'Chunking — chosen by hand' : 'Chunking'} />
+                        </button>
+                      )}
                     </div>
-                    {chunked && (
-                      <button className="row-icon"
-                        title={r.chunkingChosenBy === 'user'
-                          ? 'Change how this space is cut up'
-                          : `${r.chunking.options.length} ways to cut this space up — the recommended one is in use`}
-                        onClick={(e) => {
-                          // The row selects; this does something else entirely.
-                          e.stopPropagation();
-                          setPickingId(r.id); setFocusId(r.id); setZoneMode(false);
-                        }}>
-                        <ChunkIcon title={r.chunkingChosenBy === 'user'
-                          ? 'Chunking — chosen by hand' : 'Chunking'} />
-                      </button>
+                    {r.outline.enclosingPx?.length > 0 && (
+                      <p className="note warn" style={{ margin: '2px 0 0' }}>
+                        {r.outline.enclosingPx.length} space
+                        {r.outline.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly inside this
+                        one, so {r.outline.enclosingPx.length > 1 ? 'they are' : 'it is'} held out
+                        of the ceiling as a no-light zone. Drag a corner out to a wall and it
+                        will be subtracted properly instead.
+                      </p>
                     )}
+                    {r.region?.warning && <p className="note warn" style={{ margin: '2px 0 0' }}>{r.region.warning}</p>}
                   </div>
-                  {r.outline.enclosingPx?.length > 0 && (
-                    <p className="note warn" style={{ margin: '2px 0 0' }}>
-                      {r.outline.enclosingPx.length} space
-                      {r.outline.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly inside this
-                      one, so {r.outline.enclosingPx.length > 1 ? 'they are' : 'it is'} held out
-                      of the ceiling as a no-light zone. Drag a corner out to a wall and it
-                      will be subtracted properly instead.
-                    </p>
+
+                  {on && (
+                    <div className="space-body">
+                      {/* --- THE FIRST DECISION THAT IS ABOUT THE CEILING
+                          rather than about the lights. Everything else takes a
+                          flat slab as given and arranges fittings on it; this
+                          says what the slab is.
+                          STANDARD COSTS NO STATE. Picking it deletes the entry
+                          rather than writing 'standard', so a plan full of
+                          ordinary ceilings saves nothing about them. */}
+                      <div className="space-block">
+                        <h4>Ceiling design</h4>
+                        <div className="btnrow">
+                          <button className={'btn' + (!coved ? ' picked' : '')}
+                            title="A flat ceiling with the ambient grid on it"
+                            onClick={() => setCeilingKinds((m) => {
+                              if (!(r.id in m)) return m;
+                              const n = { ...m }; delete n[r.id]; return n;
+                            })}>
+                            Standard
+                          </button>
+                          <button className={'btn' + (coved ? ' picked' : '')}
+                            title="A dropped band round the perimeter with a concealed LED strip in it"
+                            onClick={() => setCeilingKinds((m) => ({ ...m, [r.id]: 'cove' }))}>
+                            Cove
+                          </button>
+                        </div>
+
+                        {coved && !c?.ok && (
+                          <p className="note warn" style={{ marginTop: 8 }}>
+                            {c?.reason ?? 'No cove here — the layout fell back to a standard ceiling.'}
+                          </p>
+                        )}
+                        {!coved && (
+                          <p className="note" style={{ marginTop: 8 }}>
+                            A flat ceiling with the ambient grid on it.
+                          </p>
+                        )}
+                        {/* WHICH RECTANGLE THE COVE IS SET OUT IN, where there
+                            is one. This was a plan-wide "Coves" list of its
+                            own; it is one line about one room, and it belongs
+                            in the room. CLICK TO CYCLE rather than open a
+                            picker — there are rarely more than three or four
+                            rectangles and the drawing shows each one the
+                            instant it is chosen, so cycling in place beats a
+                            panel that covers the thing you are judging. */}
+                        {coved && c?.ok && (
+                          <div className="kv" style={{ marginTop: 8 }}>
+                            <span>{ftin(c.host.w)} × {ftin(c.host.h)} · {ftin(c.offset)} inset
+                              {' '}· {STAGE_SAY[c.stage] ?? c.stage}</span>
+                            {nRects > 1 && (
+                              <button className="btn tiny"
+                                title={`Rectangle ${r.covePick + 1} of ${nRects} — click for the next`}
+                                onClick={() => setCovePicks((m) => ({
+                                  ...m, [r.id]: (r.covePick + 1) % nRects }))}>
+                                next of {nRects}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* --- AND WHAT IS ON ITS WALLS. Independent of the
+                          ceiling above: panelling, shelving and art are there
+                          whether the slab is flat or coved, and gating the
+                          upload behind Cove would hide the feature on every
+                          standard ceiling in the job. */}
+                      {/* `wallGrid`, `wallShot`, `wallState` and the two
+                          handlers below are all computed from `focus`, and this
+                          body only renders when `on` — that is, when `focus` IS
+                          `r`. One selected space and one open body is the same
+                          fact, which is the reason the accordion is `focusId`
+                          rather than state of its own. */}
+                      <RenderPassPanel
+                        room={r} grid={wallGrid} pxPerFt={pxPerFt}
+                        renders={renders[r.id] ?? []}
+                        onAddFiles={addRenders}
+                        onRemoveRender={(i) => setRenders((m) => ({
+                          ...m, [r.id]: (m[r.id] ?? []).filter((_, k) => k !== i) }))}
+                        onClearRenders={() => setRenders((m) => {
+                          const n = { ...m }; delete n[r.id]; return n; })}
+                        /* THE SHOT IS SHOWN ONLY FOR THE ROOM IT IS OF. It is
+                           rebuilt asynchronously when the selection changes, so
+                           for a beat after a click it is still the last room's,
+                           and a thumbnail of the wrong room inside this row is
+                           worse than no thumbnail. */
+                        shot={wallShot?.roomId === r.id ? wallShot : null}
+                        state={wallState.roomId === r.id ? wallState : { status: 'idle' }}
+                        result={wallResults[r.id] ?? null}
+                        transcript={wallTranscripts[r.id] ?? null}
+                        runCount={[...reverseCoves, ...shelfStrips]
+                          .filter((x) => x.roomId === r.id).length}
+                        trimmedRuns={[...reverseCoves, ...shelfStrips]
+                          .filter((x) => x.roomId === r.id && x.trimmed).map((x) => x.id)}
+                        onResetLengths={() => {
+                          const ids = new Set([...reverseCoves, ...shelfStrips]
+                            .filter((x) => x.roomId === r.id).map((x) => x.id));
+                          setRunTrims((m) => Object.fromEntries(
+                            Object.entries(m).filter(([k]) => !ids.has(k))));
+                        }}
+                        onRun={runWallPass}
+                        onClear={() => {
+                          setWallResults((m) => { const n = { ...m }; delete n[r.id]; return n; });
+                          // The transcript goes with the result: a dialog
+                          // offering the reasoning behind marks somebody has
+                          // just cleared is a way to make them doubt what they
+                          // are looking at.
+                          setWallTranscripts((m) => { const n = { ...m }; delete n[r.id]; return n; });
+                        }} />
+                    </div>
                   )}
-                  {r.region?.warning && <p className="note warn" style={{ margin: '2px 0 0' }}>{r.region.warning}</p>}
                 </div>
               );
             })}
@@ -4679,346 +5144,264 @@ export default function App({
             )}
           </div>
 
-          {/* --- the ceiling itself ---------------------------------------
-              THE FIRST DECISION THAT IS ABOUT THE CEILING RATHER THAN ABOUT
-              THE LIGHTS. Everything else in this panel takes a flat slab as
-              given and arranges fittings on it. This says what the slab is.
+          {step !== 'chunks' && step !== 'trace' && <>
+          {/* --- EDIT: ONE TOOLBOX, THREE CATEGORIES -------------------------
+              Three sections became one. They were Ceiling objects, No-light
+              zones and Additional lighting, stacked, each with a palette and a
+              list — three headings and a scroll for three answers to the same
+              question, which is "what do I put on this drawing by hand".
 
-              ON THE SELECTED SPACE, one space at a time, because it IS a
-              per-space decision — a coved living room off a flat corridor is
-              the normal case, not the exception — and because the readout
-              underneath is a paragraph of arithmetic that belongs to one room.
-              The Spaces list above is the selector; this is what it selects.
-
-              STANDARD IS THE DEFAULT AND COSTS NO STATE. Picking it deletes the
-              entry rather than writing 'standard', so a plan full of ordinary
-              ceilings saves nothing about them. */}
+              They are one box with three tabs now, and the tabs are the honest
+              shape: the three are mutually exclusive in USE as well as in
+              layout, because each arms a tool and this canvas takes one armed
+              tool at a time. Switching tab disarms whatever the last one armed,
+              which is the behaviour the old stacked version had to fake by
+              having every palette clear the other two. */}
           <div className="sec">
-            <h3>Ceiling{focus ? ` · ${focus.outline.name || 'Space'}` : ''}</h3>
-            <div className="btnrow">
-              <button className={'btn' + (focus && ceilingKinds[focus.id] !== 'cove' ? ' accent' : '')}
-                disabled={!focus}
-                title="A flat ceiling with the ambient grid on it"
-                onClick={() => focus && setCeilingKinds((m) => {
-                  if (!(focus.id in m)) return m;
-                  const n = { ...m }; delete n[focus.id]; return n;
-                })}>
-                Standard
-              </button>
-              <button className={'btn' + (focus && ceilingKinds[focus.id] === 'cove' ? ' accent' : '')}
-                disabled={!focus}
-                title="A dropped band round the perimeter with a concealed LED strip in it"
-                onClick={() => focus && setCeilingKinds((m) => ({ ...m, [focus.id]: 'cove' }))}>
-                Cove
-              </button>
+            <h3>Edit</h3>
+            {/* TABS AND NOT A ROW OF BUTTONS, and the difference is what they
+                CLAIM. Three buttons side by side say "three things you can do",
+                and one of them being filled in reads as a thing already done. A
+                tab strip says "one panel, three views of it" — which is what
+                this is — and the underline says which view you are looking at
+                without spending a fill on it. `role="tablist"` and the aria
+                wiring, because a control that looks like tabs and does not
+                answer to a screen reader as tabs is worse than one that looks
+                like buttons. */}
+            <div className="tool-tabs" role="tablist" aria-label="Edit">
+              {[['objects', 'Ceiling objects'], ['zones', 'No-light zones'],
+                ['lighting', 'Lighting']].map(([k, label]) => (
+                <button key={k} role="tab" id={`edit-tab-${k}`}
+                  aria-selected={editTab === k} aria-controls="edit-panel"
+                  className={editTab === k ? 'on' : ''}
+                  onClick={() => {
+                    setEditTab(k);
+                    // ONE ARMED TOOL ON THIS CANVAS AT A TIME, and leaving a
+                    // tool armed under a tab you cannot see is the worst version
+                    // of that: the next click on the plan does something the
+                    // panel is no longer showing you.
+                    setArmed(null); setGhost(null); setGuides([]);
+                    disarmAdd();
+                    if (k !== 'zones') { setZoneMode(false); setDraftZone(null); }
+                  }}>{label}</button>
+              ))}
             </div>
+            <div id="edit-panel" role="tabpanel" aria-labelledby={`edit-tab-${editTab}`}>
 
-            {focus && ceilingKinds[focus.id] === 'cove' && !focus.cove?.ok && (
-              <p className="note warn" style={{ marginTop: 8 }}>
-                {focus.cove?.reason ?? 'No cove here — the layout fell back to a standard ceiling.'}
-              </p>
-            )}
+            {editTab === 'objects' && <>
+              {/* Four symbols, and clicking one arms it. There is no separate
+                  "place" button: picking the thing IS asking to place it, and a
+                  picker that then needs confirming was a click spent on nothing. */}
+              <CeilingPalette armed={armed} disabled={!pxPerFt}
+                onArm={(id) => {
+                  setArmed(id);
+                  if (id) { setObjType(id); setObjMode(true); setZoneMode(false); }
+                  setGuides([]); setGhost(null);
+                }} />
 
-            {focus && ceilingKinds[focus.id] !== 'cove' && (
-              <p className="note" style={{ marginTop: 8 }}>
-                A flat ceiling with the ambient grid on it.
-              </p>
-            )}
-          </div>
-
-          {/* --- every cove on the plan -----------------------------------
-              A LIST, LIKE THE SPACES LIST, AND FOR THE SAME REASON. A cove is
-              not a fitting you nudge — it is a rectangle set out in a room, and
-              the only decision left once the ceiling is coved is WHICH
-              rectangle. That decision needs to be visible for every coved space
-              at once: on a flat with three of them the question "is the cove in
-              the right place" is asked of all three together, and a control
-              that only ever described the selected space made you click through
-              them one at a time to find the one that was wrong.
-
-              WHAT EACH ROW SHOWS is the rectangle in use, what the cove
-              delivers against what the space is owed, and the row of
-              alternatives. The alternatives are real rectangles that fit —
-              largest first, near-duplicates dropped — so picking one is picking
-              a shape rather than a number. */}
-          {coved.length > 0 && (
-            <div className="sec">
-              <h3>Coves · {coved.length}</h3>
-              {coved.map((r) => {
-                const c = r.cove;
-                const n = r.coveOptions.length;
+              {/* A fan's sweep, offered only when a fan is in play — armed, or
+                  selected. It is the one property of the four that is a standard
+                  size rather than something to drag to. */}
+              {(() => {
+                const sel = ceilingObjs.find((o) => o.id === selObjId);
+                if (armed !== 'fan' && sel?.kind !== 'fan') return null;
+                const current = sel?.kind === 'fan' ? sweepMm(sel) : fanSweepMm;
                 return (
-                  <div key={r.id} role="button" tabIndex={0}
-                    className={'outline-row row-pick' + (r.id === focusId ? ' on' : '')}
-                    onClick={() => setFocusId(r.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFocusId(r.id); }
-                    }}>
-                    <div className="row-top">
-                      <div className="row-main">
-                        <div className="outline-pick plain">
-                          <span className="outline-name">{r.outline.name || 'Space'}</span>
-                        </div>
-                        <div className="outline-meta">
-                          <span>
-                            {ftin(c.host.w)} × {ftin(c.host.h)} · {ftin(c.offset)} inset
-                            {' '}· {STAGE_SAY[c.stage] ?? c.stage}
-                          </span>
-                        </div>
-                      </div>
-                      {/* THE SAME MARK THE SPACES LIST USES FOR CHUNKING, doing
-                          the same job: this rectangle is one reading of the
-                          space and there are others. CLICK TO CYCLE rather than
-                          click to open a picker — there are rarely more than
-                          three or four rectangles, the drawing shows you each
-                          one the instant it is chosen, and cycling in place
-                          beats a panel that covers the thing you are judging.
-                          Wraps round, so it can never be a dead end. */}
-                      {n > 1 && (
-                        <button className="row-icon"
-                          title={`Rectangle ${r.covePick + 1} of ${n} — click for the next`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setCovePicks((m) => ({ ...m, [r.id]: (r.covePick + 1) % n }));
-                            setFocusId(r.id);
-                          }}>
-                          <ChunkIcon title="Try the next rectangle" />
-                        </button>
-                      )}
+                  <div className="sweep">
+                    {FAN_SWEEPS.map((mm) => (
+                      <button key={mm} type="button" className={current === mm ? 'on' : ''}
+                        onClick={() => {
+                          setFanSweepMm(mm);
+                          if (sel?.kind === 'fan') setCeilingObjs((os) =>
+                            os.map((o) => (o.id === sel.id ? withSweep(o, mm) : o)));
+                        }}>{mm} sweep</button>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {!pxPerFt && <p className="note warn">Set the scale first — these are placed at a real size.</p>}
+              {armed && (
+                <p className="note">Click on the plan to place the
+                  {' '}{CEILING_BY_ID[armed]?.label.toLowerCase()}.</p>
+              )}
+
+              {ceilingObjs.map((o) => {
+                const on = o.id === selObjId;
+                return (
+                  <div key={o.id} className={'outline-row' + (on ? ' on' : '')}>
+                    <button className="outline-pick plain"
+                      onClick={() => { setSelObjId(o.id); setObjMode(true); setArmed(null); }}>
+                      <span className="outline-name">{CEILING_BY_ID[o.typeId]?.label ?? o.kind}</span>
+                      <span className="layer-count">{sizeLabel(o)}</span>
+                    </button>
+                    <div className="outline-meta">
+                      <span>
+                        {isRect(o) ? (
+                          <>
+                            <input type="number" min="100" max="3600" step="50"
+                              value={Math.round(o.wFt * 304.8)} className="mm"
+                              onChange={(e) => setCeilingObjs((os) => os.map((q) => q.id === o.id
+                                ? { ...q, wFt: clampFt(Number(e.target.value) / 304.8) } : q))} />
+                            <span>×</span>
+                            <input type="number" min="100" max="3600" step="50"
+                              value={Math.round(o.hFt * 304.8)} className="mm"
+                              onChange={(e) => setCeilingObjs((os) => os.map((q) => q.id === o.id
+                                ? { ...q, hFt: clampFt(Number(e.target.value) / 304.8) } : q))} />
+                            <span>mm · {Math.round(((o.rot || 0) * 180) / Math.PI)}°</span>
+                          </>
+                        ) : null}
+                      </span>
+                      <button className="btn tiny" title="Remove"
+                        onClick={() => { setCeilingObjs((os) => os.filter((q) => q.id !== o.id));
+                                         setSelObjId((v) => (v === o.id ? null : v)); }}>×</button>
                     </div>
                   </div>
                 );
               })}
-            </div>
-          )}
 
-          {/* --- what is already on the ceiling --------------------------- */}
-          {/* One section for all of them, because to the layout they ARE all
-              one: a centre, a radius and the same clearance. The old pair of
-              fan panels — one for DXF, one for raster — said the same thing
-              twice and neither could hold anything but a fan. */}
-          <div className="sec">
-            <h3>Ceiling objects</h3>
+              <div className="kv" style={{ marginTop: 6 }}>
+                <span>In {focus?.outline?.name || 'this space'}</span>
+                <b>{focus?.geo?.fansInRoom?.length ?? 0} of {obstaclesPx.length}</b></div>
+            </>}
 
-            {/* Four symbols, and clicking one arms it. There is no separate
-                "place" button: picking the thing IS asking to place it, and a
-                picker that then needs confirming was a click spent on nothing. */}
-            <CeilingPalette armed={armed} disabled={!pxPerFt}
-              onArm={(id) => {
-                setArmed(id);
-                if (id) { setObjType(id); setObjMode(true); setZoneMode(false); }
-                setGuides([]); setGhost(null);
-              }} />
+            {editTab === 'zones' && <>
+              {/* DRAW ONE, AND SEE THE ONES THAT ARE THERE. That is the whole
+                  category. It used to also carry the bed detector's tally, a
+                  picker for which detector to use and a line per space about
+                  which model won the judge's vote — all real while the bed
+                  pipeline was being built, and none of it the user's business:
+                  the beds are found, judged and kept out of the light before
+                  the plan is handed over.
 
-            {/* A fan's sweep, offered only when a fan is in play — armed, or
-                selected. It is the one property of the four that is a standard
-                size rather than something to drag to. */}
-            {(() => {
-              const sel = ceilingObjs.find((o) => o.id === selObjId);
-              if (armed !== 'fan' && sel?.kind !== 'fan') return null;
-              const current = sel?.kind === 'fan' ? sweepMm(sel) : fanSweepMm;
-              return (
-                <div className="sweep">
-                  {FAN_SWEEPS.map((mm) => (
-                    <button key={mm} type="button" className={current === mm ? 'on' : ''}
-                      onClick={() => {
-                        setFanSweepMm(mm);
-                        if (sel?.kind === 'fan') setCeilingObjs((os) =>
-                          os.map((o) => (o.id === sel.id ? withSweep(o, mm) : o)));
-                      }}>{mm} sweep</button>
+                  THE PICTURE IS THE INSTRUCTION. "Draw a box" is a sentence
+                  about a GESTURE, and a sentence is a poor way to describe one —
+                  it has to be read, and then imagined. A marquee being dragged
+                  is the gesture itself, at a glance, and it stays on screen
+                  after the first zone is drawn because the tab is also where
+                  somebody comes to draw the second. */}
+              <div className="zone-hint">
+                <svg viewBox="0 0 72 46" aria-hidden="true">
+                  {/* The zone being swept out: a dashed box with a live corner. */}
+                  <rect x="7" y="7" width="44" height="28" rx="2"
+                    fill="var(--accent)" fillOpacity="0.07"
+                    stroke="var(--text-subtle)" strokeWidth="1.4"
+                    strokeDasharray="4 3" />
+                  <circle cx="7" cy="7" r="2" fill="var(--text-subtle)" />
+                  {/* ...and the pointer that is doing it, tip on the far corner
+                      it is dragging to, so the two read as one gesture rather
+                      than as a box and an arrow. */}
+                  <g transform="translate(51 35)">
+                    <path d="M0,0 L0,15 L4,11.2 L6.8,17.6 L9.6,16.4 L6.8,10.2 L12,10 Z"
+                      fill="var(--accent)" stroke="#fff" strokeWidth="1.1"
+                      strokeLinejoin="round" />
+                  </g>
+                </svg>
+                <p>
+                  {zones.length === 0 ? 'None in the layout. ' : ''}
+                  Draw a box over anything the lights should keep off.
+                </p>
+              </div>
+
+              {zones.length > 0 && (
+                <div className="zone-list">
+                  <div className="kv zone-list-head">
+                    <span>{zones.length} zone{zones.length === 1 ? '' : 's'}</span>
+                    <button className="btn tiny" onClick={() => setZones([])}>Clear all</button>
+                  </div>
+                  {zones.map((z, i) => (
+                    <div className="kv" key={z.id}>
+                      <span>Zone {i + 1}</span>
+                      <b>
+                        {pxPerFt
+                          ? `${((z.x1 - z.x0) / pxPerFt).toFixed(1)} × ${((z.y1 - z.y0) / pxPerFt).toFixed(1)} ft`
+                          : `${Math.round(z.x1 - z.x0)} × ${Math.round(z.y1 - z.y0)} px`}
+                        <button className="btn" style={{ marginLeft: 8, padding: '1px 7px', fontSize: 11 }}
+                          title="Remove zone" onClick={() => setZones((zs) => zs.filter((q) => q.id !== z.id))}>×</button>
+                      </b>
+                    </div>
                   ))}
                 </div>
-              );
-            })()}
+              )}
 
-            {!pxPerFt && <p className="note warn">Set the scale first — these are placed at a real size.</p>}
-            {armed && (
-              <p className="note">Click on the plan to place the
-                {' '}{CEILING_BY_ID[armed]?.label.toLowerCase()}.</p>
-            )}
-            
-
-            {ceilingObjs.map((o) => {
-              const on = o.id === selObjId;
-              return (
-                <div key={o.id} className={'outline-row' + (on ? ' on' : '')}>
-                  <button className="outline-pick plain"
-                    onClick={() => { setSelObjId(o.id); setObjMode(true); setArmed(null); }}>
-                    <span className="outline-name">{CEILING_BY_ID[o.typeId]?.label ?? o.kind}</span>
-                    <span className="layer-count">{sizeLabel(o)}</span>
-                  </button>
-                  <div className="outline-meta">
-                    <span>
-                      {isRect(o) ? (
-                        <>
-                          <input type="number" min="100" max="3600" step="50"
-                            value={Math.round(o.wFt * 304.8)} className="mm"
-                            onChange={(e) => setCeilingObjs((os) => os.map((q) => q.id === o.id
-                              ? { ...q, wFt: clampFt(Number(e.target.value) / 304.8) } : q))} />
-                          <span>×</span>
-                          <input type="number" min="100" max="3600" step="50"
-                            value={Math.round(o.hFt * 304.8)} className="mm"
-                            onChange={(e) => setCeilingObjs((os) => os.map((q) => q.id === o.id
-                              ? { ...q, hFt: clampFt(Number(e.target.value) / 304.8) } : q))} />
-                          <span>mm · {Math.round(((o.rot || 0) * 180) / Math.PI)}°</span>
-                        </>
-                      ) : null}
-                    </span>
-                    <button className="btn tiny" title="Remove"
-                      onClick={() => { setCeilingObjs((os) => os.filter((q) => q.id !== o.id));
-                                       setSelObjId((v) => (v === o.id ? null : v)); }}>×</button>
-                  </div>
-                </div>
-              );
-            })}
-
-            <div className="kv" style={{ marginTop: 6 }}>
-              <span>In {focus?.outline?.name || 'this space'}</span>
-              <b>{focus?.geo?.fansInRoom?.length ?? 0} of {obstaclesPx.length}</b></div>
-          </div>
-
-          {/* --- no-light zones -------------------------------------------
-              DRAW ONE, AND SEE THE ONES THAT ARE THERE. That is the whole
-              section now.
-
-              It used to also carry the bed detector's tally, a picker for which
-              detector to use, a restore button for dismissed detections, and a
-              line per space explaining which of two models won the judge's vote
-              and why. Every one of those was real and was worth having while
-              the bed pipeline was being built. None of them is the user's
-              business: the beds are found, judged and kept out of the light
-              before the plan is handed over, and a panel that reports on it is
-              asking somebody to audit a decision they did not know was being
-              made. The console still carries all of it, and the zones still
-              move the fittings — see `drawnZones` for the split between what is
-              obeyed and what is drawn. */}
-          <div className="sec">
-            <h3>No-light zones</h3>
-            <div className="btnrow">
-              <button className={'btn' + (zoneMode ? ' accent' : '')}
+              {/* THE ACTION LAST, AND FULL WIDTH. It is the one thing this tab
+                  is for, so it is the one thing shaped like a target — and it
+                  sits under the list because a button above a list of what it
+                  has already made reads as a header for them. Still a toggle:
+                  the gesture has to be cancellable without drawing something. */}
+              <button className={'btn zone-add' + (zoneMode ? ' accent' : '')}
                 onClick={() => {
                   setZoneMode((v) => !v); setDraftZone(null);
                   setArmed(null); disarmAdd();
                 }}>
-                {zoneMode ? 'Done drawing' : 'Draw zone'}
+                {zoneMode ? 'Done drawing' : '+ Add a No Light Zone'}
               </button>
-              {zones.length > 0 && <button className="btn" onClick={() => setZones([])}>Clear all</button>}
+            </>}
+
+            {editTab === 'lighting' && <>
+              <LightPalette tool={addTool} disabled={!pxPerFt || !rooms.length}
+                onPick={(t) => {
+                  setAddTool(t); setStripFrom(null); setAddAt(null);
+                  setArmed(null); setGhost(null);
+                  setZoneMode(false); setDraftZone(null);
+                }} />
+              {!rooms.length && (
+                <p className="note warn" style={{ marginTop: 8 }}>
+                  Light a space first — a fitting has to belong to one.
+                </p>
+              )}
+              {/* NO "ON THE PLAN" COUNT. It said how many strips, sconces and
+                  spots the drawing carries, three inches above a Result panel
+                  that says it again — two live readouts of one number, which is
+                  not twice the information: it is the same information asking
+                  to be reconciled. */}
+              {(manualAccents.length > 0 || manualSurfaces.length > 0) && (
+                <button className="btn" style={{ marginTop: 8, width: '100%' }}
+                  onClick={() => { setManualAccents([]); setManualSurfaces([]); disarmAdd(); }}>
+                  Clear the {manualAccents.length + manualSurfaces.length} placed by hand
+                </button>
+              )}
+            </>}
             </div>
-
-            {zones.length === 0 ? (
-              <p className="note" style={{ marginTop: 8 }}>
-                None in the layout. Draw a box over anything the lights should
-                keep off.
-              </p>
-            ) : zones.map((z, i) => (
-              <div className="kv" key={z.id}>
-                <span>Zone {i + 1}</span>
-                <b>
-                  {pxPerFt
-                    ? `${((z.x1 - z.x0) / pxPerFt).toFixed(1)} × ${((z.y1 - z.y0) / pxPerFt).toFixed(1)} ft`
-                    : `${Math.round(z.x1 - z.x0)} × ${Math.round(z.y1 - z.y0)} px`}
-                  <button className="btn" style={{ marginLeft: 8, padding: '1px 7px', fontSize: 11 }}
-                    title="Remove zone" onClick={() => setZones((zs) => zs.filter((q) => q.id !== z.id))}>×</button>
-                </b>
-              </div>
-            ))}
           </div>
 
-          {step !== 'chunks' && step !== 'trace' && <>
-          {/* --- ADDITIONAL LIGHTING ---------------------------------------
-              THREE TOOLS WHERE THERE WERE TWO PANELS OF RESULTS.
-
-              Both of the sections this replaces were reports: one listed what
-              the accent detector had found in the selected space with a button
-              to ask it again, the other did the same for task surfaces. They
-              were the right shape while those detectors were the thing being
-              built. On a finished layout they are two dropdowns, two model
-              buttons and a scrolling list of zones nobody edits — a debugging
-              surface, in the place where the obvious question is "how do I add
-              a strip along that wardrobe".
-
-              THE DETECTORS STILL RUN. They are part of the pipeline that lays
-              the plan out before anyone sees it, exactly like the bed pass, and
-              what they place is on the drawing and in the schedule. What went
-              is their reporting, and the assumption that a fitting only exists
-              because a model proposed it. */}
-          <div className="sec">
-            <h3>Additional lighting</h3>
-            <LightPalette tool={addTool} disabled={!pxPerFt || !rooms.length}
-              onPick={(t) => {
-                // ONE ARMED TOOL ON THIS CANVAS AT A TIME. A ceiling object and
-                // a sconce both want the next click, and two tools waiting for
-                // one click is a click that does something nobody predicted.
-                setAddTool(t); setStripFrom(null); setAddAt(null);
-                setArmed(null); setGhost(null);
-                setZoneMode(false); setDraftZone(null);
-              }} />
-            {!rooms.length && (
-              <p className="note warn" style={{ marginTop: 8 }}>
-                Light a space first — a fitting has to belong to one.
-              </p>
-            )}
-            {(accentZonesPx.length > 0 || taskSpotsPx.length > 0) && (
-              <div className="kv" style={{ marginTop: 10 }}>
-                <span>On the plan</span>
-                <b>{[
-                  accentZonesPx.filter((z) => z.type === 'strip' && !z.rejected).length
-                    ? `${accentZonesPx.filter((z) => z.type === 'strip' && !z.rejected).length} strip` : null,
-                  accentZonesPx.filter((z) => z.type === 'sconce' && !z.rejected).length
-                    ? `${accentZonesPx.filter((z) => z.type === 'sconce' && !z.rejected).length} sconce` : null,
-                  taskSpotsPx.filter((sp) => !sp.rejected).length
-                    ? `${taskSpotsPx.filter((sp) => !sp.rejected).length} spot` : null,
-                ].filter(Boolean).join(' · ') || 'none yet'}</b>
+          {/* --- THE RESULT, DIRECTLY UNDER THE EDITING THAT MOVES IT.
+              It was below the View toggles, which put a list of checkboxes
+              between an action and its consequence. Every number here changes
+              when something above it is placed or removed, and a readout you
+              have to scroll past a settings panel to find is a readout nobody
+              watches. */}
+          {totals.rooms > 0 && (
+            <div className="sec">
+              <h3>Result</h3>
+              <div className="stats">
+                <div className="stat"><b>{totals.lights}</b><span>lights</span></div>
+                <div className="stat"><b>{totals.perSqft.toFixed(0)}</b><span>lm / sq ft</span></div>
               </div>
-            )}
-            {(manualAccents.length > 0 || manualSurfaces.length > 0) && (
-              <button className="btn" style={{ marginTop: 8, width: '100%' }}
-                onClick={() => { setManualAccents([]); setManualSurfaces([]); disarmAdd(); }}>
-                Clear the {manualAccents.length + manualSurfaces.length} placed by hand
-              </button>
-            )}
-          </div>
+              <div className="kv" style={{ marginTop: 6 }}>
+                <span>Over</span>
+                <b>{totals.rooms} space{totals.rooms > 1 ? 's' : ''}, {Math.round(totals.areaSqft)} sq ft</b></div>
+              {/* Named per room. A warning about a light off its cell centre is
+                  useless if you cannot tell which of eight rooms it is in. */}
+              {troubles.map((t, i) => (
+                <p className="note warn" key={i}><b>{t.name}</b> — {t.msg}</p>
+              ))}
+            </div>
+          )}
+          {totals.rooms === 0 && rooms.length > 0 && (
+            <div className="sec"><p className="note warn">
+              No space on this plan produced a layout. {troubles[0]?.msg || ''}
+            </p></div>
+          )}
 
-          {/* --- THE RENDER PASS -------------------------------------------
-              THE ONE SECTION IN THIS PANEL THAT TAKES AN INPUT NOBODY HAS GIVEN
-              THE APP YET. Everything above works off the drawing; this works off
-              photographs of the finished room, which only the person doing the
-              job has. So it stays a manual, per-space step rather than joining
-              the pipeline: there is nothing for the pipeline to run it ON until
-              somebody uploads something.
-
-              It sits under Additional lighting because that is what it is FOR —
-              a panelled wall or a run of shelves is a thing to graze, and the
-              next step is the lighting responding to what this marks out. */}
-          <RenderPassPanel
-            room={focus} grid={wallGrid} pxPerFt={pxPerFt}
-            renders={focus ? (renders[focus.id] ?? []) : []}
-            onAddFiles={addRenders}
-            onRemoveRender={(i) => focus && setRenders((m) => ({
-              ...m, [focus.id]: (m[focus.id] ?? []).filter((_, k) => k !== i) }))}
-            onClearRenders={() => focus && setRenders((m) => {
-              const n = { ...m }; delete n[focus.id]; return n; })}
-            /* THE SHOT IS SHOWN ONLY FOR THE ROOM IT IS OF. It is rebuilt
-               asynchronously when the selection changes, so for a beat after a
-               click it is still the last room's — and a thumbnail of the wrong
-               room under a heading naming this one is worse than no thumbnail. */
-            shot={wallShot?.roomId === focus?.id ? wallShot : null}
-            state={wallState.roomId === focus?.id ? wallState : { status: 'idle' }}
-            result={focus ? (wallResults[focus.id] ?? null) : null}
-            transcript={focus ? (wallTranscripts[focus.id] ?? null) : null}
-            onRun={runWallPass}
-            onClear={() => {
-              if (!focus) return;
-              setWallResults((m) => { const n = { ...m }; delete n[focus.id]; return n; });
-              // THE TRANSCRIPT GOES WITH THE RESULT. It is the working for an
-              // answer that is no longer on the drawing, and a dialog offering
-              // the reasoning behind marks somebody has just cleared is a
-              // straightforward way to make them doubt what they are looking at.
-              setWallTranscripts((m) => { const n = { ...m }; delete n[focus.id]; return n; });
-            }} />
-
-          <div className="sec">
-            <h3>View</h3>
+          {/* --- VIEW, CLOSED. Every control in here is a preference about the
+              picture rather than a decision about the design, and a preference
+              you set once and forget does not deserve permanent space above the
+              export button. `<details>` and not a state flag: the browser owns
+              the open/closed, keyboard and screen-reader behaviour of a
+              disclosure, and reimplementing it is how one gets it wrong. */}
+          <details className="sec view-sec">
+            <summary><h3>View</h3></summary>
             {/* THE BUTTONS ZOOM ABOUT THE MIDDLE OF WHAT IS ON SCREEN, not
                 about the drawing's origin. Stepping the number alone kept the
                 top-left corner still, which means the thing you were looking at
@@ -5050,34 +5433,10 @@ export default function App({
             {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
               ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
               ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
-              ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
-              ['wallitems', 'Wall features']].map(([k, l]) => (
+              ['accents', 'Accent lighting'], ['spots', 'Directional spots']].map(([k, l]) => (
               <label className="check" key={k}><input type="checkbox" checked={layers[k]} onChange={toggle(k)} />{l}</label>
             ))}
-          </div>
-
-          {totals.rooms > 0 && (
-            <div className="sec">
-              <h3>Result</h3>
-              <div className="stats">
-                <div className="stat"><b>{totals.lights}</b><span>lights</span></div>
-                <div className="stat"><b>{totals.perSqft.toFixed(0)}</b><span>lm / sq ft</span></div>
-              </div>
-              <div className="kv" style={{ marginTop: 6 }}>
-                <span>Over</span>
-                <b>{totals.rooms} space{totals.rooms > 1 ? 's' : ''}, {Math.round(totals.areaSqft)} sq ft</b></div>
-              {/* Named per room. A warning about a light off its cell centre is
-                  useless if you cannot tell which of eight rooms it is in. */}
-              {troubles.map((t, i) => (
-                <p className="note warn" key={i}><b>{t.name}</b> — {t.msg}</p>
-              ))}
-            </div>
-          )}
-          {totals.rooms === 0 && rooms.length > 0 && (
-            <div className="sec"><p className="note warn">
-              No space on this plan produced a layout. {troubles[0]?.msg || ''}
-            </p></div>
-          )}
+          </details>
 
           <div className="sec">
             <h3>Export</h3>
@@ -5148,9 +5507,10 @@ export default function App({
                   Show what was identified
                 </label>
                 <p className="note" style={{ marginTop: 2 }}>
-                  Task surfaces and the beds the detector found, drawn over the
-                  plan. Working, not product — it is excluded from the PNG and SVG
-                  exports by nothing except your turning it off.
+                  Task surfaces, the beds the detector found, and the render
+                  pass&apos;s wall cells, drawn over the plan. Working, not
+                  product — it is excluded from the PNG and SVG exports by
+                  nothing except your turning it off.
                 </p>
                 {/* LOOK AGAIN — the manual bedroom pass. Admin-only because it
                     spends a model call per room and because the person who
@@ -5175,6 +5535,34 @@ export default function App({
                 {audit && (
                   <div className="admin-counts">
                     <div className="kv"><span>Task surfaces</span><b>{surfacesPx.length}</b></div>
+                    {/* WHAT THE RENDER PASS READ, and what it turned into. The
+                        cells are the working; the three fittings under them are
+                        the product, and they stay on the drawing whether or not
+                        this box is ticked. Counted here so that "the cells look
+                        wrong" and "the cells are right and the rule did nothing"
+                        are two different readings rather than one shrug. */}
+                    {/* THE RENDER PASS'S WHOLE LEDGER, and this is now the only
+                        place it is written down. `seen` is what PROMPT 01 read
+                        off the photographs; `placed` is how many of those PROMPT
+                        02 could tie to a wall on this drawing. The two differing
+                        is the pass's most useful single fact — "it saw nothing"
+                        and "it saw it and could not place it" are completely
+                        different problems — and it left the render-pass panel
+                        along with the rest of the reporting. */}
+                    <div className="kv"><span>Wall features seen</span>
+                      <b>{Object.values(wallResults)
+                        .reduce((n, w) => n + (w.elements?.length ?? 0), 0)}</b></div>
+                    <div className="kv"><span>&nbsp;&nbsp;· placed on the plan</span>
+                      <b>{wallCellsPx.length}</b></div>
+                    <div className="kv"><span>&nbsp;&nbsp;· reverse coves</span>
+                      <b>{reverseCoves.length}</b></div>
+                    <div className="kv"><span>&nbsp;&nbsp;· shelf strips</span>
+                      <b>{shelfStrips.length}</b></div>
+                    <div className="kv"><span>&nbsp;&nbsp;· art spots</span>
+                      <b>{taskSpotsPx.filter((sp) => sp.art && !sp.rejected).length}
+                        {taskSpotsPx.some((sp) => sp.art && sp.rejected)
+                          ? ` (${taskSpotsPx.filter((sp) => sp.art && sp.rejected)
+                              .reduce((n, sp) => n + (sp.wanted ?? 1), 0)} dropped)` : ''}</b></div>
                     {/* WHERE EACH ONE CAME FROM. Two sources feed this list and
                         they can double up — they did, and the count was the only
                         thing on screen that knew. A split reads as a description

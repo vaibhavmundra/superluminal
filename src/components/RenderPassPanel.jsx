@@ -1,5 +1,4 @@
 import React, { useRef, useState } from 'react';
-import { WALL_BY_ID } from '../lib/wallPrompt.js';
 import { RENDER_ACCEPT, RENDER_DEFAULTS } from '../lib/renderImage.js';
 import PromptTranscript from './PromptTranscript.jsx';
 
@@ -7,27 +6,38 @@ import PromptTranscript from './PromptTranscript.jsx';
 // RenderPassPanel — upload a couple of views of a space, get the wall features
 // marked out on the plan.
 //
-// THE SHAPE OF THIS PANEL IS AN ARGUMENT ABOUT WHAT WENT WRONG WHEN IT DOES.
-// The pass is two model calls in a row and either can fail, so a single
-// "nothing found" would be four different problems wearing one face: no
-// renders worth reading, PROMPT 01 saw nothing, PROMPT 02 could not find the
-// wall, or the plan has no scale so there was never a grid to place anything
-// on. Every one of those needs a different thing done about it.
+// IT IS A CONTROL, NOT A REPORT, and it used to be both.
 //
-// So the panel shows, in order: WHAT WAS SENT (two thumbnails and the gridded
-// plan, because "it looked at the wrong room" is invisible in a list of
-// results), WHAT IT SAW (the English from PROMPT 01, always, even for elements
-// that were never placed), and WHERE IT PUT IT (the cells, from PROMPT 02).
-// An element with words and no cells is a legible, actionable state — the
-// second call could not tie that wall to the drawing — and it is the state
-// that would otherwise silently vanish.
+// Under the button was a card per wall element: the type, the cell count, the
+// wall and location in the model's own words, the dimension, the confidence,
+// and then a line for whatever fitting the element produced. Above them, five
+// counts — features seen, features placed, reverse coves, shelf strips, art
+// spots. Every one of those was real and was the right thing to have while the
+// pass was being built: it is how you tell "it saw nothing" from "it saw it and
+// could not place it", and how you check the rules fired.
 //
-// IT IS THE SAME LESSON AS AccentPanel's furniture list, one step harder,
-// because here the two halves are two separate calls and the join between them
-// can fail on its own.
+// None of it is the user's business on a finished plan. The pass runs, and what
+// it decided is ON THE DRAWING — a filled slot along the panelled wall, a run of
+// tape in the shelving, a pair of spots at the picture. A panel that also
+// enumerates the reasoning is asking somebody to audit a decision they did not
+// know was being made, in a column of text beside the drawing that already shows
+// it. It is the same argument that emptied the accent and task-surface panels
+// into "Additional lighting", and the same answer: the DETECTORS still run and
+// what they place is on the sheet and in the schedule; what went is the
+// reporting.
+//
+// WHERE IT WENT, because none of it was thrown away: the counts and the cells
+// are under Admin → "Show what was identified", beside the bed boxes and the
+// task surfaces they are a sibling of, and the model's own words are one click
+// away under "Show the prompts & replies" for anybody at all.
+//
+// WHAT STAYS IS ABOUT THE RUN, NOT ABOUT THE RESULTS. What was sent (the
+// thumbnails and the gridded plan, because "it looked at the wrong room" is
+// invisible everywhere else), whether it failed and how, how long it took, and
+// the two ways out. Plus one line about the lengths, because a drag is the one
+// thing here a person did rather than a rule.
 // ---------------------------------------------------------------------------
 
-const pct = (v) => `${Math.round((v ?? 0) * 100)}%`;
 const kb = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}MB` : `${Math.round(n / 1000)}KB`);
 
 const PHASE_SAY = {
@@ -41,14 +51,14 @@ export default function RenderPassPanel({
   room = null, grid = null, pxPerFt = null,
   renders = [], onAddFiles, onRemoveRender, onClearRenders,
   shot = null, state = { status: 'idle' }, result = null,
-  transcript = null,
-  onRun, onClear,
+  transcript = null, runCount = 0, trimmedRuns = [],
+  onRun, onClear, onResetLengths,
 }) {
   const fileRef = useRef(null);
   const [showTx, setShowTx] = useState(false);
+  const [over, setOver] = useState(false);
   const running = state.status === 'running';
   const elements = result?.elements ?? [];
-  const placed = elements.filter((e) => e.cells?.length);
   // AT LEAST ONE CALL HAS COME BACK. Offered while the pass is still running
   // too, on purpose: the first call lands a good half-minute before the second,
   // and being able to read what it said while the second one thinks is the
@@ -68,22 +78,44 @@ export default function RenderPassPanel({
     : null;
 
   return (
-    <div className="sec">
-      <h3>Render pass{room ? ` · ${room.outline?.name || 'Space'}` : ''}</h3>
-      <p className="note" style={{ marginTop: 2 }}>
-        The plan cannot show what is ON the walls. Upload a couple of views of
-        this space and the panelling, shelving and art get marked out on it.
-      </p>
+    // A BLOCK INSIDE A SPACE, NOT A SECTION OF THE PANEL. It used to be a
+    // top-level `.sec` with its own `h3` naming the room — which is what a
+    // section describing whichever space is selected has to do, and what stops
+    // being necessary the moment it lives inside that space's own row.
+    <div className="space-block">
+      <h4>Place lights according to renders</h4>
+      
 
-      {/* --- the renders ------------------------------------------------- */}
-      <div className="btnrow" style={{ marginTop: 10 }}>
-        <button className="btn" disabled={running || !room}
-          onClick={() => fileRef.current?.click()}>
-          {renders.length ? 'Add another view' : 'Add renders'}
-        </button>
-        {renders.length > 0 && (
-          <button className="btn" disabled={running} onClick={onClearRenders}>Clear</button>
-        )}
+      {/* --- the renders -------------------------------------------------
+          A DROP TARGET AS WELL AS A BUTTON. A render arrives from a folder or
+          another window and the gesture people already have for it is a drag;
+          making them find a file picker for a file they are already holding is
+          a step spent on nothing. The button stays because a drop target with
+          no button is a feature nobody discovers, and because a drag is not
+          available from every device.
+          `stopPropagation` on all three, because the whole stage is a drop
+          target for a FLOOR PLAN — without it, dropping a render here would
+          load it as the drawing and throw the layout away. */}
+      <div
+        className={'drop-renders' + (over ? ' over' : '') + (running ? ' busy' : '')}
+        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); if (!running) setOver(true); }}
+        onDragLeave={(e) => { e.stopPropagation(); setOver(false); }}
+        onDrop={(e) => {
+          e.preventDefault(); e.stopPropagation(); setOver(false);
+          if (running || !room) return;
+          const files = Array.from(e.dataTransfer?.files ?? []);
+          if (files.length) onAddFiles?.(files);
+        }}>
+        <span>Drop renders here</span>
+        <div className="btnrow">
+          <button className="btn" disabled={running || !room}
+            onClick={() => fileRef.current?.click()}>
+            {renders.length ? 'Add another' : 'Choose files'}
+          </button>
+          {renders.length > 0 && (
+            <button className="btn" disabled={running} onClick={onClearRenders}>Clear</button>
+          )}
+        </div>
       </div>
       <input ref={fileRef} type="file" multiple accept={RENDER_ACCEPT}
         style={{ display: 'none' }}
@@ -122,19 +154,7 @@ export default function RenderPassPanel({
       ))}
 
       {/* --- the gridded plan, as the model will see it ------------------- */}
-      {shot && (
-        <div className="render-strip" style={{ marginTop: 8 }}>
-          <div className="render-thumb plan" title={`The gridded plan — ${shot.w}×${shot.h}`}>
-            <img src={shot.dataUrl} alt="the space, gridded" />
-          </div>
-          <p className="note" style={{ margin: 0, flex: 1, minWidth: 120 }}>
-            {grid
-              ? <>The second call gets this: {grid.cols} × {grid.rows} cells,
-                  {' '}{grid.cellWFt.toFixed(2)} ft each. Cell [1,1] is bottom-left.</>
-              : 'No grid on this space.'}
-          </p>
-        </div>
-      )}
+      
 
       <button className="btn primary" style={{ marginTop: 10, width: '100%' }}
         disabled={!!blocked || running} onClick={onRun}>
@@ -169,64 +189,32 @@ export default function RenderPassPanel({
         <p className="note err" style={{ marginTop: 8 }}>{state.error}</p>
       )}
 
-      {/* --- what came back ---------------------------------------------- */}
+      {/* --- how the run went, and nothing about what it found -----------
+          The counts and the cards that used to be here are in the header's
+          note. What is left answers only "did it work, and what do I do now". */}
       {result && (
         <div style={{ marginTop: 10 }}>
-          <div className="kv"><span>Wall features seen</span><b>{elements.length}</b></div>
-          {elements.length > 0 && (
-            <div className="kv"><span>Placed on the plan</span>
-              <b>{placed.length} of {elements.length}</b></div>
-          )}
-
           {elements.length === 0 && state.status === 'done' && (
             <p className="note warn" style={{ marginTop: 6 }}>
               Nothing on the walls in these views — no shelves, art, panelling or
               wallpaper. If there plainly is, check the thumbnails above are the
-              right space; the console carries the model&apos;s own words.
+              right space; the prompts and replies are one click up.
             </p>
           )}
 
-          {elements.map((e, i) => {
-            const t = WALL_BY_ID[e.type];
-            const on = e.cells?.length > 0;
-            return (
-              <div className={'wall-row' + (on ? '' : ' off')} key={i}>
-                <div className="accent-head">
-                  <span className="accent-dot" style={{ background: t?.colour || '#666' }} />
-                  <b>{t?.label || e.type}</b>
-                  <span className="accent-role">
-                    {on ? `${e.cells.length} cell${e.cells.length > 1 ? 's' : ''}` : 'not placed'}
-                  </span>
-                </div>
-                <div className="accent-what">{e.wall}</div>
-                {e.location && <div className="accent-why">{e.location}</div>}
-                <div className="accent-meta">
-                  {e.dimension && <span>{e.dimension}</span>}
-                  {on && <span>{e.wallRef || 'wall'} · [{e.start.x},{e.start.y}]→[{e.end.x},{e.end.y}]</span>}
-                  <span>{pct(e.confidence)}</span>
-                </div>
-                {/* THE ONE DISAGREEMENT WORTH SURFACING. PROMPT 01 said how wide
-                    it is and PROMPT 02 drew how long it is; when those differ by
-                    more than a couple of feet it is almost always the second
-                    call reading the grid wrong, and nothing else on screen
-                    would ever say so. */}
-                {on && e.widthFt != null && Math.abs(e.cells.length - e.widthFt) > 2 && (
-                  <div className="accent-why warn">
-                    Called {e.widthFt} ft wide but drawn {e.cells.length} cells long.
-                  </div>
-                )}
-                {e.clamped && (
-                  <div className="accent-why warn">Longer than the wall — clamped to it.</div>
-                )}
-                {!on && (
-                  <div className="accent-why warn">
-                    Seen in the render, but the second call could not tie that
-                    wall to this drawing.
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {/* THE SECOND CALL CAME BACK WITH NO ARRAY AT ALL. Different from an
+              array that placed nothing, and different again from finding nothing
+              on the walls — this one is a reply that ran out of tokens part-way
+              through its worksheet, or wandered off. It leaves the drawing empty,
+              which is indistinguishable from the other two unless it is said out
+              loud. */}
+          {result.placedNone && elements.length > 0 && (
+            <p className="note warn" style={{ marginTop: 6 }}>
+              It read the renders but the second call came back without a usable
+              answer, so nothing is on the plan. Analysing again usually fixes it.
+            </p>
+          )}
+
 
           {result.skipped?.length > 0 && (
             <p className="note warn" style={{ marginTop: 6 }}>
@@ -235,6 +223,17 @@ export default function RenderPassPanel({
             </p>
           )}
           {state.ms && <div className="kv"><span>Took</span><b>{(state.ms / 1000).toFixed(1)}s</b></div>}
+          {/* BACK TO THE RULE. The only edit this pass produces that a person
+              made rather than a rule derived, so it is the only one there is
+              anything to undo. Offered on the whole space rather than per run,
+              because the runs are no longer listed — and because somebody who
+              wants one back usually wants all of them back. */}
+          {trimmedRuns.length > 0 && onResetLengths && (
+            <button className="btn" style={{ marginTop: 6, width: '100%' }}
+              onClick={onResetLengths}>
+              Reset {trimmedRuns.length} length{trimmedRuns.length === 1 ? '' : 's'} set by hand
+            </button>
+          )}
           <button className="btn" style={{ marginTop: 6, width: '100%' }} onClick={onClear}>
             Clear these wall features
           </button>

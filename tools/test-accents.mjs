@@ -156,8 +156,16 @@ ok(zonesFromFurniture([sofa], room).zones.length === 0, 'rule 2: a sofa makes no
 ok(zonesFromFurniture([sofa], room).handled[0].rule === 2,
   'and says so — the sofa is reported as seen and deliberately left alone');
 
+// RULE 4 IS A HANDOVER NOW. A TV unit used to take a strip along its own
+// length; the wall behind a TV is exactly what the render pass reads off a
+// photograph, and it lights what is actually there — shelving, panelling, art —
+// with the right fitting for each. A strip guessed from the plan lands on that
+// same wall.
 const r4 = zonesFromFurniture([tv], room);
-ok(r4.zones.length === 1 && r4.zones[0].type === 'strip', 'rule 4: a TV unit makes a strip and only a strip');
+ok(r4.zones.length === 0, `rule 4: a TV unit makes nothing here, got ${r4.zones.length}`);
+ok(r4.handled[0].rule === 4 && r4.handled[0].emitted === 0,
+  'and says so — seen, and deliberately left to the render pass');
+ok(/render pass/.test(r4.handled[0].ruleDoes), `the reason is on the record: "${r4.handled[0].ruleDoes}"`);
 
 const r5 = zonesFromFurniture([wardrobe], room);
 ok(r5.zones.length === 1 && r5.zones[0].type === 'strip', 'rule 5: a wardrobe makes a strip');
@@ -173,9 +181,12 @@ ok(near(r3.zones[0].point.x, 70 - 40 * 0.10), 'flanking closer in than a bed doe
 
 console.log('\n-- everything at once, and the reporting --');
 const all = zonesFromFurniture([bed, wardrobe, sofa, tv], room);
-ok(all.zones.length === 4, `a bedroom with all four gives 4 fittings, got ${all.zones.length}`);
+ok(all.zones.length === 3, `a bedroom with all four gives 3 fittings, got ${all.zones.length}`);
 ok(all.handled.length === 4, 'every piece is reported back whether it produced anything or not');
-ok(all.handled.filter((h) => h.emitted === 0).length === 1, 'exactly one produced nothing — the sofa');
+ok(all.handled.filter((h) => h.emitted === 0).length === 2,
+  'two produced nothing — the sofa, and the TV unit the render pass takes over');
+ok(all.handled.every((h) => h.rule != null),
+  'and every one of the four is a RULE that fired, not a piece nobody had an answer for');
 
 console.log('\n-- A STRIP RUNS ALONG THE LONG SIDE, even in a corner --');
 // The regression. A wardrobe 8 long x 2 deep pushed into the top-left corner
@@ -198,8 +209,11 @@ ok(near(tw.runLength, 80 - 2 * (80 * 0.04)) && near(tw.run[0].y, 0),
   'turned 90 degrees it runs along the other wall, same length');
 
 // A square-ish object has no long side; distance decides and nothing throws.
-const squareish = zonesFromFurniture([{ type:'tv_unit', rect:{ x0: 60, y0: 0, x1: 100, y1: 38 }, confidence:.6 }], room);
-ok(!squareish.zones[0].rejected, 'a near-square object still places, on the nearest wall');
+// Asked of placeZone directly, because the only rule that still emits a strip
+// is the wardrobe's and this is a question about the GEOMETRY rather than about
+// which piece of furniture asked it.
+const squareish = placeZone({ type:'strip', rect:{ x0: 60, y0: 0, x1: 100, y1: 38 } }, room);
+ok(!squareish.rejected, 'a near-square object still places, on the nearest wall');
 
 console.log('\n-- refusals are sentences --');
 const floating = placeZone({ type:'strip', rect:{ x0: 90, y0: 55, x1: 110, y1: 70 } }, room);

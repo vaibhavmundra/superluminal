@@ -544,8 +544,12 @@ export function boqToPDF(boq, { title = 'Lighting schedule' } = {}) {
 const LAYOUTS = {
   //         Item  Description Qty   Unit  Wattage Beam  Load  Notes
   fittings: { share: [0.05, 0.25, 0.07, 0.07, 0.09, 0.06, 0.08, 0.33], right: [2, 6] },
-  //         Space Area  Small Large Spots Sconce Strip
-  rooms:    { share: [0.24, 0.12, 0.10, 0.10, 0.10, 0.11, 0.12, 0.11], right: [1, 2, 3, 4, 5, 6] },
+  //         Space Area  Small Large Spots Sconce Strip Art
+  // The eighth column was always reserved and always blank; the render pass's
+  // art spots go in it when there are any. RIGHT-ALIGNED like every other count
+  // on this row — it was the one index missing from the list, which nobody could
+  // see while the column had nothing in it.
+  rooms:    { share: [0.24, 0.12, 0.10, 0.10, 0.10, 0.11, 0.12, 0.11], right: [1, 2, 3, 4, 5, 6, 7] },
   // Loose facts across the top, and the "Total …" rows, which sit under the
   // fitting grid and are laid out with it.
   meta:     { share: [0.30, 0.30, 0.40], right: [] },

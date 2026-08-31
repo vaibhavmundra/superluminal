@@ -80,7 +80,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     // THE RENDER PASS'S READING. A list of wall features, each already reduced
     // to ONE rectangle in plan pixels — the union of its run of grid cells —
     // plus the individual cells for the tick marks. See wallGrid.js.
-    wallCells = [],
+    wallCells = [], reverseCoves = [],
     // THE AUDIT LAYER — off for everybody except an owner of this app. See the
     // block near the bottom of this file for what it draws and why the marks it
     // restores were removed from the drawing proper.
@@ -304,11 +304,24 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       )}
 
       {/* --- what the render pass found on the walls -------------------------
-          UNDER THE FITTINGS AND OVER THE PLAN, like every other reading. This
-          is not lighting: it is a NOTE ABOUT THE ROOM that the lighting will
-          later respond to, so it must be visible enough to judge and quiet
-          enough that a strip drawn along the same wall reads as the louder of
-          the two. Hence a wash plus a hairline, in the element's own muted
+          AN ADMIN OVERLAY, AND NOT A LAYER ANY MORE. There is no `layers` check
+          here because the caller does the gating: App.jsx passes an empty list
+          unless the viewer is an owner with "Show what was identified" ticked.
+          A `layers.wallitems &&` in front of this would be a second switch on a
+          thing with one, and the one that is not in the View list is the one
+          somebody would eventually wire a checkbox to.
+
+          WHY IT LEFT THE VIEW LIST. It is a READING, not a fitting. Shading the
+          cells is how you check the model put the panelling on the wall you
+          meant, which is exactly the question the bed boxes and the task
+          surfaces answer and exactly why those two are behind the same switch.
+          On a finished sheet it is a coloured band along a wall beside the cove
+          it produced — two marks where the drawing needs one. The CONSEQUENCES
+          stay for everybody: the reverse cove, the shelf strip, the art spots.
+
+          UNDER THE FITTINGS AND OVER THE PLAN, like every other reading, and
+          quiet enough that a strip drawn along the same wall reads as the louder
+          of the two. Hence a wash plus a hairline, in the element's own muted
           colour, and no blue anywhere near it — blue on this canvas means
           "ours, and it emits light".
 
@@ -316,7 +329,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           squares each with their own outline read as eleven separate things;
           one rectangle with the cell divisions ticked inside it reads as what
           it is — an eleven-foot run, measured. */}
-      {layers.wallitems && wallCells.map((wc) => (
+      {wallCells.map((wc) => (
         <g key={wc.id} pointerEvents="none">
           <rect x={wc.rect.x0} y={wc.rect.y0}
             width={wc.rect.x1 - wc.rect.x0} height={wc.rect.y1 - wc.rect.y0}
@@ -602,6 +615,56 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         </g>
       ))}
 
+      {/* --- the reverse coves ----------------------------------------------
+          THE SLOT ITSELF, and the tape inside it is drawn by the accents layer
+          below like every other run. Two marks for one detail, exactly as an
+          ordinary cove gets two — the setting-out line and the tape — because
+          they are two different things to set out: the plasterer builds the slot
+          and the electrician runs the tape down the middle of it.
+
+          A BAND AND NOT A LINE. Eight inches is the specification, and drawing
+          it as a line would throw away the one dimension the rule is about. So
+          it is a filled band with its inner lip drawn heavier: the lip is the
+          edge that gets set out, and the wall side of it is the wall.
+
+          FILLED IN THE FITTINGS' OWN BLUE, and solidly enough to read as a
+          filled shape rather than as a rectangle with a tint in it. Every other
+          blue on this sheet is a fitting or a selection, and that is exactly
+          what this is: eight inches of ceiling that is now lighting. It is still
+          transparent, because the plan's own line work — the wall, the door
+          jamb, whatever the slot is set out against — has to stay readable
+          underneath it. A solid band would hide the very edges it is dimensioned
+          from.
+
+          IT STOPS AT A DOOR, and that is not this file's doing: the geometry
+          arrives already cut into one band per wall segment. See wallSegments in
+          reverseCove.js.
+
+          UNDER `layers.accents`, with the tape it holds. The band without the
+          strip is a rectangle nobody can interpret, and the strip without the
+          band is a run floating eight inches off a wall for no visible reason.
+          They are one fitting and they hide together. */}
+      {layers.accents && reverseCoves.map((c) => {
+        const horizontal = c.horizontal;
+        // The inner lip: the edge away from the wall. `wall` says which side of
+        // the band the wall is on, so the lip is the other one.
+        const lip = c.wall === 'top' ? [{ x: c.rect.x0, y: c.rect.y1 }, { x: c.rect.x1, y: c.rect.y1 }]
+          : c.wall === 'bottom' ? [{ x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x1, y: c.rect.y0 }]
+          : c.wall === 'left' ? [{ x: c.rect.x1, y: c.rect.y0 }, { x: c.rect.x1, y: c.rect.y1 }]
+          : [{ x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x0, y: c.rect.y1 }];
+        void horizontal;
+        return (
+          <g key={c.id} pointerEvents="none">
+            <rect x={c.rect.x0} y={c.rect.y0}
+              width={c.rect.x1 - c.rect.x0} height={c.rect.y1 - c.rect.y0}
+              fill={C.lit} fillOpacity="0.30"
+              stroke={C.lit} strokeWidth={lw} strokeOpacity="0.55" />
+            <line x1={lip[0].x} y1={lip[0].y} x2={lip[1].x} y2={lip[1].y}
+              stroke={C.lit} strokeWidth={lw * 1.8} strokeOpacity="0.9" />
+          </g>
+        );
+      })}
+
       {/* --- accent lighting -----------------------------------------------
           THE FITTING IS THE DRAWING, the box is the working. A strip is a solid
           red line with real ends, because the whole reason the model was asked
@@ -832,20 +895,51 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 fixing was a run on the wrong wall, and no amount of sliding
                 along the wrong wall gets you off it. The old constraint is
                 still there as a snap, and on Shift as a hard axis lock. */}
+            {/* A DERIVED RUN GETS ENDS AND NOTHING ELSE.
+                A reverse cove is a slot at a wall and a shelf strip is inside
+                joinery: neither is a thing somebody placed, so neither can be
+                picked up and put somewhere else — what a person legitimately
+                wants to change is HOW LONG it is. So the body handle is not
+                offered, and the ends resize along the run's own axis. Offering a
+                move handle that quietly refused would be worse than offering
+                none: the cursor would promise a gesture the drawing will not
+                make.
+                The cursor says which way it goes, which is the only hint a grip
+                on a fitting can give before the drag starts. */}
             {a.run && onAccPointerDown && !a.rejected && (
               <g>
+                {/* THE BODY LINE COMES FIRST, WHATEVER IT DOES, AND THAT IS
+                    NOT A STYLE CHOICE — IT IS THE WHOLE BUG.
+                    SVG hit-testing is by PAINT ORDER: the last thing painted at
+                    a point is the thing that gets the pointer. This line is 1.6
+                    grips wide and runs straight through both of them, so drawn
+                    after the grips it swallows every press on them. A derived
+                    run's grips looked completely correct, highlighted on hover,
+                    showed a resize cursor — and could not be dragged, because
+                    every pointerdown was landing on the select line underneath
+                    the pointer instead. The ordinary strip never had the problem
+                    because its move line was always first.
+                    So both variants are drawn here, before the grips, and the
+                    only difference between them is what the press means. */}
                 <line x1={a.run[0].x} y1={a.run[0].y} x2={a.run[1].x} y2={a.run[1].y}
                   stroke="transparent" strokeWidth={AH * 1.6} strokeLinecap="round"
-                  className="hit" style={{ cursor: 'move' }}
-                  onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'move')} />
+                  className="hit"
+                  style={{ cursor: a.derived ? 'pointer' : 'move' }}
+                  onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id,
+                    a.derived ? 'select' : 'move')} />
                 {/* ON HOVER AS WELL AS ON SELECTION. A run you can drag but
                     whose handles only appear once you have already clicked it
                     is a run that looks fixed until you guess otherwise. The
-                    pointer being on it is enough of a question to answer. */}
+                    pointer being on it is enough of a question to answer.
+                    A derived run has no body to hover, so its hit area IS the
+                    pair of grips — they are drawn whenever it is selected, and
+                    the strip itself selects on a click like any other. */}
                 {(accSel || hot === a.id) && a.run.map((q, k) => (
                   <rect key={k} x={q.x - AH / 2} y={q.y - AH / 2} width={AH} height={AH}
                     rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
-                    className="hit" style={{ cursor: 'move' }}
+                    className="hit"
+                    style={{ cursor: a.derived
+                      ? (a.horizontal ? 'ew-resize' : 'ns-resize') : 'move' }}
                     onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, k === 0 ? 'end0' : 'end1')} />
                 ))}
               </g>
@@ -1008,13 +1102,29 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // it. Under the pointer is the right moment: it is asked about one
         // fitting at a time, and it costs the sheet nothing the rest of the
         // time.
-        const surf = hot === sp.id ? surfaces.find((sf) => sf.id === sp.surfaceId) : null;
+        //
+        // `sp.highlight` IS THE RECT, whatever the spot is aimed at. It used to
+        // look the surface up by id, which worked while a task surface was the
+        // only thing a spot could point at — an art spot points at a slice of a
+        // wall element, which is in a different list entirely, and would have
+        // hovered as nothing at all. The spot carries what it is lighting, so
+        // this does not have to know how many kinds of target exist.
+        const hl = hot === sp.id
+          ? (sp.highlight ?? surfaces.find((sf) => sf.id === sp.surfaceId)?.rect ?? null)
+          : null;
         return (
-          <g key={sp.id} {...feel(sp.id, specsFor('spot'))}>
-            {surf && (
+          // THE SAME SYMBOL FOR BOTH, deliberately. A spot aimed at a painting
+          // and one aimed at a desk are the same fitting in the same ceiling and
+          // an installer sets them out identically; inventing a second glyph
+          // would say they are different things on site, which they are not.
+          // What differs is the OPTIC, and that is a specification rather than a
+          // drawing — so it is on the hover card and on the schedule, which is
+          // where specifications belong. `sp.fixture` names the catalogue line.
+          <g key={sp.id} {...feel(sp.id, specsFor(sp.fixture || 'spot'))}>
+            {hl && (
               <g pointerEvents="none">
-                <rect x={surf.rect.x0} y={surf.rect.y0}
-                  width={surf.rect.x1 - surf.rect.x0} height={surf.rect.y1 - surf.rect.y0}
+                <rect x={hl.x0} y={hl.y0}
+                  width={hl.x1 - hl.x0} height={hl.y1 - hl.y0}
                   rx={lw * 2} fill={C.lit} fillOpacity="0.10"
                   stroke={C.lit} strokeWidth={lw * 1.4} strokeOpacity="0.55"
                   strokeDasharray={`${lw * 5} ${lw * 4}`} />

@@ -66,7 +66,13 @@ export default function CeilingPalette({ armed, onArm, disabled = false }) {
           <button key={t.id} type="button" disabled={disabled}
             className={'palette-btn' + (on ? ' on' : '')}
             title={t.label}
-            style={on ? { color: t.colour, borderColor: t.colour } : { color: t.colour }}
+            /* NO INLINE COLOUR ANY MORE. `t.colour` is the ink the GHOST is
+               drawn in on the plan — an obstacle is somebody else's object and
+               stays grey there — and it was doing double duty as the glyph's
+               colour here. Two jobs, one field: turning the palette blue would
+               have turned the ghost blue with it. The button's colour is CSS
+               now (`.palette-btn`), and `t.colour` means the one thing again. */
+            style={on ? { borderColor: 'currentColor' } : undefined}
             onClick={() => onArm(on ? null : t.id)}>
             <svg viewBox="0 0 24 24" width="26" height="26"
               stroke="currentColor" strokeWidth="1.3">
