@@ -33,6 +33,10 @@ import { roomSnapshot, requestAccents, toPlanRect } from './lib/accentMask.js';
 import { BED_SOURCES, splitByProvider, label as labelBeds, bedsIn, contestFor, judgeNote,
          applyVerdict } from './lib/bedFit.js';
 import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
+import { WALL_BY_ID, joinPlacements } from './lib/wallPrompt.js';
+import { gridFor, anchorLines, cellsToPlanPx, cellsToRect } from './lib/wallGrid.js';
+import { fitAll, RENDER_DEFAULTS } from './lib/renderImage.js';
+import RenderPassPanel from './components/RenderPassPanel.jsx';
 import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone, RUN_EDIT } from './lib/accentPlace.js';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
          sizeLabel, radiusFt, clampFt, resizeFromCorner, rotateTo, isRect,
@@ -134,7 +138,7 @@ const STAGE_SAY = {
  */
 const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: true,
   lights: true, labels: false, fan: true, zones: true, accents: true,
-  objects: true, spots: true };
+  objects: true, spots: true, wallitems: true };
 
 export default function App({
   planName = null, initialFile = null, restore = null, saveState = 'idle',
@@ -337,6 +341,35 @@ export default function App({
   // whenever an answer is strange, and a crop that is off the room or washed
   // out the wrong way is invisible in a list of zones.
   const [accentShot, setAccentShot] = useState(null);
+
+  // --- the render pass ------------------------------------------------------
+  //
+  // THE ONE PASS THAT DOES NOT READ THE DRAWING. Everything else in this app
+  // starts from the plan; a plan is a horizontal cut and cannot say that there
+  // is fluted panelling behind the bed. So this one takes PHOTOGRAPHS — renders,
+  // views — of a space, reads the wall features off them in English, and then
+  // puts that English back onto the plan against a 1ft grid. Two model calls,
+  // both in wallPrompt.js, which is also where both prompts live.
+  //
+  // Keyed by outline id like the accent pass, and for the same reason: the
+  // renders somebody uploaded for Bedroom 2 must still be there after they click
+  // through to Bedroom 3 and back.
+  const [renders, setRenders] = useState({});          // roomId -> [shrunk render]
+  const [wallResults, setWallResults] = useState({});  // roomId -> { elements: [...] }
+  const [wallState, setWallState] = useState({ status: 'idle', roomId: null });
+  // The gridded crop, made eagerly so the panel can show it — same argument as
+  // accentShot, one step stronger: a grid drawn the wrong way up is invisible in
+  // a list of cell references and obvious in a thumbnail with numbers on it.
+  const [wallShot, setWallShot] = useState(null);
+  // WHAT WENT AND WHAT CAME BACK, per room, so the panel can put both on screen.
+  //
+  // NOT IN `wallResults`, AND THEREFORE NOT SAVED. The results are a few hundred
+  // bytes of cells that must survive a reload; a transcript is several kilobytes
+  // of prompt and worksheet per room, it describes ONE run rather than the state
+  // of the plan, and it would be stale the moment anything was re-analysed. It
+  // belongs to the session, like the renders it came from. See planState.js.
+  const [wallTranscripts, setWallTranscripts] = useState({});
+
   // Editing what the model proposed. A fitting is a starting point, not a
   // verdict — see the note in accentPlace.js.
   // --- task surfaces --------------------------------------------------------
@@ -446,6 +479,8 @@ export default function App({
     setRoomState({ status: 'idle' });
     setAccentRoomId(null); setAccentResults({});
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
+    setRenders({}); setWallResults({}); setWallTranscripts({});
+    setWallState({ status: 'idle', roomId: null }); setWallShot(null);
     setSelAccId(null); setAccDrag(null);
     // BACK TO THE PROJECT'S ANSWER, NOT TO NULL. This runs on every file load,
     // including the one that opens a saved plan, and blanking it here would put
@@ -632,6 +667,10 @@ export default function App({
       setCeilingObjs, setChunkPicks, setCeilingKinds, setCovePicks,
       setAccentResults, setAccentDismissed, setManualAccents,
       setSurfaceResults, setSurfaceDismissed, setManualSurfaces,
+      // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
+      // are a few hundred bytes of JSON and the renders are megabytes of
+      // somebody's photographs, which do not belong in a jsonb column.
+      setWallResults,
       // MERGED OVER THE DEFAULTS, not assigned. See LAYER_DEFAULTS.
       setLayers: (saved) => setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
       setZoom, setView,
@@ -1515,6 +1554,218 @@ export default function App({
     return { shot, meta: payload.meta, result: { ...res, surfaces } };
   }, [source, img, wallLayerSet, pxPerFt]);
 
+  // --- the render pass, room by room ----------------------------------------
+  //
+  // TWO CALLS AND THE JOIN BETWEEN THEM. See wallPrompt.js's header for why they
+  // are two: recognition off a photograph and localisation on a plan are
+  // different jobs, they fail differently, and asked together a failure in
+  // either is one indistinguishable silence.
+
+  /** The 1ft grid for the space the panel is looking at. Null with no scale. */
+  const wallGrid = useMemo(
+    () => (focus?.plan?.ok ? gridFor(focus.plan.polygonPx, pxPerFt) : null),
+    [focus, pxPerFt]);
+
+  /**
+   * The ANCHORS block for PROMPT 02, built from what this app already knows.
+   *
+   * The prompt as written carries four anchors with their answers filled in by
+   * hand — bed wall, window wall, door, TV unit. Filling those in per room per
+   * plan is not a feature, so they are DERIVED: the accent pass has already told
+   * us where the bed and the TV unit are in plan pixels, and the door detector
+   * has already found the doors. Nothing that was not actually detected is
+   * asserted; see anchorLines() for what the block says when nothing was.
+   */
+  const wallAnchors = useCallback((r, grid) => anchorLines({
+    furniture: accentResults[r.id]?.furniture ?? [],
+    // `doors` carry their rect in the SOURCE's pixels, which is the same space
+    // the room polygons and the grid are in — see scaleFromDoor, which divides
+    // one by the other to get px/ft. No conversion, and none wanted: a second
+    // coordinate space here is a second thing to get the wrong way round.
+    doors,
+    grid,
+  }), [accentResults, doors]);
+
+  /**
+   * The gridded crop, made ahead of the call so the panel can show it.
+   *
+   * Same argument as accentShot and one step stronger. The grid encodes a
+   * coordinate system — [1,1] bottom-left, y counting UP — and a grid drawn the
+   * wrong way up produces confident answers that are all mirrored. That is
+   * invisible in a list of cell references and instantly obvious in a thumbnail
+   * with the numbers running the wrong way.
+   */
+  useEffect(() => {
+    if (!source || !focus?.plan?.ok || !wallGrid) { setWallShot(null); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const shot = await roomSnapshot({
+          source, img,
+          polygonPx: focus.plan.polygonPx,
+          lightsPx: focus.plan.lightsPx,
+          wallLayers: wallLayerSet,
+          grid: wallGrid,
+        });
+        if (alive) setWallShot({ ...shot, roomId: focus.id });
+      } catch (err) {
+        console.warn('[render pass] could not build the gridded crop:', err);
+        if (alive) setWallShot(null);
+      }
+    })();
+    return () => { alive = false; };
+  }, [source, img, focus, wallLayerSet, wallGrid]);
+
+  /**
+   * THE PASS ITSELF, for one room. No state written in here — same rule as
+   * computeAccents, and for the same reason.
+   *
+   * `onPhase` exists because this is the longest-running thing in the app by
+   * some margin: two reasoning calls on high effort, one of them looking at
+   * several photographs. A single "working…" for ninety seconds is
+   * indistinguishable from a hang, and the two phases genuinely mean different
+   * things to somebody waiting.
+   */
+  const computeWallItems = useCallback(async (r, views,
+                                              { onPhase = () => {}, onCall = () => {} } = {}) => {
+    const grid = gridFor(r.plan.polygonPx, pxPerFt);
+    if (!grid) throw new Error('No 1ft grid could be laid in this space — is the scale set?');
+    if (!views?.length) throw new Error('No renders to look at.');
+
+    const roomInfo = {
+      name: r.outline.name || null,
+      widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
+    };
+
+    // --- PROMPT 01. The renders in, English out. No plan, no coordinates.
+    onPhase('reading');
+    const first = await requestAccents({
+      plans: views, task: 'wallitems', room: roomInfo,
+    });
+    // REPORTED AS SOON AS IT LANDS, not returned at the end. If the SECOND call
+    // then throws, this is the transcript that says whether the first one was
+    // fine — which is the first question anybody asks about a failed run, and it
+    // would be lost with the exception if both were handed back together.
+    onCall('first', first.meta);
+    const elements = (first.result?.elements ?? []).map((e, i) => ({
+      ...e,
+      id: `wall-${r.id}-${i}`,
+      roomId: r.id,
+      label: WALL_BY_ID[e.type]?.label || e.type,
+      colour: WALL_BY_ID[e.type]?.colour || '#666',
+    }));
+
+    // NOTHING SEEN IS AN ANSWER, AND IT SHORT-CIRCUITS. Sending an empty array
+    // into PROMPT 02 would spend a second reasoning call to be told there is
+    // nothing to place, and buildGridRequest refuses it for exactly that reason.
+    if (!elements.length) {
+      return { grid, shot: null, meta: { first: first.meta, second: null },
+               result: { elements: [], skipped: first.result?.skipped ?? [], placedNone: false } };
+    }
+
+    // --- PROMPT 02. The plan with a grid on it, plus that English, cells out.
+    onPhase('gridding');
+    const shot = await roomSnapshot({
+      source, img, polygonPx: r.plan.polygonPx,
+      lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet, grid,
+    });
+
+    onPhase('placing');
+    const second = await requestAccents({
+      plan: shot, task: 'wallgrid', room: roomInfo,
+      elements, anchorLines: wallAnchors(r, grid), grid,
+    });
+    onCall('second', second.meta);
+
+    // THE JOIN, AND IT IS DELIBERATELY FORGIVING. Step 5 asks for the original
+    // array back unchanged, so index order is the first thing tried; a model
+    // that reordered or dropped one is matched on type-and-wall instead. What
+    // is NOT done is inventing cells for an element that came back without
+    // them — see the panel: "seen but not placed" is a real, legible state.
+    const joined = joinPlacements(elements, second.result?.placed ?? []);
+
+    return {
+      grid, shot,
+      meta: { first: first.meta, second: second.meta },
+      result: {
+        elements: joined,
+        skipped: [...(first.result?.skipped ?? []), ...(second.result?.skipped ?? [])],
+        // The one distinction the panel cannot draw for itself: the second call
+        // came back with an array that placed NOTHING, versus the second call
+        // came back with no array at all. Both leave every element unplaced.
+        placedNone: !second.result?.matched,
+      },
+    };
+  }, [source, img, wallLayerSet, pxPerFt, wallAnchors]);
+
+  /** The button. Shrinks whatever was dropped in, runs the pass, writes state. */
+  const runWallPass = useCallback(async () => {
+    const r = focus;
+    const views = renders[r?.id] ?? [];
+    if (!r?.plan?.ok || !views.length) return;
+    setWallState({ status: 'running', roomId: r.id, phase: 'reading' });
+    // A FRESH TRANSCRIPT FOR THIS RUN, cleared up front rather than merged into.
+    // Leaving the last run's second call sitting there while this run's first
+    // call is still in flight is a dialog showing two halves of two different
+    // runs, which is worse than showing nothing.
+    setWallTranscripts((m) => ({ ...m, [r.id]: {} }));
+    const record = (which, meta) => setWallTranscripts((m) => ({
+      ...m,
+      [r.id]: {
+        ...(m[r.id] ?? {}),
+        [which]: {
+          model: meta?.model ?? null, ms: meta?.ms ?? null,
+          usage: meta?.usage ?? null, bytes: meta?.bytes ?? null,
+          sentImages: meta?.sentImages ?? meta?.images ?? 0,
+          prompt: meta?.prompt ?? '',
+          // `fullReply` where the route sent one — the render-pass tasks do —
+          // and the 900-character head slice as the fallback, so a route that
+          // has not been redeployed yet degrades to something rather than blank.
+          reply: meta?.fullReply ?? meta?.reply ?? '',
+        },
+      },
+    }));
+    const t0 = Date.now();
+    try {
+      const out = await computeWallItems(r, views, {
+        onPhase: (phase) => setWallState((st) =>
+          (st.roomId === r.id ? { ...st, phase } : st)),
+        onCall: record,
+      });
+      setWallResults((m) => ({ ...m, [r.id]: out.result }));
+      if (out.shot) setWallShot({ ...out.shot, roomId: r.id });
+      setWallState({ status: 'done', roomId: r.id, ms: Date.now() - t0 });
+      console.log(`[render pass] ${r.outline.name || r.id}:`,
+        `${out.result.elements.length} element(s),`,
+        `${out.result.elements.filter((e) => e.cells?.length).length} placed`,
+        out.meta);
+    } catch (err) {
+      console.warn('[render pass] failed', err);
+      setWallState({ status: 'error', roomId: r.id, error: String(err.message || err),
+                     ms: Date.now() - t0 });
+    }
+  }, [focus, renders, computeWallItems]);
+
+  /** Files in -> downscaled renders on the selected space. See renderImage.js
+   *  for why nothing that arrives here is ever sent at the size it arrived. */
+  const addRenders = useCallback(async (files) => {
+    const r = focus;
+    if (!r) return;
+    setWallState({ status: 'running', roomId: r.id, phase: 'shrinking' });
+    try {
+      const have = renders[r.id] ?? [];
+      const { renders: shrunk, notes } = await fitAll(files);
+      // THE CAP IS RENDERIMAGE'S NUMBER, NOT A SECOND ONE HERE. fitAll() already
+      // refuses more than this in a single drop; this is the same limit applied
+      // to a drop that ARRIVES IN TWO GOES, and two constants that must agree
+      // is one constant with a bug waiting in it.
+      setRenders((m) => ({ ...m, [r.id]: [...have, ...shrunk].slice(0, RENDER_DEFAULTS.maxRenders) }));
+      setWallState({ status: 'idle', roomId: r.id, notes });
+    } catch (err) {
+      setWallState({ status: 'error', roomId: r.id, error: String(err.message || err) });
+    }
+  }, [focus, renders]);
+
   /** What kind of space is it? One small call, one word back. */
   const computeRoomType = useCallback(async (r, { reuseShot = null } = {}) => {
     const shot = reuseShot ?? await roomSnapshot({
@@ -1885,6 +2136,44 @@ export default function App({
     return [...out, ...manualAccents.filter(
       (m) => live.has(m.roomId) && !accentDismissed.includes(m.id))];
   }, [rooms, accentResults, accentDismissed, manualAccents]);
+
+  /**
+   * What the canvas draws for the render pass: every placed wall feature, in
+   * plan pixels.
+   *
+   * THE GRID IS RECOMPUTED HERE RATHER THAN STORED WITH THE RESULT, and that is
+   * the same argument as `runFt` in computeAccents. A grid is a memo over the
+   * room's polygon and the scale; store it on the answer and it starts lying the
+   * moment somebody drags an outline corner or renames the door that sets the
+   * scale — the cells would then be drawn against a grid the room no longer has.
+   * Derived every render, it moves with the room, which is what anybody would
+   * expect of a mark that says "there is panelling along this wall".
+   */
+  const wallCellsPx = useMemo(() => {
+    const out = [];
+    for (const r of rooms) {
+      const res = wallResults[r.id];
+      if (!res?.elements?.length || !r.plan?.ok) continue;
+      const grid = gridFor(r.plan.polygonPx, pxPerFt);
+      if (!grid) continue;
+      for (const e of res.elements) {
+        if (!e.cells?.length) continue;
+        const rect = cellsToRect(e.cells, grid);
+        if (!rect) continue;
+        out.push({
+          id: e.id || `${r.id}-${out.length}`, roomId: r.id, type: e.type,
+          label: e.label || WALL_BY_ID[e.type]?.label || e.type,
+          colour: e.colour || WALL_BY_ID[e.type]?.colour || '#666',
+          rect, rects: cellsToPlanPx(e.cells, grid),
+          // Which way the run lies, so the cell ticks are drawn ACROSS it
+          // rather than along it. A run one cell long is called horizontal and
+          // draws no ticks either way.
+          horizontal: e.start && e.end ? e.start.y === e.end.y : true,
+        });
+      }
+    }
+    return out;
+  }, [rooms, wallResults, pxPerFt]);
 
   /**
    * The layout, in the one number a lighting drawing is actually judged on.
@@ -3796,13 +4085,14 @@ export default function App({
     ceilingObjs, chunkPicks, ceilingKinds, covePicks,
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces,
+    wallResults,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
        detections, dismissed, bedVerdicts, provider, zones, doors,
        ceilingObjs, chunkPicks, ceilingKinds, covePicks,
        accentResults, accentDismissed, manualAccents,
-       surfaceResults, surfaceDismissed, manualSurfaces, layers, zoom, view]);
+       surfaceResults, surfaceDismissed, manualSurfaces, wallResults, layers, zoom, view]);
 
   const stats = useMemo(() => statsFrom({ totals, rooms, boq }), [totals, rooms, boq]);
   const status = useMemo(() => statusFrom({ outlines, litIds, totals }), [outlines, litIds, totals]);
@@ -4104,6 +4394,7 @@ export default function App({
               selAccId={readOnly ? null : selAccId}
               onAccPointerDown={readOnly ? null : accPointerDown}
               surfaces={surfacesPx} taskSpots={taskSpotsPx}
+              wallCells={wallCellsPx}
               measure={null} onCanvasClick={readOnly ? null : onCanvasClick}
               /* Crosshair only where a click would actually do something. Off
                  the ceiling it reverts to a pointer, which is the cursor's job:
@@ -4688,6 +4979,44 @@ export default function App({
             )}
           </div>
 
+          {/* --- THE RENDER PASS -------------------------------------------
+              THE ONE SECTION IN THIS PANEL THAT TAKES AN INPUT NOBODY HAS GIVEN
+              THE APP YET. Everything above works off the drawing; this works off
+              photographs of the finished room, which only the person doing the
+              job has. So it stays a manual, per-space step rather than joining
+              the pipeline: there is nothing for the pipeline to run it ON until
+              somebody uploads something.
+
+              It sits under Additional lighting because that is what it is FOR —
+              a panelled wall or a run of shelves is a thing to graze, and the
+              next step is the lighting responding to what this marks out. */}
+          <RenderPassPanel
+            room={focus} grid={wallGrid} pxPerFt={pxPerFt}
+            renders={focus ? (renders[focus.id] ?? []) : []}
+            onAddFiles={addRenders}
+            onRemoveRender={(i) => focus && setRenders((m) => ({
+              ...m, [focus.id]: (m[focus.id] ?? []).filter((_, k) => k !== i) }))}
+            onClearRenders={() => focus && setRenders((m) => {
+              const n = { ...m }; delete n[focus.id]; return n; })}
+            /* THE SHOT IS SHOWN ONLY FOR THE ROOM IT IS OF. It is rebuilt
+               asynchronously when the selection changes, so for a beat after a
+               click it is still the last room's — and a thumbnail of the wrong
+               room under a heading naming this one is worse than no thumbnail. */
+            shot={wallShot?.roomId === focus?.id ? wallShot : null}
+            state={wallState.roomId === focus?.id ? wallState : { status: 'idle' }}
+            result={focus ? (wallResults[focus.id] ?? null) : null}
+            transcript={focus ? (wallTranscripts[focus.id] ?? null) : null}
+            onRun={runWallPass}
+            onClear={() => {
+              if (!focus) return;
+              setWallResults((m) => { const n = { ...m }; delete n[focus.id]; return n; });
+              // THE TRANSCRIPT GOES WITH THE RESULT. It is the working for an
+              // answer that is no longer on the drawing, and a dialog offering
+              // the reasoning behind marks somebody has just cleared is a
+              // straightforward way to make them doubt what they are looking at.
+              setWallTranscripts((m) => { const n = { ...m }; delete n[focus.id]; return n; });
+            }} />
+
           <div className="sec">
             <h3>View</h3>
             {/* THE BUTTONS ZOOM ABOUT THE MIDDLE OF WHAT IS ON SCREEN, not
@@ -4721,7 +5050,8 @@ export default function App({
             {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
               ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
               ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
-              ['accents', 'Accent lighting'], ['spots', 'Directional spots']].map(([k, l]) => (
+              ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
+              ['wallitems', 'Wall features']].map(([k, l]) => (
               <label className="check" key={k}><input type="checkbox" checked={layers[k]} onChange={toggle(k)} />{l}</label>
             ))}
           </div>

@@ -192,5 +192,79 @@ console.log('\n-- `plan` and `plans` are the same wire --');
   ok(viaList.json.meta.images === 1, 'and counts it as one');
 }
 
+console.log('\n-- the render pass: two tasks on one route --');
+{
+  // PROMPT 01. The images are RENDERS, not a plan crop, and the reply is a bare
+  // top-level array with a sentence in front of it — the exact shape that made
+  // the shared extractJson() return null. See elementsFromReply.
+  stubOpenAI('Here is what I can see:\n[{"type":"Wall Panelling","wall":"the wall behind the bed",'
+    + '"location":"full width of the bed","dimension":"4ft high and 9ft wide","confidence":0.9}]');
+  const { code, json } = await call({ plans: [PLAN, PLAN], task: 'wallitems', room: ROOM });
+  ok(code === 200, `200: ${code}`);
+  ok(json.result.elements.length === 1, `one element back: ${json.result.elements.length}`);
+  ok(json.result.elements[0].type === 'panelling', 'normalised on the way out');
+  ok(json.meta.found === 1, 'and `found` counts elements, not furniture');
+  ok(json.meta.images === 2, 'both views went');
+  ok(sent.messages[0].content.filter((c) => c.type === 'image_url').length === 2,
+    'as two images in ONE message — "is this the same painting twice" needs both in view');
+  ok(!sent.response_format,
+    'no response_format: this answer is a top-level ARRAY and json_object forbids one');
+}
+{
+  // PROMPT 02. A worksheet and THEN the array, which is what the prompt asks
+  // for and what no other task on this route produces.
+  stubOpenAI('Step 1. W1 top wall, y = 10, x from 1 to 12.\nStep 4. Self-check: OK.\nStep 5.\n'
+    + '[{"type":"panelling","wall":"the wall behind the bed","wall_ref":"W1",'
+    + '"start_cell":[2,10],"end_cell":[10,10]}]');
+  const { code, json } = await call({
+    plan: PLAN, task: 'wallgrid', room: ROOM,
+    elements: [{ type: 'panelling', wall: 'the wall behind the bed',
+                 location: 'full width of the bed', dimension: '4ft high and 9ft wide',
+                 // Fields the browser carries that the prompt must not see.
+                 id: 'wall-x-0', colour: '#5F6B57', confidence: 0.9 }],
+    anchorLines: '   - Bed headboard wall = the top wall',
+    grid: { cols: 12, rows: 10, cellFt: 1 },
+  });
+  ok(code === 200, `200: ${code}`);
+  ok(json.result.placed.length === 1, 'the array is found past the worksheet');
+  ok(json.result.placed[0].cells.length === 9, '9 cells, so the run is the right length');
+  const text = sent.messages[0].content.find((c) => c.type === 'text').text;
+  ok(/y = 10, x from 1 to 12/.test(text), 'the prompt was filled in with THIS grid');
+  ok(/Bed headboard wall = the top wall/.test(text), 'and with the anchors the browser derived');
+  ok(!/wall-x-0|#5F6B57|confidence/.test(text),
+    'the pasted array is the four fields the prompt names and nothing else');
+
+  // THE TRANSCRIPT. The dialog behind "Show the prompts & replies" is fed from
+  // here, and the two things it needs are the two things the browser cannot
+  // reconstruct: the prompt AS FILLED IN, and the reply IN FULL — the worksheet
+  // runs past the 900-character head slice every other task settles for, and the
+  // array it is asked for is at the END of it.
+  ok(json.meta.prompt === text, 'meta.prompt is the prompt that actually went');
+  ok(/Step 5\.\n\[\{"type":"panelling"/.test(json.meta.fullReply),
+    'meta.fullReply reaches the array past the worksheet, not just the head of it');
+  ok(json.meta.sentImages === 1, 'and says how many pictures went with it');
+  ok(!/data:image|base64/.test(JSON.stringify(json.meta)),
+    'and no image is echoed back to the sender that made it');
+}
+{
+  // AND NOT ON THE OTHER FOUR TASKS. They run two at a time over every room on a
+  // sheet; a few kilobytes of prompt on each would be a few kilobytes times
+  // sixteen for something nothing reads.
+  stubOpenAI('{"type":"bedroom","confidence":0.9}');
+  const { json } = await call({ plan: PLAN, task: 'roomtype', projectId: 'residential' });
+  ok(json.meta.prompt === undefined && json.meta.fullReply === undefined,
+    'the transcript is not sent for the whole-plan tasks');
+  ok(typeof json.meta.reply === 'string', 'which still get the short reply they always had');
+}
+{
+  // A second call with nothing to place is a reasoning call spent to be told
+  // so. buildGridRequest refuses it, and a refusal from a prompt builder is a
+  // caller error — a 400, like an unknown project id.
+  stubOpenAI('[]');
+  const { code } = await call({ plan: PLAN, task: 'wallgrid', elements: [],
+                                grid: { cols: 12, rows: 10, cellFt: 1 } });
+  ok(code === 400, `an empty element list is a 400, not a wasted call: ${code}`);
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\nall good');
 process.exit(fail ? 1 : 0);

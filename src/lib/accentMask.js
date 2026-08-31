@@ -148,7 +148,7 @@ function loadImage(url) {
  * they end up out of step after a re-crop.
  */
 export async function roomSnapshot({ source, img, polygonPx, lightsPx = [], wallLayers = null,
-                                     boxes = [], badge = null, opts = {} } = {}) {
+                                     boxes = [], badge = null, grid = null, opts = {} } = {}) {
   const o = { ...MASK_DEFAULTS, ...opts };
   if (!source || !polygonPx?.length) throw new Error('No space to look at.');
 
@@ -215,6 +215,70 @@ export async function roomSnapshot({ source, img, polygonPx, lightsPx = [], wall
   ctx.lineWidth = Math.max(1.2, outW / 500);
   ctx.stroke();
   ctx.restore();
+
+  // --- the 1ft grid, for the render pass and nothing else
+  //
+  // DRAWN HERE RATHER THAN IN A SECOND SNAPSHOT FUNCTION, because everything
+  // above it — the crop, the square-ish padding, the wash, the green boundary —
+  // is exactly what the render pass wants too, and a second copy of it would be
+  // a second thing to keep in step with this one. `grid` is null for every
+  // other caller and nothing is drawn.
+  //
+  // THE LABELS ARE THE POINT, not the lines. openaiDetect.js's header makes the
+  // case at length: reading a number printed next to a thing beats estimating a
+  // distance to it, and it is the one arm of that experiment worth reviving —
+  // here it costs nothing, because a room is ten to twenty cells across rather
+  // than the sixty a whole sheet would need, so the labels stay legible and the
+  // line work stays visible underneath.
+  //
+  // Y COUNTS UP. Row 1 is the BOTTOM row, exactly as PROMPT 02 defines it, and
+  // the numbers down the left edge run 1 at the bottom to `rows` at the top.
+  // Get this backwards and every answer comes back mirrored, confidently.
+  if (grid?.cols > 0 && grid?.rows > 0) {
+    const gx0 = (grid.x0 - crop.x0) * s, gy0 = (grid.y0 - crop.y0) * s;
+    const gx1 = (grid.x1 - crop.x0) * s, gy1 = (grid.y1 - crop.y0) * s;
+    const cw2 = (gx1 - gx0) / grid.cols, ch2 = (gy1 - gy0) / grid.rows;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(37,99,235,0.30)';
+    ctx.lineWidth = Math.max(0.6, outW / 1400);
+    ctx.beginPath();
+    for (let i = 0; i <= grid.cols; i++) {
+      const x = gx0 + i * cw2;
+      ctx.moveTo(x, gy0); ctx.lineTo(x, gy1);
+    }
+    for (let j = 0; j <= grid.rows; j++) {
+      const y = gy0 + j * ch2;
+      ctx.moveTo(gx0, y); ctx.lineTo(gx1, y);
+    }
+    ctx.stroke();
+    // The grid's own outer edge, heavier: it is the [1,1]..[cols,rows] extent,
+    // and "which line is the wall" is the question the whole answer hangs on.
+    ctx.strokeStyle = 'rgba(37,99,235,0.75)';
+    ctx.lineWidth = Math.max(1.2, outW / 600);
+    ctx.strokeRect(gx0, gy0, gx1 - gx0, gy1 - gy0);
+    ctx.restore();
+
+    // The numbers. Columns along the BOTTOM, rows down the LEFT, both outside
+    // the grid in the margin the crop already leaves — inside, they would sit
+    // on top of the furniture the model is reading the anchors off.
+    const fs = Math.max(7, Math.min(13, Math.min(cw2, ch2) * 0.62));
+    ctx.save();
+    ctx.font = `600 ${fs.toFixed(1)}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+    ctx.fillStyle = 'rgba(37,99,235,0.95)';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let i = 0; i < grid.cols; i++) {
+      ctx.fillText(String(i + 1), gx0 + (i + 0.5) * cw2, gy1 + fs * 0.35);
+    }
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let j = 0; j < grid.rows; j++) {
+      // j = 0 is the TOP row of pixels, which is row `rows` in the prompt's
+      // coordinates. This subtraction is the flip, and it is the only place in
+      // the drawing code it happens.
+      ctx.fillText(String(grid.rows - j), gx0 - fs * 0.35, gy0 + (j + 0.5) * ch2);
+    }
+    ctx.restore();
+  }
 
   // --- the ambient lights already laid out
   const r = Math.max(2.5, outW / 170);
@@ -311,6 +375,7 @@ export function toPlanRect(rect, crop, sent) {
  */
 export async function requestAccents({ plan, plans = null, room = null, ceilingFt = null,
                                        task = 'furniture', projectId = null, counts = null,
+                                       elements = null, anchorLines = null, grid = null,
                                        endpoint = '/api/accents', signal } = {}) {
   const list = (plans && plans.length ? plans : [plan]).filter(Boolean);
   if (!list.length || !list[0]?.base64) throw new Error('No plan image to send.');
@@ -324,6 +389,12 @@ export async function requestAccents({ plan, plans = null, room = null, ceilingF
       // is the whole set. They agree on the first image by construction.
       plan: wire[0], plans: wire,
       room, ceilingFt, task, projectId, counts,
+      // THE RENDER PASS'S TWO EXTRA FIELDS, and they are null for every other
+      // task. `elements` is PROMPT 01's answer on its way into PROMPT 02, and
+      // `anchorLines` plus `grid` are what turn that prompt's {braces} into a
+      // question about THIS room. See wallPrompt.js.
+      elements, anchorLines,
+      grid: grid ? { cols: grid.cols, rows: grid.rows, cellFt: grid.cellFt } : null,
     }),
     signal,
   });

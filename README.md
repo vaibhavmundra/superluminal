@@ -3449,6 +3449,191 @@ The browser console carries the crop as a `data:` URL you can open in a tab, the
 placed runs and points in plan pixels, and — when a run comes back empty — the
 model's own words, which is invisible in the parsed payload.
 
+## The render pass: what the plan cannot show you
+
+A floor plan is a horizontal cut. It can tell you there is a bed against that
+wall; it cannot tell you there is a nine-foot run of fluted panelling behind the
+bed, or three paintings over the console, or open shelving in the alcove. Those
+are on the **walls**, and a wall in plan view is a line.
+
+So this pass does not read the drawing. It reads **renders** — the views the
+designer already has of the finished space — and then puts what it found *back
+onto the plan* so the lighting can respond to it.
+
+Pick a space in the **Spaces** list, drop a couple of views into **Render pass**,
+click **Analyse renders**, and the wall features come back marked out on the
+plan as runs of filled cells.
+
+### Two calls, and they are deliberately not one
+
+|   | asks | gets | of what |
+|---|---|---|---|
+| **PROMPT 01** | what is on the walls | English — type, wall, location, dimension | the renders |
+| **PROMPT 02** | where that is, on this plan | cell references | the plan, gridded |
+
+This is the same split as everywhere else in this app — *the model recognises,
+the code decides* — one step further out. Recognising fluted panelling in a
+photograph and locating it on a floor plan are different jobs, they fail
+differently, and asked in one breath a failure in either comes back as the same
+silence. Split, the panel can show you the English from the first call **even
+for an element the second call could not place**, which is what tells "it saw
+nothing" apart from "it saw it and could not find the wall".
+
+The first call is never asked for a coordinate. It has no coordinate system to
+answer in — a photograph and a floor plan share nothing — so it is asked for
+descriptive phrases tied to what is in the room: *the wall behind the bed*, *the
+wall the wardrobe is on*. Vague compass directions are ruled out in the prompt,
+because they are exactly the ones the second call cannot resolve.
+
+### Both prompts live in one file
+
+**`src/lib/wallPrompt.js`.** That is the whole answer, and it is the file to open
+to tweak either of them:
+
+- **PROMPT 01** is `RENDER_PROMPT_01`, a plain exported string, **verbatim**. The
+  machinery around it — the JSON contract, the key names, the room size — is
+  appended afterwards in `buildRenderPrompt()`, so tightening the machine half
+  never means editing the half that carries the intent.
+- **PROMPT 02** is `gridPrompt02()`, a template with six fill-ins:
+  `{ANCHOR_LINES}`, `{N}` (feet per cell), `{ROWS}`, `{COLS}` and the elements
+  array. `tools/test-wall-pass.mjs` asserts no placeholder survives into a sent
+  prompt.
+
+Nothing else in the app writes prompt text for this pass. `api/accents.js`
+imports these two, so what ships is byte-for-byte what is read there.
+
+### The grid, and the one thing that will bite you
+
+The second call gets the same crop the accent pass sends — one room at full
+contrast, the rest of the sheet washed back — with a **1 ft grid** drawn over it
+and the cell numbers labelled down two edges. The labels are the point, not the
+lines: reading a number printed next to a thing beats estimating a distance to
+it. That is `openaiDetect.js`'s `gridCells` arm, which lost on whole sheets
+because a grid dense enough to be precise buried the line work, and wins here
+because a room is twelve cells across rather than sixty.
+
+**PROMPT 02 counts y upward. Plan pixels count downward.** `[1,1]` is the
+*bottom*-left cell. Get that backwards and every element comes back mirrored
+top-to-bottom — which looks entirely plausible on a rectangular room and is
+wrong for every one of them. The flip happens in exactly two places, both in
+`wallGrid.js`'s `cellRect()` and the label loop that mirrors it, and the test
+file asserts both.
+
+The cells are **not exactly one foot**. A room is `round(widthFt)` cells wide and
+the cell is then `widthPx / cols`, so a 12.4 ft room is twelve cells of 1.03 ft
+rather than twelve of 1.00 ft *and a sliver*. The sliver is the problem: a
+partial cell at the far wall is a cell the model can see and count, so it answers
+`x = 13` on a room the code thinks has twelve columns.
+
+### The anchors are derived, not typed
+
+PROMPT 02's `ANCHORS` block is what ties *"the wall behind the bed"* to a wall of
+a rectangle on a drawing. Written by hand it carries four filled-in answers;
+filling those in per room per plan is not a feature. So they come from what the
+app already detected — the accent pass's furniture and the doors found for the
+scale — in `anchorLines()`. A derived anchor can be wrong and survive it: it is a
+hint in a prompt, not a coordinate, and the model still has the drawing in front
+of it. What does *not* survive is a confident anchor asserted for something never
+detected, so anything without a detection behind it is simply not listed and the
+block says as much.
+
+**Nearest wall is the wrong way to decide which wall, and it is wrong exactly
+where furniture lives: in a corner.** `sideOf()` scored the four gaps and took
+the smallest. A TV unit running the full width of the bottom wall sits in the
+bottom-*left* corner — it touches the bottom wall and the left wall at distance
+zero, the gaps tie, and the tie broke toward the left. The block then said
+`TV unit = the left wall`, PROMPT 02 believed it, put the TV/console zone on the
+left wall, and placed everything referring to it from there. Confident,
+self-consistent, entirely wrong, from one tie-break.
+
+`accentPlace.js`'s `wallForRun` had already met this; the fix is the same idea.
+Don't ask which wall is nearest, ask which walls are **eligible** and then take
+the nearest of those. Furniture pushed against a wall is long along it and
+shallow across it, so only the two walls parallel to its long axis are
+candidates. The bottom-left TV unit is judged against top and bottom only.
+
+**The bed is the exception, and it inverts the rule.** A bed's long axis is
+head-to-foot and the headboard is on a *short* edge, so the headboard wall runs
+*across* that axis — precisely the pair the furniture rule excludes. Hence
+`sideOf(rect, grid, { across: true })` for beds and nothing else. A near-square
+box (a king at 6 x 6.5 ft) has no long axis worth the name and keeps all four
+walls in play, on the same 12% tolerance `wallForRun` uses so the two never
+disagree about what counts as square.
+
+Two of the same thing on one wall collapse to one anchor line; two on different
+walls get numbered, because `Wardrobe = the right wall` directly above
+`Wardrobe = the left wall` reads as a contradiction rather than as a room with
+two wardrobes in it.
+
+### Renders are downscaled before they go
+
+A render out of Lumion is routinely 4000x2250 and eight megabytes; two of them
+base64-encoded is twenty-two megabytes, and `api/accents.js` refuses anything
+over four — as does Vercel, less politely, with a message that names neither
+image. `renderImage.js` decodes each one, draws it into a canvas at 1400px on the
+long edge and re-encodes as JPEG at 0.82, and then **enforces the budget across
+the whole set**, stepping the long edge down until the total fits. Two images
+inside a per-image cap can still be over the body cap together, and that failure
+lands as a 413 that mentions neither.
+
+### The model
+
+This is the one pass reading **photographs** rather than line drawings. Telling
+fluted panelling from a vertically-striped wallpaper is a harder call than
+telling a wardrobe from a TV unit, and the second call has to hold a wall table,
+an anchor table and a self-check at once. So it gets its own model name on its
+own env var — `OPENAI_WALL_MODEL`, defaulting to `WALL_MODEL` in
+`wallPrompt.js` — with `reasoning_effort: high`, and pointing it at something
+better does not move every other call on the sheet.
+
+### What is kept
+
+The elements are kept; the renders are not. The cells are a few hundred bytes of
+JSON per room and cost two reasoning calls to produce, so they go in
+`editor_state` like everything else. The renders are megabytes of somebody's
+photographs, they are an *input*, and they are still on the user's disk — putting
+them in a jsonb column would multiply the row size by a hundred to save a
+drag-and-drop.
+
+```
+[accents 7f2a] -> 812KB x2 — room 1000x1000, task=wallitems, room="Master Bedroom", gpt-5.5
+[accents 7f2a] <- openai 200 in 21430ms
+[accents 7f2a] == 3: panelling 0.90, wall_art 0.80, shelves 0.60
+[accents 9c04] -> 96KB — room 840x840, task=wallgrid, room="Master Bedroom", gpt-5.5
+[accents 9c04] <- openai 200 in 38210ms
+[accents 9c04] == 3: panelling 0.90, wall_art 0.80, shelves 0.60
+[render pass] Master Bedroom: 3 element(s), 3 placed
+```
+
+**Wall features** in the View list turns the marks off.
+
+### Show the prompts & replies
+
+Under the Analyse button, once a run has produced anything. It opens a dialog
+with a tab per call: the prompt **as it actually went** and the model's reply
+**in full**.
+
+Both halves earn their place. Half of PROMPT 02 is filled in at runtime — this
+room's grid, the anchors derived from its furniture and doors, the first call's
+answer pasted in — so reading `wallPrompt.js` does not tell you what was asked
+about *this* room. And PROMPT 02's reply is a worksheet before it is an array:
+the wall table, the anchor table, a line per element and a self-check. That
+worksheet is the model showing its working, and it is the only place the reason a
+run landed on the wrong wall is ever written down. The panel shows the
+conclusion; the dialog shows the argument.
+
+The transcript rides on `meta.prompt` and `meta.fullReply`, **for the render
+pass's two tasks only** — the other four run two at a time over every room on a
+sheet, where a few kilobytes each would be a few kilobytes times sixteen for
+something nothing reads. No image is echoed back: the browser made every picture
+that went and still has all of them.
+
+It is offered while the pass is still running, too. The first call lands a good
+half-minute before the second, and being able to read what it said while the
+second one thinks is the difference between a wait and a hang. Like the renders,
+the transcript is session-only — it describes one run rather than the state of
+the plan, and it goes when the wall features are cleared.
+
 ## Export for CAD: a DXF that lands on the drawing it came from
 
 **Offered only on a DXF**, because it is only meaningful on one. It comes back
@@ -4073,6 +4258,7 @@ node tools/test-vector-flow.mjs       # the whole vector route as App.jsx runs i
 node tools/test-furniture.mjs         # detection -> zones: centres, rescaling, refusals
 node tools/test-detect-api.mjs        # the proxy, network stubbed: refusals, key never leaks
 node tools/test-detect-flow.mjs       # response -> zone -> NO LIGHT OVER THE BED, as App.jsx wires it
+node tools/test-wall-pass.mjs         # the render pass: both prompts, the y flip, the worksheet, the join
 node tools/test-openai-detect.mjs     # the GPT route: every reply shape, and the same bed claim
 node tools/test-room-booleans.mjs     # no two rooms overlap: nesting, carving, and 27 lattice arrangements
 node tools/test-rooms-detect.mjs      # room masks -> outlines -> a lit plan, and the sheet thrown away

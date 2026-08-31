@@ -113,6 +113,21 @@ export function serialiseEditor(s) {
     surfaceDismissed: s.surfaceDismissed,
     manualSurfaces: s.manualSurfaces,
 
+    // --- the render pass's reading of the walls.
+    //
+    // THE ANSWER IS KEPT; THE RENDERS ARE NOT. The elements are a few hundred
+    // bytes of English and cell references per room, and they are exactly the
+    // kind of thing that must survive a reload — they came from an upload
+    // somebody did by hand and cost two reasoning calls to produce.
+    //
+    // The renders themselves are megabytes of somebody's photographs and fall
+    // squarely under the "huge and re-creatable" exclusion in the header above:
+    // they are an INPUT, they are still on the user's disk, and putting them in
+    // a jsonb column would multiply the row size by a hundred to save a second
+    // drag-and-drop. The cells drawn on the plan are what the next session
+    // needs; the panel simply asks for the views again if it is re-run.
+    wallResults: s.wallResults,
+
     // --- view preferences. Cheap, and jarring to lose.
     ui: { layers: s.layers, zoom: s.zoom, view: s.view },
   };
@@ -178,6 +193,7 @@ export function applyEditor(p, set) {
   set.setSurfaceResults(p.surfaceResults ?? {});
   set.setSurfaceDismissed(p.surfaceDismissed ?? []);
   set.setManualSurfaces(p.manualSurfaces ?? []);
+  set.setWallResults?.(p.wallResults ?? {});
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);

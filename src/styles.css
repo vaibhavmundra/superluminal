@@ -604,6 +604,18 @@ label.mini input{width:11px;height:11px;margin:0;accent-color:var(--accent)}
 .accent-rules b{color:var(--text)}
 .accent-row.bad{border-style:dashed;border-color:var(--danger-line);background:var(--danger-soft)}
 .accent-why.warn{color:var(--danger-ink)}
+/* THE RENDER PASS'S ROWS ARE ACCENT ROWS. Same box, same head, same meta — the
+   only difference is what happens when the second call could not place one, and
+   that is a state the accent list has no equivalent of: the element WAS seen,
+   it is just not on the drawing. So it is faded like a dismissed zone but NOT
+   struck through, because struck-through means "you turned this off" everywhere
+   else in this panel and here nobody turned anything off. */
+.wall-row{
+  border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin-top:6px;
+  background:var(--surface)
+}
+.wall-row.off{opacity:.6;border-style:dashed}
+
 .furn-row{
   display:grid;grid-template-columns:8px minmax(0,1fr) auto auto;gap:7px;align-items:center;
   padding:3px 0;font-size:11px;border-bottom:1px solid var(--border)
@@ -1361,6 +1373,68 @@ input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
 }
 .bubble:hover{background:var(--accent-hover);border-color:var(--accent-hover);color:#fff}
 .bubble.on{background:var(--ink);border-color:var(--ink);color:#fff}
+
+/* ---------- the prompt transcript ----------
+   A READING DIALOG, WHICH IS A DIFFERENT SHAPE FROM EVERY OTHER MODAL HERE.
+   The others ask a question and are as small as the question — a project type,
+   three door widths. This one is several thousand characters of prompt and a
+   worksheet, so it is as tall as the window allows and the BODY scrolls rather
+   than the page behind it: a dialog that grows past the viewport puts its own
+   close button off screen. */
+.modal.tall{
+  width:min(860px,94vw);max-height:88vh;display:flex;flex-direction:column;
+  padding:20px 20px 18px;overflow:hidden
+}
+.tx-head{display:flex;align-items:flex-start;gap:14px;flex:0 0 auto}
+.tx-head h2{margin:0}
+.tx-head .btn{margin-left:auto;flex:0 0 auto}
+.tx-tabs{display:flex;gap:6px;margin-top:14px;flex:0 0 auto}
+.tx-tabs button{
+  flex:1 1 0;padding:7px 10px;border:1px solid var(--border);border-radius:8px;
+  background:var(--surface);cursor:pointer;font:inherit;font-size:11.5px;
+  color:var(--text-muted);text-align:left
+}
+.tx-tabs button.on{border-color:var(--accent);background:var(--accent-soft);color:var(--text)}
+.tx-tabs button:disabled{opacity:.4;cursor:default}
+.tx-meta{
+  display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;flex:0 0 auto;
+  font-family:var(--mono);font-size:10px;color:var(--text-subtle)
+}
+/* TWO PANES THAT SCROLL SEPARATELY, and the head, tabs and meta above them do
+   not scroll at all. The alternative — one scroller down the whole dialog — is
+   the obvious one and is worse for the thing this dialog is FOR: reading the
+   reply against the prompt that produced it. Scroll to the bottom of a single
+   pane and the prompt is off screen, so checking "it said W1 because the anchor
+   says top wall" means scrolling back up and losing your place in the reply.
+   Split, each half holds its position while you read the other, and the tabs
+   stay reachable however long either side runs. */
+.tx-block{
+  flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin-top:12px
+}
+.tx-block-head{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-bottom:5px}
+.tx-block-head b{font-size:11.5px}
+.tx-block-head .note{margin:0;font-family:var(--mono);font-size:10px}
+.tx-block-head .btn{margin-left:auto}
+.tx-text{
+  flex:1 1 auto;min-height:90px;overflow:auto;margin:0;
+  padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+  background:var(--input-bg);
+  /* THE ONE PLACE IN THIS APP WITH A REAL MONOSPACE, and it is a deliberate
+     exception to the one-typeface rule above rather than an oversight. That rule
+     is about the DRAWING and the panels around it, where `--mono` resolves to
+     the app face because tabular figures already give a column of numbers its
+     alignment. This is neither: it is source text. PROMPT 02's reply is a
+     worksheet drawn as a table in spaces, and its JSON is indented; set in a
+     proportional face both collapse into prose. No webfont is loaded for it —
+     the stack is whatever the machine already has. */
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;
+  font-size:10.5px;line-height:1.55;color:var(--text);
+  /* pre-wrap, NOT pre. The prompt's own indentation carries meaning — PROMPT
+     02's rules are an indented list — so it must not be collapsed; but a
+     worksheet line that runs long must wrap rather than force the whole dialog
+     to scroll sideways. */
+  white-space:pre-wrap;word-break:break-word
+}
 
 /* ---------- the new-project dialog ---------- */
 .modal.wide{width:min(620px,94vw)}

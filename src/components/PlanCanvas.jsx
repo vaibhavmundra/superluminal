@@ -77,6 +77,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     accents = [], objMode = false, selObjId = null, onObjPointerDown,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [],
+    // THE RENDER PASS'S READING. A list of wall features, each already reduced
+    // to ONE rectangle in plan pixels — the union of its run of grid cells —
+    // plus the individual cells for the tick marks. See wallGrid.js.
+    wallCells = [],
     // THE AUDIT LAYER — off for everybody except an owner of this app. See the
     // block near the bottom of this file for what it draws and why the marks it
     // restores were removed from the drawing proper.
@@ -298,6 +302,35 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           )}
         </g>
       )}
+
+      {/* --- what the render pass found on the walls -------------------------
+          UNDER THE FITTINGS AND OVER THE PLAN, like every other reading. This
+          is not lighting: it is a NOTE ABOUT THE ROOM that the lighting will
+          later respond to, so it must be visible enough to judge and quiet
+          enough that a strip drawn along the same wall reads as the louder of
+          the two. Hence a wash plus a hairline, in the element's own muted
+          colour, and no blue anywhere near it — blue on this canvas means
+          "ours, and it emits light".
+
+          ONE RECT FOR THE RUN, AND TICKS BETWEEN THE CELLS. Eleven abutting
+          squares each with their own outline read as eleven separate things;
+          one rectangle with the cell divisions ticked inside it reads as what
+          it is — an eleven-foot run, measured. */}
+      {layers.wallitems && wallCells.map((wc) => (
+        <g key={wc.id} pointerEvents="none">
+          <rect x={wc.rect.x0} y={wc.rect.y0}
+            width={wc.rect.x1 - wc.rect.x0} height={wc.rect.y1 - wc.rect.y0}
+            fill={wc.colour} fillOpacity="0.22"
+            stroke={wc.colour} strokeWidth={lw * 1.6} strokeOpacity="0.9" />
+          <g stroke={wc.colour} strokeWidth={lw} strokeOpacity="0.45">
+            {wc.rects.slice(1).map((c, k) => (
+              wc.horizontal
+                ? <line key={k} x1={c.x0} y1={c.y0} x2={c.x0} y2={c.y1} />
+                : <line key={k} x1={c.x0} y1={c.y0} x2={c.x1} y2={c.y0} />
+            ))}
+          </g>
+        </g>
+      ))}
 
       {/* --- what is already on the ceiling ---------------------------------
           A fan, a chandelier and an AC cassette are three drawings of one

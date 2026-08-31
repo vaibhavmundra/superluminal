@@ -28,7 +28,7 @@ function apiRoutes(env) {
       // the two drift apart.
       for (const k of ['ROBOFLOW_INFERENCE_KEY', 'ROBOFLOW_WORKFLOW_URL',
                        'ROBOFLOW_ROOMS_WORKFLOW_URL',
-                       'OPENAI_API_KEY', 'OPENAI_VISION_MODEL',
+                       'OPENAI_API_KEY', 'OPENAI_VISION_MODEL', 'OPENAI_WALL_MODEL',
                        'SUPABASE_URL', 'SUPABASE_PROJECT_ID', 'SUPABASE_SECRET_KEY',
                        'SUPABASE_ANON_KEY', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY']) {
         if (env[k] && !process.env[k]) process.env[k] = env[k];

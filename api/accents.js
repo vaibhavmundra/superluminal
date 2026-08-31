@@ -23,6 +23,9 @@ import { buildAccentRequest, furnitureFromReply, DEFAULT_MODEL } from '../src/li
 import { buildSurfaceRequest, surfacesFromReply } from '../src/lib/taskSurfaces.js';
 import { buildRoomTypeRequest, roomTypeFromReply } from '../src/lib/roomTypes.js';
 import { buildBedFitRequest, bedFitFromReply } from '../src/lib/bedFit.js';
+import { buildRenderRequest, elementsFromReply,
+         buildGridRequest, cellsFromReply,
+         WALL_MODEL, CELL_FT, MAX_ELEMENTS } from '../src/lib/wallPrompt.js';
 import { textFromResponse } from '../src/lib/openaiDetect.js';
 
 /*
@@ -124,7 +127,14 @@ export default async function handler(req, res) {
 
   const w = images[0].w;
   const h = images[0].h;
-  const model = body.model || process.env.OPENAI_VISION_MODEL || DEFAULT_MODEL;
+  // THE RENDER PASS GETS ITS OWN MODEL NAME, on its own env var. It is the one
+  // pass reading photographs rather than line drawings — see the note on
+  // WALL_MODEL in wallPrompt.js — so pointing it at a better model must not
+  // mean moving every other call on the plan at the same time.
+  const wallTask = body.task === 'wallitems' || body.task === 'wallgrid';
+  const model = body.model
+    || (wallTask ? (process.env.OPENAI_WALL_MODEL || WALL_MODEL) : null)
+    || process.env.OPENAI_VISION_MODEL || DEFAULT_MODEL;
   // Coerced field by field, not accepted wholesale. Every other input on this
   // route is coerced (plan.w, ceilingFt, the render list); a `room` object taken
   // as given was the one hole, and a widthFt arriving as a string was an
@@ -138,7 +148,16 @@ export default async function handler(req, res) {
   // them and gets back a letter. A separate endpoint per question would be a
   // separate copy of the key handling, the scrubbing, the size guard and the
   // logging, four times over.
-  const task = ['surfaces', 'roomtype', 'bedfit'].includes(body.task) ? body.task : 'furniture';
+  //
+  // `wallitems` and `wallgrid` are THE RENDER PASS, and they are the first two
+  // tasks on this route whose first image is not a crop of the floor plan:
+  // `wallitems` sends PHOTOGRAPHS (a couple of renders of one room) and gets
+  // English back, and `wallgrid` sends the plan crop with a 1ft grid on it plus
+  // that English, and gets cell references back. Everything else on this route
+  // — the key, the scrub, the size guard, the logging — is identical for them,
+  // which is the whole reason they are tasks here rather than a third endpoint.
+  const task = ['surfaces', 'roomtype', 'bedfit', 'wallitems', 'wallgrid']
+    .includes(body.task) ? body.task : 'furniture';
   const projectId = typeof body.projectId === 'string' ? body.projectId : null;
 
   const room = rb ? {
@@ -160,11 +179,41 @@ export default async function handler(req, res) {
   const cb = body.counts && typeof body.counts === 'object' ? body.counts : null;
   const counts = cb && Number.isFinite(Number(cb.a)) && Number.isFinite(Number(cb.b))
     ? { a: Number(cb.a), b: Number(cb.b) } : null;
+  // --- the render pass's own inputs, coerced like everything else here.
+  //
+  // `elements` is PROMPT 01's answer coming back in to be pasted into PROMPT 02.
+  // It is TRIMMED TO THE FOUR FIELDS THE PROMPT NAMES rather than passed
+  // through: the browser carries ids, colours, confidences and a parsed
+  // widthFt on each one, and every extra key in that pasted array is a field
+  // the model may decide to preserve, reorder by, or reason about. The prompt
+  // says "output the original array unchanged" — so the original array should
+  // be the four fields the prompt describes and nothing else.
+  const wallElements = Array.isArray(body.elements)
+    ? body.elements.slice(0, MAX_ELEMENTS)
+        .filter((e) => e && typeof e === 'object')
+        .map((e) => ({
+          type: String(e.type ?? '').slice(0, 40),
+          wall: String(e.wall ?? '').slice(0, 240),
+          location: String(e.location ?? '').slice(0, 240),
+          dimension: String(e.dimension ?? '').slice(0, 120),
+        }))
+    : [];
+  const anchorLines = typeof body.anchorLines === 'string'
+    ? body.anchorLines.slice(0, 2000) : '';
+  const gb = body.grid && typeof body.grid === 'object' ? body.grid : null;
+  const gridCols = Number(gb?.cols) > 0 ? Math.round(Number(gb.cols)) : 10;
+  const gridRows = Number(gb?.rows) > 0 ? Math.round(Number(gb.rows)) : 10;
+  const gridCellFt = Number(gb?.cellFt) > 0 ? Number(gb.cellFt) : CELL_FT;
+
   let request;
   try {
     request = task === 'roomtype' ? buildRoomTypeRequest({ plan, projectId, room })
       : task === 'surfaces' ? buildSurfaceRequest({ plan, room, model })
       : task === 'bedfit' ? buildBedFitRequest({ plans: images, room, counts, model })
+      : task === 'wallitems' ? buildRenderRequest({ renders: images, room, model })
+      : task === 'wallgrid' ? buildGridRequest({
+          plan, elements: wallElements, anchorLines,
+          rows: gridRows, cols: gridCols, cellFt: gridCellFt, model })
       : buildAccentRequest({ plan, room, ceilingFt, model });
   } catch (err) {
     // An unknown project id reaches the prompt builder as a throw. That is a
@@ -210,10 +259,12 @@ export default async function handler(req, res) {
   const payload = task === 'roomtype' ? roomTypeFromReply(reply, { projectId })
     : task === 'surfaces' ? surfacesFromReply(reply, { w, h })
     : task === 'bedfit' ? bedFitFromReply(reply)
+    : task === 'wallitems' ? elementsFromReply(reply)
+    : task === 'wallgrid' ? cellsFromReply(reply, { rows: gridRows, cols: gridCols })
     : furnitureFromReply(reply, { w, h });
   // The room-type task returns one answer rather than a list, so there is
   // nothing to count. Logged as the answer itself.
-  const found = payload.furniture ?? payload.surfaces ?? null;
+  const found = payload.furniture ?? payload.surfaces ?? payload.elements ?? payload.placed ?? null;
 
   // The model's own words. A refusal, a hedge, or "none of the rules apply to
   // this room" is the single most useful thing on the wire when a run comes
@@ -231,12 +282,21 @@ export default async function handler(req, res) {
   if (task === 'bedfit' && !payload.matched) {
     log(id, '??', `the judge did not pick — raw reply: ${reply.slice(0, 300)}`);
   }
+  // PROMPT 02 answers with a worksheet and THEN the array, so "no array" and
+  // "an empty array" are completely different failures — the first is a reply
+  // that ran out of tokens mid-worksheet or wandered off, the second is a model
+  // that genuinely placed nothing. Only the raw reply tells them apart.
+  if (task === 'wallgrid' && !payload.matched) {
+    markLoud(id);
+    log(id, '??', `no placements came back from ${wallElements.length} element(s)`
+      + ` — raw reply tail: ${reply.slice(-400)}`);
+  }
   log(id, '==', task === 'bedfit'
     ? `pick ${payload.pick ?? 'NONE'} ${payload.confidence.toFixed(2)}${payload.why ? ` — ${payload.why}` : ''}`
     : !found
     ? `${payload.type} ${payload.confidence?.toFixed(2)}${payload.matched ? '' : ' (UNMATCHED)'}`
     : found.length
-      ? `${found.length}: ${found.map((f) => `${f.type} ${f.confidence.toFixed(2)}`).join(', ')}`
+      ? `${found.length}: ${found.map((f) => `${f.type ?? '?'} ${(f.confidence ?? 0).toFixed(2)}`).join(', ')}`
       : `nothing found. reply: ${reply.slice(0, 300)}`);
   if (payload.skipped?.length) {
     log(id, '??', `${payload.skipped.length} dropped: ${payload.skipped.map((s) => s.reason).join('; ').slice(0, 240)}`);
@@ -253,6 +313,30 @@ export default async function handler(req, res) {
       skipped: payload.skipped?.length ?? 0,
       usage: json.usage ?? null,
       reply: reply.slice(0, 900),
+      // --- THE TRANSCRIPT, AND ONLY FOR THE RENDER PASS.
+      //
+      // The prompt text and the whole reply, so the panel can put both on screen
+      // in a dialog. That is a few kilobytes on every response, which is why it
+      // is NOT sent for the other four tasks: they run two at a time across
+      // every room on a sheet, so it would be a few kilobytes times sixteen for
+      // something nothing reads.
+      //
+      // The render pass is the opposite case in every respect. It runs once, by
+      // hand, on one room; its two prompts are the thing a person is expected to
+      // TUNE — they are the whole reason wallPrompt.js is written the way it is
+      // — and PROMPT 02's reply is a worksheet whose reasoning is the answer to
+      // "why did it put the panelling on that wall". A 900-character head slice
+      // of that reply is the least useful 900 characters of it, because the
+      // array is at the END.
+      //
+      // NO IMAGES IN HERE. The browser made every picture that went and still
+      // has all of them; echoing megabytes of base64 back to the sender would
+      // be the single largest thing on this wire.
+      ...(wallTask ? {
+        prompt: request.messages?.[0]?.content?.find((c) => c.type === 'text')?.text ?? '',
+        fullReply: reply,
+        sentImages: images.length,
+      } : {}),
     },
     result: payload,
   });
