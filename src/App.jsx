@@ -9,7 +9,7 @@ import { PLAN_OPTIONS, FITTING_LUMENS, WALL_WEIGHT_IN, OTHER_STROKE_PX,
          SIMPLIFY_ROOM_TO_RECTANGLE, lumenCriteriaFor } from './lib/settings.js';
 import { planLights } from './lib/planner.js';
 import { enumerateChunkings, findChunking } from './lib/chunking.js';
-import { planWithCove, coveRectOptions } from './lib/cove.js';
+import { designChunking, planCeilingDesign } from './lib/ceilingDesign.js';
 import { bbox, pointInPolygon } from './lib/geometry.js';
 import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, DOOR_WIDTHS } from './lib/doors.js';
@@ -35,7 +35,8 @@ import { BED_SOURCES, splitByProvider, label as labelBeds, bedsIn, contestFor, j
 import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
 import { WALL_BY_ID, joinPlacements } from './lib/wallPrompt.js';
 import { gridFor, anchorLines, cellsToPlanPx, cellsToRect } from './lib/wallGrid.js';
-import { fitAll, RENDER_DEFAULTS } from './lib/renderImage.js';
+import { fitAll, RENDER_DEFAULTS, renderBlob, renderRef, fetchRender }
+  from './lib/renderImage.js';
 import { sliceRect, artWidthFt, spotCountFor, litByArtSpots, planArtSpots,
          ART_SPOT } from './lib/artSpots.js';
 import { reverseCovesFor, mergeReverseCoves, trimWallRun,
@@ -74,21 +75,6 @@ const UPLOAD_LABEL = { creating: 'Preparing…', uploading: 'Uploading drawing�
 const ftin = (v) => {
   const f = Math.floor(v), i = Math.round((v - f) * 12);
   return i === 12 ? `${f + 1}'0"` : `${f}'${i}"`;
-};
-
-/**
- * WHICH RUNG OF THE LADDER THE COVE STOPPED ON, in two words.
- *
- * It is the one thing about a cove that is not visible on the drawing at a
- * glance — whether there are downlights inside it at all — and it belongs on
- * the row rather than in a paragraph under it. Everything else the ladder
- * worked out (what the space is owed, what the strip delivers, how long the run
- * is) is arithmetic somebody can ask for; this is the decision.
- */
-const STAGE_SAY = {
-  cove: 'cove only',      // the strip carries the space; no downlights inside
-  inner: 'plus inside',   // ...and a grid within the cove line
-  band: 'plus band',      // ...and the band outside it as well
 };
 
 /**
@@ -155,6 +141,12 @@ export default function App({
   initialProjectType = null, initialPdfPage = null, uploadState = null, isAdmin = false,
   onRename = null, onPersist = null, onMilestone = null, onBack = null,
   onRetryUpload = null,
+  // WHERE THE RENDERS LIVE, and the only storage this component is given.
+  // `{ put(blob, { roomId, index }) -> path, url(path) -> href }`, supplied by
+  // routes/Planner.jsx. Null in the standalone editor and in the tests, and
+  // everything below degrades to what it did before: the pass still runs, the
+  // views just do not come back next time.
+  renderStore = null,
   // ---------------------------------------------------------------------
   // READ-ONLY MODE — the viewer an admin gets on somebody else's plan.
   //
@@ -310,19 +302,41 @@ export default function App({
   // which is what makes lighting eight rooms one act instead of eight choices.
   const [chunkPicks, setChunkPicks] = useState({});
   /**
-   * WHAT KIND OF CEILING EACH SPACE HAS. outline id -> 'standard' | 'cove'.
+   * WHAT EACH PIECE OF CEILING IS. outline id -> { chunk key -> option id }.
    *
-   * ABSENT MEANS STANDARD, and nothing writes 'standard' into this map — the
-   * flat ceiling with a grid of downlights on it is what this app has always
-   * produced and it stays the default that costs no state. Only a space
-   * somebody has deliberately coved has an entry.
+   * THE DECISION IS PER CHUNK, NOT PER SPACE. A space is cut into rectangles by
+   * its own outline — see ceilingDesign.js — and each of those pieces gets a
+   * ceiling design of its own: standard today, cove where one can be built,
+   * whatever else this app learns to draw later. An L-shaped living-dining room
+   * is two chunks and can be coved over one end, both, or neither, which is the
+   * thing a single 'cove: yes' on the room could never say.
    *
-   * `covePicks` is the second half of the same decision: WHICH of the
-   * rectangles that fit in the space the cove is set out in. Absent means the
-   * largest, which is the answer nearly always — see coveRectOptions.
+   * ABSENT MEANS STANDARD, at both levels: nothing writes 'standard' into this
+   * map, so a plan of ordinary ceilings costs no state at all. And the inner key
+   * is the chunk's GEOMETRY (see chunkKey) rather than its index, so a pick
+   * survives a slider nudge and is dropped by a re-traced outline — which is the
+   * right way round. An index would survive the re-trace and quietly move
+   * somebody's cove to a different piece of ceiling.
+   *
+   * `ceilingKinds` IS THE OLD ANSWER, KEPT ONLY TO BE READ. It was one word per
+   * space — outline id -> 'cove' — and plans in the database still carry it.
+   * Nothing in the UI writes it any more; the layout below reads it once, when a
+   * space has no per-chunk answer yet, and puts the cove on the biggest chunk.
+   * That is what the old state meant, so an old plan reopens with its coves
+   * where they were and the first per-chunk edit retires the legacy entry.
    */
+  const [designPicks, setDesignPicks] = useState({});
   const [ceilingKinds, setCeilingKinds] = useState({});
-  const [covePicks, setCovePicks] = useState({});
+  /**
+   * WHICH CHUNK'S OPTIONS ARE ON SCREEN. { roomId, key } or null.
+   *
+   * Clicking any ambient light in a chunk opens the little pill over that chunk
+   * and flipping it through the options is the whole interface for choosing a
+   * ceiling — see PlanCanvas. It is a pointer at a chunk and not at a light on
+   * purpose: pick 'cove only' and the chunk has no downlights left to have been
+   * clicked, and the pill has to still be there to flip back with.
+   */
+  const [optionPick, setOptionPick] = useState(null);
   const [pickingId, setPickingId] = useState(null);   // the room whose chunking is being chosen
 
   // The room detector. Runs on upload, like the bed one, and for the same
@@ -365,6 +379,20 @@ export default function App({
   // renders somebody uploaded for Bedroom 2 must still be there after they click
   // through to Bedroom 3 and back.
   const [renders, setRenders] = useState({});          // roomId -> [shrunk render]
+  /**
+   * WHERE THOSE RENDERS WENT. roomId -> [{ path, name, w, h, bytes, ... }].
+   *
+   * The pointers, and the half of the pair that is SAVED — see planState.js.
+   * `renders` above is the working copy: base64 in memory, which is what goes to
+   * the model and what the thumbnails draw. This is a storage key and ninety
+   * bytes of description per view, which is what survives a reload.
+   *
+   * Two lists rather than one field with a mode, because they genuinely differ
+   * in lifetime: a render dropped while the plan's row is still being inserted
+   * has no path and works perfectly well for the pass, and a render restored
+   * from the bucket has a path before its bytes have arrived.
+   */
+  const [renderRefs, setRenderRefs] = useState({});
   const [wallResults, setWallResults] = useState({});  // roomId -> { elements: [...] }
   const [wallState, setWallState] = useState({ status: 'idle', roomId: null });
   // The gridded crop, made eagerly so the panel can show it — same argument as
@@ -508,12 +536,13 @@ export default function App({
     setMeasure({ a: null, b: null }); setZoom(1);
     setZones([]); setZoneMode(false); setDraftZone(null);
     setChunkPicks({}); setPickingId(null);
-    setCeilingKinds({}); setCovePicks({});
+    setCeilingKinds({}); setDesignPicks({}); setOptionPick(null);
     setDetections([]); setDetectState({ status: 'idle' }); setDismissed([]);
     setRoomState({ status: 'idle' });
     setAccentRoomId(null); setAccentResults({});
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
-    setRenders({}); setWallResults({}); setWallTranscripts({}); setRunTrims({});
+    setRenders({}); setRenderRefs({});
+    setWallResults({}); setWallTranscripts({}); setRunTrims({});
     setWallState({ status: 'idle', roomId: null }); setWallShot(null);
     setSelAccId(null); setAccDrag(null);
     // BACK TO THE PROJECT'S ANSWER, NOT TO NULL. This runs on every file load,
@@ -698,7 +727,7 @@ export default function App({
       setPdfPage,
       setRoomTypes, setDetections, setDismissed, setBedVerdicts, setProvider, setZones,
       setDoors, setDoorState, setDetectState,
-      setCeilingObjs, setChunkPicks, setCeilingKinds, setCovePicks,
+      setCeilingObjs, setChunkPicks, setCeilingKinds, setDesignPicks,
       setAccentResults, setAccentDismissed, setManualAccents,
       setSurfaceResults, setSurfaceDismissed, setManualSurfaces,
       // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
@@ -708,6 +737,9 @@ export default function App({
       // ...and the lengths somebody dragged. Two numbers per run, and the only
       // thing about these derived fittings a person actually chose.
       setRunTrims,
+      // ...and where the views themselves are. The bytes are fetched back out
+      // of the bucket by the effect below, lazily and per space.
+      setRenderRefs,
       // MERGED OVER THE DEFAULTS, not assigned. See LAYER_DEFAULTS.
       setLayers: (saved) => setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
       setZoom, setView,
@@ -1332,57 +1364,85 @@ export default function App({
 
       // --- THE CEILING ITSELF -------------------------------------------
       //
-      // Standard until somebody says otherwise. A cove replaces the whole of
-      // the step above for this space: its own decomposition (bed-free, see
-      // geo.coveZonesFt), its own chunk plan with the cove line cut into it,
-      // and up to three passes of the planner as the ladder in cove.js decides
-      // how much light the strip has already accounted for.
+      // ONE DECISION PER PIECE OF CEILING. The space is cut into chunks by its
+      // OWN OUTLINE — `coveZonesFt`, which keeps the holes in the ceiling and
+      // drops the furniture standing under it, because a bed has no opinion
+      // about where a band of plasterboard is set out — and each chunk carries
+      // the design somebody chose for it. Standard chunks are then gridded the
+      // ordinary way, furniture and all, so a plain rectangular bedroom comes
+      // out exactly as it always did: one chunk, one grid, the bed still
+      // cutting it up. See ceilingDesign.js.
       //
-      // IT CAN DECLINE. A space too narrow to inset has no cove, and the
-      // fallback is not an error state — it is the standard ceiling, with the
-      // reason carried on `cove` so the panel can say why.
-      const wantsCove = ceilingKinds[o.id] === 'cove';
-      let coveOptions = [], covePick = 0, cove = null, res = null;
-      if (wantsCove) {
-        // THE RECTANGLES THAT FIT IN THIS ROOM, largest first. Asked of the room
-        // as BUILT — `coveZonesFt`, which keeps the holes in the ceiling and
-        // drops the furniture standing under it.
-        coveOptions = coveRectOptions(geo.polygonFt, geo.coveZonesFt, roomOpt);
-        // CLAMPED, NOT TRUSTED. The list is derived, so it can shrink under a
-        // pick somebody made — correct the scale, redraw the outline, and
-        // option 4 may not exist any more. Falling back to the largest is the
-        // same rule the chunking picker follows.
-        covePick = Math.min(Math.max(covePicks[o.id] ?? 0, 0),
-                            Math.max(0, coveOptions.length - 1));
-        const out = planWithCove({
-          polygonFt: geo.polygonFt,
-          fixturesFt: geo.fixturesFt,
-          zonesFt: geo.zonesFt,
-          coveZonesFt: geo.coveZonesFt,
-          opt: roomOpt,
-          chunkOpt: roomChunkOpt,
-          options: coveOptions,
-          rect: coveOptions[covePick] ?? null,
-          criteria: lumenCriteriaFor(projectId, roomTypes[o.id]?.type),
-          fixtureFor: roomFixture,
-        });
-        cove = out.cove;
-        if (out.plan?.ok) res = out.plan;
-      }
-      if (!res) {
+      // THE CHUNK PICKER'S CHOICE GOVERNS BOTH LEVELS. `chosenId` is a reading
+      // of the space — bays across it, courses along it — and it is offered to
+      // the design chunking and to the grid inside a standard chunk alike, so
+      // one answer means one thing everywhere.
+      const design = designChunking(geo.polygonFt, geo.coveZonesFt,
+                                    roomChunkOpt, geo.fixturesFt, chosenId);
+      // THE PICKS, WITH THE OLD STATE READ AS A LAST RESORT. See the note on
+      // `ceilingKinds`: a space that has never been edited per chunk but was
+      // coved under the old room-level switch puts its cove on the biggest
+      // chunk, which is where that switch would have put it.
+      const picks = designPicks[o.id]
+        ?? (ceilingKinds[o.id] === 'cove' && design.chunks.length
+            ? { [design.chunks[0].key]: 'cove' } : {});
+      const built = planCeilingDesign({
+        polygonFt: geo.polygonFt,
+        fixturesFt: geo.fixturesFt,
+        zonesFt: geo.zonesFt,
+        designChunks: design.chunks,
+        picks,
+        opt: roomOpt,
+        chunkOpt: roomChunkOpt,
+        strategy: chosenId,
+        criteria: lumenCriteriaFor(projectId, roomTypes[o.id]?.type),
+        fixtureFor: roomFixture,
+      });
+      const coves = built.coves.filter((c) => c.ok);
+      let res = built.plan;
+      // IT CAN DECLINE, AND THAT IS NOT AN ERROR STATE. A space whose own
+      // outline gives the chunker nothing to work with falls back to the plain
+      // layout on the room as a whole, which is the answer this app gave before
+      // any of this existed.
+      if (!res?.ok) {
         res = planLights(geo.polygonFt, geo.fixturesFt,
           { ...roomOpt, chunkStrategy: chosenId || 'auto' }, geo.zonesFt);
       }
+      // WHAT EACH CHUNK IS, AND WHAT ELSE IT COULD BE, in plan pixels — the one
+      // thing the canvas needs to draw the option pill. `pick` and `options`
+      // ride along so the pill never has to ask the geometry anything.
+      //
+      // EMPTY WHEN THE FALLBACK RAN, because then these chunks are not what is
+      // on the drawing: the fittings came from one grid over the whole space and
+      // none of them carries a chunk key. A pill over a chunk no light belongs
+      // to would offer a choice that changes nothing.
+      const designChunksPx = !built.plan?.ok ? [] : built.parts.map((p) => ({
+        key: p.key, pick: p.pick,
+        options: p.options.map((x) => ({ id: x.id, label: x.label })),
+        rect: { x0: p.chunk.x0 * pxPerFt + origin.x, y0: p.chunk.y0 * pxPerFt + origin.y,
+                x1: p.chunk.x1 * pxPerFt + origin.x, y1: p.chunk.y1 * pxPerFt + origin.y },
+        wFt: p.chunk.w, hFt: p.chunk.h,
+      }));
 
       // WHICH CATALOGUE LINE ONE LIGHT IS, now that a chunk can have an opinion
       // of its own. The band outside a cove is lit with the 5 W narrow lamp
       // where it is too shallow for a 7 W — that is a property of the chunk the
       // light sits in, not of the room, so it wins over the room's own mapping.
       // See bandFixtureFor in cove.js.
-      const lightFixture = (l) => {
-        const ci = l.kind === 'small' ? l.cell?.chunk : l.chunk;
-        return res.chunks?.[ci]?.coveFixture ?? roomFixture(l.kind);
-      };
+      const chunkIndexOf = (l) => (l.kind === 'small' ? l.cell?.chunk : l.chunk);
+      const lightFixture = (l) =>
+        res.chunks?.[chunkIndexOf(l)]?.coveFixture ?? roomFixture(l.kind);
+      /**
+       * WHICH DESIGN CHUNK PUT THIS LIGHT HERE.
+       *
+       * The chunk plan stamps every rectangle it hands the planner with the key
+       * of the design chunk it came out of — a standard chunk's grid pieces, a
+       * cove's inner rectangle, each of the four band runs. Carrying that stamp
+       * out onto the drawn fitting is what makes the whole interface possible:
+       * click a downlight and the pill knows which piece of ceiling's options it
+       * is flipping through, with nothing to hit-test and no geometry to redo.
+       */
+      const lightDesign = (l) => res.chunks?.[chunkIndexOf(l)]?.design ?? null;
 
       /** A feet-space rectangle as its four corners in plan pixels, in order.
        *  Both the cove line and the tape round it are drawn as closed runs, and
@@ -1412,6 +1472,7 @@ export default function App({
         // deals in `kind` (geometry) and never in products; see FIXTURE_BY_TYPE.
         lightsPx: res.lights.map((l) => ({ ...l, ...toPx(l),
           fixture: lightFixture(l),
+          design: lightDesign(l),
           centrePx: l.cell ? toPx({ x: l.cell.cx, y: l.cell.cy }) : null,
           coverPx: l.cells.map((id) => {
             const c = res.cells.find((x) => x.id === id);
@@ -1427,12 +1488,19 @@ export default function App({
         // scale. See roomInFeet in exporters.js.
         zonesPx: myZones,
         fansPx: mine,
-        // THE COVE'S OWN SETTING-OUT LINE, in plan pixels. It rides on the plan
+        // THE COVE SETTING-OUT LINES, in plan pixels. They ride on the plan
         // rather than being handed to the canvas separately because everything
-        // else the canvas draws for a room already does — one prop, one room,
-        // one shape — and because a cove line without the layout it cut is a
-        // rectangle floating over somebody's drawing.
-        covePx: cove?.ok ? { line: corners(cove.line), offset: cove.offset } : null,
+        // else the canvas draws for a room already does — one prop, one room —
+        // and because a cove line without the layout it cut is a rectangle
+        // floating over somebody's drawing.
+        //
+        // A LIST, BECAUSE A SPACE CAN CARRY SEVERAL. An L-shaped room coved over
+        // both ends has two bands, set out square, exactly as they would be
+        // built. Each line carries the key of the chunk it belongs to, so
+        // clicking one opens that chunk's options — which is the only way back
+        // for a chunk whose cove is carrying the space on its own and therefore
+        // has no downlight left to click.
+        covesPx: coves.map((c) => ({ key: c.key, line: corners(c.line), offset: c.offset })),
       };
 
       /**
@@ -1449,37 +1517,41 @@ export default function App({
        * same `rect`, same `runLength` — so the canvas, the schedule and the
        * exporters all take it without knowing a cove exists.
        */
-      const coveStrip = (cove?.ok && res.ok) ? (() => {
+      const coveStrips = res.ok ? coves.map((c) => {
         // THE TAPE, NOT THE LINE — see STRIP_OFFSET_FT in cove.js. The run is
         // three inches outside the setting-out line, in the pocket, which is
         // both where it is installed and the length that gets billed.
-        const pts = corners(cove.strip);
+        const pts = corners(c.strip);
         const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
         return {
-          id: `cove-${o.id}`, type: 'strip', kind: 'cove', roomId: o.id,
+          // THE CHUNK'S KEY IN THE ID, because a space can now hold more than
+          // one cove and two runs called `cove-<room>` are one run as far as the
+          // schedule and the exporters are concerned.
+          id: `cove-${o.id}-${c.key}`, type: 'strip', kind: 'cove', roomId: o.id,
           source: 'cove', label: 'Cove LED strip',
           loop: pts,
-          runLength: cove.perimeterFt * pxPerFt,
+          runLength: c.perimeterFt * pxPerFt,
           rect: { x0: Math.min(...xs), y0: Math.min(...ys),
                   x1: Math.max(...xs), y1: Math.max(...ys) },
         };
-      })() : null;
+      }) : [];
 
       out.push({
         id: o.id, outline: o, region, geo, chunking, plan,
         chosenId, chunkingChosenBy: picked ? 'user' : 'recommended',
-        // The ceiling, and everything the cove decided. `cove` is null on a
-        // standard ceiling and carries `ok:false` with a reason when a cove was
-        // asked for and could not be drawn.
-        ceiling: cove?.ok ? 'cove' : 'standard',
-        cove, coveOptions, covePick, coveStrip,
+        // The ceiling, chunk by chunk. `design` is how the space was cut up,
+        // `designChunksPx` is what the canvas draws the option pills from, and
+        // `coves` holds one report per cove — what the ladder decided, what the
+        // strip delivers, how long the run is.
+        ceiling: coves.length ? 'cove' : 'standard',
+        design, designChunksPx, coves, coveStrips,
         stats: outlineStats(o, pxPerFt),
       });
     }
     return out;
   }, [source, pxPerFt, litOutlines, useBoundingRect, obstaclesPx, zoneList, zones,
       reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes, projectId,
-      ceilingKinds, covePicks]);
+      designPicks, ceilingKinds]);
 
   // What the canvas draws: every zone, whoever it belongs to. The planner sees
   // the per-room subsets above; this is only for the eye.
@@ -1912,12 +1984,74 @@ export default function App({
       // refuses more than this in a single drop; this is the same limit applied
       // to a drop that ARRIVES IN TWO GOES, and two constants that must agree
       // is one constant with a bug waiting in it.
-      setRenders((m) => ({ ...m, [r.id]: [...have, ...shrunk].slice(0, RENDER_DEFAULTS.maxRenders) }));
+      const kept = [...have, ...shrunk].slice(0, RENDER_DEFAULTS.maxRenders);
+      setRenders((m) => ({ ...m, [r.id]: kept }));
       setWallState({ status: 'idle', roomId: r.id, notes });
+
+      // --- and then, in the background, to the bucket ----------------------
+      //
+      // AFTER THE STATE, NOT BEFORE IT. The thumbnails and the Analyse button
+      // are ready the moment the canvas has finished; making either of them
+      // wait on an upload would put a spinner in front of a picture that is
+      // already decoded and in memory for no benefit to the person looking at
+      // it. And it must not be able to fail the drop: a bucket that refuses is
+      // a render that is not KEPT, which is a smaller problem than a render
+      // that cannot be USED.
+      if (!renderStore?.put) return;
+      const base = (renderRefs[r.id] ?? []).length;
+      shrunk.forEach((v, i) => {
+        // Only the ones that survived the cap above are worth storing.
+        if (!kept.includes(v)) return;
+        renderStore.put(renderBlob(v), { roomId: r.id, index: base + i })
+          .then((path) => {
+            if (!path) return;
+            setRenderRefs((m) => ({ ...m, [r.id]: [...(m[r.id] ?? []), renderRef(v, path)] }));
+          })
+          .catch((err) => console.warn('[render pass] a view was not stored', err));
+      });
     } catch (err) {
       setWallState({ status: 'error', roomId: r.id, error: String(err.message || err) });
     }
-  }, [focus, renders]);
+  }, [focus, renders, renderRefs, renderStore]);
+
+  /**
+   * THE VIEWS, BACK OUT OF THE BUCKET — for the space that is open, and no other.
+   *
+   * WHY LAZY. A flat of nine rooms with four views each is thirty-six JPEGs and
+   * several megabytes; fetching all of them to open a plan would put that on the
+   * critical path of every reload to populate drop targets nobody has looked at.
+   * The refs are already restored, so the panel knows how many views a space has
+   * before a single byte is fetched — this only pays for the one on screen.
+   *
+   * WHY IT NEVER OVERWRITES. `renders[id]` being present means either these
+   * bytes are already here or somebody has just dropped new files in, and the
+   * second one must win. So an id that already has a working copy is skipped
+   * outright rather than merged.
+   */
+  const fetchingRenders = useRef(new Set());
+  useEffect(() => {
+    const id = focus?.id;
+    const refs = id ? (renderRefs[id] ?? []) : [];
+    if (!id || !refs.length || !renderStore?.url) return;
+    if (renders[id]?.length || fetchingRenders.current.has(id)) return;
+    fetchingRenders.current.add(id);
+    let alive = true;
+    (async () => {
+      try {
+        const back = [];
+        for (const ref of refs) {
+          const href = renderStore.url(ref.path);
+          if (!href) continue;
+          try { back.push(await fetchRender(href, ref)); }
+          catch (err) { console.warn('[render pass] a stored view is missing', ref.path, err); }
+        }
+        if (alive && back.length) setRenders((m) => (m[id]?.length ? m : { ...m, [id]: back }));
+      } finally {
+        fetchingRenders.current.delete(id);
+      }
+    })();
+    return () => { alive = false; };
+  }, [focus?.id, renderRefs, renders, renderStore]);
 
   /** What kind of space is it? One small call, one word back. */
   const computeRoomType = useCallback(async (r, { reuseShot = null } = {}) => {
@@ -2280,8 +2414,15 @@ export default function App({
       // its coffee table in one chunk and its dining table in another, and
       // giving both the same grid puts one of them nowhere near what it is
       // lighting.
+      // THE TYPE TRAVELS WITH THE RECT, and it is the only field the placer
+      // needs beyond the geometry. Peer surfaces are lit as one run off one
+      // ceiling line — see the RUNS header in taskSpots.js — and "peer" is
+      // decided first of all by the two being the same kind of thing. A pair of
+      // coffee tables is one piece of furniture; a coffee table and a desk that
+      // happen to line up are not, and without the type the placer cannot tell
+      // them apart and would have to guess.
       const placed = mine.length
-        ? planTaskSpots(mine.map((sf) => rectFt(sf.rect)), ceiling) : [];
+        ? planTaskSpots(mine.map((sf) => ({ ...rectFt(sf.rect), type: sf.type })), ceiling) : [];
 
       mine.forEach((sf, k) => {
         const res = placed[k];
@@ -2299,6 +2440,10 @@ export default function App({
           target: t,
           angle: Math.atan2(t.y - p.y, t.x - p.x),
           via: res.spot.via,
+          // Present only on a spot standing in a run, so the drawing and the
+          // tooltip can say WHY it is where it is: the lane was chosen for the
+          // group, not for this table on its own.
+          run: res.spot.run ?? null,
           // The segment it is standing on, in pixels, so the drawing can show
           // its working when the secondary grid is switched on.
           segment: { a: toPx(res.spot.segment.a), b: toPx(res.spot.segment.b) },
@@ -2388,7 +2533,7 @@ export default function App({
     // rather than into `manualAccents` for exactly that reason: this list is
     // what the drawing and the schedule read, and `manualAccents` is a store of
     // things a person made.
-    for (const r of rooms) if (r.coveStrip) out.push(r.coveStrip);
+    for (const r of rooms) out.push(...(r.coveStrips ?? []));
     // THE REVERSE COVES' TAPE, on the same terms and for the same reason. A
     // reverse cove is a slot with a strip in it, so it is billed by the metre
     // like every other run — shaped as an ordinary accent zone, so the canvas,
@@ -2399,7 +2544,12 @@ export default function App({
       if (!litRooms.has(c.roomId)) continue;
       out.push({
         id: `rcove-strip-${c.id}`, type: 'strip', kind: 'reverse-cove', roomId: c.roomId,
-        source: 'reverse-cove', label: 'Reverse cove LED strip',
+        source: 'reverse-cove', label: 'Reverse cove',
+        // WHICH CATALOGUE LINE. `type: 'strip'` is what makes the canvas, the
+        // schedule and the DXF take this without any of them needing to know
+        // what a reverse cove is; `fixture` is what they read when they DO need
+        // to know — the tooltip's words, the schedule's line, the DXF's layer.
+        fixture: 'reverse-cove',
         run: c.run, rect: c.rect, runLength: c.runLength,
         // WHAT THE DRAG NEEDS. `derived` says this run has no stored geometry to
         // edit — the ends write a trim instead — and the rest is what turns a
@@ -2497,14 +2647,15 @@ export default function App({
     // AND THE COVES, which are the reason this had to change: a cove can be the
     // only ambient source in a space, and a lm/sqft figure that ignored it
     // would report a coved living room as unlit.
-    const coveLumens = done.reduce((t, r) => t + (r.cove?.ok ? r.cove.coveLumens : 0), 0);
+    const coveLumens = done.reduce((t, r) => t
+      + (r.coves ?? []).reduce((u, c) => u + c.coveLumens, 0), 0);
     const lumens = gridLumens + coveLumens;
     const areaSqft = done.reduce((s, r) => s + r.plan.stats.areaSqft, 0);
     return {
       rooms: done.length,
       failed: rooms.length - done.length,
       lights: done.reduce((s, r) => s + r.plan.lights.length, 0),
-      coves: done.filter((r) => r.cove?.ok).length,
+      coves: done.reduce((t, r) => t + (r.coves?.length ?? 0), 0),
       areaSqft, lumens, gridLumens, coveLumens,
       perSqft: lumens / Math.max(1, areaSqft),
     };
@@ -3531,6 +3682,44 @@ export default function App({
   }, [objMode, armed, selObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
       manualAccents, focusId, readOnly]);
 
+  /**
+   * OPEN A CHUNK'S OPTIONS. Called by a click on any ambient light — the light
+   * carries the key of the design chunk that put it there — and by a click on a
+   * cove line, which is the way back for a chunk lit by its strip alone.
+   *
+   * It selects the space as well. Clicking a fitting in a room the panel is not
+   * describing and having the panel stay on the last room is the same
+   * disagreement the canvas selection exists to prevent.
+   */
+  const pickChunkOptions = useCallback((roomId, key) => {
+    if (!roomId || !key) return;
+    setFocusId(roomId);
+    setOptionPick({ roomId, key });
+  }, []);
+
+  /**
+   * FLIP ONE CHUNK THROUGH ITS OPTIONS.
+   *
+   * THE CURRENT ANSWER IS READ OFF THE LAYOUT, not out of `designPicks`, and
+   * that is what makes the legacy path and the "standard costs no state" rule
+   * agree with each other. `designChunksPx` says what each chunk ACTUALLY got —
+   * including a cove that came from the old room-level switch and a pick that
+   * was dropped because the chunk it named no longer exists — so writing the
+   * whole space back from it retires the legacy entry, keeps every other chunk
+   * exactly as it is, and still stores nothing for a standard ceiling.
+   */
+  const cycleChunkOption = useCallback((roomId, key, dir = 1) => {
+    const room = rooms.find((r) => r.id === roomId);
+    const chunk = room?.designChunksPx?.find((d) => d.key === key);
+    if (!chunk || (chunk.options?.length ?? 0) < 2) return;
+    const i = Math.max(0, chunk.options.findIndex((x) => x.id === chunk.pick));
+    const next = chunk.options[(i + dir + chunk.options.length) % chunk.options.length].id;
+    const base = {};
+    for (const d of room.designChunksPx) if (d.pick !== 'standard') base[d.key] = d.pick;
+    if (next === 'standard') delete base[key]; else base[key] = next;
+    setDesignPicks((m) => ({ ...m, [roomId]: base }));
+  }, [rooms]);
+
   const onCanvasClick = (e) => {
     // Ceiling objects are handled entirely in the pointer events — see the note
     // on objPointerDown. Nothing about them may happen on a click.
@@ -3552,6 +3741,11 @@ export default function App({
     // the space under it and yank the panel to a different room.
     const hit = roomAt(svgPoint(e));
     setFocusId(hit ? hit.id : null);
+    // THE PILL CLOSES ON ANY CLICK THAT IS NOT ON A FITTING. A light, a cove
+    // line and the pill itself all stop the click before it gets here, so this
+    // only fires on the ceiling around them — which is exactly the gesture
+    // "never mind" wants to be.
+    setOptionPick(null);
     if (!hit) { setSelAccId(null); setSelObjId(null); }
   };
 
@@ -4436,17 +4630,17 @@ export default function App({
     projectType: projectId, roomTypes, pdfPage,
     detections, dismissed, bedVerdicts, provider, zones,
     doors,
-    ceilingObjs, chunkPicks, ceilingKinds, covePicks,
+    ceilingObjs, chunkPicks, designPicks, ceilingKinds,
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces,
-    wallResults, runTrims,
+    wallResults, runTrims, renderRefs,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
        detections, dismissed, bedVerdicts, provider, zones, doors,
-       ceilingObjs, chunkPicks, ceilingKinds, covePicks,
+       ceilingObjs, chunkPicks, designPicks, ceilingKinds,
        accentResults, accentDismissed, manualAccents,
-       surfaceResults, surfaceDismissed, manualSurfaces, wallResults, runTrims,
+       surfaceResults, surfaceDismissed, manualSurfaces, wallResults, runTrims, renderRefs,
        layers, zoom, view]);
 
   const stats = useMemo(() => statsFrom({ totals, rooms, boq }), [totals, rooms, boq]);
@@ -4725,7 +4919,15 @@ export default function App({
               vector={isVector ? source.render : null}
               wallLayers={null}
               width={source.w} height={source.h}
-              plans={rooms.map((r) => ({ id: r.id, name: r.outline.name, plan: r.plan }))}
+              plans={rooms.map((r) => ({ id: r.id, name: r.outline.name, plan: r.plan,
+                                         design: r.designChunksPx }))}
+              /* WHICH CHUNK'S OPTIONS ARE OPEN, and the two things that can be
+                 done about it. Read-only viewers get neither, so the drawing is
+                 a drawing: the pill is a control and a control nobody may use is
+                 a thing to explain rather than a thing to draw. */
+              optionPick={readOnly || armed || addTool ? null : optionPick}
+              onPickChunk={readOnly || armed || addTool ? null : pickChunkOptions}
+              onCycleOption={readOnly || armed || addTool ? null : cycleChunkOption}
               focusId={focus?.id ?? null}
               /* THE RAW `focusId`, NOT `focus`. `focus` falls back to rooms[0]
                  so the details panel always has something to describe; the blue
@@ -4937,9 +5139,7 @@ export default function App({
             {rooms.map((r) => {
               const on = r.id === focusId;
               const chunked = r.chunking?.needsChoice;
-              const coved = ceilingKinds[r.id] === 'cove';
-              const c = r.cove;
-              const nRects = r.coveOptions?.length ?? 0;
+              const coved = (r.coves?.length ?? 0) > 0;
               return (
                 <div key={r.id} className={'outline-row space-row' + (on ? ' on' : '')}>
                   {/* THE HEAD IS THE CONTROL; THE BODY IS NOT. They were one
@@ -5004,70 +5204,18 @@ export default function App({
 
                   {on && (
                     <div className="space-body">
-                      {/* --- THE FIRST DECISION THAT IS ABOUT THE CEILING
-                          rather than about the lights. Everything else takes a
-                          flat slab as given and arranges fittings on it; this
-                          says what the slab is.
-                          STANDARD COSTS NO STATE. Picking it deletes the entry
-                          rather than writing 'standard', so a plan full of
-                          ordinary ceilings saves nothing about them. */}
-                      <div className="space-block">
-                        <h4>Ceiling design</h4>
-                        <div className="btnrow">
-                          <button className={'btn' + (!coved ? ' picked' : '')}
-                            title="A flat ceiling with the ambient grid on it"
-                            onClick={() => setCeilingKinds((m) => {
-                              if (!(r.id in m)) return m;
-                              const n = { ...m }; delete n[r.id]; return n;
-                            })}>
-                            Standard
-                          </button>
-                          <button className={'btn' + (coved ? ' picked' : '')}
-                            title="A dropped band round the perimeter with a concealed LED strip in it"
-                            onClick={() => setCeilingKinds((m) => ({ ...m, [r.id]: 'cove' }))}>
-                            Cove
-                          </button>
-                        </div>
-
-                        {coved && !c?.ok && (
-                          <p className="note warn" style={{ marginTop: 8 }}>
-                            {c?.reason ?? 'No cove here — the layout fell back to a standard ceiling.'}
-                          </p>
-                        )}
-                        {!coved && (
-                          <p className="note" style={{ marginTop: 8 }}>
-                            A flat ceiling with the ambient grid on it.
-                          </p>
-                        )}
-                        {/* WHICH RECTANGLE THE COVE IS SET OUT IN, where there
-                            is one. This was a plan-wide "Coves" list of its
-                            own; it is one line about one room, and it belongs
-                            in the room. CLICK TO CYCLE rather than open a
-                            picker — there are rarely more than three or four
-                            rectangles and the drawing shows each one the
-                            instant it is chosen, so cycling in place beats a
-                            panel that covers the thing you are judging. */}
-                        {coved && c?.ok && (
-                          <div className="kv" style={{ marginTop: 8 }}>
-                            <span>{ftin(c.host.w)} × {ftin(c.host.h)} · {ftin(c.offset)} inset
-                              {' '}· {STAGE_SAY[c.stage] ?? c.stage}</span>
-                            {nRects > 1 && (
-                              <button className="btn tiny"
-                                title={`Rectangle ${r.covePick + 1} of ${nRects} — click for the next`}
-                                onClick={() => setCovePicks((m) => ({
-                                  ...m, [r.id]: (r.covePick + 1) % nRects }))}>
-                                next of {nRects}
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* --- AND WHAT IS ON ITS WALLS. Independent of the
-                          ceiling above: panelling, shelving and art are there
-                          whether the slab is flat or coved, and gating the
-                          upload behind Cove would hide the feature on every
-                          standard ceiling in the job. */}
+                      {/* --- WHAT IS ON ITS WALLS, and now the only thing in
+                          here. The ceiling design used to be reported above
+                          this — each chunk, its size, what it came out as — and
+                          it was a paragraph of text restating what the drawing
+                          already shows, in the one place you cannot see the
+                          drawing while reading it. The decision is made on the
+                          plan (click a light) and its consequence is drawn on
+                          the plan; a second account of it in the panel is not
+                          reassurance, it is something else to reconcile.
+                          Independent of the ceiling either way: panelling,
+                          shelving and art are there whether the slab is flat or
+                          coved, which is why this was never gated on it. */}
                       {/* `wallGrid`, `wallShot`, `wallState` and the two
                           handlers below are all computed from `focus`, and this
                           body only renders when `on` — that is, when `focus` IS
@@ -5077,11 +5225,28 @@ export default function App({
                       <RenderPassPanel
                         room={r} grid={wallGrid} pxPerFt={pxPerFt}
                         renders={renders[r.id] ?? []}
+                        stored={(renderRefs[r.id] ?? []).length}
                         onAddFiles={addRenders}
-                        onRemoveRender={(i) => setRenders((m) => ({
-                          ...m, [r.id]: (m[r.id] ?? []).filter((_, k) => k !== i) }))}
-                        onClearRenders={() => setRenders((m) => {
-                          const n = { ...m }; delete n[r.id]; return n; })}
+                        /* REMOVING A VIEW DROPS THE REFERENCE, NOT THE OBJECT.
+                           The bucket copy stays where it is, deliberately: it
+                           was one of the images a pass was actually run on, and
+                           the answer that pass produced is still on this plan
+                           and still in its revisions. Deleting the pixels would
+                           leave a wall element whose evidence no longer exists
+                           — a training row with a hole in it — to save a few
+                           hundred kilobytes. What the person meant by the × is
+                           "not this one, next time", and that is exactly what
+                           removing it from the list does. */
+                        onRemoveRender={(i) => {
+                          setRenders((m) => ({
+                            ...m, [r.id]: (m[r.id] ?? []).filter((_, k) => k !== i) }));
+                          setRenderRefs((m) => ({
+                            ...m, [r.id]: (m[r.id] ?? []).filter((_, k) => k !== i) }));
+                        }}
+                        onClearRenders={() => {
+                          setRenders((m) => { const n = { ...m }; delete n[r.id]; return n; });
+                          setRenderRefs((m) => { const n = { ...m }; delete n[r.id]; return n; });
+                        }}
                         /* THE SHOT IS SHOWN ONLY FOR THE ROOM IT IS OF. It is
                            rebuilt asynchronously when the selection changes, so
                            for a beat after a click it is still the last room's,

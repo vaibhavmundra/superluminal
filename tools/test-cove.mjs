@@ -20,9 +20,14 @@
 //   node tools/test-cove.mjs
 // ---------------------------------------------------------------------------
 
-import { coveOffsetFor, coveGeometry, bandFixtureFor, coveRectOptions,
-         planWithCove, COVE_TOLERANCE, NARROW_BAND_FT,
-         STRIP_OFFSET_FT, OFFSET_STEPS, OFFSET_MAX } from '../src/lib/cove.js';
+import { coveOffsetFor, coveGeometry, bandFixtureFor, COVE_TOLERANCE,
+         NARROW_BAND_FT, STRIP_OFFSET_FT, OFFSET_STEPS,
+         OFFSET_MAX } from '../src/lib/cove.js';
+// WHERE A COVE IS NOW DECIDED. cove.js is the detail; the choosing and the
+// ladder live in ceilingDesign.js, so a test about what a cove DOES has to go
+// through it. See tools/test-ceiling-design.mjs for the choosing itself.
+import { planCeilingDesign, chunkKey, designChunking,
+         optionsForChunk } from '../src/lib/ceilingDesign.js';
 import { COVE_LUMENS_PER_FT } from '../src/lib/planner.js';
 import { PLAN_OPTIONS, lumenCriteriaFor } from '../src/lib/settings.js';
 import { planTaskSpots, rectDistance, SPOT_DEFAULTS } from '../src/lib/taskSpots.js';
@@ -35,8 +40,23 @@ const say = (t) => console.log('\n' + t);
 
 const box = (w, h) => ({
   polygonFt: [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }],
-  chunks: [{ x0: 0, y0: 0, x1: w, y1: h, w, h, area: w * h }],
+  chunks: [{ x0: 0, y0: 0, x1: w, y1: h, w, h, area: w * h,
+             key: chunkKey({ x0: 0, y0: 0, x1: w, y1: h }) }],
 });
+
+/**
+ * ONE SPACE, ONE CHUNK, COVED. The room is a rectangle so its own outline gives
+ * exactly one design chunk, which is the case every claim below is about: what a
+ * cove does to the layout underneath it. `r.cove` is that chunk's report.
+ */
+const coved = (w, h, criteria, { zonesFt = [] } = {}) => {
+  const b = box(w, h);
+  const out = planCeilingDesign({
+    polygonFt: b.polygonFt, zonesFt, designChunks: b.chunks,
+    picks: { [b.chunks[0].key]: 'cove' },
+    opt: PLAN_OPTIONS, criteria });
+  return { plan: out.plan, cove: out.coves[0], parts: out.parts };
+};
 
 // --- 1. the inset table ----------------------------------------------------
 say('1. THE INSET IS THE TABLE');
@@ -113,40 +133,50 @@ say('2. THE COVE LINE CUTS THE GRID');
 ok(coveGeometry({ x0: 0, y0: 0, x1: 40, y1: 4 }) === null,
   'a chunk too narrow to inset gets NO cove rather than an inside-out one');
 
-// --- 2b. the rectangle search ---------------------------------------------
-say('2b. THE COVE GOES IN THE LARGEST RECTANGLE THAT FITS');
+// --- 2b. which piece of ceiling it goes in ---------------------------------
+say('2b. THE COVE GOES IN A CHUNK, AND THE CHUNKS COME FROM THE OUTLINE');
 {
   // An L-shaped living-dining: 26 x 14 across the top, 18 x 7 hanging below the
-  // right-hand end. Two big rectangles fit it and neither contains the other,
-  // which is the case the picker exists for.
+  // right-hand end. TWO pieces of ceiling, and that is the whole point — under
+  // the old reading the room got ONE cove in whichever rectangle was biggest,
+  // and a person who wanted the other end, or both ends, had no way to say so.
   const L = [{ x: 0, y: 0 }, { x: 26, y: 0 }, { x: 26, y: 21 },
              { x: 8, y: 21 }, { x: 8, y: 14 }, { x: 0, y: 14 }];
-  const opts = coveRectOptions(L, [], PLAN_OPTIONS);
-  ok(opts.length >= 2, `${opts.length} rectangles offered, largest first`);
-  ok(near(opts[0].area, 18 * 21) && near(opts[1].area, 26 * 14),
-    `the two real answers come first: ${opts[0].w}x${opts[0].h} then ${opts[1].w}x${opts[1].h}`);
-  ok(opts.every((r, i) => i === 0 || r.area <= opts[i - 1].area), '...in descending area');
-  ok(opts.every((r) => coveGeometry(r) !== null), '...and every one of them can carry a cove');
-  ok(opts.every((r) => r.offset === coveOffsetFor(Math.min(r.w, r.h))),
-    '...each carrying the inset its own shorter side implies');
+  const d = designChunking(L, [], PLAN_OPTIONS, []);
+  ok(d.chunks.length === 2, `${d.chunks.length} chunks, each one a piece of ceiling to decide about`);
+  ok(d.chunks.every((c) => optionsForChunk(c, PLAN_OPTIONS).some((o) => o.id === 'cove')),
+    '...and a cove is offered in every one of them, not just the biggest');
+  const area = d.chunks.reduce((t, c) => t + c.area, 0);
+  ok(near(area, 26 * 14 + 18 * 7, 1e-6), '...and together they are the whole ceiling');
 
-  // THE ONE THAT MATTERS: furniture must not move the rectangle. A bed pushed
-  // into the middle of the top bay is not a hole in the ceiling.
+  // THE ONE THAT MATTERS: furniture must not move the chunks. A bed pushed into
+  // the middle of the top bay is not a hole in the ceiling.
   const bed = [{ x0: 9, y0: 1, x1: 16, y1: 7 }];
-  const withBed = coveRectOptions(L, bed, PLAN_OPTIONS);
-  ok(!near(withBed[0].area, opts[0].area),
-    'treated as a hole, a bed DOES wreck the answer — which is why it must not be one');
-  const asBuilt = coveRectOptions(L, [], PLAN_OPTIONS);
-  ok(near(asBuilt[0].area, opts[0].area) && asBuilt[0].x0 === opts[0].x0,
-    '...and set out on the room as built it is the same rectangle, bed or no bed');
+  const withBed = designChunking(L, bed, PLAN_OPTIONS, []);
+  ok(withBed.chunks.length > d.chunks.length,
+    'treated as a hole, a bed DOES cut the ceiling up — which is why it must not be one');
+  const asBuilt = designChunking(L, [], PLAN_OPTIONS, []);
+  ok(asBuilt.chunks.length === d.chunks.length
+     && asBuilt.chunks.every((c, i) => c.key === d.chunks[i].key),
+    '...and set out on the room as built they are the same chunks, bed or no bed');
 }
 {
   // A hole in the CEILING is a different thing and must still count.
   const room = [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 20 }, { x: 0, y: 20 }];
   const shaft = [{ x0: 12, y0: 0, x1: 18, y1: 20 }];
-  const opts = coveRectOptions(room, shaft, PLAN_OPTIONS);
-  ok(opts.every((r) => r.x1 <= 12 + 1e-9 || r.x0 >= 18 - 1e-9),
-    'no candidate crosses a shaft that goes all the way through the ceiling');
+  const d = designChunking(room, shaft, PLAN_OPTIONS, []);
+  ok(d.chunks.every((c) => c.x1 <= 12 + 1e-9 || c.x0 >= 18 - 1e-9),
+    'no chunk crosses a shaft that goes all the way through the ceiling');
+}
+{
+  // A CHUNK CAN BE TOO NARROW TO BE WORTH COVING even when the geometry would
+  // technically close: two 2 ft bands in a 5 ft chunk leave a one-foot ribbon.
+  ok(!optionsForChunk({ x0: 0, y0: 0, x1: 20, y1: 5 }, PLAN_OPTIONS)
+      .some((o) => o.id === 'cove'),
+    'a 5 ft chunk is offered no cove — the higher ceiling left in the middle would be a ribbon');
+  ok(optionsForChunk({ x0: 0, y0: 0, x1: 20, y1: 12 }, PLAN_OPTIONS)
+      .some((o) => o.id === 'cove'),
+    '...and a 12 ft one is');
 }
 
 // --- 3. nothing crowds the line -------------------------------------------
@@ -174,8 +204,7 @@ const checkClearance = (r, label) => {
 
 // --- the ladder ------------------------------------------------------------
 say('4. THE LADDER STOPS AT THE FIRST RUNG THAT MEETS THE BRIEF');
-const run = (w, h, criteria, extra = {}) => planWithCove({
-  polygonFt: box(w, h).polygonFt, opt: PLAN_OPTIONS, criteria, ...extra });
+const run = (w, h, criteria, extra = {}) => coved(w, h, criteria, extra);
 
 {
   // A long thin residential space: a lot of perimeter for very little floor, so
@@ -264,8 +293,7 @@ say('6. A TASK SPOT STILL LANDS IN A ROOM WITH NO DOWNLIGHTS');
   const W = 12.9, H = 12.5;
   const room = [{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: H }, { x: 0, y: H }];
   const bed = [{ x0: 0.5, y0: 1.5, x1: 6.5, y1: 8 }];
-  const r = planWithCove({ polygonFt: room, zonesFt: bed, coveZonesFt: [],
-                           opt: PLAN_OPTIONS, criteria: 20 });
+  const r = coved(W, H, 20, { zonesFt: bed });
   ok(r.cove.stage === 'cove' && r.plan.lights.length === 0,
     'the cove carries this bedroom — not one downlight in it');
 
@@ -310,8 +338,7 @@ say('6. A TASK SPOT STILL LANDS IN A ROOM WITH NO DOWNLIGHTS');
   // the nearest piece of ceiling that can, rather than not exist.
   const W = 12.9, H = 12.5;
   const room = [{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: H }, { x: 0, y: H }];
-  const r = planWithCove({ polygonFt: room, zonesFt: [], coveZonesFt: [],
-                           opt: PLAN_OPTIONS, criteria: 20 });
+  const r = coved(W, H, 20);
   const desk = { x0: W - 2.6, y0: 0.4, x1: W - 0.4, y1: 2.6 };
   const res = planTaskSpots([desk], {
     chunks: r.plan.chunks, lights: r.plan.lights, polygon: room,

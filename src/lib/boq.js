@@ -99,6 +99,24 @@ export const FIXTURES = [
     // is specified. A total for "the strip" is meaningless without a length.
     watts: null, wattsPerM: 9.6, beam: null, lumens: null, lumensPerM: 850,
     note: 'accent — concealed cove / under-cabinet' },
+  { id: 'reverse-cove', label: '8" reverse cove', unit: 'm',
+    // THE SAME TAPE AND A DIFFERENT PRODUCT, which is the distinction a
+    // schedule exists to make. What is bought here is not a length of strip: it
+    // is a 200mm slot formed in the ceiling at the wall, with the tape at its
+    // inner lip washing the wall below. The plasterboard, the shadow gap and the
+    // setting-out are the item; the tape is a component of it.
+    //
+    // So it is billed by the metre like the strip — a slot is linear and is
+    // priced that way — at the same rating, because it is the same tape in it.
+    // Merging the two lines would tell a contractor to buy nine metres of strip
+    // and nothing about the nine metres of ceiling detail that has to be built
+    // to put it in.
+    //
+    // AND THE TOOLTIP READS THIS LINE. Same argument as everywhere else in this
+    // file: the card under the pointer and the schedule cannot disagree,
+    // because there is one place the words and the numbers come from.
+    watts: null, wattsPerM: 9.6, beam: null, lumens: null, lumensPerM: 850,
+    note: 'accent — washes a panelled or papered wall' },
 ];
 
 /** Placed on the ceiling, counted, and deliberately not billed. */
@@ -128,7 +146,7 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
   // --- per room
   const byRoom = lit.map((r) => {
     const q = { small: 0, 'small-narrow': 0, large: 0, spot: 0, 'art-spot': 0,
-                sconce: 0, strip: 0 };
+                sconce: 0, strip: 0, 'reverse-cove': 0 };
 
     // BY `fixture`, FALLING BACK TO `kind`. The planner only ever emits 'small'
     // and 'large' — those are geometry, not product — and the room's type then
@@ -154,11 +172,17 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
       if (z.roomId !== r.id || z.rejected) continue;
       if (z.type === 'sconce') q.sconce++;
       else if (z.type === 'strip') {
+        // BY `fixture`, LIKE THE LIGHTS AND THE SPOTS. Every linear run on this
+        // drawing is `type: 'strip'` — that is what makes the canvas, the
+        // schedule and the DXF take all of them without knowing what a cove is —
+        // and the PRODUCT is a separate question the run itself answers.
+        const id = z.fixture || 'strip';
+        if (q[id] == null) q[id] = 0;
         // METRES, and a run with no length is still a run. A strip whose length
         // could not be derived is counted as a piece with zero metres rather
         // than dropped, because "there is a strip here" is the part the drawing
         // is sure about.
-        q.strip += runMetres(z, pxPerFt) ?? 0;
+        q[id] += runMetres(z, pxPerFt) ?? 0;
       }
     }
 
@@ -170,17 +194,25 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
       // Strips counted as PIECES as well as metres: a contractor buys metres and
       // installs runs, and the number of runs is what tells him how many drivers
       // and how many end caps.
-      stripRuns: accents.filter((z) => z.roomId === r.id && !z.rejected && z.type === 'strip').length,
+      // PIECES PER PRODUCT. A contractor buys metres and installs runs, and the
+      // number of runs is what tells him how many drivers and end caps — so it
+      // has to be counted per line, not once for every linear thing on the plan.
+      runsBy: accents.reduce((m, z) => {
+        if (z.roomId !== r.id || z.rejected || z.type !== 'strip') return m;
+        const id = z.fixture || 'strip';
+        m[id] = (m[id] ?? 0) + 1;
+        return m;
+      }, {}),
     };
   });
 
   // --- the totals, which are what actually gets ordered
   const total = { small: 0, 'small-narrow': 0, large: 0, spot: 0, 'art-spot': 0,
-                  sconce: 0, strip: 0 };
-  let stripRuns = 0;
+                  sconce: 0, strip: 0, 'reverse-cove': 0 };
+  const runsBy = {};
   for (const r of byRoom) {
     for (const k of Object.keys(total)) total[k] += r.qty[k] ?? 0;
-    stripRuns += r.stripRuns;
+    for (const [k, n] of Object.entries(r.runsBy)) runsBy[k] = (runsBy[k] ?? 0) + n;
   }
 
   const lines = FIXTURES.map((f) => {
@@ -191,7 +223,7 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
     return {
       ...f,
       qty: f.unit === 'm' ? round(qty, 2) : qty,
-      pieces: f.id === 'strip' ? stripRuns : qty,
+      pieces: f.unit === 'm' ? (runsBy[f.id] ?? 0) : qty,
       load: load == null ? null : round(load, 1),
     };
   }).filter((l) => l.qty > 0 || l.pieces > 0);
@@ -224,8 +256,15 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
     coordination: coord,
     totals: {
       fittings: lines.filter((l) => l.unit === 'nos').reduce((s, l) => s + l.qty, 0),
-      stripMetres: round(total.strip, 2),
-      stripRuns,
+      // ALL THE TAPE ON THE PLAN, over every line that is bought by the metre.
+      // It was `total.strip` and that was the same number while there was one
+      // linear line; with the reverse cove billed separately it would have gone
+      // on reporting the strip alone and quietly dropped every metre of cove
+      // from the summary the side panel prints.
+      stripMetres: round(lines.filter((l) => l.unit === 'm')
+        .reduce((n, l) => n + (l.qty ?? 0), 0), 2),
+      stripRuns: lines.filter((l) => l.unit === 'm')
+        .reduce((n, l) => n + (l.pieces ?? 0), 0),
       watts,
       unstated: unstated.map((l) => ({ id: l.id, label: l.label, qty: l.qty })),
       areaSqft,
@@ -339,7 +378,7 @@ export function boqTable(boq, { perRoom = true } = {}) {
       fmtWatts(l),
       fmtBeam(l),
       l.load == null ? '—' : String(l.load),
-      l.id === 'strip' && l.pieces ? `${l.pieces} run${l.pieces === 1 ? '' : 's'} · ${l.note}` : l.note,
+      l.unit === 'm' && l.pieces ? `${l.pieces} run${l.pieces === 1 ? '' : 's'} · ${l.note}` : l.note,
     ]);
   });
 
@@ -347,7 +386,7 @@ export function boqTable(boq, { perRoom = true } = {}) {
   rows.push(['', 'Total fittings', String(boq.totals.fittings), 'nos', '', '',
              String(boq.totals.watts), '']);
   if (boq.totals.stripMetres > 0) {
-    rows.push(['', 'Total LED strip', boq.totals.stripMetres.toFixed(2), 'm', '', '', '', '']);
+    rows.push(['', 'Total linear, all runs', boq.totals.stripMetres.toFixed(2), 'm', '', '', '', '']);
   }
   if (boq.totals.unstated.length) {
     // THE EXCLUSION IS A NOTE, NOT A QUANTITY, and it took a rendered PDF to see
@@ -380,6 +419,7 @@ export function boqTable(boq, { perRoom = true } = {}) {
     // a plan that never ran the render pass, because a column of zeros on every
     // schedule is a question the reader has to ask and answer for themselves.
     const artCol = boq.rooms.some((r) => (r.qty['art-spot'] ?? 0) > 0);
+    const roomMetres = (r) => (r.qty.strip ?? 0) + (r.qty['reverse-cove'] ?? 0);
     rows.push(['Space', 'Area (sqft)', 'Small', 'Large', 'Spots', 'Sconces', 'Strip (m)',
                artCol ? 'Art spots' : '']);
     for (const r of boq.rooms) {
@@ -387,7 +427,11 @@ export function boqTable(boq, { perRoom = true } = {}) {
         r.name,
         r.areaSqft == null ? '—' : String(round(r.areaSqft, 1)),
         String(r.qty.small), String(r.qty.large), String(r.qty.spot),
-        String(r.qty.sconce), r.qty.strip ? r.qty.strip.toFixed(2) : '—',
+        // ALL THE TAPE IN THE ROOM, like the spreadsheet's column. This asks
+        // "how much linear product goes in here", and a reverse cove is linear
+        // product — it is a separate SCHEDULE line because it is a different
+        // thing to order, not because it is in a different room.
+        String(r.qty.sconce), roomMetres(r) ? roomMetres(r).toFixed(2) : '—',
         artCol ? String(r.qty['art-spot'] ?? 0) : '',
       ]);
     }
@@ -525,16 +569,22 @@ export function boqSheets(boq) {
     txt('', 'tot'),
   ]);
 
-  const stripRow = boq.lines.find((l) => l.id === 'strip')
-    ? allRows[boq.lines.findIndex((l) => l.id === 'strip')] : null;
+  // EVERY LINE BOUGHT BY THE METRE, added up. One line's cell was enough while
+  // the strip was the only linear product; the reverse cove is a second, and a
+  // "total" that silently means "total of the first one" is the worst kind of
+  // wrong number to put in a spreadsheet somebody prices from.
+  const metreRefs = boq.lines
+    .map((l, i) => (l.unit === 'm' ? allRows[i] : null))
+    .filter(Boolean);
   let metresRow = null;
-  if (stripRow) {
+  if (metreRefs.length) {
     metresRow = at();
     // NO UNIT COLUMN ON THE SUMMARY ROWS. `0.00" m"` already prints the unit, so
     // filling D as well reads "5.94 m   m". The rows inside the table keep their
     // Unit column because their formats do not carry one.
-    rows.push([txt(''), txt('Total LED strip', 'bold'),
-               fx(`${ref(2, stripRow)}`, boq.totals.stripMetres, 'metres')]);
+    rows.push([txt(''), txt('Total linear, all runs', 'bold'),
+               fx(metreRefs.map((r2) => ref(2, r2)).join('+'),
+                  boq.totals.stripMetres, 'metres')]);
   }
 
   // The area now lives in C4 — see the meta block above.
@@ -590,8 +640,14 @@ export function boqSheets(boq) {
     { head: 'Spots',    id: 'spot',      style: 'num',    w: 9 },
     ...(artCol ? [{ head: 'Art spots', id: 'art-spot', style: 'num', w: 11 }] : []),
     { head: 'Sconces',  id: 'sconce',    style: 'num',    w: 10 },
-    { head: 'Strip',    id: 'strip',     style: 'metres', w: 11, dp: 2 },
+    // ALL THE TAPE IN THE ROOM, not just the line called `strip`. This column
+    // answers "how much linear product goes in here", and a reverse cove is
+    // linear product — it is only a separate SCHEDULE line because it is a
+    // different thing to order, not because it is a different room.
+    { head: 'Strip',    ids: ['strip', 'reverse-cove'], style: 'metres', w: 11, dp: 2 },
   ];
+  /** One column's quantity: a single line, or several summed. */
+  const colQty = (q, c) => (c.ids ? c.ids.reduce((n2, id) => n2 + (q[id] ?? 0), 0) : (q[c.id] ?? 0));
   const rHead = rat();
   rrows.push([txt('Space', 'h'), txt('Area', 'hr'),
               ...RCOLS.map((c) => txt(c.head, 'hr'))]);
@@ -599,19 +655,19 @@ export function boqSheets(boq) {
   for (const r of boq.rooms) {
     rrows.push([
       txt(r.name, 'bold'), n(round(r.areaSqft, 0), 'area'),
-      ...RCOLS.map((c) => n(c.dp != null ? round(r.qty[c.id] ?? 0, c.dp) : (r.qty[c.id] ?? 0), c.style)),
+      ...RCOLS.map((c) => n(c.dp != null ? round(colQty(r.qty, c), c.dp) : colQty(r.qty, c), c.style)),
     ]);
   }
   const rLast = rrows.length;
   const rTotal = rat();
   const colSum = (c) => `SUM(${colLetter(c)}${rFirst}:${colLetter(c)}${rLast})`;
   const tot = (c, v, s = 'totNum') => fx(colSum(c), v, s);
-  const sum = (k) => boq.rooms.reduce((a, r) => a + (r.qty[k] ?? 0), 0);
+  const sum = (c) => boq.rooms.reduce((a, r) => a + colQty(r.qty, c), 0);
   rrows.push([
     txt('Total', 'totBold'),
     tot(1, boq.totals.areaSqft, 'totArea'),
     ...RCOLS.map((c, i) => tot(2 + i,
-      c.dp != null ? round(sum(c.id), c.dp) : sum(c.id),
+      c.dp != null ? round(sum(c), c.dp) : sum(c),
       c.style === 'metres' ? 'totMetres' : 'totNum')),
   ]);
 
@@ -629,7 +685,7 @@ export function boqSheets(boq) {
   const pairs = RCOLS
     .filter((c) => c.style !== 'metres')
     .map((c) => {
-      const cell = q(c.id);
+      const cell = q(c.id);   // the metre columns are excluded, so `id` is set
       return cell ? `${colLetter(2 + RCOLS.indexOf(c))}${rTotal}=${cell}` : null;
     })
     .filter(Boolean);

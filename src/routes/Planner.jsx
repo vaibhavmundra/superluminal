@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import App from '../App.jsx';
-import { getPlan, updatePlan, fetchPlanFile, uploadSnapshot, recordRevision, touchPlanOpened }
-  from '../lib/db.js';
+import { getPlan, updatePlan, fetchPlanFile, uploadSnapshot, uploadRender, recordRevision,
+  touchPlanOpened, publicUrl } from '../lib/db.js';
 import { getJob, subscribeJob, whenRowReady, retryUpload, releaseJob, provisionalPlan }
   from '../lib/uploads.js';
 import { useAuth } from '../lib/auth.jsx';
+import { readDraft, saveDraft, clearDraft, pickRestore } from '../lib/draft.js';
 
 // ---------------------------------------------------------------------------
 // THE EDITOR, WITH A DATABASE BEHIND IT.
@@ -35,12 +36,28 @@ import { useAuth } from '../lib/auth.jsx';
 // THE SAVE IS DEBOUNCED. Dragging a strip fires a state change per pointermove;
 // writing on each would be a hundred requests for one gesture. 1.5 seconds of
 // quiet, then one write, of the LATEST payload — an intermediate state mid-drag
-// has no value, only where the strip ended up does. Flushed on beforeunload and
-// on unmount, which is what catches "Back to Projects" clicked half a second
-// after the last nudge.
+// has no value, only where the strip ended up does. Flushed on pagehide and on
+// unmount, which is what catches "Back to Projects" clicked half a second after
+// the last nudge.
+//
+// AND MIRRORED LOCALLY THE INSTANT IT ARRIVES. The debounce plus the round trip
+// is a window — a second or two wide — in which the newest edit lives only in
+// React state, and a reload inside it used to lose that edit. The unload flush
+// does not close the window, because a fetch still in flight when the document
+// goes away is cancelled by the browser: it lands sometimes, which is precisely
+// what "sometimes I lose the lights the render pass placed" was. So every
+// payload is written to localStorage synchronously (lib/draft.js) before the
+// timer is even set, and deleted when the real write lands. A draft still
+// present on open is evidence that the last write did not finish, and it wins.
 // ---------------------------------------------------------------------------
 
 const QUIET_MS = 1500;
+
+/** serialiseEditor stamps every state it emits; this is that stamp as a number. */
+const stampOf = (st) => {
+  const t = Date.parse(st?.savedAt ?? '');
+  return Number.isNaN(t) ? 0 : t;
+};
 
 export default function Planner() {
   const { planId } = useParams();
@@ -58,6 +75,11 @@ export default function Planner() {
   const [upload, setUpload] = useState(() => (job ? job.status : null));
   const [err, setErr] = useState('');
   const [saveState, setSaveState] = useState('idle');   // idle | dirty | saving | saved | error
+
+  // READ ONCE, AT MOUNT, and before anything can overwrite it. A draft is only
+  // ever interesting in comparison with the row that is about to arrive.
+  const [draft] = useState(() => readDraft(planId));
+  const warnedDraft = useRef(false);
 
   // --- the job, as it progresses --------------------------------------------
   useEffect(() => {
@@ -104,6 +126,13 @@ export default function Planner() {
   const pending = useRef(null);
   const timer = useRef(null);
   const writing = useRef(false);
+  // THE STAMP OF THE NEWEST editor_state THIS TAB HAS SUCCESSFULLY WRITTEN.
+  // A milestone is slow — it renders a PNG and uploads it before it updates the
+  // row — so the state it captured when it was fired can be several seconds old
+  // by the time it writes, and an autosave that happened in between would be
+  // overwritten by it. Comparing stamps is how a late milestone is stopped from
+  // walking backwards over a newer save.
+  const wroteAt = useRef(0);
   const planRef = useRef(null);
   planRef.current = plan;
 
@@ -132,6 +161,12 @@ export default function Planner() {
       if (d?.projectType) patch.project_type = d.projectType;
 
       await updatePlan(row.id, patch);
+      wroteAt.current = Math.max(wroteAt.current, stampOf(p.editorState));
+      // ONLY WHEN NOTHING NEWER IS ALREADY QUEUED. `pending.current` was
+      // emptied at the top of this flush; if it has been refilled since, the
+      // draft now describes an edit this write did not carry and deleting it
+      // would reopen the very window this exists to close.
+      if (!pending.current) clearDraft(planId);
       setSaveState('saved');
     } catch (e) {
       console.error('[planner] save failed', e);
@@ -144,16 +179,29 @@ export default function Planner() {
   }, [planId]);
 
   const onPersist = useCallback((payload) => {
+    // FIRST, AND SYNCHRONOUSLY. No await, no network, nothing that can be
+    // cancelled by an unload. Everything below this line is best-effort.
+    saveDraft(planId, payload.editorState);
     pending.current = payload;
     setSaveState((s) => (s === 'saving' ? s : 'dirty'));
     clearTimeout(timer.current);
     timer.current = setTimeout(flush, QUIET_MS);
-  }, [flush]);
+  }, [flush, planId]);
 
   useEffect(() => {
     const bye = () => { if (pending.current) flush(); };
+    // PAGEHIDE, NOT ONLY BEFOREUNLOAD. beforeunload does not fire at all on a
+    // backgrounded mobile tab that is later discarded, and neither event can
+    // hold the document open for an async write — the draft in localStorage is
+    // what actually guarantees the edit survives. These two just give the real
+    // write its best chance to get out first.
+    window.addEventListener('pagehide', bye);
     window.addEventListener('beforeunload', bye);
-    return () => { window.removeEventListener('beforeunload', bye); bye(); clearTimeout(timer.current); };
+    return () => {
+      window.removeEventListener('pagehide', bye);
+      window.removeEventListener('beforeunload', bye);
+      bye(); clearTimeout(timer.current);
+    };
   }, [flush]);
 
   /**
@@ -174,12 +222,23 @@ export default function Planner() {
       const blob = await payload.getSnapshot?.();
       if (blob) snapshotPath = await uploadSnapshot(row, blob);
 
-      const patch = {
-        editor_state: payload.editorState,
-        stats: payload.stats,
-        status: payload.status,
-        snapshot_path: snapshotPath,
-      };
+      const patch = { snapshot_path: snapshotPath };
+      // THE STATE ONLY IF IT IS STILL THE NEWEST. Everything above this line —
+      // the design serialisation, the PNG, the upload — takes seconds, and the
+      // autosave does not stop running while it happens. Writing the captured
+      // state unconditionally is how a plan loses whatever was done during a
+      // milestone's upload, which for a render pass run right after "light up
+      // the space" is the entire render pass.
+      const mine = stampOf(payload.editorState);
+      if (mine >= wroteAt.current) {
+        patch.editor_state = payload.editorState;
+        patch.stats = payload.stats;
+        patch.status = payload.status;
+        wroteAt.current = mine;
+      } else {
+        console.warn('[planner] milestone state is behind the last save — '
+          + 'writing the snapshot only');
+      }
       if (d.design) { patch.design_json = d.design; patch.boq_json = d.boq ?? null; }
       if (d.pxPerFt) patch.px_per_ft = d.pxPerFt;
       if (d.width) { patch.width = d.width; patch.height = d.height; }
@@ -202,6 +261,31 @@ export default function Planner() {
       setSaveState('error');
     }
   }, [planId]);
+
+  /**
+   * THE BUCKET, FOR THE RENDER PASS — and the only Supabase this route hands
+   * the editor.
+   *
+   * App.jsx stays a pure editor over a File (see the header): it knows how to
+   * shrink a render and how to draw one, and nothing about where it lives. So
+   * it gets two functions rather than a client. `put` returns the storage path,
+   * which is what goes into editor_state; `url` turns one back into something
+   * an <img> and a fetch can both use.
+   *
+   * NULL WHEN THERE IS NO ROW YET. On a drop the editor is running against a
+   * provisional plan for a second or two; an upload against it would land under
+   * "undefined/" and fail the storage policy. A render dropped in that window
+   * simply is not stored, and the pass runs on it regardless.
+   */
+  const renderStore = useMemo(() => ({
+    put: async (blob, meta) => {
+      const row = planRef.current;
+      if (!row || row.provisional) return null;
+      await whenRowReady(planId);
+      return uploadRender(row, blob, meta);
+    },
+    url: (path) => publicUrl(path),
+  }), [planId]);
 
   const rename = useCallback(async (name) => {
     const row = planRef.current;
@@ -234,19 +318,31 @@ export default function Planner() {
     );
   }
 
+  // WHICH STATE THIS OPENS ON. Normally the row. A draft that is newer than the
+  // row means the last write did not complete — a reload inside the debounce, a
+  // tab closed mid-request, a dropped connection — and it is the only copy of
+  // that work in existence, so it wins. See lib/draft.js.
+  const chosen = pickRestore(plan.editor_state ?? null, draft);
+  if (chosen.from === 'draft' && !warnedDraft.current) {
+    warnedDraft.current = true;
+    console.log('[planner] restoring unsaved local work', {
+      aheadMs: chosen.aheadMs, savedAt: chosen.state?.savedAt });
+  }
+
   return (
     <App
       key={plan.id}
       planName={plan.name}
       initialFile={file}
       initialProjectType={plan.project_type ?? null}
-      initialPdfPage={plan.editor_state?.pdfPage ?? null}
-      restore={plan.editor_state ?? null}
+      initialPdfPage={chosen.state?.pdfPage ?? null}
+      restore={chosen.state}
       saveState={saveState}
       uploadState={upload}
       isAdmin={isAdmin}
       onRetryUpload={() => retryUpload(planId)}
       onRename={rename}
+      renderStore={renderStore}
       onPersist={onPersist}
       onMilestone={onMilestone}
       onBack={() => nav(plan.project_id ? `/projects/${plan.project_id}` : '/dashboard')}

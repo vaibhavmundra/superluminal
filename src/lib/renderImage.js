@@ -150,3 +150,63 @@ export async function fitAll(files, opts = {}) {
     + ' refused. Try sending two or three views rather than all of them.');
   return { renders, notes };
 }
+
+// ---------------------------------------------------------------------------
+// KEEPING THEM, AND GETTING THEM BACK.
+//
+// A shrunk render is a base64 JPEG in React state — which is exactly the wrong
+// place for it to be the only copy. Reopening a plan brought back every wall
+// element the model found and none of the pictures it found them in, and
+// re-running the pass meant hunting down the original files again.
+//
+// So the bytes go to storage, and these two functions are the conversion at
+// each end. WHAT IS STORED IS WHAT WAS SENT — the downscaled JPEG, not the
+// original upload — because a render kept beside the JSON the model returned
+// for it is only a usable training pair if the pixels are the ones the model
+// actually saw.
+// ---------------------------------------------------------------------------
+
+/** The exact bytes that went to the API, as a Blob ready to upload. */
+export function renderBlob(r) {
+  const bin = atob(r.base64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: r.mime || 'image/jpeg' });
+}
+
+/**
+ * A stored render -> the same object shape addRenders produced.
+ *
+ * THE METADATA COMES FROM THE PLAN, NOT THE PIXELS. Width, height, quality and
+ * the original's dimensions were all decided during the shrink and recorded in
+ * editor_state; re-deriving them from the JPEG would give the first two and
+ * silently lose the rest, and "originals are not sent" in the panel would stop
+ * being true. So this only fetches bytes.
+ */
+export async function fetchRender(url, ref = {}) {
+  const res = await fetch(url, { cache: 'force-cache' });
+  if (!res.ok) throw new Error(`A stored render could not be read (${res.status})`);
+  const blob = await res.blob();
+  const dataUrl = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(new Error('A stored render could not be decoded.'));
+    fr.readAsDataURL(blob);
+  });
+  const base64 = dataUrl.split(',')[1] ?? '';
+  return {
+    name: ref.name || 'render', mime: 'image/jpeg',
+    base64, dataUrl,
+    w: ref.w ?? null, h: ref.h ?? null, quality: ref.quality ?? null,
+    bytes: decodedBytes(base64),
+    fromBytes: ref.fromBytes ?? null, fromW: ref.fromW ?? null, fromH: ref.fromH ?? null,
+    path: ref.path ?? null, stored: true,
+  };
+}
+
+/** What goes in editor_state: where it is, and everything the panel shows. */
+export const renderRef = (r, path) => ({
+  path, name: r.name, w: r.w, h: r.h, bytes: r.bytes, quality: r.quality,
+  fromW: r.fromW, fromH: r.fromH, fromBytes: r.fromBytes,
+  at: new Date().toISOString(),
+});

@@ -214,6 +214,58 @@ export async function fetchPlanFile(plan) {
   return new File([blob], name, { type });
 }
 
+/**
+ * A RENDER, KEPT — at exactly the size it was sent to the model.
+ *
+ * TWO REASONS, and the second one is the bigger one.
+ *
+ *   IT COMES BACK. The renders used to live in React state and nowhere else, so
+ *   reopening a plan showed a space whose reverse coves and art spots were all
+ *   still there with no picture to explain where any of them came from, and
+ *   re-running the pass meant finding the files again.
+ *
+ *   IT IS THE CORPUS. A render paired with the JSON the model returned for it,
+ *   and with the design that was laid out afterwards, is one training row. The
+ *   pixels have to be the ones the model actually saw or the pair is a lie —
+ *   which is why this stores the DOWNSCALED JPEG out of renderImage.js and not
+ *   the eight-megabyte original. Same bytes, same 1400px long edge, same
+ *   quality step, as went up to the API.
+ *
+ * NEVER UPSERTED. Each upload gets its own timestamped key, so re-uploading a
+ * view is a new object rather than a silent overwrite of the one an earlier
+ * pass was trained against.
+ */
+export async function uploadRender(plan, blob, { roomId, index = 0 }) {
+  const owner = plan.owner || await uid();
+  // Outline ids are minted client-side and a room can be renamed; neither is
+  // safe in a storage key, so the key carries a sanitised copy and the mapping
+  // back to the space lives in editor_state where it can be corrected.
+  const safe = String(roomId || 'room').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 48) || 'room';
+  const path = `${owner}/${plan.id}/renders/${safe}/${Date.now().toString(36)}-${index}.jpg`;
+  const { error } = await must().storage.from(BUCKET)
+    .upload(path, blob, { upsert: false, contentType: 'image/jpeg',
+                          cacheControl: '31536000' });
+  if (error) throw error;
+  return path;
+}
+
+/** Everything stored for one plan, for the analytics side. Newest first. */
+export async function listRenders(plan) {
+  const owner = plan.owner || await uid();
+  const root = `${owner}/${plan.id}/renders`;
+  const out = [];
+  const rooms = unwrap(await must().storage.from(BUCKET).list(root, { limit: 200 }));
+  for (const r of rooms ?? []) {
+    if (r.id) continue;                       // a file at the root; there are none
+    const files = unwrap(await must().storage.from(BUCKET)
+      .list(`${root}/${r.name}`, { limit: 200, sortBy: { column: 'name', order: 'desc' } }));
+    for (const f of files ?? []) out.push({ roomKey: r.name, path: `${root}/${r.name}/${f.name}`,
+                                            bytes: f.metadata?.size ?? null,
+                                            at: f.created_at ?? null });
+  }
+  return out;
+}
+
 /** The finished design, as a PNG beside its drawing. */
 export async function uploadSnapshot(plan, blob) {
   // NOT `plan.owner`. While a background upload is still in flight the editor is

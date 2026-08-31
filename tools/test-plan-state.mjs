@@ -54,6 +54,25 @@ const STATE = {
                                  { id: 'acc-o1-1', kind: 'cove', rejected: true }] } },
   accentDismissed: ['acc-o1-2'],
   manualAccents: [{ id: 'man-1', kind: 'sconce', roomId: 'o1' }],
+  // The render pass: what the model said about the walls, and the two lengths
+  // somebody dragged afterwards. The renders themselves are deliberately absent
+  // — see planState.js — but everything derived from them must come back, or a
+  // reopened plan is missing its reverse coves, its shelf strips and its art
+  // spots while every other light is still on the sheet.
+  wallResults: { o1: { elements: [
+    { id: 'we-o1-0', type: 'panelling', wall: 'bottom',
+      start_cell: 'B1', end_cell: 'H1', width_ft: 7 },
+    { id: 'we-o1-1', type: 'painting', wall: 'left',
+      start_cell: 'A3', end_cell: 'A5', width_ft: 3 },
+  ], took: 8210 } },
+  runTrims: { 'rcove-we-o1-0-0': { startFt: 0.5, endFt: -1 },
+              'shelf-we-o1-2-0': { startFt: 0, endFt: 0.75 } },
+  // Pointers into the bucket, not pixels: see planState.js and db.uploadRender.
+  renderRefs: { o1: [
+    { path: 'u1/p1/renders/o1/mf3k9-0.jpg', name: 'living-01.png',
+      w: 1400, h: 788, bytes: 402_112, quality: 0.82,
+      fromW: 4000, fromH: 2250, fromBytes: 8_411_002, at: '2026-08-31T09:12:00.000Z' },
+  ] },
   surfaceResults: { o1: { surfaces: [{ id: 'surf-o1-0', kind: 'tv' }] } },
   surfaceDismissed: [], manualSurfaces: [{ id: 'ms-1', roomId: 'o1' }],
   layers: { plan: true, lights: true, labels: true }, zoom: 1.4, view: 'boq',
@@ -99,6 +118,22 @@ section('a full round trip');
   ok('hand-placed accents survive', same(got.setManualAccents, STATE.manualAccents));
   ok('task surfaces survive', same(got.setSurfaceResults, STATE.surfaceResults));
   ok('hand-drawn surfaces survive', same(got.setManualSurfaces, STATE.manualSurfaces));
+  // THE REGRESSION THIS SECTION WAS ADDED FOR. Reverse coves, shelf strips and
+  // art spots are all derived from these two on every render — nothing about
+  // them is stored — so if either field fails to round trip the render pass's
+  // lights are simply gone the next time the plan is opened, with every other
+  // light still in place. Which is exactly how it was reported.
+  ok('the wall elements survive', same(got.setWallResults, STATE.wallResults));
+  ok('and keep their cells and widths',
+    got.setWallResults?.o1?.elements?.[0]?.start_cell === 'B1'
+    && got.setWallResults?.o1?.elements?.[0]?.width_ft === 7);
+  ok('hand-dragged run lengths survive', same(got.setRunTrims, STATE.runTrims));
+  ok('the stored renders come back as pointers', same(got.setRenderRefs, STATE.renderRefs));
+  ok('and keep the size they were sent at',
+    got.setRenderRefs?.o1?.[0]?.w === 1400 && got.setRenderRefs?.o1?.[0]?.fromW === 4000);
+  ok('but no pixels went into the column',
+    !JSON.stringify(serialiseEditor(STATE)).includes('base64')
+    && !JSON.stringify(serialiseEditor(STATE)).includes('data:image'));
   ok('scale survives', got.setScaleMode === 'door' && got.setRefId === 'door900'
     && got.setCustomFt === 3 && same(got.setMeasure, STATE.measure)
     && same(got.setDoorPick, STATE.doorPick));

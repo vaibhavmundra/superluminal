@@ -86,6 +86,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     // restores were removed from the drawing proper.
     audit = false, auditZones = [],
     onFixture = null, draftRun = null,
+    // WHICH PIECE OF CEILING IS BEING DECIDED, and the two things that can be
+    // done about it. `optionPick` is { roomId, key }; `plans[i].design` carries
+    // the chunks themselves. See the pill at the foot of this file.
+    optionPick = null, onPickChunk = null, onCycleOption = null,
     placeSnap = null, sconceGhost = null, cursor = null },
   ref
 ) {
@@ -118,6 +122,16 @@ const PlanCanvas = forwardRef(function PlanCanvas(
   // heavy strokes make it look like the plan is ours.
   const lw = Math.max(width, height) / 1500;
   const laid = plans.filter((r) => r.plan?.ok);
+  /**
+   * IS A CLICK ON A FITTING A CHOICE ABOUT THE CEILING RIGHT NOW?
+   *
+   * Not while something else owns the click. Boxing a no-light zone, dragging a
+   * ceiling object or placing an armed fitting all mean the pointer is spoken
+   * for, and a click that both places a fan and reopens a chunk's options is a
+   * click nobody asked for. The caller withholds the handler in those modes —
+   * see the PlanCanvas call site — and this is only the local reading of that.
+   */
+  const pickable = !!onPickChunk && !zoneMode && !objMode;
 
   // each chunk draws its own outline plus its own interior grid lines —
   // no line ever crosses a no-light zone, because the zones aren't in any chunk
@@ -279,12 +293,22 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               Under the lights and over the grid, like every other room layer,
               and pointer-transparent because there is nothing here to grab —
               the cove follows the ceiling, and the ceiling is set in the panel. */}
-          {r.plan.covePx && (
-            <polygon points={points(r.plan.covePx.line)}
+          {(r.plan.covesPx ?? []).map((cv) => (
+            <polygon key={cv.key} points={points(cv.line)}
+              /* AND IT IS THE WAY BACK. A chunk whose cove is carrying it on its
+                 own has no downlight left to click, so the cove line itself
+                 opens that chunk's options. It is the only mark the design left
+                 on that piece of ceiling, which makes it the only honest thing
+                 to click. */
+              className={pickable ? 'hit' : undefined}
+              style={pickable ? { cursor: 'pointer' } : undefined}
+              onClick={pickable
+                ? (e) => { e.stopPropagation(); onPickChunk(r.id, cv.key); }
+                : undefined}
               fill="none" stroke={C.lit} strokeWidth={lw * 1.6}
               strokeDasharray={`${lw * 5} ${lw * 4}`}
-              strokeLinejoin="round" opacity="0.85" pointerEvents="none" />
-          )}
+              strokeLinejoin="round" opacity="0.85" />
+          ))}
         </g>
       ))}
 
@@ -579,6 +603,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     radius, and making that live would have one downlight
                     swallowing the clicks meant for its neighbours. */}
                 <circle className="hit" cx={l.x} cy={l.y} r={R}
+                  /* CLICKING A LIGHT ASKS ABOUT THE CEILING IT IS ON. The
+                     fitting carries the key of the design chunk that put it
+                     there, so there is nothing to hit-test: the pill opens over
+                     that chunk and flips it through what it could be. */
+                  onClick={pickable && l.design
+                    ? (e) => { e.stopPropagation(); onPickChunk(r.id, l.design); }
+                    : undefined}
                   fill={l.kind === 'large' ? col : '#fff'}
                   stroke={col} strokeWidth={lw * (warm ? 3.1 : 1.7)} />
                 {l.kind === 'small' && <circle cx={l.x} cy={l.y} r={R * 0.42} fill={col} />}
@@ -706,11 +737,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             cx: a.point.x + ix * stand, cy: a.point.y + iy * stand,
           };
         })() : null;
+        // WHAT THE CARD UNDER THE POINTER CALLS THIS — by `fixture`, falling
+        // back to the type. Every linear run on this drawing is `type: 'strip'`,
+        // which is what lets one block draw all of them; what a given run IS —
+        // plain tape, or an eight-inch slot formed in the ceiling to wash a
+        // panelled wall — is the fixture, and it is the fixture the card should
+        // name. A reverse cove reading "LED strip · concealed cove /
+        // under-cabinet" describes the component and not the item.
+        const spec = a.type === 'strip'
+          ? specsFor(a.fixture || 'strip', { metres: runMetres(a, pxPerFt) })
+          : specsFor('sconce');
         return (
-          <g key={a.id} opacity={dim}
-            {...feel(a.id, a.type === 'strip'
-              ? specsFor('strip', { metres: runMetres(a, pxPerFt) })
-              : specsFor('sconce'))}>
+          <g key={a.id} opacity={dim} {...feel(a.id, spec)}>
             {accSel && a.run && (
               <line x1={a.run[0].x} y1={a.run[0].y} x2={a.run[1].x} y2={a.run[1].y}
                 stroke={C.grip} strokeWidth={AFW * 5} strokeLinecap="round" opacity="0.28" />
@@ -1313,6 +1351,94 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             </g>
             <circle cx={cx} cy={cy} r={R} fill="none"
               stroke={C.lit} strokeWidth={lw * 2.1} />
+          </g>
+        );
+      })()}
+
+
+      {/* --- THE CEILING DESIGN, CHOSEN ON THE DRAWING ----------------------
+          A cove is a thing you judge by looking at it, so the choice belongs on
+          the drawing and not in a panel three inches away from the only view
+          that tells you anything. Click any light in a chunk and this appears
+          over that chunk: what the piece of ceiling is now, and arrows to flip
+          it through everything else it could be.
+
+          IT IS ANCHORED TO THE CHUNK, NOT TO THE LIGHT THAT OPENED IT. Flip to
+          a cove that carries the space on its own and the light you clicked
+          ceases to exist; a pill anchored to it would vanish mid-decision with
+          no way back. The chunk is the thing being decided and the chunk does
+          not move.
+
+          AND IT DOES NOT RESIZE. The width is set by the longest label in the
+          list rather than by the one showing, because this control is used by
+          clicking the same spot repeatedly — a pill that grew from STANDARD to
+          COVE would slide the arrow out from under the cursor doing the
+          flipping. */}
+      {optionPick && onCycleOption && (() => {
+        const room = laid.find((x) => x.id === optionPick.roomId);
+        const ch = room?.design?.find((d) => d.key === optionPick.key);
+        if (!ch) return null;
+        const opts = ch.options ?? [];
+        if (!opts.length) return null;
+        const at = Math.max(0, opts.findIndex((o) => o.id === ch.pick));
+        const label = (opts[at]?.label ?? '').toUpperCase();
+        const many = opts.length > 1;
+
+        const fs = s * 0.4;                 // the sheet's own annotation size
+        const h = fs * 1.9;
+        const arrow = h * 0.9;
+        // THE WORD'S OWN BREATHING ROOM, AND IT IS NOT THE ARROWS'.
+        //
+        // These were one number, and a chunk with nothing to flip through was
+        // the case that showed it: with two arrows on the pill their cells sat
+        // between the word and the ends and stood in for padding, so a single
+        // half-em looked fine — take the arrows away and STANDARD was jammed
+        // against both ends. Padding is a property of the label, so it is
+        // charged for the label, and the arrows are added outside it.
+        const side = fs * 0.95;
+        // A GENEROUS PER-CHARACTER ESTIMATE, because the alternative is
+        // measuring text in the DOM to lay out an SVG. Upper case in this face
+        // runs close to 0.62 em and the letter-spacing below adds a tenth on
+        // top, so 0.72 covers the word with a little to spare — and erring wide
+        // costs a slightly roomy pill, where erring narrow clips a word.
+        const longest = opts.reduce((m, o) => Math.max(m, (o.label || '').length), 0);
+        const tw = Math.max(longest, 6) * fs * 0.72;
+        const w = tw + side * 2 + (many ? arrow * 2 : 0);
+        const cx = (ch.rect.x0 + ch.rect.x1) / 2;
+        // Inside the chunk, near its top edge — and never past its middle, so a
+        // shallow chunk keeps its pill on itself rather than over the next one.
+        const cy = Math.min(ch.rect.y0 + h * 1.4, (ch.rect.y0 + ch.rect.y1) / 2);
+        const step = (dir) => (e) => {
+          e.stopPropagation();
+          onCycleOption(optionPick.roomId, optionPick.key, dir);
+        };
+        const glyph = (x, mark, dir) => (
+          <g>
+            <rect className="hit" x={x} y={cy - h / 2} width={arrow} height={h}
+              fill={C.lit} rx={h / 2} ry={h / 2}
+              style={{ cursor: 'pointer' }} onClick={step(dir)} />
+            <text x={x + arrow / 2} y={cy + fs * 0.36} textAnchor="middle"
+              fontSize={fs * 1.15} fontFamily="The Neue Montreal, sans-serif"
+              fill="#fff" opacity="0.85">{mark}</text>
+          </g>
+        );
+        return (
+          <g>
+            {/* WHICH PIECE OF CEILING THIS IS ABOUT. The pill names the design;
+                only the outline says where it lands. */}
+            <rect x={ch.rect.x0} y={ch.rect.y0}
+              width={ch.rect.x1 - ch.rect.x0} height={ch.rect.y1 - ch.rect.y0}
+              fill={C.lit} fillOpacity="0.045" stroke={C.lit} strokeWidth={lw * 1.8}
+              strokeDasharray={`${lw * 8} ${lw * 5}`} opacity="0.7"
+              pointerEvents="none" />
+            <rect className="hit" x={cx - w / 2} y={cy - h / 2} width={w} height={h}
+              rx={h / 2} ry={h / 2} fill={C.lit}
+              onClick={(e) => e.stopPropagation()} />
+            <text x={cx} y={cy + fs * 0.36} textAnchor="middle" fontSize={fs}
+              fontFamily="The Neue Montreal, sans-serif" fill="#fff"
+              letterSpacing={fs * 0.1}>{label}</text>
+            {many && glyph(cx - w / 2, '\u2039', -1)}
+            {many && glyph(cx + w / 2 - arrow, '\u203A', 1)}
           </g>
         );
       })()}

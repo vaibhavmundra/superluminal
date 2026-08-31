@@ -490,5 +490,45 @@ console.log('\n-- a wet room is a different product in the same grid --');
 }
 
 
+console.log('\n-- a reverse cove is its own product, on the same tape --');
+{
+  const rm = (id, name) => ({ id, outline: { name },
+    plan: { ok: true, stats: { areaSqft: 200 }, lights: [] } });
+  const b = buildBOQ({
+    rooms: [rm('r1', 'Living'), rm('r2', 'Bed 1')],
+    accents: [
+      { id: 'a', roomId: 'r1', type: 'strip', runLength: 10 * PX },
+      { id: 'b', roomId: 'r1', type: 'strip', fixture: 'reverse-cove', runLength: 9 * PX },
+      { id: 'c', roomId: 'r2', type: 'strip', fixture: 'reverse-cove', runLength: 6 * PX },
+      { id: 'd', roomId: 'r1', type: 'strip', fixture: 'reverse-cove', rejected: 'x', runLength: 99 * PX },
+    ],
+    pxPerFt: PX,
+  });
+  const line = (id) => b.lines.find((l) => l.id === id);
+  ok(!!line('reverse-cove'), 'there is a catalogue line for it');
+  ok(line('reverse-cove').label === '8" reverse cove',
+    `named as the item, not the component: "${line('reverse-cove').label}"`);
+  ok(near(line('strip').qty, 10 * 0.3048, 0.01), `the plain strip keeps its own metres: ${line('strip').qty}`);
+  ok(near(line('reverse-cove').qty, 15 * 0.3048, 0.01),
+    `and the coves are billed apart: ${line('reverse-cove').qty} m`);
+  ok(line('reverse-cove').pieces === 2, `two runs — two drivers: ${line('reverse-cove').pieces}`);
+  ok(line('strip').pieces === 1, 'and the strip line counts only its own');
+  ok(near(b.totals.stripMetres, 25 * 0.3048, 0.01),
+    `the summary totals ALL the tape, not just the strip line: ${b.totals.stripMetres} m`);
+  ok(b.totals.stripRuns === 3, `and all the runs: ${b.totals.stripRuns}`);
+  ok(near(line('reverse-cove').load, 15 * 0.3048 * 9.6, 0.1),
+    'it carries load at the strip rating, because it is the same tape');
+
+  // The per-room breakdown asks a different question — how much linear product
+  // goes in this room — so it adds them.
+  ok(near(b.rooms[0].qty.strip + b.rooms[0].qty['reverse-cove'], 19 * 0.3048, 0.01),
+    'and the room holds both');
+  const head = boqTable(b).find((r) => r[0] === 'Space');
+  ok(head[6] === 'Strip (m)', 'the breakdown keeps one Strip column');
+  const living = boqTable(b).find((r) => r[0] === 'Living');
+  ok(near(Number(living[6]), 19 * 0.3048, 0.01),
+    `which sums the room's tape: ${living[6]} m`);
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\nall good');
 process.exit(fail ? 1 : 0);

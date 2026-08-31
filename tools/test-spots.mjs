@@ -10,8 +10,8 @@
 // ---------------------------------------------------------------------------
 
 import { secondaryGrid, placeTaskSpot, chunkFor, rectDistance,
-         planTaskSpots, chandelierOver, segmentKey,
-         SPOT_DEFAULTS } from '../src/lib/taskSpots.js';
+         planTaskSpots, chandelierOver, segmentKey, groupSurfaces,
+         SPOT_DEFAULTS, RUN_DEFAULTS } from '../src/lib/taskSpots.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
@@ -307,6 +307,220 @@ console.log('\n-- EACH SURFACE AGAINST ITS OWN CHUNK --');
   const three = planTaskSpots([coffee, dining, second], ctx);
   const keys = three.filter((r) => r.spot).map((r) => segmentKey(r.spot.segment));
   ok(new Set(keys).size === keys.length, 'no two spots share a segment');
+}
+
+console.log('\n-- PEER SURFACES GO UP AS A RUN --');
+{
+  // THE CASE FROM THE DRAWING: two coffee tables side by side in front of one
+  // sofa. Placed independently each took the segment nearest itself and they
+  // landed on two different rows, aiming two different ways.
+  const A = { x0: 5,  y0: 7, x1: 9,  y1: 10, type: 'coffee_table' };
+  const B = { x0: 10, y0: 7, x1: 14, y1: 10, type: 'coffee_table' };
+
+  const g = groupSurfaces([A, B]);
+  ok(g.length === 1 && g[0].members.length === 2 && g[0].axis === 'h',
+    `they are one horizontal run: ${JSON.stringify(g)}`);
+
+  const res = planTaskSpots([A, B], base);
+  ok(res.every((r) => r.spot), `both placed: ${res.map((r) => r.rejected ?? 'ok').join(' / ')}`);
+  ok(near(res[0].spot.y, res[1].spot.y),
+    `ON ONE LANE: y=${res[0].spot.y} and y=${res[1].spot.y}`);
+  ok(res.every((r) => r.spot.run && r.spot.run.of === 2),
+    'and each one says it is standing in a run of two');
+  ok(res[0].spot.run.lane.axis === 'h' && near(res[0].spot.run.lane.at, res[0].spot.y),
+    'the lane it names is the one it is on');
+
+  const gap = Math.hypot(res[0].spot.x - res[1].spot.x, res[0].spot.y - res[1].spot.y);
+  ok(gap >= RUN_DEFAULTS.minSpotGap, `and they are ${gap.toFixed(2)} ft apart, over the six-inch floor`);
+
+  // THE LANE STANDS OFF THE GROUP, so both arrows point the same way rather
+  // than one of them skimming its own table sideways.
+  ok(Math.sign(res[0].spot.aim.y) === Math.sign(res[1].spot.aim.y) && res[0].spot.aim.y !== 0,
+    'both aim the same way across the lane');
+  ok(res.every((r) => r.spot.y > 10 || r.spot.y < 7), 'no spot sits inside the group it lights');
+
+  // Each still aims at ITS OWN table, and stands close enough to light it.
+  ok(near(res[0].spot.target.x, 7) && near(res[1].spot.target.x, 12),
+    'each aims at its own table, not at the pair');
+  ok(rectDistance({ x: res[0].spot.x, y: res[0].spot.y }, A) <= RUN_DEFAULTS.maxAimFt
+     && rectDistance({ x: res[1].spot.x, y: res[1].spot.y }, B) <= RUN_DEFAULTS.maxAimFt,
+    'and both are inside the cap');
+
+  // Order changes nothing, which is what makes it a drawing rather than a roll.
+  const rev = planTaskSpots([B, A], base);
+  ok(near(rev[0].spot.x, res[1].spot.x) && near(rev[1].spot.x, res[0].spot.x),
+    'and the order they were listed in changes nothing');
+}
+
+console.log('\n-- the spacing is the FURNITURE\'S, not a fixed pitch --');
+{
+  // Two tables well apart along the same line: their spots should be well
+  // apart too, not bunched at some computed pitch about the group centre.
+  const A = { x0: 2,  y0: 7, x1: 6,  y1: 10, type: 'coffee_table' };
+  const B = { x0: 9,  y0: 7, x1: 13, y1: 10, type: 'coffee_table' };
+  const res = planTaskSpots([A, B], base);
+  ok(res.every((r) => r.spot?.run), 'still one run');
+  const spread = Math.abs(res[0].spot.x - res[1].spot.x);
+  ok(spread > 4, `the spots are ${spread.toFixed(1)} ft apart because the tables are`);
+  ok(res[0].spot.x < res[1].spot.x, 'and they are in the same order as the tables');
+}
+
+console.log('\n-- WHAT IS NOT A RUN --');
+{
+  const A = { x0: 5,  y0: 7, x1: 9,  y1: 10, type: 'coffee_table' };
+
+  // Untyped surfaces never group. The type is the only evidence there is, and
+  // its absence is not a reason to guess — which is also why every test above
+  // this section, all of which pass bare rectangles, is unaffected.
+  ok(groupSurfaces([{ ...A, type: undefined }, { x0: 10, y0: 7, x1: 14, y1: 10 }])
+       .every((g) => g.members.length === 1),
+    'two untyped rectangles are two surfaces, not a run');
+
+  // Different kinds of thing.
+  const desk = { x0: 10, y0: 7, x1: 14, y1: 10, type: 'executive_desk' };
+  ok(groupSurfaces([A, desk]).every((g) => g.members.length === 1),
+    'a coffee table and a desk that line up perfectly are still two objects');
+
+  // Aligned but nowhere near each other: the gap is wider than the smaller
+  // one's own span, so they are two objects that happen to share a y.
+  const far = { x0: 19, y0: 7, x1: 23, y1: 10, type: 'coffee_table' };
+  ok(groupSurfaces([A, far]).every((g) => g.members.length === 1),
+    `aligned but ${far.x0 - A.x1} ft apart is not adjacent`);
+
+  // Adjacent but out of line by more than half the smaller short side.
+  const skew = { x0: 10, y0: 10.5, x1: 14, y1: 13.5, type: 'coffee_table' };
+  ok(groupSurfaces([A, skew]).every((g) => g.members.length === 1),
+    'and adjacent but out of line is not a row');
+
+  // A chain of three, and the chain BREAKING at the one wide gap.
+  const t = (x0, x1) => ({ x0, y0: 7, x1, y1: 10, type: 'coffee_table' });
+  const three = groupSurfaces([t(1, 4), t(5, 8), t(9, 12)]);
+  ok(three.length === 1 && three[0].members.length === 3, 'three in a row is one run of three');
+  const broken = groupSurfaces([t(1, 4), t(5, 8), t(20, 23)]);
+  ok(broken.length === 2
+     && broken.some((g) => g.members.length === 2)
+     && broken.some((g) => g.members.length === 1),
+    `a wide gap ends the chain: ${broken.map((g) => g.members.length).join('+')}`);
+}
+
+console.log('\n-- A RUN THAT CANNOT BE SERVED DISSOLVES --');
+{
+  // Every lane that could serve this pair is blocked, so they stop being peers
+  // and go back to being two surfaces placed by the old rules. A tidy run that
+  // lights nothing is worse than a scattered pair that does.
+  const A = { x0: 5,  y0: 7, x1: 9,  y1: 10, type: 'coffee_table' };
+  const B = { x0: 10, y0: 7, x1: 14, y1: 10, type: 'coffee_table' };
+  // Both horizontal lanes struck out. Only lanes PARALLEL to the group can host
+  // it, so with the rows gone there is nowhere for a run to stand — and the
+  // columns are still there for the members individually.
+  const deadRows = [{ x0: 0, y0: 11, x1: 24, y1: 13 }, { x0: 0, y0: 3, x1: 24, y1: 5 }];
+  const res = planTaskSpots([A, B], { ...base, zones: deadRows });
+  ok(res.every((r) => !r.spot?.run), 'no run survived the obstructions');
+  ok(res.every((r) => r.spot), 'but both members were still placed by the old path');
+  ok(res.some((r) => !near(res[0].spot.y, res[1].spot.y)) || res[0].spot.x !== res[1].spot.x,
+    'independently, as two surfaces rather than a row');
+
+  // The cap alone is enough to dissolve one: squeeze the band shut and no lane
+  // is both far enough off the group and near enough to light it.
+  const tight = planTaskSpots([A, B], { ...base, opt: { ...base.opt, maxAimFt: 1.6 } });
+  ok(tight.every((r) => !r.spot?.run), 'and so is a cap nothing can meet');
+}
+
+console.log('\n-- THE LEDGER STANDS OUTSIDE A RUN --');
+{
+  // Two surfaces that are NOT peers, contending for one segment. Nothing about
+  // runs may relax this: two spots six inches apart aiming at different things
+  // is the bug the used-once rule exists for.
+  const left  = { x0: 1.5, y0: 6.5, x1: 3.5, y1: 9.5, type: 'coffee_table' };
+  const desk  = { x0: 4.5, y0: 6.5, x1: 6.5, y1: 9.5, type: 'executive_desk' };
+  const both = planTaskSpots([left, desk], base);
+  ok(both.every((r) => r.spot), 'both placed');
+  ok(segmentKey(both[0].spot.segment) !== segmentKey(both[1].spot.segment),
+    'and still on different segments');
+  const gap = Math.hypot(both[0].spot.x - both[1].spot.x, both[0].spot.y - both[1].spot.y);
+  ok(gap >= RUN_DEFAULTS.minSpotGap, `${gap.toFixed(2)} ft apart, over the floor`);
+}
+
+console.log('\n-- A RUN IS RANKED ON THE WHOLE RUN --');
+{
+  // A pair of coffee tables against one bigger dining table. Either table alone
+  // is smaller than the dining table; together they are the bigger commitment
+  // and take first pick.
+  const a = { x0: 2, y0: 6.5, x1: 5, y1: 9.5, type: 'coffee_table' };
+  const b = { x0: 6, y0: 6.5, x1: 9, y1: 9.5, type: 'coffee_table' };
+  const dining = { x0: 14, y0: 5, x1: 20, y1: 11, type: 'dining_table' };
+  const res = planTaskSpots([dining, a, b], base);
+  ok(res.every((r) => r.spot), `all three placed: ${res.map((r) => r.rejected ?? 'ok').join(' / ')}`);
+  ok(res[1].spot.run && res[2].spot.run && near(res[1].spot.y, res[2].spot.y),
+    'the pair is still a run');
+  ok(!res[0].spot.run, 'and the dining table is not in it');
+}
+
+console.log('\n-- A CHANDELIER\'D SURFACE DOES NOT VOTE ON THE LANE --');
+{
+  const A = { x0: 5,  y0: 7, x1: 9,  y1: 10, type: 'coffee_table' };
+  const B = { x0: 10, y0: 7, x1: 14, y1: 10, type: 'coffee_table' };
+  // Over A and clear of B — the 3 ft rule is measured from the body, so the
+  // chandelier has to be genuinely out of B's reach for this to test anything.
+  const res = planTaskSpots([A, B], { ...base, chandeliers: [{ x: 5.5, y: 8.5, r: 0.5 }] });
+  ok(!res[0].spot && /chandelier/.test(res[0].skipped ?? ''), 'the lit one is skipped');
+  ok(res[1].spot && !res[1].spot.run,
+    'and the other is placed alone, not as a run of one');
+}
+
+console.log('\n-- THE PLAN THIS WAS BUILT FOR: two coffee tables, one sofa --');
+{
+  // Straight off the drawing, at 62 px per foot. Worth pinning exactly, because
+  // it is the case that came back WRONG TWICE: once because the spots were
+  // placed independently, and once because the run was refused the only lane
+  // that could carry it.
+  //
+  // The ambient grid here is two columns by two rows, and the row that serves
+  // the seating zone runs THROUGH the tables — which is where the downlights
+  // for that zone went. The next row up is 6.4 ft off them, past the cap. So a
+  // rule that a lane must stand clear of the group leaves this pair with no
+  // lane at all.
+  const F = (px) => +(px / 62).toFixed(3);
+  const ch = { x0: F(428), y0: F(201), x1: F(1228), y1: F(1237),
+               xLines: [F(428), F(828), F(1228)], yLines: [F(201), F(719), F(1237)] };
+  const lts = [];
+  [628, 1028].forEach((x) => [460, 978].forEach((y) =>
+    lts.push({ id: `S${lts.length}`, x: F(x), y: F(y), kind: 'small' })));
+  const poly = [{ x: F(390), y: F(195) }, { x: F(1270), y: F(195) },
+                { x: F(1270), y: F(1245) }, { x: F(390), y: F(1245) }];
+  const A = { x0: F(632), y0: F(855), x1: F(808), y1: F(1030), type: 'coffee_table' };
+  const B = { x0: F(825), y0: F(855), x1: F(995), y1: F(1030), type: 'coffee_table' };
+  const ctx = { chunks: [ch], lights: lts, polygon: poly, fixtures: [], zones: [],
+                coves: [], opt: { fanClearance: 1.0 } };
+
+  const res = planTaskSpots([A, B], ctx);
+  ok(res.every((r) => r.spot?.run), `a run formed: ${res.map((r) => r.rejected ?? 'ok').join(' / ')}`);
+  ok(near(res[0].spot.y, res[1].spot.y), `on one line: y=${res[0].spot.y.toFixed(2)}`);
+  ok(near(res[0].spot.y, F(978), 0.01), 'and it is the row that runs through the tables');
+
+  const gap = Math.hypot(res[0].spot.x - res[1].spot.x, res[0].spot.y - res[1].spot.y);
+  ok(gap >= RUN_DEFAULTS.minSpotGap, `${(gap * 12).toFixed(0)} in apart, over the six-inch floor`);
+  ok(gap < 2, 'and TOGETHER — a pair in the gap between the tables, which is the detail asked for');
+  ok(res[0].spot.x < res[1].spot.x, 'in the same order as the tables');
+
+  // Each still points at its own table and stands close enough to light it.
+  ok(near(res[0].spot.target.x, (A.x0 + A.x1) / 2) && near(res[1].spot.target.x, (B.x0 + B.x1) / 2),
+    'each aims at its own table');
+  ok(rectDistance({ x: res[0].spot.x, y: res[0].spot.y }, A) <= RUN_DEFAULTS.maxAimFt
+     && rectDistance({ x: res[1].spot.x, y: res[1].spot.y }, B) <= RUN_DEFAULTS.maxAimFt,
+    'and both are well inside the cap');
+
+  // THE OLD ANSWER, for the record: placed independently they went to two
+  // different lines — one on the row, one halfway up a column.
+  // Strip the types and nothing groups, which is the behaviour this file had
+  // before runs existed: the ledger sends the second table off the row it
+  // wanted and onto a column, half the room away from its neighbour.
+  const solo = planTaskSpots([{ ...A, type: undefined }, { ...B, type: undefined }], ctx);
+  ok(solo.every((r) => r.spot) && !near(solo[0].spot.y, solo[1].spot.y),
+    `ungrouped they land on two different lines: y=${solo[0].spot.y.toFixed(2)}`
+    + ` and y=${solo[1].spot.y.toFixed(2)} — which is the drawing that started this`);
+  const soloGap = Math.hypot(solo[0].spot.x - solo[1].spot.x, solo[0].spot.y - solo[1].spot.y);
+  ok(soloGap > gap * 3, `and ${soloGap.toFixed(1)} ft apart instead of ${gap.toFixed(1)}`);
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

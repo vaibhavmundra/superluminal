@@ -312,10 +312,24 @@ export function toDXF(rooms, { pxPerFt, heightPx } = {}) {
  * ceiling evenly or aimed at a table; decorative is what an interior designer
  * specifies by model number; ceiling objects are somebody else's scope entirely.
  * Each is a thing a person switches off on its own to look at the rest.
+ *
+ * AND THE REVERSE COVE IS A SIXTH, WHICH IS THE TRADE RULE APPLIED AGAIN RATHER
+ * THAN AN EXCEPTION TO IT. Everything on `led_strips` is bought from a lighting
+ * supplier and run by an electrician. A reverse cove is eight inches of ceiling:
+ * it is set out, boarded, taped and skimmed by a CEILING CONTRACTOR, weeks
+ * before the tape that goes in it arrives on site. Two trades, two programmes,
+ * two people who need to see their own work without the other's on top of it —
+ * which is the whole test this list is built on.
+ *
+ * It also wants a different KIND of geometry, and that is the tell. Everything
+ * else here is a symbol or a run: a circle, a cross, a polyline. This is an
+ * outline of something that gets built to a dimension, so it exports as the
+ * rectangle it is and can be measured off the drawing.
  */
 export const SUPERLUMINAL_LAYERS = {
   spots: 'superluminal_spots',
   strips: 'superluminal_led_strips',
+  reverseCoves: 'superluminal_reverse_coves',
   decorative: 'superluminal_decorative',
   objects: 'superluminal_ceiling_objects',
   rooms: 'superluminal_rooms',
@@ -325,6 +339,7 @@ export const SUPERLUMINAL_LAYERS = {
 const SL_COLOUR = {
   spots: 5,        // blue
   strips: 4,       // cyan
+  reverseCoves: 2, // yellow — a builder's line, not an electrician's
   decorative: 6,   // magenta
   objects: 1,      // red
   rooms: 3,        // green
@@ -384,7 +399,7 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
   const duPerFt = 1 / (units?.toFeet || 1);
   const P = (p) => source.toDu(p);              // plan pixels -> drawing units
   const L = (ft) => ft * duPerFt;               // feet -> drawing units
-  const { spots: LY_S, strips: LY_T, decorative: LY_D,
+  const { spots: LY_S, strips: LY_T, reverseCoves: LY_C, decorative: LY_D,
           objects: LY_O, rooms: LY_R } = SUPERLUMINAL_LAYERS;
 
   let out = slHeader(units?.code);
@@ -451,6 +466,21 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
   // --- accents: a strip is linear product, a sconce is decorative
   for (const a of accents) {
     if (a.rejected) continue;
+    // A REVERSE COVE IS THE SLOT, NOT THE TAPE IN IT — a closed rectangle on
+    // its own layer, drawn from the band's four corners so it imports as one
+    // thing that can be selected, dimensioned and set out. It went out as a
+    // two-point polyline on the strips layer, which is the tape's geometry and
+    // says nothing about the eight inches of ceiling that has to be built.
+    //
+    // The tape is NOT drawn as well. It runs down the middle of a rectangle
+    // whose width is the specification; a second line inside the first adds no
+    // information and one more thing to snap to by accident.
+    if (a.fixture === 'reverse-cove' && a.rect) {
+      const { x0, y0, x1, y1 } = a.rect;
+      add(dxfPolyline(LY_C, [{ x: x0, y: y0 }, { x: x1, y: y0 },
+                             { x: x1, y: y1 }, { x: x0, y: y1 }].map(P), true));
+      continue;
+    }
     // A strip is its RUN — the two ends are the whole specification, and they
     // are the numbers the derivation existed to produce.
     if (a.run) add(dxfPolyline(LY_T, a.run.map(P), false));

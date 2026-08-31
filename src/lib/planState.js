@@ -98,12 +98,20 @@ export function serialiseEditor(s) {
     // --- the ceiling as edited
     ceilingObjs: s.ceilingObjs,
     chunkPicks: s.chunkPicks,
-    // WHAT KIND OF CEILING EACH SPACE HAS, and which of the rectangles that fit
-    // in it the cove is set out in. Two small maps keyed by outline id, and they must be kept: the
-    // layout is a memo over them, so a plan reopened without these comes back
-    // as flat ceilings everywhere and silently loses every cove in the job.
+    // WHAT EACH PIECE OF CEILING IS: outline id -> { chunk key -> option id }.
+    // Small, and it must be kept — the layout is a memo over it, so a plan
+    // reopened without this comes back as flat ceilings everywhere and silently
+    // loses every cove in the job.
+    designPicks: s.designPicks,
+    // THE OLD ANSWER, WRITTEN BACK UNCHANGED. `ceilingKinds` was one word per
+    // space — outline id -> 'cove' — before the decision moved to the chunk. No
+    // UI writes it any more, and it is still saved so that a plan made under the
+    // old switch keeps reopening with its coves in place however many times it
+    // is saved in between. See the note on `designPicks` in App.jsx.
+    // (`covePicks` — which of the rectangles in a space the cove was set out in
+    // — is gone with the question: a cove is set out in a CHUNK now, and the
+    // chunk is the thing that was picked.)
     ceilingKinds: s.ceilingKinds,
-    covePicks: s.covePicks,
 
     // --- the two model-proposed layers, and the fittings added by hand
     accentResults: s.accentResults,
@@ -120,18 +128,32 @@ export function serialiseEditor(s) {
     // kind of thing that must survive a reload — they came from an upload
     // somebody did by hand and cost two reasoning calls to produce.
     //
-    // The renders themselves are megabytes of somebody's photographs and fall
-    // squarely under the "huge and re-creatable" exclusion in the header above:
-    // they are an INPUT, they are still on the user's disk, and putting them in
-    // a jsonb column would multiply the row size by a hundred to save a second
-    // drag-and-drop. The cells drawn on the plan are what the next session
-    // needs; the panel simply asks for the views again if it is re-run.
+    // The render BYTES are still not in here, and never will be: megabytes of
+    // somebody's photographs in a jsonb column would multiply the row size by a
+    // hundred, and this column is read in full every time a plan is opened.
+    // They go to the bucket instead (db.uploadRender) and this column keeps the
+    // POINTERS — see renderRefs below.
     wallResults: s.wallResults,
     // ...and the lengths somebody dragged on the fittings the pass produced.
     // Two numbers per run, in feet, and the only thing about a reverse cove or a
     // shelf strip that a person chose rather than a rule derived — which is
     // exactly the test for what belongs in this column. See trimWallRun.
     runTrims: s.runTrims,
+    // ...and where the views went.
+    //
+    // A PATH AND ITS DIMENSIONS, which is about ninety bytes per render, and it
+    // buys two things. The obvious one: reopening a plan shows the pictures the
+    // pass was run on instead of an empty drop target under a room full of
+    // reverse coves nobody can account for, and re-running does not mean finding
+    // the files again.
+    //
+    // The one that matters more: a render, the JSON the model returned for it
+    // and the design that came out the other side are ONE TRAINING ROW, and a
+    // revision already carries this whole object. Storing the pointer here is
+    // what makes that row assemblable later. The sizes are recorded rather than
+    // re-derived because they describe what was SENT — the model saw a 1400px
+    // JPEG at quality 0.82, and that fact is part of the row.
+    renderRefs: s.renderRefs,
 
     // --- view preferences. Cheap, and jarring to lose.
     ui: { layers: s.layers, zoom: s.zoom, view: s.view },
@@ -190,7 +212,7 @@ export function applyEditor(p, set) {
   set.setCeilingObjs(p.ceilingObjs ?? []);
   set.setChunkPicks(p.chunkPicks ?? {});
   set.setCeilingKinds(p.ceilingKinds ?? {});
-  set.setCovePicks(p.covePicks ?? {});
+  set.setDesignPicks(p.designPicks ?? {});
 
   set.setAccentResults(p.accentResults ?? {});
   set.setAccentDismissed(p.accentDismissed ?? []);
@@ -200,6 +222,9 @@ export function applyEditor(p, set) {
   set.setManualSurfaces(p.manualSurfaces ?? []);
   set.setWallResults?.(p.wallResults ?? {});
   set.setRunTrims?.(p.runTrims ?? {});
+  // THE POINTERS, NOT THE PIXELS. App fetches the bytes back from the bucket
+  // afterwards and only for the space that is open — see the rehydrate effect.
+  set.setRenderRefs?.(p.renderRefs ?? {});
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);

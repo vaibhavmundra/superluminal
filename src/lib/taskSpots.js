@@ -257,8 +257,8 @@ export function spotLegality({ polygon, zones = [], fixtures = [], coves = [],
  */
 export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
                                          zones = [], coves = [], usedSegments = null,
-                                         opt = {} } = {}) {
-  const o = { ...SPOT_DEFAULTS, ...opt };
+                                         taken = [], opt = {} } = {}) {
+  const o = { ...SPOT_DEFAULTS, ...RUN_DEFAULTS, ...opt };
   const wallMin = o.wallDistance ?? opt.minWallDistance ?? 0;
   const clearance = opt.fanClearance ?? 0;
   const centre = centreOf(surface);
@@ -277,6 +277,15 @@ export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
     // about the ceiling, and the art cluster next door has its own version of it.
     if (rectDistance(p, surface) < EPS && Math.hypot(p.x - centre.x, p.y - centre.y) < o.minStandoff) {
       reasons.add('directly over the surface, with nothing to aim at'); return false;
+    }
+    // CLEAR OF THE FITTINGS ALREADY PLACED. The used-once ledger stops a second
+    // spot taking the same SEGMENT, which is not the same as stopping it landing
+    // six inches from one on the segment next door. Same floor as a run's, for
+    // the same reason: two trims closer than that read as a collision.
+    for (const t of taken) {
+      if (Math.hypot(p.x - t.x, p.y - t.y) < o.minSpotGap - EPS) {
+        reasons.add('within six inches of a spot that is already there'); return false;
+      }
     }
     return true;
   };
@@ -371,8 +380,325 @@ export function chandelierOver(surface, chandeliers = [], opt = {}) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// RUNS. Two spots are not two decisions.
+//
+// Everything above places ONE spot against the ambient grid, and the argument
+// for where it goes is the header's: a spot on the layout's own geometry reads
+// as deliberate. That argument was made about a spot and a ceiling. It was
+// never made about a spot and ANOTHER SPOT, and the moment there are two the
+// eye compares them to each other before it compares either to the downlights.
+//
+// A pair of coffee tables side by side is the case that showed it. Each table
+// got the segment nearest itself; one landed on the row through the tables and
+// the other on the row a full cell above, aiming a different way. Both legal,
+// both on the grid, and together they read as two unrelated decisions about
+// one piece of furniture — because that is what they were.
+//
+// SO PEER SURFACES ARE PLACED AS A RUN: one lane, chosen for the group, with
+// every member's spot standing on it. Proximity beats grid membership at short
+// range, and a run is the only arrangement that satisfies both — it is on the
+// layout's geometry AND it is internally coherent.
+//
+// The run is ALL OR NOTHING. A lane that will not take every member is not a
+// lane for this group, and if no lane will, the group dissolves and each
+// surface goes back to the rules above unchanged. A tidy run that lights
+// nothing properly is worse than a scattered pair that does.
+// ---------------------------------------------------------------------------
+
+export const RUN_DEFAULTS = {
+  // SIX INCHES, and it is a FLOOR rather than a target. Roughly two trim
+  // diameters on a 75mm spot, which is the distance at which two fittings stop
+  // reading as a collision and start reading as a pair. Nothing aims for it —
+  // members take their own nearest node and the spacing that falls out is the
+  // furniture's own rhythm — but nothing may go under it.
+  minSpotGap: 0.5,
+
+  // COLINEAR ENOUGH TO BE A ROW, as a fraction of the smaller surface's short
+  // side. Deliberately not alignTol: that figure is the residue the ambient
+  // aligner leaves behind on a light, and two tables are not lights. Half the
+  // short side is the honest reading of "these look like they are in a line" —
+  // it scales with the furniture, so a pair of side tables has to be tidier
+  // than a pair of dining tables to qualify.
+  alignFrac: 0.5,
+
+  // ADJACENT, NOT MERELY ALIGNED, as a multiple of the smaller member's own
+  // span along the run. Two coffee tables eight inches apart are one object.
+  // A coffee table and a dining table fourteen feet apart that happen to share
+  // a y are two objects, and lighting them off one lane would drag one of them
+  // across the room for the sake of a tidy drawing.
+  gapFactor: 1.0,
+
+  // THE HARD CAP, and the only thing that dissolves a run.
+  //
+  // Judged on aim distance rather than on the angle the fitting ends up at,
+  // which was the other candidate. Angle is the truer measure of whether a
+  // spot is doing its job, but it needs a ceiling height this module does not
+  // have and it breaks more runs than it saves. Five feet is the distance past
+  // which a narrow beam is grazing a table rather than lighting it, at every
+  // ceiling height a domestic plan actually uses.
+  maxAimFt: 5.0,
+
+  // WHAT A SIBLING'S SEGMENT COSTS, in feet of apparent distance.
+  //
+  // Two members whose nearest nodes tie will both reach for the same segment,
+  // and the six-inch floor then resolves it by sliding the second one along.
+  // Sometimes that is exactly right — two tables with one pair of downlights
+  // between them get a pair of spots in that gap, which is the detail a
+  // designer would draw — and sometimes it is the old bug, two fittings a foot
+  // apart splaying at tables eight feet apart.
+  //
+  // WHAT SEPARATES THE TWO IS HOW GOOD THE ALTERNATIVE IS, so this is a
+  // surcharge and not a veto. It was a veto first: any unused segment beat a
+  // shared one however bad it was, which sent the second table's spot out past
+  // a downlight to a stub at the chunk edge rather than let it stand a foot
+  // from its neighbour. A foot and a half is enough that a comparable
+  // alternative wins and a much worse one does not.
+  shareSurchargeFt: 1.5,
+};
+
+const shortSide = (s) => Math.min(s.x1 - s.x0, s.y1 - s.y0);
+const spanAlong = (s, axis) => (axis === 'h' ? s.x1 - s.x0 : s.y1 - s.y0);
+const gapAlong = (a, b, axis) => (axis === 'h'
+  ? Math.max(a.x0 - b.x1, b.x0 - a.x1)
+  : Math.max(a.y0 - b.y1, b.y0 - a.y1));
+
 /**
- * Every surface in one chunk-space, each with its own spot.
+ * Are these two surfaces members of the same run?
+ *
+ * Three tests, and all three have to pass. Same kind of thing, in a line, and
+ * next to each other. The predicate UNDER-GROUPS ON PURPOSE: a run that should
+ * have formed and did not is the behaviour this file had all along, while a
+ * run that should not have formed drags a spot away from the thing it lights.
+ */
+function samePeer(a, b, axis, o) {
+  // 1. THE SAME KIND OF THING. Grouping asserts "these two are one piece of
+  //    furniture", and a desk beside a side table is not that. An untyped
+  //    surface never groups at all — the type is the only evidence there is
+  //    and its absence is not a reason to guess.
+  if (!a.type || !b.type || a.type !== b.type) return false;
+
+  const across = axis === 'h' ? 'y' : 'x';
+  const ca = centreOf(a), cb = centreOf(b);
+
+  // 2. IN A LINE, to within half the smaller one's short side.
+  if (Math.abs(ca[across] - cb[across]) > o.alignFrac * Math.min(shortSide(a), shortSide(b))) {
+    return false;
+  }
+
+  // 3. NEXT TO EACH OTHER. A negative gap means they overlap in this axis,
+  //    which is as adjacent as it gets.
+  const gap = gapAlong(a, b, axis);
+  return gap <= o.gapFactor * Math.min(spanAlong(a, axis), spanAlong(b, axis));
+}
+
+/**
+ * Sort the room's surfaces into runs and singletons.
+ *
+ * Returns `[{ axis, members: [index…] }]` covering every surface exactly once —
+ * singletons carry `axis: null` and a single member, so the caller has one list
+ * to walk rather than two.
+ *
+ * HORIZONTAL RUNS ARE LOOKED FOR FIRST and a surface joins at most one run.
+ * With both axes tried on equal footing a square-ish pair sitting diagonally
+ * could land in either, and which one it landed in would depend on the order
+ * the model happened to list them. One fixed order is worth more here than a
+ * cleverer rule, because the drawing has to come out the same twice.
+ */
+export function groupSurfaces(surfaces, opt = {}) {
+  const o = { ...SPOT_DEFAULTS, ...RUN_DEFAULTS, ...opt };
+  const used = new Array(surfaces.length).fill(false);
+  const runs = [];
+
+  for (const axis of ['h', 'v']) {
+    const along = axis === 'h' ? 'x' : 'y';
+
+    // By type, because a run is by definition all of one thing.
+    const byType = new Map();
+    surfaces.forEach((s, i) => {
+      if (used[i] || !s?.type) return;
+      if (!byType.has(s.type)) byType.set(s.type, []);
+      byType.get(s.type).push(i);
+    });
+
+    for (const idx of byType.values()) {
+      // ALONG THE AXIS, so "adjacent" is tested between neighbours rather than
+      // between whichever two the list happened to put next to each other. A
+      // chain of three tables is three surfaces each adjacent to the next, and
+      // the ends need never have been adjacent to one another.
+      idx.sort((a, b) => centreOf(surfaces[a])[along] - centreOf(surfaces[b])[along] || a - b);
+
+      let chain = [idx[0]];
+      const flush = () => { if (chain.length > 1) runs.push({ axis, members: [...chain] }); };
+      for (let k = 1; k < idx.length; k++) {
+        if (samePeer(surfaces[chain[chain.length - 1]], surfaces[idx[k]], axis, o)) {
+          chain.push(idx[k]);
+        } else { flush(); chain = [idx[k]]; }
+      }
+      flush();
+    }
+    for (const r of runs) for (const i of r.members) used[i] = true;
+  }
+
+  surfaces.forEach((_, i) => { if (!used[i]) runs.push({ axis: null, members: [i] }); });
+  return runs;
+}
+
+/** How far a lane stands off a rectangle, measured across its own axis. */
+function laneOffset(lane, box, axis) {
+  return axis === 'h'
+    ? Math.max(box.y0 - lane.at, 0, lane.at - box.y1)
+    : Math.max(box.x0 - lane.at, 0, lane.at - box.x1);
+}
+
+/** The smallest rectangle containing all of them. */
+function bboxOf(rects) {
+  return rects.reduce((b, r) => ({
+    x0: Math.min(b.x0, r.x0), y0: Math.min(b.y0, r.y0),
+    x1: Math.max(b.x1, r.x1), y1: Math.max(b.y1, r.y1),
+  }), { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+}
+
+/**
+ * Try to stand the whole run on ONE lane. All of it or none of it.
+ *
+ * Members are placed in the order they sit along the lane, each taking the node
+ * nearest its OWN surface — the midpoint of the best segment on that lane, with
+ * the usual slide when the midpoint is unavailable. Nothing is evenly pitched
+ * and nothing is centred on the group: the spacing that comes out is the
+ * spacing of the furniture, which is the rhythm the room already has.
+ *
+ * The six-inch floor is enforced through the same `legal` predicate as every
+ * other rule, so a member whose best node is already taken by its neighbour
+ * SLIDES rather than failing — the nudge falls out of standIn for free.
+ */
+function runOnLane(lane, members, segs, o, legalBase, taken) {
+  const along = lane.axis === 'h' ? 'x' : 'y';
+  const order = members
+    .map((m) => ({ m, at: centreOf(m.s)[along] }))
+    .sort((a, b) => a.at - b.at)
+    .map((e) => e.m);
+
+  const chosen = [];
+  for (const m of order) {
+    const centre = centreOf(m.s);
+    const legal = (p) => {
+      if (!legalBase(p)) return false;
+      if (rectDistance(p, m.s) < EPS
+          && Math.hypot(p.x - centre.x, p.y - centre.y) < o.minStandoff) return false;
+      for (const t of taken) {
+        if (Math.hypot(p.x - t.x, p.y - t.y) < o.minSpotGap - EPS) return false;
+      }
+      for (const c of chosen) {
+        if (Math.hypot(p.x - c.p.x, p.y - c.p.y) < o.minSpotGap - EPS) return false;
+      }
+      return true;
+    };
+
+    // A SIBLING'S SEGMENT COSTS EXTRA. See shareSurchargeFt — the ranking is on
+    // the surcharged distance, so a genuinely better segment elsewhere wins and
+    // a far worse one does not.
+    const spent = new Set(chosen.map((c) => segmentKey(c.s)));
+
+    let got = null;
+    for (const kind of ['light-light', 'light-edge']) {
+      const ranked = segs
+        .filter((s) => s.kind === kind)
+        .map((s) => {
+          const d = rectDistance(s.mid, m.s);
+          return { s, d, rank: d + (spent.has(segmentKey(s)) ? o.shareSurchargeFt : 0) };
+        })
+        .sort((a, b) => a.rank - b.rank || a.s.length - b.s.length);
+      for (const { s, d } of ranked) {
+        const p = standIn(s, o, legal, m.s);
+        if (!p) continue;
+        // THE HARD CAP, checked here rather than after the run is assembled, so
+        // a member that cannot be served from this lane fails the lane at once
+        // instead of dragging the other members through a placement that is
+        // about to be thrown away.
+        if (rectDistance(p, m.s) > o.maxAimFt + EPS) continue;
+        got = { m, p, s, kind, d };
+        break;
+      }
+      if (got) break;
+    }
+    if (!got) return null;
+    chosen.push(got);
+  }
+  return chosen;
+}
+
+/**
+ * Place a run of peer surfaces on one lane, or return null and let them go
+ * their own ways.
+ *
+ * `members` are `{ s, i }` — the surface and its index in the caller's list.
+ */
+export function placeRun(members, axis, ctx = {}) {
+  const o = { ...SPOT_DEFAULTS, ...RUN_DEFAULTS, ...(ctx.opt ?? {}) };
+  const chunks = ctx.chunks?.length ? ctx.chunks : (ctx.chunk ? [ctx.chunk] : []);
+
+  // ONE CHUNK, or no run. A chunk is a region of ceiling with its own grid, and
+  // "one lane through the whole group" is meaningless when the group straddles
+  // two grids. Members split across chunks fall back to the per-surface path,
+  // which already knows how to handle exactly that.
+  const chunk = chunkFor(centreOf(members[0].s), chunks);
+  if (!chunk) return null;
+  if (!members.every((m) => chunkFor(centreOf(m.s), chunks) === chunk)) return null;
+
+  const wallMin = o.wallDistance ?? ctx.opt?.minWallDistance ?? 0;
+  const clearance = ctx.opt?.fanClearance ?? 0;
+  const legalBase = spotLegality({
+    polygon: ctx.polygon, zones: ctx.zones ?? [], fixtures: ctx.fixtures ?? [],
+    coves: ctx.coves ?? [], clearance, wallMin,
+  });
+
+  const grid = secondaryGrid(chunk, ctx.lights ?? [], o);
+  const box = bboxOf(members.map((m) => m.s));
+
+  // LANES PARALLEL TO THE GROUP'S OWN AXIS. A vertical lane serving a pair of
+  // tables that run left-to-right gives a run of spots at right angles to the
+  // run of furniture, which lights neither table from anywhere sensible.
+  //
+  // A LANE MAY RUN STRAIGHT THROUGH THE GROUP, and in a real room it usually
+  // does. This asked for a minimum offset first, on the reasoning that a lane
+  // crossing the surfaces gives every member a sideways aim — and it threw away
+  // the only usable lane in the plan it was written for. The ambient row that
+  // serves a seating zone runs THROUGH that zone, because that is where the
+  // downlights for it went; the next row up was six and a half feet off the
+  // tables, past the cap, so the pair dissolved every time and the drawing
+  // never changed. The rule that idea was really reaching for is minStandoff,
+  // which already refuses a point with nothing to aim at, one point at a time
+  // and on the evidence rather than on a blanket ban.
+  //
+  // Nearest first: a lane further out than it needs to be is a lane grazing
+  // every surface at a flatter angle for nothing — the same reasoning, and the
+  // same ordering, as the art rows next door. A lane already further from the
+  // group than the cap allows can serve nobody, so it is dropped here rather
+  // than discovered member by member.
+  const lanes = grid.lines
+    .filter((l) => l.axis === axis)
+    .map((l) => ({ l, off: laneOffset(l, box, axis) }))
+    .filter((q) => q.off <= o.maxAimFt + EPS)
+    .sort((a, b) => a.off - b.off);
+
+  const taken = [...(ctx.taken ?? [])];
+
+  for (const { l, off } of lanes) {
+    const segs = grid.segments.filter((s) => s.axis === axis
+      && Math.abs((axis === 'h' ? s.a.y : s.a.x) - l.at) <= o.alignTol);
+    if (!segs.length) continue;
+    const chosen = runOnLane(l, members, segs, o, legalBase, taken);
+    if (chosen) return { chosen, grid, lane: l, standoff: off };
+  }
+  return null;
+}
+
+/**
+ * Every surface in one room, each with its own spot.
+ *
+ * PEER SURFACES GO UP AS A RUN, everything else one at a time. See the RUNS
+ * header above for why a second spot changes what the first one has to satisfy.
  *
  * ONE SPOT LIGHTS ONE SURFACE. Placed independently, two surfaces near the same
  * pair of downlights would both pick that pair's midpoint and the drawing would
@@ -380,11 +706,23 @@ export function chandelierOver(surface, chandeliers = [], opt = {}) {
  * whoever takes it first takes it, and the next surface moves on to its own
  * second choice.
  *
+ * THE LEDGER IS SUSPENDED INSIDE A RUN, and only inside one. Its stated reason
+ * is two fittings landing on one point, and the rule it actually implements is
+ * one fitting per run of ceiling — which is coarser, and is what threw the
+ * second coffee table onto a different row because six inches of a six-foot
+ * segment had been taken. Within a run the real constraint is available: the
+ * members are on a chosen lane by design and minSpotGap governs how close two
+ * of them may get. Between unrelated surfaces the ledger stands, because two
+ * spots six inches apart aiming at different things IS the bug it was written
+ * for.
+ *
  * FIRST PICK GOES TO THE LARGEST SURFACE, and that is a real choice rather than
  * an accident of the order the model happened to list them in. A dining table
  * and a coffee table competing for one segment should be resolved in favour of
  * the dining table: it is the bigger commitment, it is harder to light from
- * somewhere else, and a compromise on the coffee table costs less.
+ * somewhere else, and a compromise on the coffee table costs less. A run is
+ * ranked on the total area of its members, so a pair of coffee tables outranks
+ * a single one — the run is the commitment, not any one table in it.
  */
 export function planTaskSpots(surfaces, ctx = {}) {
   // EACH SURFACE AGAINST ITS OWN CHUNK. This took one chunk for the whole room —
@@ -398,25 +736,33 @@ export function planTaskSpots(surfaces, ctx = {}) {
   // to a surface are the ones in the chunk the surface actually sits in. There
   // is no sense in which the other chunk's lines were candidates.
   const chunks = ctx.chunks?.length ? ctx.chunks : (ctx.chunk ? [ctx.chunk] : []);
+  const o = { ...SPOT_DEFAULTS, ...RUN_DEFAULTS, ...(ctx.opt ?? {}) };
   const area = (s) => Math.max(0, s.x1 - s.x0) * Math.max(0, s.y1 - s.y0);
-  const order = surfaces
-    .map((s, i) => ({ s, i }))
-    .sort((a, b) => area(b.s) - area(a.s) || a.i - b.i);
 
   const usedSegments = new Set();
+  const taken = [...(ctx.taken ?? [])];
   const out = new Array(surfaces.length);
 
-  for (const { s, i } of order) {
+  // CHANDELIER SKIPS FIRST, BEFORE ANYTHING IS GROUPED. A surface a chandelier
+  // already lights is not going to be lit, and letting it into a run would let
+  // it constrain the lane chosen for tables that ARE getting a fitting — a
+  // vote cast by something that is not standing for election.
+  const live = [];
+  surfaces.forEach((s, i) => {
     const skip = chandelierOver(s, ctx.chandeliers, ctx.opt);
     if (skip) {
       out[i] = { skipped: `A chandelier is ${skip.distance.toFixed(1)} ft away and`
         + ` already lights this surface.` };
-      continue;
+      return;
     }
-    const centre = { x: (s.x0 + s.x1) / 2, y: (s.y0 + s.y1) / 2 };
-    const chunk = chunkFor(centre, chunks);
-    if (!chunk) { out[i] = { rejected: 'This surface is not in any chunk of ceiling.' }; continue; }
-    let res = placeTaskSpot(s, { ...ctx, chunk, usedSegments });
+    live.push({ s, i });
+  });
+
+  /** One surface, on its own, by the rules above. */
+  const placeOne = ({ s, i }) => {
+    const chunk = chunkFor(centreOf(s), chunks);
+    if (!chunk) { out[i] = { rejected: 'This surface is not in any chunk of ceiling.' }; return; }
+    let res = placeTaskSpot(s, { ...ctx, chunk, usedSegments, taken });
 
     // THE NEAREST GRID THAT WILL TAKE IT.
     //
@@ -436,21 +782,73 @@ export function planTaskSpots(surfaces, ctx = {}) {
     // it is what keeps the spot beside the thing it is lighting rather than
     // wherever the first chunk in the list happens to be.
     if (!res.spot) {
+      const centre = centreOf(s);
       const others = chunks
         .filter((c) => c !== chunk)
         .map((c) => ({ c, d: rectDistance(centre, c) }))
         .sort((a2, b2) => a2.d - b2.d);
       for (const { c } of others) {
-        const alt = placeTaskSpot(s, { ...ctx, chunk: c, usedSegments });
+        const alt = placeTaskSpot(s, { ...ctx, chunk: c, usedSegments, taken });
         if (!alt.spot) continue;
         res = { ...alt, spot: { ...alt.spot, viaChunk: 'nearest' } };
         break;
       }
     }
 
-    if (res.spot) usedSegments.add(segmentKey(res.spot.segment));
+    if (res.spot) {
+      usedSegments.add(segmentKey(res.spot.segment));
+      taken.push({ x: res.spot.x, y: res.spot.y });
+    }
     out[i] = res;
+  };
+
+  // THE UNITS OF THE DECISION: runs and singletons in one list, largest first.
+  const units = groupSurfaces(live.map((e) => e.s), o).map((g) => ({
+    axis: g.axis,
+    members: g.members.map((k) => live[k]),
+    weight: g.members.reduce((a, k) => a + area(live[k].s), 0),
+    first: Math.min(...g.members.map((k) => live[k].i)),
+  })).sort((a, b) => b.weight - a.weight || a.first - b.first);
+
+  for (const u of units) {
+    if (u.members.length > 1) {
+      const run = placeRun(u.members, u.axis, { ...ctx, chunks, taken, opt: o });
+      if (run) {
+        run.chosen.forEach((c, k) => {
+          const centre = centreOf(c.m.s);
+          const dx = centre.x - c.p.x, dy = centre.y - c.p.y;
+          const len = Math.hypot(dx, dy) || 1;
+          out[c.m.i] = {
+            spot: {
+              x: c.p.x, y: c.p.y,
+              aim: { x: dx / len, y: dy / len },
+              angle: Math.atan2(dy, dx),
+              target: centre,
+              via: c.kind, segment: c.s, distance: c.d,
+              slid: Math.hypot(c.p.x - c.s.mid.x, c.p.y - c.s.mid.y),
+              // WHAT THE DRAWING NEEDS TO EXPLAIN ITSELF. A spot that stands
+              // where it does because of its neighbours rather than because of
+              // its own surface should be able to say so.
+              run: { axis: u.axis, index: k, of: run.chosen.length,
+                     lane: { axis: run.lane.axis, at: run.lane.at,
+                             a: run.lane.a, b: run.lane.b },
+                     standoff: run.standoff },
+            },
+            grid: run.grid,
+          };
+          usedSegments.add(segmentKey(c.s));
+          taken.push({ x: c.p.x, y: c.p.y });
+        });
+        continue;
+      }
+      // THE RUN DISSOLVED. No lane would take all of it inside the cap, so the
+      // members stop being peers and become surfaces again — largest first,
+      // exactly as if they had never been grouped. A tidy run that lights
+      // nothing properly is worse than a scattered pair that does.
+    }
+    [...u.members].sort((a, b) => area(b.s) - area(a.s) || a.i - b.i).forEach(placeOne);
   }
+
   return out;
 }
 

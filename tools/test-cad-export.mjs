@@ -102,8 +102,9 @@ console.log('\n-- the round trip --');
 
   const names = layers.map((l) => l.name).sort();
   ok(names.join(',') === 'superluminal_ceiling_objects,superluminal_decorative,'
-     + 'superluminal_led_strips,superluminal_rooms,superluminal_spots',
-    `five layers, declared in a real LAYER table: ${names.join(', ')}`);
+     + 'superluminal_led_strips,superluminal_reverse_coves,superluminal_rooms,'
+     + 'superluminal_spots',
+    `six layers, declared in a real LAYER table: ${names.join(', ')}`);
   ok(layers.every((l) => l.colour > 0), 'each with a colour');
   ok(new Set(layers.map((l) => l.colour)).size === layers.length,
     'and a distinct one, so they are told apart on import');
@@ -232,6 +233,47 @@ console.log('\n-- it refuses what it cannot line up with --');
   try { toSuperluminalDXF({ source: { kind: 'raster' }, rooms: [] }); }
   catch (e) { threw = e.message; }
   ok(/original DXF/.test(threw ?? ''), `a raster plan is refused with a reason: "${threw}"`);
+}
+
+console.log('\n-- a reverse cove is the SLOT, not the tape in it --');
+{
+  // A cove hugging a wall: an 8in band with a run down its middle. It goes out
+  // as a closed rectangle on its own layer — a ceiling contractor's line, weeks
+  // before the electrician's — and NOT as the two-point run on the strips
+  // layer, which is the tape's geometry and says nothing about the ceiling that
+  // has to be built to hold it.
+  const rect = { x0: px.x, y0: px.y, x1: px.x + 9 * source.pxPerFt,
+                 y1: px.y + (8 / 12) * source.pxPerFt };
+  const mid = (rect.y0 + rect.y1) / 2;
+  const run = [{ x: rect.x0, y: mid }, { x: rect.x1, y: mid }];
+  const cove = { id: 'rc', type: 'strip', kind: 'reverse-cove',
+                 fixture: 'reverse-cove', roomId: 'r1', run, rect };
+  const { entities } = scan(toSuperluminalDXF({ source, accents: [cove] }));
+  const onCove = entities.filter((e) => e.layer === 'superluminal_reverse_coves');
+  const onStrip = entities.filter((e) => e.layer === 'superluminal_led_strips');
+  ok(onCove.length === 1, `one entity on the reverse-cove layer: ${onCove.length}`);
+  ok(onStrip.length === 0, 'and nothing on the strips layer — the tape is not drawn twice');
+  ok(onCove[0].type === 'POLYLINE', `drawn as a polyline: ${onCove[0].type}`);
+  ok(onCove[0].closed, 'and CLOSED — a rectangle, not four lines somebody has to join');
+  ok(onCove[0].verts.length === 4, `with four corners: ${onCove[0].verts.length}`);
+  const xs = new Set(onCove[0].verts.map((v) => v['10'].toFixed(3)));
+  const ys = new Set(onCove[0].verts.map((v) => v['20'].toFixed(3)));
+  ok(xs.size === 2 && ys.size === 2,
+    'axis-aligned: two distinct x and two distinct y, which is a clean rectangle');
+  // ...and it is the real 8in x 9ft slot, in the drawing's own units.
+  const w = Math.abs([...xs].map(Number)[0] - [...xs].map(Number)[1]);
+  const h = Math.abs([...ys].map(Number)[0] - [...ys].map(Number)[1]);
+  ok(near(w / MM, 9, 0.02) && near(h / MM, 8 / 12, 0.02),
+    `and measures 9 ft by 8 in on the drawing: ${(w / MM).toFixed(2)} x ${(h / MM * 12).toFixed(1)} in`);
+
+  // An ordinary strip is untouched: still an open run on the strips layer.
+  const plain = scan(toSuperluminalDXF({ source,
+    accents: [{ id: 's', type: 'strip', roomId: 'r1', run, rect }] }));
+  const pe = plain.entities.filter((e) => e.layer === 'superluminal_led_strips');
+  ok(pe.length === 1 && !pe[0].closed && pe[0].verts.length === 2,
+    'while a plain strip is still an open two-point run on the strips layer');
+  ok(plain.entities.every((e) => e.layer !== 'superluminal_reverse_coves'),
+    'and puts nothing on the cove layer');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

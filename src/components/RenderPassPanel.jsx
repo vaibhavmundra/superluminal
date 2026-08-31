@@ -49,7 +49,7 @@ const PHASE_SAY = {
 
 export default function RenderPassPanel({
   room = null, grid = null, pxPerFt = null,
-  renders = [], onAddFiles, onRemoveRender, onClearRenders,
+  renders = [], stored = 0, onAddFiles, onRemoveRender, onClearRenders,
   shot = null, state = { status: 'idle' }, result = null,
   transcript = null, runCount = 0, trimmedRuns = [],
   onRun, onClear, onResetLengths,
@@ -65,6 +65,13 @@ export default function RenderPassPanel({
   // whole difference between a wait and a hang.
   const hasTx = !!(transcript?.first || transcript?.second);
 
+  // THE GAP BETWEEN "THIS SPACE HAS VIEWS" AND "THE VIEWS ARE HERE".
+  // The paths come back with the plan; the JPEGs are fetched from the bucket
+  // afterwards and only for the space that is open. For the second or two in
+  // between, the honest thing to say is that they are coming — an empty drop
+  // target under a room full of reverse coves reads as "the pass was lost".
+  const waiting = !renders.length && stored > 0;
+
   // WHY THE BUTTON IS DISABLED, IN WORDS, AND ONLY THE FIRST REASON.
   // A disabled button with no explanation is the single most common way a
   // feature reads as broken. Only the first blocker is shown because fixing it
@@ -74,6 +81,7 @@ export default function RenderPassPanel({
     : !room.plan?.ok ? 'Light this space first — the grid is laid inside its outline.'
     : !(pxPerFt > 0) ? 'Set the scale first. A 1ft grid needs to know what a foot is.'
     : !grid ? 'No grid could be laid in this space.'
+    : waiting ? `Bringing back ${stored} saved view${stored > 1 ? 's' : ''}…`
     : !renders.length ? 'Add a render or two of this space.'
     : null;
 
@@ -106,7 +114,9 @@ export default function RenderPassPanel({
           const files = Array.from(e.dataTransfer?.files ?? []);
           if (files.length) onAddFiles?.(files);
         }}>
-        <span>Drop renders here</span>
+        <span>{waiting
+          ? `Bringing back ${stored} saved view${stored > 1 ? 's' : ''}…`
+          : 'Drop renders here'}</span>
         <div className="btnrow">
           <button className="btn" disabled={running || !room}
             onClick={() => fileRef.current?.click()}>
@@ -147,6 +157,12 @@ export default function RenderPassPanel({
           {renders.length} view{renders.length > 1 ? 's' : ''} ·
           {' '}{kb(renders.reduce((n, r) => n + r.bytes, 0))} after downscaling
           {renders.some((r) => r.fromW > r.w) && ' (originals are not sent)'}
+          {/* SAID ONLY WHEN IT IS TRUE OF EVERY VIEW. "Saved with this space"
+              next to a list where one of them is not saved is worse than
+              silence — the one that would be lost is the one it reassures you
+              about. A drop made while the plan's row was still being inserted
+              is exactly that case. */}
+          {stored >= renders.length && stored > 0 && ' · saved with this space'}
         </p>
       )}
       {(state.notes ?? []).map((n, i) => (

@@ -97,6 +97,18 @@ export default function TaskSurfacePanel({
                     // there; a REJECTION is a problem to solve.
                     if (sp.skipped) return <div className="accent-why">{sp.skipped}</div>;
                     if (sp.rejected) return <div className="accent-why warn">{sp.rejected}</div>;
+                    // A SPOT IN A RUN STANDS WHERE IT DOES BECAUSE OF ITS
+                    // NEIGHBOURS, not because of its own surface, and the panel
+                    // has to say so — otherwise the one explanation on offer
+                    // ("the middle of its own segment") is the one thing that
+                    // is not true of it.
+                    if (sp.run) {
+                      return <div className="accent-why">Spot {sp.run.index + 1} of
+                        {' '}{sp.run.of} in a run, all on one ceiling line
+                        {sp.run.standoff < 0.05
+                          ? ' through the group'
+                          : ` ${sp.run.standoff.toFixed(1)} ft off the group`}.</div>;
+                    }
                     return <div className="accent-why">Spot on the secondary grid,
                       {sp.via === 'light-light'
                         ? ' between two lights' : ' between a light and the chunk edge'}.</div>;
@@ -136,8 +148,11 @@ export default function TaskSurfacePanel({
                       ? ` · ${spots.filter((q) => q.skipped).length} left to a chandelier` : ''}</b></div>
                 <p className="note" style={{ marginTop: 6 }}>
                   One spot per surface, each at the middle of its own
-                  secondary-grid segment — no segment is shared. A surface with a
-                  chandelier within 3 ft of it is left alone. Turn on
+                  secondary-grid segment. Surfaces of the same kind sitting side
+                  by side are lit as a <b>run</b> instead — one ceiling line for
+                  the group, never closer than 6 in apart — because two spots on
+                  two different lines read as two unrelated decisions. A surface
+                  with a chandelier within 3 ft of it is left alone. Turn on
                   <b> Secondary grid</b> under View to see the lines.
                 </p>
               </>

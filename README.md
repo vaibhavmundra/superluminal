@@ -3874,11 +3874,41 @@ the strip without the band is a run floating eight inches off a wall for no
 visible reason.
 
 The tape is emitted as an ordinary accent zone — same `type: 'strip'`, same
-`runLength` — which is the same trick `coveStrip` uses, so **the schedule, the
-canvas and the DXF take it without any of them knowing what a reverse cove is**.
-It is billed in the LED strip line by the metre and counted as one run (one
-driver, one pair of end caps). `run` rather than `loop`: a perimeter cove turns
-four corners and this one turns none.
+`runLength` — which is the same trick `coveStrip` uses, so **the canvas, the
+schedule and the DXF take it without any of them needing to know what a reverse
+cove is**. `run` rather than `loop`: a perimeter cove turns four corners and this
+one turns none.
+
+But it carries `fixture: 'reverse-cove'`, and that is what they read when they
+*do* need to know:
+
+- **The schedule bills it as its own line**, `8" reverse cove`. The same tape at
+  the same rating — it is the same tape — but what is bought is not a length of
+  strip: it is a 200mm slot formed in the ceiling, and the plasterboard, the
+  shadow gap and the setting-out are the item while the tape is a component of
+  it. Merging the two lines would tell a contractor to buy nine metres of strip
+  and nothing about the nine metres of ceiling detail that has to be built to
+  put it in. `stripMetres` now sums **every** line bought by the metre, because a
+  "total" that silently means "total of the first one" is the worst kind of wrong
+  number to put in a spreadsheet somebody prices from.
+- **The tooltip reads that line**, so the card under the pointer says
+  `8" reverse cove · accent — washes a panelled or papered wall` rather than
+  `LED strip · concealed cove / under-cabinet`, which describes the component and
+  not the item. One place the words and the numbers come from, as everywhere
+  else in `boq.js`.
+- **The DXF gives it its own layer**, `superluminal_reverse_coves`, as a **closed
+  rectangle** drawn from the band's four corners. That is the trade rule applied
+  again rather than an exception to it: everything on `led_strips` is bought from
+  a lighting supplier and run by an electrician, and a reverse cove is set out,
+  boarded, taped and skimmed by a *ceiling contractor* weeks before the tape
+  arrives on site. Two trades, two programmes, two people who need to see their
+  own work without the other's on top of it. It also wants a different *kind* of
+  geometry, which is the tell — everything else on those layers is a symbol or a
+  run, and this is the outline of something built to a dimension, so it exports
+  as the rectangle it is and can be measured off the drawing. The tape inside it
+  is not drawn as well: a second line down the middle of a rectangle whose width
+  is the specification adds no information and one more thing to snap to by
+  accident.
 
 A wall that comes back **both panelled and papered** — fluted timber to the dado,
 paper above — is one wall and two honest answers. The two bands land in the same
@@ -3983,9 +4013,9 @@ to look for one room's answer.
 
 **Everything per-space moved inside the space.** The Spaces list is an accordion
 now: clicking a space opens it and closes every other one, and the body holds
-what is a decision about *that* space — **Ceiling design** (Standard | Cove, with
-the cove's rectangle and a cycle button where there is one), then **Place lights
-according to renders**, which is the render pass with a drop target on it.
+what is a decision about *that* space — today that is **Place lights according
+to renders**, the render pass with a drop target on it. (Ceiling design was here
+too for a while; it now lives on the drawing — see below.)
 Nothing below the list is per-space any more.
 
 The accordion is **`focusId`, not a second piece of state.** The app already had
@@ -4101,9 +4131,53 @@ that went and still has all of them.
 
 It is offered while the pass is still running, too. The first call lands a good
 half-minute before the second, and being able to read what it said while the
-second one thinks is the difference between a wait and a hang. Like the renders,
-the transcript is session-only — it describes one run rather than the state of
-the plan, and it goes when the wall features are cleared.
+second one thinks is the difference between a wait and a hang. The transcript is
+session-only — it describes one run rather than the state of the plan, and it
+goes when the wall features are cleared.
+
+### The renders are kept, at the size they were sent
+
+The bytes go to the `uploads` bucket under
+`<owner>/<plan>/renders/<space>/<stamp>-<n>.jpg`, and `editor_state` keeps a
+**pointer and a description** — the path, the name, the dimensions it was sent
+at, the JPEG quality, and what the original weighed. About ninety bytes per
+view. The pixels are never in the column: it is read in full every time a plan
+is opened, and a few megabytes of somebody's photographs in a jsonb row is the
+kind of thing that is fine for a month and then is not.
+
+**What is stored is what was sent.** The downscaled 1400px JPEG out of
+`renderImage.js`, not the eight-megabyte original. That is the point of it:
+a render kept beside the JSON the model returned for it is only a usable
+training pair if the pixels are the ones the model actually saw. A render, its
+two replies and the design that came out the other side is one row — and
+`plan_revisions` already carries the whole `editor_state`, so the pointer being
+in there is what makes the row assemblable later.
+
+**They come back lazily, and only for the space that is open.** A flat of nine
+rooms with four views each is thirty-six JPEGs; fetching all of them to open a
+plan would put several megabytes on the critical path of every reload to
+populate drop targets nobody has looked at. The refs restore with the plan, so
+the panel knows how many views a space has before a byte is fetched — it says
+"Bringing back 3 saved views…" and then draws them. A space that already has a
+working copy in memory is never overwritten by the fetch, because that copy is
+either these same bytes or something somebody has just dropped in.
+
+**Uploading never blocks the drop.** The thumbnails and the Analyse button are
+ready the moment the canvas finishes; the upload runs behind them. A bucket that
+refuses leaves a render that is not *kept*, which is a much smaller problem than
+a render that cannot be *used* — and a render dropped while the plan's row is
+still being inserted has no path to write to at all, so it simply is not stored
+and the pass runs on it regardless. The panel says "saved with this space" only
+when every view in the list has a path.
+
+**Removing a view drops the reference, not the object.** It was one of the
+images a pass was actually run on, and that pass's answer is still on the plan
+and still in its revisions; deleting the pixels would leave a wall element whose
+evidence no longer exists — a training row with a hole in it — to save a few
+hundred kilobytes. What the × means is "not this one, next time".
+
+`db.listRenders(plan)` enumerates everything stored for a plan, for the
+analytics side.
 
 ## Export for CAD: a DXF that lands on the drawing it came from
 
@@ -4848,15 +4922,14 @@ memos over what *is* stored), and anything huge and re-creatable (the accent
 detector's room crops, which are base64 images that would multiply the row size
 by ten for something re-made in a second).
 
-### The autosave, and the two bugs in it that were not obvious
+### The autosave, and the bugs in it that were not obvious
 
 Debounced at 1.5 seconds of quiet, coalescing to the **latest** payload rather
 than a queue: an intermediate state halfway through dragging a strip has no
-value, only where it ended up does. Flushed on `beforeunload` and on unmount,
-which is what catches "Back to Projects" clicked half a second after the last
-nudge.
+value, only where it ended up does. Flushed on `pagehide` and on unmount, which
+is what catches "Back to Projects" clicked half a second after the last nudge.
 
-Two things about it are load-bearing and neither is visible in the happy path:
+Three things about it are load-bearing and none is visible in the happy path:
 
 **The state object must be a memo with exact dependencies.** `onPersist` marks
 the route dirty, which re-renders the editor. If the state object were built
@@ -4876,6 +4949,41 @@ restored values. There is a test for the round trip
 and asserts every one of them reaches a setter — because a field added to one
 half and forgotten in the other fails **silently**, and would not be noticed for
 weeks.
+
+**And the unload flush does not work, so there is a local draft.** This was
+reported as *"sometimes after the render has been analysed and the lights have
+been placed, when I reload the drawing I lose the lights placed by render
+pass"* — and the "sometimes" was the whole clue. The round trip was fine
+(`wallResults` and `runTrims` both serialise and both restore; there are tests
+for it now). The loss was on the way out.
+
+The debounce plus the round trip is a window, a second or two wide, in which
+the newest edit exists only in React state. `beforeunload` was supposed to cover
+it and cannot: the flush is `async` — it awaits `whenRowReady` and then a
+supabase-js call — and **a fetch still in flight when the document unloads is
+cancelled by the browser**. It lands sometimes, depending on how far it got.
+The render pass is simply the last thing anybody does before reloading, so it is
+the change most often sitting in the window when the page goes away; everything
+else was saved minutes earlier and never noticed.
+
+So `lib/draft.js` mirrors every payload into `localStorage` **synchronously,
+before the debounce timer is even set** — no await, no network, nothing that can
+be cancelled — and deletes it when the real write lands. On open, a draft that
+is still there and is *newer* than the row is evidence that the last write did
+not finish, and it is what the editor restores. A tie goes to the row (the write
+did land, only the delete was missed). `sendBeacon` and `fetch(keepalive)` were
+both considered and both rejected: the first cannot send an `Authorization`
+header and the second caps the body at 64KB, which an `editor_state` with forty
+outlines goes past — a size-dependent silent failure is a worse bug than the one
+being fixed. `tools/test-draft.mjs` covers the four rules.
+
+**A milestone can no longer walk backwards over a newer save.** The milestone
+path renders a PNG and uploads it before it updates the row, which takes
+seconds, and the autosave does not stop while that happens. It used to write the
+`editor_state` it captured when it was *fired*, unconditionally — so a render
+pass run during a milestone's upload could be overwritten by a state from before
+it. The route now tracks the stamp of the newest `editor_state` it has written
+and a late milestone writes the snapshot only.
 
 **A reopened plan does not re-run the detectors.** Four model calls, real money,
 and the results would overwrite the corrections the user made last time. Each of
@@ -5360,3 +5468,110 @@ instances detected", that global has stopped working.
 session is correct, so it is bounded at 8 seconds and clears local state whether
 or not the network confirms. A "Log out" that leaves you looking signed in is its
 own kind of broken, and on a shared machine it is worse than that.
+
+
+## The ceiling design belongs to a chunk, not to a space
+
+Ticking **Cove** on a room could not describe an L-shaped living-dining room, and
+that is the whole reason this moved. An L is two pieces of ceiling — the living
+end and the dining end — and a plasterer sets a band out over one of them, or
+over both, or over neither. `cove: yes` cannot say which, so the app had to
+guess, and it guessed with *the largest rectangle that fits in the room*: a
+search of real quality, answering a question nobody had asked.
+
+So the unit of the decision is now the **chunk**, and the choice is made **on the
+drawing**:
+
+```
+click any light in a chunk  ->  a pill appears over that chunk
+                            ->  ‹ STANDARD ›   ‹ COVE ›   ...
+```
+
+### Which chunks, and why they are not the ones the lights sit on
+
+There are two levels of chunking now, and they answer different questions.
+
+| | cut from | what it decides |
+|---|---|---|
+| **design chunks** | the room outline, minus **holes in the ceiling** — shafts, enclosed rooms, reverse coves | the pieces somebody chooses a ceiling design for |
+| **inside a chunk** | that chunk, minus the **furniture** | the grid, exactly as before |
+
+**Furniture is deliberately not in the first reading.** A bed is a thing standing
+on the floor and it has no opinion about where a band of plasterboard is set out;
+chunk a bedroom with the bed in it and the pieces on offer are whatever L-shaped
+remainders the mattress left. This is the same distinction `coveZonesFt` has
+always drawn in `App.jsx` — the room as *built* versus the room as *occupied* —
+promoted from a detail of the cove to the shape of the feature.
+
+The bed still cuts the grid. A chunk left as Standard is chunked again inside
+itself, furniture and all, which has one consequence worth stating plainly: **a
+plain rectangular bedroom has exactly one design chunk, so its layout comes out
+light for light identical to what this app produced before any of this existed.**
+`tools/test-ceiling-design.mjs` asserts that against the old code path on four
+rooms. Nothing regressed to gain the L-shaped case.
+
+The chunk picker still means something, and now it means it twice: the reading
+somebody chose there — bays across the space, courses along it — is offered to
+the design chunking *and* to the grid inside a Standard chunk, so one answer
+governs both levels.
+
+### A chunk is named by its geometry
+
+`designPicks` is `outline id -> { chunk key -> option id }`, and the inner key is
+the chunk's own rectangle rounded to a thousandth of a foot. Not its index. An
+index survives a re-traced outline, which is exactly the wrong way round: it
+would keep the pick alive and quietly move somebody's cove onto a different piece
+of ceiling. A geometric key survives a slider nudge and a re-enumeration, and is
+dropped by a re-trace — after which the chunk gets the default back.
+
+Absent means Standard at both levels, and nothing writes `'standard'`, so a plan
+full of ordinary ceilings still costs no state at all.
+
+### The pill, and the two things it must not do
+
+**It is anchored to the chunk, not to the light that opened it.** Flip to a cove
+that carries the space on its own and every downlight in that chunk ceases to
+exist — a pill anchored to the fitting you clicked would vanish mid-decision with
+no way back. The chunk does not move.
+
+**It does not resize.** The width is set by the longest label in the list rather
+than by the one showing, because this control is used by clicking the same spot
+repeatedly; a pill that grew from STANDARD to COVE would slide the arrow out from
+under the cursor doing the flipping.
+
+Every fitting on the drawing carries the key of the design chunk that put it
+there — stamped through the chunk plan, which stamps every rectangle it hands the
+planner — so clicking a light needs no hit-testing and no geometry: the fitting
+already knows whose decision it is. The **cove line is clickable too**, and that
+is not a nicety: a chunk lit by its strip alone has no downlight left to click,
+and the line is the only mark the design left on that piece of ceiling.
+
+### One ladder per cove
+
+`cove.js` explains the ladder — cove alone, plus the grid inside, plus the band —
+and with several coves on one plan each has its own answer: a small coved end can
+be carried by its strip while the big one next door needs its grid lit. So the
+rung is per cove and the passes escalate in lockstep: lay the whole space out,
+ask every cove whether it is still short of its own chunk's brief, escalate the
+ones that are, lay it out again. **Three runs of the planner at most, which is
+what one cove has always cost.** Lumens are attributed to the chunk they fall
+in, so a bright end of the room can never talk the other end's cove out of its
+own fittings.
+
+`cove.js` kept the geometry — the inset table, the band, where the tape sits —
+and lost `coveRectOptions` and `planWithCove` with the questions they answered.
+`covePicks` (which of the rectangles in a space the cove was set out in) went the
+same way: a cove is set out in a chunk now, and the chunk is the thing that was
+picked. `ceilingKinds` is still read, and still saved, so a plan made under the
+old room-level switch reopens with its cove on the biggest chunk — which is where
+that switch would have put it — and the first per-chunk edit retires the legacy
+entry.
+
+**The panel says nothing about the ceiling any more.** The Standard | Cove
+buttons went first, and the report that replaced them — each chunk, its size,
+what it came out as — went straight after, because it was a paragraph of text
+restating what the drawing already shows, in the one place you cannot see the
+drawing while reading it. A second account of a decision is not reassurance, it
+is something else to reconcile. The decision is made on the plan and its
+consequence is drawn on the plan; a cove is a thing you judge by looking at it.
+The space body is the render upload and nothing else.
