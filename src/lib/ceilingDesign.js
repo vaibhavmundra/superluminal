@@ -31,6 +31,25 @@
 // design chunk, so its layout comes out identical to what this app produced
 // before any of this existed. Nothing regressed to gain the L-shaped case.
 //
+// AND A THIRD THING A CHUNK CAN BE: A TRACK. It belongs in this file for the
+// same reason the cove does — it is an answer to "what is this piece of ceiling"
+// — but it enters the pipeline at the opposite end, and the asymmetry is worth
+// stating once here rather than discovering it in step 3b.
+//
+//   a cove   changes the ceiling's SHAPE, so it has to be settled BEFORE the
+//            layout: its line cuts the grid, and nothing may sit near it.
+//   a track  changes nothing about the ceiling and nothing about the grid. It
+//            is a profile set out TO THE FITTINGS, so it cannot be settled
+//            until there are fittings to set it out to — it is laid over the
+//            finished layout, and the fittings it reaches slide onto it and are
+//            bought as track modules instead of as recessed downlights.
+//
+// So a track chunk is planned as a Standard one, start to finish, and the seven
+// arrangements are seven ways of drawing a profile through that answer. The
+// count of fittings, the cells they light and their spacing along a row are the
+// Standard layout's, unchanged — which is the promise the option makes. See
+// track.js.
+//
 // THE LADDER, ONCE PER COVE. cove.js explains it: a cove is an ambient source
 // with a fixed output, so the question is whether the space under it needs
 // downlights at all, and the answer is one of three rungs. With several coves
@@ -46,6 +65,8 @@
 import { planLights, COVE_LUMENS_PER_FT, DEFAULTS, resolveOptions } from './planner.js';
 import { enumerateChunkings, findChunking } from './chunking.js';
 import { coveGeometry, bandFixtureFor, COVE_TOLERANCE } from './cove.js';
+import { planTrack, isTrackPick, trackArrangementsFor,
+         TRACK_ARRANGEMENTS, ABSORB_FT, WALL_CLEAR_FT } from './track.js';
 import { FIXTURE_BY_ID } from './boq.js';
 
 const R4 = (v) => Math.round(v * 1e4) / 1e4;
@@ -84,7 +105,10 @@ const rectPolygon = (r) => [
  * default and because "flip forward to see what else is possible, flip back to
  * where you were" is the gesture this is for.
  */
-export const OPTION_LABEL = { standard: 'Standard', cove: 'Cove' };
+export const OPTION_LABEL = {
+  standard: 'Standard', cove: 'Cove',
+  ...Object.fromEntries(TRACK_ARRANGEMENTS.map((t) => [t.id, t.label])),
+};
 
 /**
  * THE LEAST HIGHER CEILING A COVE CAN LEAVE AND STILL BE ONE.
@@ -99,7 +123,13 @@ export const OPTION_LABEL = { standard: 'Standard', cove: 'Cove' };
  */
 export const MIN_INNER_FT = 3;
 
-export function optionsForChunk(chunk, opt = {}) {
+/** "top and bottom", "left", "all four sides" — the sides a track runs along,
+ *  said the way somebody would say them. */
+const sideWords = (sides) => (sides.length === 4 ? 'all four sides'
+  : sides.length === 1 ? `the ${sides[0]}`
+  : `the ${sides.slice(0, -1).join(', ')} and ${sides[sides.length - 1]}`);
+
+export function optionsForChunk(chunk, opt = {}, site = null) {
   const out = [{
     id: 'standard', label: OPTION_LABEL.standard,
     blurb: 'A flat ceiling with the ambient grid on it.',
@@ -112,12 +142,27 @@ export function optionsForChunk(chunk, opt = {}) {
            + 'with a concealed strip washing the higher ceiling inside it.',
     });
   }
+  // THE TRACKS, AND THEY ARE THE SAME KIND OF ANSWER AS THE COVE ABOVE: what
+  // this piece of ceiling IS. Offered on size alone, because the option list
+  // has to exist before the layout does — a chunk big enough for a run whose
+  // lights turn out to give it nowhere to sit falls back to Standard when the
+  // layout is built. See trackArrangementsFor, and `declined` in the parts.
+  for (const t of trackArrangementsFor(chunk, site)) {
+    out.push({
+      id: t.id, label: t.label, short: t.short, sides: t.sides,
+      blurb: `A track profile along ${sideWords(t.sides)} of this chunk, set out `
+           + `through the ambient grid's own lines and kept ${WALL_CLEAR_FT} ft `
+           + `clear of the walls. Every fitting within ${ABSORB_FT} ft of the run `
+           + 'clips into it instead of into the slab; the grid itself does not '
+           + 'change.',
+    });
+  }
   return out;
 }
 
 /** Which option a chunk actually has, tolerating a stale or unknown pick. */
-export function resolvePick(chunk, picks = {}, opt = {}) {
-  const options = optionsForChunk(chunk, opt);
+export function resolvePick(chunk, picks = {}, opt = {}, site = null) {
+  const options = optionsForChunk(chunk, opt, site);
   const key = chunk.key ?? chunkKey(chunk);
   const wanted = picks[key];
   const pick = options.some((o) => o.id === wanted) ? wanted : 'standard';
@@ -164,20 +209,31 @@ const lumensOf = (id) => FIXTURE_BY_ID[id]?.lumens ?? 0;
  *   polygonFt      the space
  *   zonesFt        what the FITTINGS must keep off — furniture included
  *   designChunks   from designChunking(), each carrying its `key`
- *   picks          key -> 'standard' | 'cove'. Absent means standard, and
- *                  nothing writes 'standard': a plan of ordinary ceilings
- *                  costs no state.
+ *   picks          key -> 'standard' | 'cove' | a track arrangement id. Absent
+ *                  means standard, and nothing writes 'standard': a plan of
+ *                  ordinary ceilings costs no state.
  *   strategy       the chunk-picker's id, passed down to the grid inside a
  *                  Standard chunk so one choice governs both levels
  *
- * Returns { plan, parts, coves }:
+ * Returns { plan, parts, coves, tracks }:
  *   parts   one entry per design chunk — its key, its options, what it got, and
  *           for a cove everything the ladder decided. This is what the canvas
  *           draws the option pill from.
  *   coves   the cove reports, in the shape the panel and the schedule read.
+ *   tracks  one per chunk that got a track and could carry it: the runs, the
+ *           corner joins, the length, and which fittings clipped into it. The
+ *           fittings themselves also carry the stamp — see `plan.lights[].track`
+ *           — so the drawing and the schedule read it off the fitting.
  */
 export function planCeilingDesign({
   polygonFt, fixturesFt = [], zonesFt = [],
+  // THE ROOM AS BUILT, and it is a DIFFERENT list from `zonesFt`. That one is
+  // what the fittings keep off — furniture included. This is the holes in the
+  // ceiling: shafts, enclosed rooms, reverse coves. It is the same list
+  // `designChunking` was handed, and it is here because a track keeps a foot off
+  // every WALL, and the wall of an enclosed WC standing in a living room is a
+  // wall. Absent, a track keeps clear of the outline alone.
+  builtZonesFt = [],
   designChunks = [], picks = {},
   opt = {}, chunkOpt = null, strategy = null,
   criteria = 20,
@@ -186,10 +242,25 @@ export function planCeilingDesign({
 } = {}) {
   const o = resolveOptions({ ...DEFAULTS, ...opt });
   const co = chunkOpt ?? o;
+  // The room as built, in the one shape track.js asks for. One object, so the
+  // option list and the geometry cannot be asked about different rooms.
+  const site = polygonFt?.length
+    ? {
+        polygon: polygonFt,
+        holes: builtZonesFt,
+        // AND THE ZONES A FITTING MAY NOT SIT IN, which is a third list and not
+        // either of the other two. `holes` are holes in the CEILING and decide
+        // where a wall is; these are what the FITTINGS keep off — the furniture
+        // included — and they decide where a head may land. Absorption is the
+        // one thing in this app that moves a fitting after the grid is settled,
+        // so it is the one thing that has to ask.
+        keepOff: zonesFt,
+      }
+    : null;
 
   // --- 1. what each design chunk is -----------------------------------------
   const parts = designChunks.map((chunk) => {
-    const { key, options, pick } = resolvePick(chunk, picks, o);
+    const { key, options, pick } = resolvePick(chunk, picks, o, site);
     if (pick === 'cove') {
       const geo = coveGeometry(chunk);
       return {
@@ -210,8 +281,18 @@ export function planCeilingDesign({
     const sub = enumerateChunkings(rectPolygon(chunk), zonesFt, co, fixturesFt);
     const wanted = strategy ? findChunking(sub.options, strategy) : null;
     const best = wanted || findChunking(sub.options, sub.recommendedId);
+    //
+    // AND A TRACK CHUNK IS GRIDDED THE SAME WAY, WHICH IS THE WHOLE POINT OF
+    // ONE. A track does not touch the ceiling's shape and does not touch the
+    // grid: the fittings come out exactly where Standard would have put them,
+    // and the profile is drawn through them afterwards, once there is a layout
+    // to draw it through. So there is nothing to do here beyond remembering
+    // which arrangement was asked for. See track.js, and step 3b below.
+    const track = isTrackPick(pick) ? pick : null;
     return {
-      key, chunk, options, pick: 'standard', kind: 'standard',
+      key, chunk, options,
+      pick: track ?? 'standard', kind: track ? 'track' : 'standard',
+      arrangement: track,
       chunks: best?.chunks ?? [], omitted: best?.omitted ?? [],
     };
   });
@@ -291,13 +372,93 @@ export function planCeilingDesign({
     res = run();
   }
 
+  // --- 3b. the tracks, drawn THROUGH the layout the grid already settled ---
+  //
+  // AFTER THE LADDER AND NOT BEFORE, and this is the one structural difference
+  // between a track and a cove. A cove has to be settled first because its line
+  // cuts the grid; a track cannot be settled first because it is set out to the
+  // fittings, and until the grid has run there are no fittings to set it out
+  // to. So everything above this line ran as though a track chunk were a plain
+  // Standard one — which it is, as a ceiling — and this is where the profile is
+  // laid over the answer.
+  //
+  // NOTHING HERE MOVES A LIGHT INTO OR OUT OF A CELL. Absorption changes a
+  // fitting's POSITION and what it is BOUGHT as, and nothing else: the cell it
+  // lights, the count, and the omissions are all exactly the Standard layout's,
+  // which is the promise the option makes to the person flipping it.
+  //
+  // THE MOVE IS AT MOST `ABSORB_FT` ACROSS THE RUN plus half a head ALONG it.
+  // The first is absorption — a fitting sliding onto the profile it is carried
+  // by. The second is the body having a length: a twelve-inch head centred on
+  // the corner of a closed track would hang half of itself off the end of the
+  // profile, so it slides in by half its own length. See `nearestOn` in
+  // track.js; both components are reported per fitting.
+  const trackParts = parts.filter((p) => p.kind === 'track');
+  const tracks = [];
+  const moved = new Map();          // index into res.lights -> where it lands
+  if (res?.ok) {
+    const designOf = (l) => res.chunks[chunkOf(l)]?.design ?? null;
+    for (const p of trackParts) {
+      // This chunk's own ambient fittings, with their index kept, because the
+      // answer has to be stamped back onto the very same objects.
+      const mine = [];
+      res.lights.forEach((l, i) => { if (designOf(l) === p.key) mine.push({ i, l }); });
+      const t = planTrack(p.chunk, p.arrangement, mine.map((m) => m.l), o, site);
+      if (!t) {
+        // IT CAN DECLINE, AND THE DRAWING IS WHAT IT SAYS. A chunk whose lights
+        // give the arrangement nowhere to sit gets the Standard ceiling it
+        // already has, and the part says Standard — because that IS what is on
+        // the drawing, and a pill reading TRACK over a chunk with no profile on
+        // it would be the pill lying. `declined` keeps the request, so anything
+        // that wants to explain the fallback can.
+        p.kind = 'standard'; p.pick = 'standard';
+        p.declined = p.arrangement; p.arrangement = null;
+        continue;
+      }
+      t.absorbed.forEach((a, k) => {
+        if (!a) return;
+        // THE RUN'S AXIS TRAVELS WITH THE FITTING. A head clipped into a profile
+        // lies ALONG it — it is a 200 x 25 mm body, not a disc — so the drawing
+        // cannot draw one without knowing which way its run goes, and looking
+        // that up from a light means the canvas re-deriving geometry it was
+        // already handed. One field, stamped where the answer is known.
+        moved.set(mine[k].i, { key: p.key, axis: t.runs[a.run].axis, ...a });
+      });
+      p.track = t;
+      tracks.push({ key: p.key, chunk: p.chunk, ...t });
+    }
+  }
+
+  // The layout, with the absorbed fittings sitting on the profile they are
+  // clipped into. `gridPos` keeps where the grid actually put each one, so the
+  // drawing can show the move and nobody has to take the claim above on trust.
+  const plan = moved.size ? {
+    ...res,
+    lights: res.lights.map((l, i) => {
+      const m = moved.get(i);
+      if (!m) return l;
+      return {
+        ...l, x: m.x, y: m.y,
+        gridPos: { x: l.x, y: l.y },
+        track: m.key, trackRun: m.run, trackAxis: m.axis, trackAlong: m.along,
+        // THE TWO COMPONENTS, KEPT APART. `trackPerp` is how far it came onto
+        // the profile and is what the absorption zone bounds; `trackSlide` is
+        // how far it moved along the profile to keep its body on it. Summing
+        // them into one number would make a corner head look like a fitting
+        // dragged further than the rule allows.
+        trackPerp: m.perp, trackSlide: m.slide,
+        trackMoved: Math.hypot(m.x - l.x, m.y - l.y) > 1e-6,
+      };
+    }),
+  } : res;
+
   // --- 4. what everyone else is told ---------------------------------------
   const grid = gridLumensByDesign(res);
   const coves = coveParts().map((p) => coveReport(p, res, {
     criteria, tolerance, gridLumens: grid.get(p.key) || 0,
   }));
 
-  return { plan: res, parts, coves };
+  return { plan, parts, coves, tracks };
 }
 
 /** What the panel, the schedule and the drawing are told about one cove. */

@@ -3,6 +3,7 @@ import { guideLine } from '../lib/snapGuides.js';
 import { CEILING_BY_ID, isRect } from '../lib/ceilingObjects.js';
 import { specsFor, runMetres } from '../lib/boq.js';
 import { STRIP_STYLE } from '../lib/settings.js';
+import { TRACK_DIMS_IN } from '../lib/track.js';
 
 // ---------------------------------------------------------------------------
 // PlanCanvas — the finished drawing. EVERY room on it, not one.
@@ -116,11 +117,73 @@ const PlanCanvas = forwardRef(function PlanCanvas(
   });
 
   const s = pxPerFt || 1;
+  /**
+   * INCHES, IN THE DRAWING'S OWN UNITS.
+   *
+   * Almost everything on this sheet is sized in MULTIPLES OF `lw` — the fitting
+   * symbols, the option pill, the guides — because almost everything on this
+   * sheet is a SYMBOL, and a symbol is sized to be read rather than to be true.
+   * A downlight drawn to its real 90 mm cut-out would be a dot on an apartment
+   * plan and would tell the reader nothing.
+   *
+   * A TRACK IS THE EXCEPTION, and it is an exception because it is not a symbol.
+   * It is an OBJECT: a profile with a real width, carrying modules of a real
+   * length, set out on the slab and measured to. Drawn to size, the heads read
+   * as what they are — white modules seated in a dark run, spaced as they will
+   * actually be spaced — and the drawing can be scaled off. Drawn as symbols
+   * they would be circles floating over a line, which is the one thing a track
+   * drawing must not look like.
+   *
+   * The figures come from TRACK_DIMS_IN in track.js rather than from here, and
+   * only the LENGTHS there affect the layout — a run's centreline does not move
+   * when the profile is drawn heavier. This file is the only reader of the
+   * widths.
+   *
+   * Nothing here is clamped to a minimum. `s` is fixed per plan (the zoom is a
+   * CSS scale on the whole stage, not a change to these units), so a true inch
+   * is a true inch at every zoom, and inventing a floor would make the profile
+   * read as wider than it is on exactly the plans where space is tightest.
+   */
+  const inch = (n) => (n * s) / 12;
+
   // THIN AND CRISP. This was /900 and everything on the drawing is a multiple
   // of it, so the one number sets the weight of the whole sheet. A lighting
   // layout is an overlay on somebody else's line work and should read as one —
   // heavy strokes make it look like the plan is ours.
   const lw = Math.max(width, height) / 1500;
+
+  /**
+   * HOW A LINEAR MARK IS CLICKED, and why it needs saying out loud.
+   *
+   * `.hit` means `pointer-events: all`, and on an SVG shape that means the
+   * INTERIOR as well as the stroke — regardless of `fill`. A closed path with
+   * `fill="none"` and `.hit` on it is therefore live over everything it
+   * encloses, which is fine until something else needs to be clicked in there.
+   * That is exactly the bug styles.css warns about, and it bit twice: the cove
+   * STRIP is a closed dotted path drawn after the cove LINE, so it was live over
+   * the whole coved chunk and swallowed every click meant for the line — leaving
+   * a chunk whose cove carries it on its own with no way back to its options at
+   * all. The track profile arrived later with the same shape and the same fault.
+   *
+   * AND IT HAS TO BE DECLARED AFTER `lw`, which is the other thing this block
+   * has already got wrong once. A const initialised from `lw` above its
+   * declaration is a temporal-dead-zone error that throws on the first render —
+   * `vite build` compiles it happily and no test in tools/ rendered a component,
+   * so it reached the browser. tools/test-render.mjs exists because of this.
+   *
+   * So a linear mark gets an explicit BAND: an invisible, solid, fat stroke over
+   * the same path, with `pointer-events: stroke` in an INLINE STYLE — inline
+   * beats the `.hit` class rule, where a `pointerEvents` attribute would lose to
+   * it. Solid because `pointer-events: stroke` on a DASHED stroke follows the
+   * dashes, so a dotted mark would be clickable only on its dots.
+   *
+   * The band is generous on purpose. A cove line is 1.6 lw and a track profile
+   * an inch: both are far finer than a pointer, and both are the only mark their
+   * piece of ceiling has.
+   */
+  const HIT_BAND = lw * 10;
+  const bandStyle = { cursor: 'pointer', pointerEvents: 'stroke' };
+
   const laid = plans.filter((r) => r.plan?.ok);
   /**
    * IS A CLICK ON A FITTING A CHOICE ABOUT THE CEILING RIGHT NOW?
@@ -295,11 +358,23 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               the cove follows the ceiling, and the ceiling is set in the panel. */}
           {(r.plan.covesPx ?? []).map((cv) => (
             <polygon key={cv.key} points={points(cv.line)}
-              /* AND IT IS THE WAY BACK. A chunk whose cove is carrying it on its
-                 own has no downlight left to click, so the cove line itself
-                 opens that chunk's options. It is the only mark the design left
-                 on that piece of ceiling, which makes it the only honest thing
-                 to click. */
+              /* AND IT IS THE WAY BACK — THE WHOLE OF WHAT IT ENCLOSES, not a
+                 band along the line, and that is deliberate rather than
+                 accidental. A chunk whose cove carries it on its own has NO
+                 downlight left to click, so this rectangle is the only mark the
+                 design left on that piece of ceiling and it has to be reliably
+                 hittable. A band would not be: the tape runs three inches
+                 outside this line, which at a normal zoom is a couple of pixels,
+                 so a band round each would overlap and the tape — drawn later —
+                 would take the click. `.hit` is `pointer-events: all`, which on
+                 a `fill="none"` shape means the interior too, so clicking
+                 anywhere on the coved ceiling opens its options.
+                 THE COST IS ACCEPTED: a click inside a coved chunk opens the
+                 pill instead of clearing the selection. A control that can be
+                 reached beats a deselect that can be done an inch to the left.
+                 THE TRACK PROFILE IS DELIBERATELY DIFFERENT — see below. It
+                 keeps its heads, so it always has something better to click and
+                 takes a band instead. */
               className={pickable ? 'hit' : undefined}
               style={pickable ? { cursor: 'pointer' } : undefined}
               onClick={pickable
@@ -309,6 +384,88 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               strokeDasharray={`${lw * 5} ${lw * 4}`}
               strokeLinejoin="round" opacity="0.85" />
           ))}
+
+          {/* --- THE TRACK PROFILE ------------------------------------------
+              SOLID, AND THAT IS THE WHOLE IDIOM. Every concealed run on this
+              sheet is dotted — the cove's setting-out line, a strip, a reverse
+              cove — because a dotted line is how a drawing says "this is behind
+              something". A track is the opposite: it is the one linear element
+              you can see from the floor, a visible profile with visible heads
+              clipped into it. So it is drawn solid, and the two marks cannot be
+              confused at a glance.
+
+              A BODY AND A CORE, because a profile has a WIDTH and at plan scale
+              that width is a hairline. Drawing it as one thin line would make it
+              read as a leader or a dimension; the pale wider stroke behind the
+              core gives it the presence of an object without pretending to a
+              dimension it is too small to show.
+
+              IN THE FITTINGS' BLUE, like the cove line and for the same reason:
+              on a chunk whose lights have all been absorbed, this is where every
+              fitting in that piece of ceiling is, and drawing it in the grid's
+              grey would file the lighting design under scaffolding.
+
+              AND IT IS A WAY BACK. Same as the cove line — click the profile and
+              that chunk's options open. Its own fittings are clickable too, but
+              they sit ON it, so the profile is the larger and more obvious
+              target for "what else could this ceiling be". */}
+          {(r.plan.tracksPx ?? []).map((t) => {
+            const click = pickable && onPickChunk
+              ? (e) => { e.stopPropagation(); onPickChunk(r.id, t.key); }
+              : undefined;
+            // ONE INCH, WHICH IS THE PROFILE ITSELF AND NOT A LINE STANDING FOR
+            // IT. See `inch` at the top of this file for why this one element is
+            // drawn to size. What it buys is the whole drawing: the heads are an
+            // inch wide too, so they seat INSIDE the run as white modules in a
+            // dark carrier — which is what a track looks like on a ceiling, and
+            // what no pair of hairlines could say.
+            const w = inch(TRACK_DIMS_IN.profile);
+            // A CLICK TARGET WIDER THAN THE THING. An inch is an inch, and on a
+            // large plan that is a few pixels of pointer — too fine to hit,
+            // where the pill it opens is the main way anybody changes a ceiling.
+            // Invisible, so the drawing is unaffected.
+            const grab = Math.max(w * 3, HIT_BAND);
+            const hit = pickable ? 'hit' : undefined;
+            // `pointerEvents: 'stroke'` AND NOT THE `.hit` DEFAULT OF `all`.
+            // The closed arrangement is a closed path, and `all` would make it
+            // live over the whole rectangle it encloses — the same fault the
+            // cove strip had. See `bandStyle`.
+            const cur = pickable ? bandStyle : undefined;
+            // A CLOSED TRACK IS ONE PATH, NOT FOUR LINES. Mitred corners are the
+            // difference between a rectangle and four strokes that overlap at
+            // the ends, and at a real width the overlap shows — as a lump at
+            // each corner where the drawing should show a corner piece.
+            if (t.closed) {
+              const d = `M${t.runs.map((rn) => `${rn.a.x},${rn.a.y}`).join(' L')} Z`;
+              return (
+                <g key={'trk' + t.key}>
+                  <path d={d} fill="none" stroke={C.lit} strokeWidth={w}
+                    strokeLinejoin="miter" pointerEvents="none" />
+                  <path className={hit} style={cur} onClick={click} d={d}
+                    fill="none" stroke="transparent" strokeWidth={grab} />
+                </g>
+              );
+            }
+            return (
+              <g key={'trk' + t.key}>
+                {t.runs.map((rn, k) => (
+                  <g key={k}>
+                    {/* BUTT ENDS, AND NO END-CAP TICK. A hairline needed a tick
+                        to say it was a cut length rather than a line running off
+                        the sheet; a one-inch run has a visible squared end of
+                        its own, and a tick on top of it would be drawing an end
+                        cap that is not a separate item. */}
+                    <line x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
+                      stroke={C.lit} strokeWidth={w} strokeLinecap="butt"
+                      pointerEvents="none" />
+                    <line className={hit} style={cur} onClick={click}
+                      x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
+                      stroke="transparent" strokeWidth={grab} strokeLinecap="butt" />
+                  </g>
+                ))}
+              </g>
+            );
+          })}
         </g>
       ))}
 
@@ -578,6 +735,74 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               * (fx === 'small-narrow' ? 0.8 : 1) * s;
             const col = l.kind === 'large' ? C.large : C.small;
             const warm = hot === l.id;
+
+            // --- A HEAD SEATED IN A TRACK -------------------------------------
+            //
+            // NOT A CIRCLE, BECAUSE IT IS NOT A DOWNLIGHT. A recessed downlight
+            // is a round cut-out and its symbol is a circle; a track head is a
+            // 300 x 38 mm module that slides along a profile, and drawn as a
+            // circle it would say the wrong thing twice — the wrong shape, and
+            // the wrong length along the run, which is the dimension that
+            // decides how many heads a run can carry AND the one the layout
+            // itself depends on. See TRACK_DIMS_IN, which is where all five of
+            // these figures live and which says which of them move a fitting.
+            //
+            // WHITE IN THE RUN. The profile under it is solid ink an inch wide,
+            // so a white module with a blue edge reads as a lamp seated in a
+            // dark carrier — the way the product actually looks from below, and
+            // the way the two marks tell each other apart at a glance.
+            //
+            // ALONG THE RUN, which is what `trackAxis` is for: the same module
+            // is eight inches wide on a run across the room and eight inches
+            // tall on one down it. Nothing else on this sheet has an
+            // orientation it did not choose for itself.
+            if (l.track) {
+              const along = inch(TRACK_DIMS_IN.head.len);
+              const across = inch(TRACK_DIMS_IN.head.wide);
+              const horiz = l.trackAxis !== 'v';
+              const rw = horiz ? along : across;
+              const rh = horiz ? across : along;
+              // THE POOL, STRETCHED THE WAY THE FITTING IS. A round glow under a
+              // linear source is the one thing that would give the game away —
+              // an eight-inch lamp throws an eight-inch pool, and the radial
+              // gradient scaled into an ellipse says exactly that.
+              const gw = rw / 2 + inch(3), gh = rh / 2 + inch(3);
+              // The click target, again wider than the mark. Same argument as
+              // the profile's: an inch of pointer is not a target.
+              const px = Math.max(rw / 2, lw * 5), py = Math.max(rh / 2, lw * 5);
+              return (
+                <g key={l.id} {...feel(l.id, specsFor(fx))}>
+                  <ellipse cx={l.x} cy={l.y} rx={gw} ry={gh} fill="url(#lp-glow)"
+                    className="lp-pulse" pointerEvents="none"
+                    style={{ animationDelay: `${((li * 137) % 1000) / 1000 * -2.8}s` }} />
+                  <rect className="hit" x={l.x - px} y={l.y - py}
+                    width={px * 2} height={py * 2} fill="transparent"
+                    onClick={pickable && l.design
+                      ? (e) => { e.stopPropagation(); onPickChunk(r.id, l.design); }
+                      : undefined} />
+                  <rect x={l.x - rw / 2} y={l.y - rh / 2} width={rw} height={rh}
+                    fill="#fff" stroke={col} strokeWidth={lw * (warm ? 2.6 : 1.5)}
+                    pointerEvents="none" />
+                  {layers.labels && l.gridPx && (
+                    <g opacity="0.45" pointerEvents="none">
+                      <line x1={l.gridPx.x} y1={l.gridPx.y} x2={l.x} y2={l.y}
+                        stroke={col} strokeWidth={lw}
+                        strokeDasharray={`${lw * 2} ${lw * 2}`} />
+                      <circle cx={l.gridPx.x} cy={l.gridPx.y} r={lw * 1.4}
+                        fill="none" stroke={col} strokeWidth={lw} />
+                    </g>
+                  )}
+                  {layers.labels && (
+                    <text x={l.x + rw / 2 + lw * 2.5} y={l.y - rh / 2 - lw * 2}
+                      fontSize={s * 0.5} fontFamily="The Neue Montreal, sans-serif"
+                      fill={col} opacity="0.75">
+                      {laid.length > 1 && r.name ? `${r.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 4)}-` : ''}{l.id}
+                    </text>
+                  )}
+                </g>
+              );
+            }
+
             return (
               <g key={l.id} {...feel(l.id, specsFor(fx))}>
                 {/* THE POOL OF LIGHT. Under the symbol, wider than it, and
@@ -624,6 +849,22 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     {l.coverPx.map((q, k) => (
                       <line key={k} x1={l.x} y1={l.y} x2={q.x} y2={q.y} stroke={col} strokeWidth={lw} />
                     ))}
+                  </g>
+                )}
+                {/* WHERE THE GRID PUT IT, before the track took it. Same
+                    idiom as the nudge tether below and behind the same switch:
+                    it is WORKING — the evidence for the claim that flipping a
+                    chunk to Track does not re-plan its grid — and working does
+                    not belong on a sheet handed to a client. Anybody checking
+                    that claim turns the labels on and sees every move, and every
+                    one of them is under three feet and square to the run. */}
+                {layers.labels && l.gridPx && (
+                  <g opacity="0.45" pointerEvents="none">
+                    <line x1={l.gridPx.x} y1={l.gridPx.y} x2={l.x} y2={l.y}
+                      stroke={col} strokeWidth={lw}
+                      strokeDasharray={`${lw * 2} ${lw * 2}`} />
+                    <circle cx={l.gridPx.x} cy={l.gridPx.y} r={lw * 1.4}
+                      fill="none" stroke={col} strokeWidth={lw} />
                   </g>
                 )}
                 {layers.labels && l.nudged && l.centrePx && (
@@ -710,7 +951,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           the wrong wall — that disagreement is the bug, and it is invisible if
           only one of the two is drawn. */}
       {layers.accents && accents.map((a, ai) => {
-        const w = a.rect.x1 - a.rect.x0, h = a.rect.y1 - a.rect.y0;
+        // `const w = a.rect.x1 - ...` USED TO BE HERE, and it went because it was
+        // an unconditional dereference in aid of nothing: `w` and `h` were never
+        // read — eslint had been saying so for a long time — and every accent the
+        // app passes happens to carry a `rect`, so the crash it was one field
+        // away from never fired. test-render.mjs fired it on the first fixture
+        // that left `rect` off, which is exactly the kind of thing that file is
+        // for. The model's box is not drawn any more (see the note above), so
+        // the accent's own extent is nobody's business here.
         const dim = a.rejected ? 0.35 : 1;
         const accSel = a.id === selAccId;
         // ONE COLOUR FOR EVERYTHING THAT EMITS. `a.colour` was set per accent
@@ -799,7 +1047,19 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                              animationPlayState: hot === a.id ? 'paused' : 'running' }} />
                   <path d={d} fill="none" stroke={acol}
                     strokeWidth={lw * (S.stroke + boost)} strokeLinecap="round"
-                    strokeDasharray={`${dot} ${gapl}`} className="lp-flow hit" />
+                    strokeDasharray={`${dot} ${gapl}`} className="lp-flow" />
+                  {/* THE TAPE IS THE TARGET, NOT THE AREA IT ENCLOSES.
+                      This path used to carry `.hit` itself, and a closed path
+                      with `pointer-events: all` is live over its whole interior:
+                      a cove strip was therefore eating every click inside the
+                      chunk it runs round, including the ones meant for the cove
+                      line underneath it — which is the only way back to a coved
+                      chunk's options. The card still comes up on the tape, which
+                      is the only thing this was ever for; a cove has no ends and
+                      no handles to drag. See `bandStyle`. */}
+                  <path className="hit" style={{ pointerEvents: 'stroke' }} d={d}
+                    fill="none" stroke="transparent"
+                    strokeWidth={Math.max(lw * (S.stroke + boost) * 3, lw * 6)} />
                 </g>
               );
             })()}
@@ -1126,11 +1386,36 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         if (sp.rejected) return null;
         const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
         const ux = Math.cos(sp.angle), uy = Math.sin(sp.angle);
-        // The arrow starts at the rim, not the centre, so the body of the
-        // fitting stays a clean circle and the tail cannot be mistaken for a
-        // conduit run back to it.
-        const x0 = sp.x + ux * R * 1.15, y0 = sp.y + uy * R * 1.15;
-        const x1 = sp.x + ux * R * 3.5, y1 = sp.y + uy * R * 3.5;
+        // --- A DIRECTIONAL HEAD ON A TRACK -------------------------------
+        //
+        // A BODY WITH A LENGTH, LIKE THE AMBIENT HEAD AND FOR THE SAME REASON:
+        // it is a 150 mm cylinder that clips onto a profile, not a recessed
+        // spot, and its length is what decides how much of a run it occupies.
+        // Drawn to size — see `inch` at the top of this file.
+        //
+        // AND IT IS THE ONE FITTING ON THIS SHEET THAT ALREADY HAD A DIRECTION.
+        // The arrow has always pointed at what the spot is for; the body was a
+        // circle, so the direction lived entirely in the arrow. A cylinder can
+        // carry it too, so it does: the body lies ALONG the aim with its lens at
+        // the far end, and the drawing says which way the fitting is turned as
+        // well as which way it is looking.
+        const onTrack = !!sp.track;
+        const bodyLen = inch(TRACK_DIMS_IN.spot.len);
+        const bodyWide = inch(TRACK_DIMS_IN.spot.wide);
+        // The arrow leaves the fitting where the fitting ends. On a circle that
+        // is the rim; on a cylinder it is the nose, half a body-length out.
+        const off = onTrack ? bodyLen / 2 + inch(0.6) : R * 1.15;
+        // THE BODY IS DRAWN TO SIZE; THE ARROW IS NOT, AND THAT IS THE LINE
+        // BETWEEN THE TWO KINDS OF MARK ON THIS SHEET. The cylinder is an
+        // OBJECT — six inches of it, measurable off the drawing. The arrow is an
+        // ANNOTATION: it says what the fitting is for, it is read at the same
+        // size everywhere on the sheet, and scaling it to a six-inch body would
+        // shrink the one mark whose whole job is to be noticed. So it keeps the
+        // length and the head it has always had, and only its START moves out to
+        // the nose of the body.
+        const reach = onTrack ? off + R * 2.35 : R * 3.5;
+        const x0 = sp.x + ux * off, y0 = sp.y + uy * off;
+        const x1 = sp.x + ux * reach, y1 = sp.y + uy * reach;
         const head = R * 1.05;
         const nx = -uy, ny = ux;
         // WHAT IT IS LIGHTING, ON HOVER. The task surfaces came off the drawing
@@ -1173,12 +1458,71 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   strokeDasharray={`${lw * 2} ${lw * 3}`} />
               </g>
             )}
-            <circle cx={sp.x} cy={sp.y} r={R * 2.4} fill="url(#lp-glow)"
-              className="lp-pulse" pointerEvents="none"
+            {/* WHERE THE PLACER PUT IT, before a track took it. Same tether,
+                same switch and same argument as the ambient lights': the move is
+                perpendicular and under three feet, and this is how somebody
+                checks that rather than taking it on trust. */}
+            {layers.labels && sp.gridPx && (
+              <g opacity="0.45" pointerEvents="none">
+                <line x1={sp.gridPx.x} y1={sp.gridPx.y} x2={sp.x} y2={sp.y}
+                  stroke={C.small} strokeWidth={lw}
+                  strokeDasharray={`${lw * 2} ${lw * 2}`} />
+                <circle cx={sp.gridPx.x} cy={sp.gridPx.y} r={lw * 1.4}
+                  fill="none" stroke={C.small} strokeWidth={lw} />
+              </g>
+            )}
+            <ellipse cx={sp.x} cy={sp.y}
+              rx={onTrack ? bodyLen / 2 + inch(2.4) : R * 2.4}
+              ry={onTrack ? bodyWide / 2 + inch(2.4) : R * 2.4}
+              transform={onTrack
+                ? `rotate(${(sp.angle * 180) / Math.PI} ${sp.x} ${sp.y})` : undefined}
+              fill="url(#lp-glow)" className="lp-pulse" pointerEvents="none"
               style={{ animationDelay: `${((sp.x | 0) % 1000) / 1000 * -2.8}s` }} />
-            <circle className="hit" cx={sp.x} cy={sp.y} r={R} fill="#fff"
-              stroke={C.small} strokeWidth={lw * (hot === sp.id ? 3.4 : 2)} />
-            <circle cx={sp.x} cy={sp.y} r={R * 0.4} fill={C.small} />
+            {onTrack ? (
+              <g transform={`rotate(${(sp.angle * 180) / Math.PI} ${sp.x} ${sp.y})`}>
+                {/* A wider, invisible target — see the profile's `grab`. */}
+                <rect className="hit" x={sp.x - bodyLen / 2} y={sp.y - Math.max(bodyWide, lw * 9) / 2}
+                  width={bodyLen} height={Math.max(bodyWide, lw * 9)} fill="transparent" />
+                {/* THE CYLINDER, AS A CAPSULE. `rx` at half the width is what
+                    makes the ends round rather than square, which is the
+                    difference between a cylinder seen from below and a second
+                    ambient head — and those two must never be confused, because
+                    one of them is aimed.
+                    
+                    SOLID, WHERE THE AMBIENT HEAD IS WHITE, and that inversion is
+                    the drawing doing what the product does. A track spot is a
+                    dark body with a bright lens in its nose; an ambient head is a
+                    lit panel the length of its module. Filling this white too
+                    would have put the two on the same footing at a scale where
+                    the only difference left is a rounded corner — and it would
+                    have cost the lens its contrast, because a 1.5 in body is
+                    five pixels on a large plan and there is not room for a white
+                    shape inside a white shape. */}
+                <rect x={sp.x - bodyLen / 2} y={sp.y - bodyWide / 2}
+                  width={bodyLen} height={bodyWide}
+                  rx={bodyWide / 2} ry={bodyWide / 2}
+                  fill={C.small} stroke={C.small}
+                  strokeWidth={lw * (hot === sp.id ? 2.4 : 0.7)} pointerEvents="none" />
+                {/* THE LENS, IN THE NOSE. Centred on the capsule's own end
+                    radius, so it reads as the round end of the cylinder being
+                    the thing that emits — which is what you see looking up at
+                    one. Wider across the body than along it, because a round
+                    aperture on a head tilted off vertical is an ellipse, and
+                    because an ellipse points and a circle does not: this is what
+                    says which way the fitting is turned with the arrow layer
+                    switched off. */}
+                <ellipse cx={sp.x + bodyLen / 2 - bodyWide / 2} cy={sp.y}
+                  rx={bodyWide * 0.31} ry={bodyWide * 0.47}
+                  fill="#fff" stroke={C.small}
+                  strokeWidth={lw * (hot === sp.id ? 2.2 : 1.1)} pointerEvents="none" />
+              </g>
+            ) : (
+              <>
+                <circle className="hit" cx={sp.x} cy={sp.y} r={R} fill="#fff"
+                  stroke={C.small} strokeWidth={lw * (hot === sp.id ? 3.4 : 2)} />
+                <circle cx={sp.x} cy={sp.y} r={R * 0.4} fill={C.small} />
+              </>
+            )}
             <line x1={x0} y1={y0} x2={x1} y2={y1}
               stroke={C.small} strokeWidth={lw * 1.9} strokeLinecap="round" />
             <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * 0.55},${y1 - uy * head + ny * head * 0.55}`

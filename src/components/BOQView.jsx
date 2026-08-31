@@ -39,6 +39,10 @@ export default function BOQView({ boq, planName }) {
   const t = boq.totals;
   // Whether the narrow-beam column earns its place on THIS plan.
   const narrow = boq.rooms.reduce((n, r) => n + (r.qty['small-narrow'] || 0), 0);
+  // ...and whether the track columns do. Same rule and the same reason: a plan
+  // with no track on it should not carry three columns of dashes explaining
+  // that.
+  const tracked = boq.rooms.reduce((n, r) => n + (r.qty['track-profile'] || 0), 0);
 
   return (
     <div className="boq-wrap">
@@ -62,6 +66,12 @@ export default function BOQView({ boq, planName }) {
                 third of the summary saying that a thing is absent. */}
             {t.stripMetres > 0 && (
               <div className="boq-tile"><b>{t.stripMetres.toFixed(2)}</b><span>m of strip</span></div>
+            )}
+            {/* WHOLE METRES, because that is how the figure is made — see
+                trackMetres in boq.js. Two decimals here would claim a precision
+                the rounding has already deliberately spent. */}
+            {t.trackMetres > 0 && (
+              <div className="boq-tile"><b>{t.trackMetres}</b><span>m of track</span></div>
             )}
             <div className="boq-tile"><b>{t.watts}</b><span>watts connected</span></div>
           </div>
@@ -97,7 +107,7 @@ export default function BOQView({ boq, planName }) {
                 <td className="boq-u">{fmtBeam(l)}</td>
                 <td className="boq-r">{l.load == null ? '—' : `${l.load} W`}</td>
                 <td className="boq-note">
-                  {l.id === 'strip' && l.pieces
+                  {(l.id === 'strip' || l.id === 'track-profile') && l.pieces
                     ? <><b>{l.pieces} run{l.pieces === 1 ? '' : 's'}</b> · {l.note}</>
                     : l.note}
                 </td>
@@ -169,6 +179,8 @@ export default function BOQView({ boq, planName }) {
               <col className="c-room" /><col className="c-num" /><col className="c-num" />
               <col className="c-num" /><col className="c-num" /><col className="c-num" />
               <col className="c-num" />
+              {tracked > 0 && <col className="c-num" />}
+              {tracked > 0 && <col className="c-num" />}
             </colgroup>
             <thead>
               <tr>
@@ -184,6 +196,8 @@ export default function BOQView({ boq, planName }) {
                 <th className="boq-r">Spots</th>
                 <th className="boq-r">Sconces</th>
                 <th className="boq-r">Strip</th>
+                {tracked > 0 && <th className="boq-r">Track</th>}
+                {tracked > 0 && <th className="boq-r">Track heads</th>}
               </tr>
             </thead>
             <tbody>
@@ -197,6 +211,21 @@ export default function BOQView({ boq, planName }) {
                   <td className="boq-r">{r.qty.spot || '—'}</td>
                   <td className="boq-r">{r.qty.sconce || '—'}</td>
                   <td className="boq-r">{r.qty.strip ? `${r.qty.strip.toFixed(2)} m` : '—'}</td>
+                  {tracked > 0 && (
+                    <td className="boq-r">
+                      {r.qty['track-profile'] ? `${r.qty['track-profile']} m` : '—'}
+                    </td>
+                  )}
+                  {/* THE HEADS AS ONE FIGURE, ambient and directional together.
+                      The two are separate LINES on the order above, because they
+                      are two products; per space the question being asked is
+                      "how many things clip into this room's track", and splitting
+                      it costs a column to answer half of it twice. */}
+                  {tracked > 0 && (
+                    <td className="boq-r">
+                      {(r.qty['track-ambient'] || 0) + (r.qty['track-spot'] || 0) || '—'}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

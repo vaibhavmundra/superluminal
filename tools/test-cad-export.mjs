@@ -103,8 +103,8 @@ console.log('\n-- the round trip --');
   const names = layers.map((l) => l.name).sort();
   ok(names.join(',') === 'superluminal_ceiling_objects,superluminal_decorative,'
      + 'superluminal_led_strips,superluminal_reverse_coves,superluminal_rooms,'
-     + 'superluminal_spots',
-    `six layers, declared in a real LAYER table: ${names.join(', ')}`);
+     + 'superluminal_spots,superluminal_track_fixtures,superluminal_tracks',
+    `eight layers, declared in a real LAYER table: ${names.join(', ')}`);
   ok(layers.every((l) => l.colour > 0), 'each with a colour');
   ok(new Set(layers.map((l) => l.colour)).size === layers.length,
     'and a distinct one, so they are told apart on import');
@@ -274,6 +274,80 @@ console.log('\n-- a reverse cove is the SLOT, not the tape in it --');
     'while a plain strip is still an open two-point run on the strips layer');
   ok(plain.entities.every((e) => e.layer !== 'superluminal_reverse_coves'),
     'and puts nothing on the cove layer');
+}
+
+console.log('\n-- a track is two layers: the carrier, and what clips into it --');
+{
+  // A three-foot run of profile with one ambient head on it and one aimed head
+  // turned 90 degrees, plus a recessed downlight elsewhere in the same room.
+  const a = source.fromDu({ x: OX + MM, y: OY + 2 * MM });
+  const b = source.fromDu({ x: OX + 4 * MM, y: OY + 2 * MM });
+  const headAt = source.fromDu({ x: OX + 2 * MM, y: OY + 2 * MM });
+  const spotAt = source.fromDu({ x: OX + 3 * MM, y: OY + 2 * MM });
+  const out = toSuperluminalDXF({
+    source,
+    rooms: [{ name: 'R', plan: {
+      polygonPx: [],
+      tracksPx: [{ key: 'k', closed: false, runs: [{ a, b, side: 'top', axis: 'h' }] }],
+      lightsPx: [{ id: 'T1', kind: 'small', ...headAt, track: 'k', trackAxis: 'h' },
+                 { id: 'S1', kind: 'small', ...px }],
+    } }],
+    spots: [{ id: 'sp1', ...spotAt, track: 'k', angle: Math.PI / 2,
+              target: source.fromDu({ x: OX + 3 * MM, y: OY }) }],
+  });
+  const { entities } = scan(out);
+  const on = (layer) => entities.filter((e) => e.layer === layer);
+  const LY = SUPERLUMINAL_LAYERS;
+
+  const carrier = on(LY.tracks);
+  ok(carrier.length === 1 && carrier[0].type === 'POLYLINE' && !carrier[0].closed,
+    'the profile is one open polyline on the track layer');
+
+  // THE ASSERTION THIS BLOCK EXISTS FOR: the heads are NOT on the recessed
+  // schedule. A module clipped into a profile is not cut into the ceiling.
+  const recessed = on(LY.spots);
+  ok(recessed.some((e) => e.type === 'CIRCLE'),
+    'the plain downlight is still a ring on the spots layer');
+  ok(recessed.filter((e) => e.type === 'CIRCLE').length === 1,
+    '...and it is the ONLY ring there — neither track head joined it');
+  ok(recessed.every((e) => e.type !== 'POLYLINE'),
+    'and nothing rectangular landed on the recessed layer either');
+
+  const heads = on(LY.trackFixtures).filter((e) => e.type === 'POLYLINE');
+  ok(heads.length === 2, `both heads are on the track-fixtures layer: ${heads.length}`);
+  ok(heads.every((e) => e.closed && e.verts.length === 4),
+    '...each as a closed four-point body, not a ring');
+
+  /** A polyline's two edge lengths, in feet. */
+  const sides = (e) => {
+    const d = (i, j) => Math.hypot(e.verts[j]['10'] - e.verts[i]['10'],
+                                   e.verts[j]['20'] - e.verts[i]['20']) / MM;
+    return [d(0, 1), d(1, 2)];
+  };
+  // The ambient head: 12 in along its run, 1.5 in across it. Horizontal run, so
+  // the long edge lies in x.
+  const amb = heads.find((e) => near(sides(e)[0], 1, 0.02));
+  ok(!!amb, 'the ambient head measures 12 in along the run');
+  ok(amb && near(sides(amb)[1], 1.5 / 12, 0.02),
+    `and 1.5 in across it: ${amb ? (sides(amb)[1] * 12).toFixed(2) : '?'} in`);
+  const ax = amb.verts.map((v) => v['10']), ay = amb.verts.map((v) => v['20']);
+  ok(near(Math.max(...ax) - Math.min(...ax), 1 * MM, 1)
+     && near(Math.max(...ay) - Math.min(...ay), (1.5 / 12) * MM, 1),
+    'lying ALONG the horizontal run, not across it — the axis survived the export');
+
+  // The aimed head: 6 in long, and TURNED. Aimed at drawing-Y-down, so its long
+  // edge lies in y — which is the rotation a ring would have thrown away.
+  const dir = heads.find((e) => near(sides(e)[0], 0.5, 0.02));
+  ok(!!dir, 'the directional head measures 6 in long');
+  const dx = dir.verts.map((v) => v['10']), dy = dir.verts.map((v) => v['20']);
+  ok(near(Math.max(...dy) - Math.min(...dy), 0.5 * MM, 1)
+     && near(Math.max(...dx) - Math.min(...dx), (1.5 / 12) * MM, 1),
+    'and is turned to its aim — the one fitting whose rotation is a specification');
+
+  // The aim arrow follows the fitting onto its own layer, so switching the
+  // recessed schedule off does not strip the track heads of what they point at.
+  ok(on(LY.trackFixtures).some((e) => e.type === 'LINE'),
+    'the aim arrow is on the track layer with the head it belongs to');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

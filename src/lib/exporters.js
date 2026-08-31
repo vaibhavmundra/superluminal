@@ -15,6 +15,8 @@
 // roomInFeet, which is the only place that conversion happens.
 // ---------------------------------------------------------------------------
 
+import { TRACK_DIMS_IN } from './track.js';
+
 export function download(filename, content, mime = 'text/plain') {
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -330,6 +332,21 @@ export const SUPERLUMINAL_LAYERS = {
   spots: 'superluminal_spots',
   strips: 'superluminal_led_strips',
   reverseCoves: 'superluminal_reverse_coves',
+  // A SEVENTH, BY THE SAME TRADE RULE. A track is not a fitting and not tape: it
+  // is a carrier that has to be SET OUT and fixed before any head goes near it,
+  // and it is the one thing on this drawing an electrician marks on the slab
+  // first and works to. The heads clipped into it stay on `spots` with every
+  // other fitting — they are the schedule — and the profile is the line they are
+  // set out along, which is a different drawing to work from.
+  tracks: 'superluminal_tracks',
+  // AND THE HEADS ON THEIR OWN LAYER TOO, which is the trade rule taken one step
+  // further than the profile. The profile is set out and fixed by one visit; the
+  // heads are clipped in on another, are the only fittings on the drawing that
+  // can be slid along afterwards without touching the ceiling, and are a
+  // different order from a different page of the catalogue. Somebody setting out
+  // carrier wants the runs without forty modules on top of them, and somebody
+  // commissioning wants the modules without the recessed schedule.
+  trackFixtures: 'superluminal_track_fixtures',
   decorative: 'superluminal_decorative',
   objects: 'superluminal_ceiling_objects',
   rooms: 'superluminal_rooms',
@@ -340,6 +357,8 @@ const SL_COLOUR = {
   spots: 5,        // blue
   strips: 4,       // cyan
   reverseCoves: 2, // yellow — a builder's line, not an electrician's
+  tracks: 7,       // white/black — the setting-out line the heads sit on
+  trackFixtures: 30, // orange — what clips into it
   decorative: 6,   // magenta
   objects: 1,      // red
   rooms: 3,        // green
@@ -400,7 +419,8 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
   const P = (p) => source.toDu(p);              // plan pixels -> drawing units
   const L = (ft) => ft * duPerFt;               // feet -> drawing units
   const { spots: LY_S, strips: LY_T, reverseCoves: LY_C, decorative: LY_D,
-          objects: LY_O, rooms: LY_R } = SUPERLUMINAL_LAYERS;
+          objects: LY_O, rooms: LY_R, tracks: LY_K,
+          trackFixtures: LY_KF } = SUPERLUMINAL_LAYERS;
 
   let out = slHeader(units?.code);
   const add = (e) => { out = out.concat(e); };
@@ -413,6 +433,37 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
     add(dxfLine(layer, c.x - r, c.y, c.x + r, c.y));
     add(dxfLine(layer, c.x, c.y - r, c.x, c.y + r));
   };
+
+  /**
+   * A TRACK HEAD, AS THE RECTANGLE IT IS, plus a cross at its centre.
+   *
+   * NOT A RING, WHICH IS WHAT EVERY OTHER FITTING GETS. A ring is the honest
+   * symbol for a round cut-out; a track head is a body with a length and an
+   * orientation, and both of those are the whole reason it is on a track — the
+   * length decides how many fit on a run and the orientation is which way it
+   * lies on the carrier. A circle in a CAD file throws both away, and the person
+   * who opens it can no longer check that the heads fit between the corners.
+   *
+   * ROTATED IN PIXELS AND CONVERTED CORNER BY CORNER, for the reason the AC unit
+   * block gives above: an angle carried across the Y flip comes out mirrored,
+   * four points cannot.
+   */
+  const trackBody = (at, lenFt, wideFt, angle) => {
+    const px = source.pxPerFt || 1;
+    const c = Math.cos(angle || 0), sn = Math.sin(angle || 0);
+    const hx = (lenFt * px) / 2, hy = (wideFt * px) / 2;
+    const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
+      const lx = sx * hx, ly = sy * hy;
+      return P({ x: at.x + lx * c - ly * sn, y: at.y + lx * sn + ly * c });
+    });
+    add(dxfPolyline(LY_KF, corners, true));
+    // The centre, because that is what an electrician sets a module out to and a
+    // rectangle alone gives nothing to snap to.
+    const q = P(at), t = L(0.15);
+    add(dxfLine(LY_KF, q.x - t, q.y, q.x + t, q.y));
+    add(dxfLine(LY_KF, q.x, q.y - t, q.x, q.y + t));
+  };
+  const IN = (n) => n / 12;
 
   // --- room outlines
   for (const r of rooms) {
@@ -455,9 +506,36 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
     }
   }
 
+  // --- the track profiles: the line the heads are set out along
+  //
+  // A CLOSED TRACK GOES OUT AS A CLOSED POLYLINE and an open one as an open
+  // polyline, which is the same distinction the cove and the strip make one
+  // block down and for the same reason: a four-sided track is ONE circuit, cut
+  // and cornered on site, and a file that delivered it as four separate lines
+  // would leave somebody joining them up by eye — and counting four corner
+  // pieces by eye too.
+  for (const r of rooms) {
+    for (const t of r?.plan?.tracksPx || []) {
+      const pts = t.closed
+        ? t.runs.map((rn) => rn.a)          // the corners, in order
+        : null;
+      if (pts) { add(dxfPolyline(LY_K, pts.map(P), true)); continue; }
+      for (const rn of t.runs) add(dxfPolyline(LY_K, [rn.a, rn.b].map(P), false));
+    }
+  }
+
   // --- spots: the recessed schedule, ambient and aimed alike
+  //
+  // ...LESS THE ONES A TRACK TOOK. A head clipped into a profile is not part of
+  // the recessed schedule — it is not cut into the ceiling at all — so it leaves
+  // this layer for the track's own, drawn as its body rather than as a ring.
   for (const r of rooms) {
     for (const l of r?.plan?.lightsPx || []) {
+      if (l.track) {
+        trackBody(l, IN(TRACK_DIMS_IN.head.len), IN(TRACK_DIMS_IN.head.wide),
+                  l.trackAxis === 'v' ? Math.PI / 2 : 0);
+        continue;
+      }
       marker(LY_S, l, (l.kind === 'large' ? 0.5 : 0.29)
         * ((l.fixture || l.kind) === 'small-narrow' ? 0.8 : 1));
     }
@@ -495,16 +573,33 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
   }
 
   // --- directional spots, on the same layer as the ambient ones
+  //
+  // ...AND, LIKE THEM, THE ONES ON A TRACK GO ELSEWHERE. The body is drawn as
+  // its rectangle, turned to the aim — which is the one fitting on the drawing
+  // whose ROTATION is part of the specification, so exporting it as a ring would
+  // throw away the thing an installer has to set.
   for (const sp of spots) {
     if (sp.x == null) continue;
-    marker(LY_S, sp, 0.3);
+    const onTrack = !!sp.track;
+    if (onTrack) {
+      trackBody(sp, IN(TRACK_DIMS_IN.spot.len), IN(TRACK_DIMS_IN.spot.wide), sp.angle || 0);
+    } else {
+      marker(LY_S, sp, 0.3);
+    }
     // The tail, pointing at what it lights. Drawn to a fixed length rather than
     // all the way to the surface, which would read as a line to somewhere.
+    //
+    // ON THE FITTING'S OWN LAYER, whichever that is: the arrow says what this
+    // fitting is aimed at, so a person who has switched the recessed schedule
+    // off to look at the track keeps the aim of every head they can see.
+    const LY_A = onTrack ? LY_KF : LY_S;
     const from = P(sp), to = P(sp.target);
     const dx = to.x - from.x, dy = to.y - from.y;
     const d = Math.hypot(dx, dy) || 1, reach = L(1.2);
-    add(dxfLine(LY_S, from.x + (dx / d) * L(0.42), from.y + (dy / d) * L(0.42),
-                      from.x + (dx / d) * reach,   from.y + (dy / d) * reach));
+    // Clear of the body, which on a track is longer than a ring's radius.
+    const start = onTrack ? L(IN(TRACK_DIMS_IN.spot.len) / 2 + 0.05) : L(0.42);
+    add(dxfLine(LY_A, from.x + (dx / d) * start, from.y + (dy / d) * start,
+                      from.x + (dx / d) * reach, from.y + (dy / d) * reach));
   }
 
   out = out.concat(['0','ENDSEC','0','EOF']);

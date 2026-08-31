@@ -104,12 +104,20 @@ say('2. A CHUNK IS NAMED BY ITS GEOMETRY');
 say('3. EVERY PIECE OFFERS WHAT IT CAN CARRY');
 {
   const labels = (c) => optionsForChunk(c, opt).map((o) => o.label);
+  // BY MEMBERSHIP AND NOT BY COUNT. These were length checks, and the seven
+  // track arrangements are what showed the difference: what this claim is about
+  // is whether a COVE is on offer, and a count says that only for as long as
+  // nothing else is ever added to the list. See test-track.mjs for the tracks'
+  // own gating.
+  const ids = (c) => optionsForChunk(c, opt).map((o) => o.id);
   ok(labels({ x0: 0, y0: 0, x1: 4, y1: 4 })[0] === OPTION_LABEL.standard,
     'standard is always first, and always available');
-  ok(labels({ x0: 0, y0: 0, x1: 4, y1: 4 }).length === 1,
-    'a chunk you could not stand a cove in is offered only that');
-  ok(labels({ x0: 0, y0: 0, x1: 20, y1: 12 }).length === 2,
-    'a 20 x 12 chunk is offered standard and a cove');
+  ok(!ids({ x0: 0, y0: 0, x1: 4, y1: 4 }).includes('cove'),
+    'a chunk you could not stand a cove in is not offered one');
+  ok(ids({ x0: 0, y0: 0, x1: 4, y1: 4 }).length === 1,
+    '...and a chunk too small for anything else is offered standard alone');
+  ok(ids({ x0: 0, y0: 0, x1: 20, y1: 12 }).includes('cove'),
+    'a 20 x 12 chunk is offered a cove');
   // The break is stated in terms of what is LEFT in the middle, so it moves
   // correctly with the inset table rather than being a second hard-coded figure.
   let least = null;

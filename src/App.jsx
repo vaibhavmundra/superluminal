@@ -10,6 +10,7 @@ import { PLAN_OPTIONS, FITTING_LUMENS, WALL_WEIGHT_IN, OTHER_STROKE_PX,
 import { planLights } from './lib/planner.js';
 import { enumerateChunkings, findChunking } from './lib/chunking.js';
 import { designChunking, planCeilingDesign } from './lib/ceilingDesign.js';
+import { absorbPoints, SPOT_LEN_FT } from './lib/track.js';
 import { bbox, pointInPolygon } from './lib/geometry.js';
 import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, DOOR_WIDTHS } from './lib/doors.js';
@@ -23,7 +24,7 @@ import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
 import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
-import { buildBOQ, FIXTURE_BY_ID } from './lib/boq.js';
+import { buildBOQ, FIXTURE_BY_ID, trackFixtureFor } from './lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
 import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, targetAreaFor, fixtureFor } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
@@ -1390,6 +1391,12 @@ export default function App({
         polygonFt: geo.polygonFt,
         fixturesFt: geo.fixturesFt,
         zonesFt: geo.zonesFt,
+        // THE SAME LIST THE DESIGN CHUNKING WAS GIVEN, and passing it twice is
+        // the point rather than a duplication: these are the holes in the
+        // ceiling, and a track keeping a foot off the walls has to count the
+        // wall of an enclosed room exactly as the chunker counted it. Two
+        // readings of "the room as built" would eventually disagree.
+        builtZonesFt: geo.coveZonesFt,
         designChunks: design.chunks,
         picks,
         opt: roomOpt,
@@ -1399,6 +1406,13 @@ export default function App({
         fixtureFor: roomFixture,
       });
       const coves = built.coves.filter((c) => c.ok);
+      // THE TRACKS, WHICH ARE NOT FILTERED THE WAY THE COVES ARE. A cove report
+      // carries `ok` because the ladder can run against a layout that failed;
+      // a track is derived FROM a finished layout, so one exists only if there
+      // was something to derive it from. What it can do instead is decline —
+      // see `declined` in ceilingDesign.js — and a declined chunk simply has no
+      // entry here.
+      let tracks = built.tracks ?? [];
       let res = built.plan;
       // IT CAN DECLINE, AND THAT IS NOT AN ERROR STATE. A space whose own
       // outline gives the chunker nothing to work with falls back to the plain
@@ -1407,6 +1421,11 @@ export default function App({
       if (!res?.ok) {
         res = planLights(geo.polygonFt, geo.fixturesFt,
           { ...roomOpt, chunkStrategy: chosenId || 'auto' }, geo.zonesFt);
+        // AND THE TRACKS GO WITH THE LAYOUT THEY WERE SET OUT TO. Same argument
+        // as `designChunksPx` being emptied here: these runs were placed through
+        // fittings that are no longer on the drawing, so drawing them would be
+        // drawing a profile through nothing.
+        tracks = [];
       }
       // WHAT EACH CHUNK IS, AND WHAT ELSE IT COULD BE, in plan pixels — the one
       // thing the canvas needs to draw the option pill. `pick` and `options`
@@ -1430,8 +1449,21 @@ export default function App({
       // light sits in, not of the room, so it wins over the room's own mapping.
       // See bandFixtureFor in cove.js.
       const chunkIndexOf = (l) => (l.kind === 'small' ? l.cell?.chunk : l.chunk);
-      const lightFixture = (l) =>
-        res.chunks?.[chunkIndexOf(l)]?.coveFixture ?? roomFixture(l.kind);
+      /**
+       * WHICH CATALOGUE LINE ONE LIGHT IS.
+       *
+       * THREE OPINIONS, RESOLVED OUTWARDS. The room's type says what a `small`
+       * light is bought as; the chunk overrides it where the band outside a cove
+       * needs the narrow lamp; and the TRACK overrides both, because a fitting
+       * clipped into a profile is a different product from a recessed one
+       * whatever room it is in and whatever chunk it sits in. It is last because
+       * it is the most specific: it is a fact about this one fitting, not about
+       * its room or its piece of ceiling. See TRACK_FIXTURE in boq.js.
+       */
+      const lightFixture = (l) => {
+        const base = res.chunks?.[chunkIndexOf(l)]?.coveFixture ?? roomFixture(l.kind);
+        return l.track ? trackFixtureFor(base) : base;
+      };
       /**
        * WHICH DESIGN CHUNK PUT THIS LIGHT HERE.
        *
@@ -1473,6 +1505,12 @@ export default function App({
         lightsPx: res.lights.map((l) => ({ ...l, ...toPx(l),
           fixture: lightFixture(l),
           design: lightDesign(l),
+          // WHERE THE GRID PUT IT, for a fitting a track has since pulled onto
+          // its profile. `l.x/l.y` above is the fitting's real position — the
+          // one that gets set out, exported and billed — and this is the claim
+          // the whole option rests on, drawn: the grid did not change, the
+          // fitting slid onto the run. Absent on every light no track touched.
+          gridPx: l.gridPos ? toPx(l.gridPos) : null,
           centrePx: l.cell ? toPx({ x: l.cell.cx, y: l.cell.cy }) : null,
           coverPx: l.cells.map((id) => {
             const c = res.cells.find((x) => x.id === id);
@@ -1501,6 +1539,19 @@ export default function App({
         // for a chunk whose cove is carrying the space on its own and therefore
         // has no downlight left to click.
         covesPx: coves.map((c) => ({ key: c.key, line: corners(c.line), offset: c.offset })),
+        // THE TRACK RUNS, in plan pixels, and they ride on the plan for exactly
+        // the reasons `covesPx` does: one prop per room, and a profile without
+        // the layout it was set out through is a line floating over somebody's
+        // drawing. Each run carries the key of the chunk that owns it, so
+        // clicking one opens that chunk's options — the way back for a track
+        // whose fittings have all been absorbed and are therefore drawn ON it.
+        tracksPx: tracks.map((t) => ({
+          key: t.key, id: t.id, label: t.label, short: t.short,
+          closed: t.closed, corners: t.corners, pieces: t.pieces,
+          lengthFt: t.lengthFt,
+          runs: t.runs.map((rn) => ({ a: toPx(rn.a), b: toPx(rn.b),
+                                      side: rn.side, axis: rn.axis })),
+        })),
       };
 
       /**
@@ -1543,8 +1594,12 @@ export default function App({
         // `designChunksPx` is what the canvas draws the option pills from, and
         // `coves` holds one report per cove — what the ladder decided, what the
         // strip delivers, how long the run is.
-        ceiling: coves.length ? 'cove' : 'standard',
-        design, designChunksPx, coves, coveStrips,
+        ceiling: coves.length ? 'cove' : tracks.length ? 'track' : 'standard',
+        // `tracks` IS IN FEET AND THAT IS DELIBERATE. The canvas reads
+        // `plan.tracksPx`; this is what the SCHEDULE reads, and a schedule
+        // measuring a profile off plan pixels would be measuring it off the
+        // zoom. See buildBOQ, which takes the length from here.
+        design, designChunksPx, coves, coveStrips, tracks,
         stats: outlineStats(o, pxPerFt),
       });
     }
@@ -2515,6 +2570,78 @@ export default function App({
           });
         });
       });
+    }
+
+    // --- 3. AND THEN THE TRACKS TAKE WHAT THEY CAN REACH ------------------
+    //
+    // A SECOND ABSORPTION PASS, BECAUSE THE TWO LAYERS ARE PLANNED AT DIFFERENT
+    // TIMES AND THAT IS NOT AN ACCIDENT OF THE CODE. The ambient grid is settled
+    // inside the ceiling design, and the track is set out through it there; the
+    // task and art spots are placed HERE, afterwards, against that finished
+    // grid. So a spot cannot be absorbed when the profile is drawn — it does not
+    // exist yet — and the profile cannot wait for the spots, because the spots
+    // are placed relative to the grid the profile was set out to. One pass each,
+    // in the only order the dependency allows.
+    //
+    // `occupied` IS WHAT KEEPS THE TWO HONEST. The ambient modules already hold
+    // their inches of profile, and a directional head clipped into the same inch
+    // is a clash on site. The track reports its slots (see planTrack) and this
+    // pass respects them, so a spot that has nowhere to go stays recessed rather
+    // than being drawn on top of a downlight.
+    //
+    // AFTER THE LOOP AND NOT INSIDE IT, because the loop returns early for a
+    // room with no art and a step at the bottom of its body would silently skip
+    // those rooms — which is most of them.
+    for (const r of rooms) {
+      const tracks = r.tracks ?? [];
+      if (!tracks.length) continue;
+      const { toFt, toPx } = r.geo;
+      const mine = [];
+      out.forEach((sp, i) => {
+        if (sp.roomId === r.id && !sp.rejected && sp.x != null && sp.target) mine.push({ i, sp });
+      });
+      if (!mine.length) continue;
+      // The spots are in PLAN PIXELS by the time they are pushed above and the
+      // track is in the room's own feet, so this converts once, here, rather
+      // than asking absorbPoints to know about two coordinate spaces.
+      const ptsFt = mine.map((m) => toFt({ x: m.sp.x, y: m.sp.y }));
+      for (const t of tracks) {
+        // `len` IS THE SPOT'S BODY AND NOT THE HEAD'S, and it decides two things
+        // at once: how much profile a spot needs behind it at the end of a run,
+        // and how much room it needs beside its neighbours. A directional body
+        // is half the length of an ambient one, so passing the ambient figure
+        // both pushes it needlessly far in from a corner AND refuses a second
+        // spot beside it that would physically clear the first by eight inches.
+        const got = absorbPoints(t.runs, ptsFt, { absorb: t.absorb, len: SPOT_LEN_FT,
+                                                 // The same zones the ambient
+                                                 // pass obeyed — a spot dragged
+                                                 // over a bed is as wrong as a
+                                                 // downlight there. The track
+                                                 // carries them so this cannot
+                                                 // be handed a different list.
+                                                 keepOff: t.keepOff ?? [],
+                                                 occupied: t.occupied });
+        got.forEach((a, k) => {
+          if (!a) return;
+          const m = mine[k];
+          const at = toPx({ x: a.x, y: a.y });
+          out[m.i] = {
+            ...m.sp, x: at.x, y: at.y,
+            // Where the placer put it, kept for the same reason a light keeps
+            // `gridPx`: the drawing shows the move, so the claim that nothing
+            // was re-planned is checkable rather than asserted.
+            gridPx: { x: m.sp.x, y: m.sp.y },
+            track: t.key, trackRun: a.run, trackAxis: t.runs[a.run].axis,
+            fixture: trackFixtureFor(m.sp.fixture),
+            // RE-AIMED FROM WHERE IT NOW IS. A spot is a fitting plus a
+            // direction, and moving the fitting without turning it leaves the
+            // arrow — and the beam — pointing past the thing it is for.
+            angle: Math.atan2(m.sp.target.y - at.y, m.sp.target.x - at.x),
+          };
+          // Spent. A spot absorbed by one run cannot be offered to the next.
+          ptsFt[k] = null;
+        });
+      }
     }
     return out;
   }, [rooms, surfacesPx, artPiecesPx, opt]);

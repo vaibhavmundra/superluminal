@@ -5575,3 +5575,414 @@ drawing while reading it. A second account of a decision is not reassurance, it
 is something else to reconcile. The decision is made on the plan and its
 consequence is drawn on the plan; a cove is a thing you judge by looking at it.
 The space body is the render upload and nothing else.
+
+## The track ceiling: a profile drawn through the layout
+
+A cove and a track are the same kind of answer — *what is this piece of ceiling* —
+and they enter the pipeline at opposite ends. That asymmetry is the feature.
+
+| | when it is settled | what it changes |
+|---|---|---|
+| **cove** | **before** the layout | the ceiling's shape. Its setting-out line cuts the grid, no cell straddles it, and nothing may sit near it |
+| **track** | **after** the layout | nothing about the ceiling and nothing about the grid. It is a carrier, set out *to the fittings* — so it cannot be placed until there are fittings to place it against |
+
+Which is why a track is cheap where a cove was expensive. A chunk flipped to
+Track is planned as a Standard one, start to finish — same number of fittings,
+same cells, same spacing along a row — and then the profile is drawn through the
+answer. `tools/test-track.mjs` asserts that for all seven arrangements, light for
+light and cell for cell.
+
+What *does* change is the **schedule** (a head clipped into a profile is a
+different product from a recessed downlight, and the profile is bought by the
+metre) and the **drawing** (the heads sit on the profile, because a head that is
+not on the profile cannot exist).
+
+### The seven arrangements
+
+The seven ways a rectilinear chunk can carry a track without its runs meeting at
+anything but a corner:
+
+```
+04 SIDES   all four, as one closed circuit
+02 SIDES   top + bottom          02 SIDES   left + right
+01 SIDES   top   bottom   left   right
+```
+
+They are a **choice**, not a derivation — which sides a track runs along is a
+design decision about how the room is used, exactly as the chunking is — so
+`track.js` enumerates them and scores the *line positions* within each. They join
+the same pill the cove is on, which makes nine options on a big chunk and is why
+the pill's width was already set by the longest label rather than the showing one.
+
+Offered on **size alone**, because the option list has to exist before the layout
+does: a single run needs `2 × ABSORB_FT` across it, a parallel pair needs
+`2 × ABSORB_FT + MIN_SPAN_FT`. A chunk that passes that and then turns out to
+have nowhere to sit **declines** — the part reads Standard, which is what is
+actually drawn, and keeps the request in `declined` so the fallback can be
+explained. A 30 × 8 corridor is the case: it is offered the pair on size, lays out
+with one row of downlights, and both runs would land on that one line.
+
+### The runs go through the fixtures
+
+A cove's band is inset by a joinery figure, because a cove is built and a builder
+works in feet. **A track is set out by the electrician, to the lights** — the
+reason to run one is to gather a row of fittings onto one profile and one circuit.
+So the candidate positions are the grid's own light lines, clustered within
+`ON_TOL_FT`, and the one chosen is scored:
+
+1. **the most fittings *on* the line** — worth 100 of anything else, because
+   "connect the maximum number of fixtures" is the rule the feature was asked for
+2. then the most it would **absorb**, on-line and off-line together
+3. then the **outermost** — leftmost for a left run, topmost for a top run
+
+Step 3 is what decides an even grid, where every row ties on the first two. It is
+also what makes four sides come out as **the rectangle round the outer ring of
+fittings**, which on a plain 24 × 18 room puts all eight downlights on the
+profile and moves not one of them.
+
+Open runs span the **spread of the grid** plus `OVERHANG_FT`, not the room: a run
+stopping at the wall would carry feet of profile past the last head for nothing.
+A closed one has no free ends — each run stops where the next starts, at the four
+intersections — and therefore no overhang and **four corner joins**.
+
+### A run keeps a foot off every wall
+
+A cove's band is *drawn against* the wall — that is the detail. A track cannot
+be. It is an extrusion carrying modules that throw light down and, in the
+directional case, sideways, and against a wall all three of its facts turn
+against it: the run is dead against the plaster on one side, half of every head's
+cone lands on the wall instead of the floor, and there is nowhere to stand to
+reach the modules the whole product exists to let you re-aim. `WALL_CLEAR_FT` is
+a foot — the least that reads as a run *on* the ceiling rather than a shadow gap
+*in* it.
+
+**Measured to walls, not to chunk edges**, and that distinction is the whole
+reason `wallSides` exists. A design chunk's edge is sometimes a wall and
+sometimes just where the chunker cut one piece of ceiling from the next; a run
+set back a foot from an imaginary line in the middle of a living-dining room
+would be keeping clear of nothing. So each of a chunk's four edges is tested
+against the room as *built* — the outline, plus the holes in the ceiling, the
+same pair the design chunks were cut from, so the two readings cannot drift.
+
+**Holes count.** The wall of an enclosed WC standing inside a living room is a
+wall in every sense that matters here, and a shaft's edge likewise.
+
+**Sampled along the edge, and any hit makes the whole edge a wall.** An edge can
+be part wall and part cut — an L-shaped room split into two rectangles leaves one
+of them with an edge that runs along the outside wall for some of its length and
+along its neighbour for the rest. Deciding from the midpoint would call that a
+cut and let a run sit hard against the half of it that is plaster. Clearance
+costs a foot of ceiling; getting it wrong costs a fitting against a wall.
+
+The result is one rectangle per chunk — `trackBounds` — and everything works
+inside it: the candidate line positions, the extent of an open run, and the
+corners of a closed one. Stating the clearance once as a region beats testing it
+in three places and eventually forgetting one. **The gating reads it too**, so an
+arrangement is never offered on room the clearance has already taken away: a
+30 × 8 corridor is 8 ft across and only 6 ft clear, so the parallel pair is
+withdrawn rather than offered and then declined.
+
+Two places it actually changes the answer, both asserted in `test-track.mjs`
+against a version of the call with no room supplied:
+
+* a row of fittings half a foot off the wall is **pulled in to the clearance
+  line**, not thrown away. It used to be filtered out of the candidates, which
+  cost a track its best-connected row over six inches of plaster — and in a
+  narrow strip whose only row sits inside the clearance, made the whole
+  arrangement decline. The inset is a foot, so a clamped candidate never moves
+  more than a foot, well inside the absorption zone. The score is taken at the
+  clamped position, so the degradation is honest by itself: a row four inches
+  outside still counts as *on* the run once pulled in, and a row a foot outside
+  counts only as near and loses to a row the run can sit on exactly.
+* an open run whose **end** would breach the clearance is cut short at it. The
+  end is the part that breaches, because the run is cut past its last fitting and
+  that fitting is the one nearest the wall
+
+### Reach is measured from where a fitting *may* sit
+
+Three feet from the run — but three feet *from what?* It was being measured from
+the point the grid parked the fitting on, and **the grid never pinned it there.**
+A small light goes at its cell centre, but the planner does not require the
+centre; it requires the centre *band* — `centreBand` of the cell's own width and
+height, searched for a spot clear of the fans and zones. Every position in that
+band is one the layout was free to choose and would have accepted.
+
+So the honest question is how far a fitting is from the run *from the nearest
+position it could legally occupy*, and `fittingSlack` is that. The case that
+found it: a light in a two-foot strip beside a bed, **3 ft 0.7 in** from a run —
+reported out of reach, while the same light five inches inside its own cell,
+which the layout would have been perfectly happy with, is within it. Half an inch
+of arithmetic deciding whether a fitting joins a circuit is not a decision, it is
+a rounding error.
+
+**Only small lights have a band.** A large light sits at a *solved* position on a
+shared grid line — one of a discrete set of candidates the matching chose
+between, not a point with a tolerance round it — and a task spot's position is
+its own placer's answer for the same reason. Both arrive without a `cell` and get
+nothing, which is right by construction. The report keeps the two components
+apart (`perp`, `slack`), because only the absorption part is bounded by
+`ABSORB_FT` and a figure that summed them would look like a broken rule.
+
+#### …and a head may not land in a no-light zone
+
+Extending the reach is what made this necessary, and it would have been a bad bug
+to ship without it. Three feet is far enough to carry a fitting over a bed, and
+the light that prompted all of this would have landed **squarely on the pillow**.
+
+The grid itself can never do this — the zones carve the chunks, so the question
+cannot arise there — and absorption is the one thing in this app that moves a
+fitting after the layout is settled. So it is the one thing that has to ask. Note
+what is *not* forbidden: the **profile** may cross a bed. It is a carrier, not a
+light, and a track running over a bed with no modules in that stretch is exactly
+what would be built. What may not happen is a head in that stretch.
+
+That makes three lists of rectangles in play, and they are not
+interchangeable — `holes` are holes in the *ceiling* and decide where a wall is;
+`keepOff` is what the *fittings* avoid, furniture included, and decides where a
+head may land; the design chunks come from the first and the grid from the second.
+
+### The absorption zone, and the clash it can create
+
+Three feet either side. A head clips in anywhere *along* a profile and nowhere
+*across* it, so a fitting off the line has to move onto it, square to the run.
+Three feet is how far one can move before the move stops being a detail of the
+same layout: under a fifth of the 50 sqft cell's side, and under the 3.9 ft the
+grid already keeps between two lights.
+
+#### A head sits wholly on its profile
+
+A head is a foot long, so it needs six inches of carrier either side of its
+centre — and that is the second thing that can move one:
+
+* **an open run** is cut long enough to carry its end fittings. `OVERHANG_FT` is
+  derived as `HEAD_LEN_FT / 2 + END_MARGIN_FT` rather than chosen, so a longer
+  head lengthens the run instead of quietly hanging off it. (The old hard-coded
+  0.75 ft happened to be right for an eight-inch head and would have been wrong
+  for a twelve-inch one — which is exactly the bug deriving it prevents.)
+* **a closed run's ends are its corners**, and those are fixed by the chosen
+  lines, so the head slides *inward* instead: a landing point is clamped into the
+  run by half a body at each end. A head centred on a corner therefore moves in
+  by exactly half its own length and ends up flush; one that already fits does
+  not move at all. The clamp is continuous, not a corner special case.
+
+A corner light is **equidistant from the two runs that meet there**, so the
+longer run wins the tie. It has more profile to slide into, and it means all four
+corners of a rectangle answer the same way — the drawing reads as one decision
+rather than four coincidences.
+
+The two movements are reported separately per fitting (`trackPerp`, `trackSlide`)
+because only the first is bounded by the absorption zone. Summing them would make
+a corner head look like a fitting dragged further than the rule allows. A
+directional body is half as long, so it is clamped by half as much and may sit
+nearer a corner.
+
+The perpendicular move preserves spacing **within** a row and can break it
+**between** rows — two fittings in one column, in adjacent rows, both within
+three feet of one horizontal run, would land on the same inch of profile. Bids are
+sorted by how far each has to move and taken in that order, so **the fitting that
+barely moves is never displaced by one dragged three feet**; the loser stays
+recessed. Turn the labels on and every move is drawn as a tether back to where the
+grid put it, which is how the "nothing was re-planned" claim is checked rather
+than believed.
+
+**Two modules may touch. They may not overlap.** That is the whole rule, and it
+took two wrong answers to arrive at — both of them the same mistake in different
+sizes, and both visible on a drawing as a pair of task spots straddling a run with
+one absorbed and the other left recessed for no reason a reader can see.
+
+| | needs | second try | first try |
+|---|---|---|---|
+| head beside head | 12.5 in | 15 in | 18 in |
+| head beside spot | 9.5 in | 12 in | 18 in |
+| spot beside spot | **6.5 in** | 9 in | 18 in |
+
+The first answer was one constant, eighteen inches centre-to-centre whatever the
+two fittings were, reasoned as "a twelve-inch head plus slack" — nearly three
+times the six-inch directional body it was also being applied to. The second
+derived it per pair and kept a three-inch joint, which fixed the arithmetic and
+left the error: the pair on the drawing were 7.6 in apart and still needed 9.
+
+**The rule is not here to second-guess the spot placer**, which is what both wrong
+answers assumed. Absorption moves a fitting *perpendicular* to the run, so it
+never brings two fittings closer than they already were; whatever spacing the
+layout chose is a spacing the layout is entitled to. What the rule exists for is
+the one clash the perpendicular move creates out of nothing — two fittings in one
+column, in adjacent rows, landing on the same inch of profile. That case is *zero*
+apart, so any honest threshold catches it, which is exactly why the threshold can
+be the smallest honest one: the two half-bodies plus half an inch of clip.
+
+The slots a track reports to the second pass carry the **length of the body
+holding each one**, so the spot pass asks for the right amount of room instead of
+assuming, and adding a third module length to the range cannot silently get it
+wrong. `test-track.mjs` pins the arithmetic rather than a passing example, and
+carries the exact pair off the drawing — 7.6 in apart, one of them 6.3 in off the
+run — as a regression case.
+
+**Two passes, because the two layers are planned at different times.** The ambient
+grid is settled inside the ceiling design and the track is set out through it
+there; the task and art spots are placed afterwards, against that finished grid.
+So the track reports the slots its ambient heads hold (`occupied`) and the second
+pass respects them — a spot with nowhere to go stays recessed rather than being
+drawn on top of a downlight.
+
+### On the drawing: three marks drawn to size
+
+**Solid, and that is the whole idiom.** Every concealed run on this sheet is
+dotted — a cove's line, a strip, a reverse cove — because dotted is how a drawing
+says *this is behind something*. A track is the one linear element you can see
+from the floor, so it is drawn solid.
+
+And it is the one thing on this sheet drawn to its **real dimensions**. Almost
+everything else is a *symbol* — a downlight drawn to its true 90 mm cut-out would
+be a dot on an apartment plan and would say nothing — but a track is an *object*
+with a length, set out on the slab, whose width is a dimension somebody measures
+to. `inch()` in `PlanCanvas.jsx` is the whole of that exception.
+
+| | drawn as | why |
+|---|---|---|
+| **profile** | a solid **1.5 in** line | its real width. Nothing is clamped to a minimum: `pxPerFt` is fixed per plan and the zoom is a CSS scale on the stage, so a true inch is a true inch at every zoom |
+| **ambient head** | **12 × 1.5 in** rectangle, white with a blue edge, lying **along** its run | not a circle, because it is not a downlight — it is a 300 × 38 mm module, and the length is what decides how many a run can carry. As wide as the channel, it reads as a lamp seated in the carrier |
+| **directional head** | **6 × 1.5 in** capsule, solid, with a white **lens ellipse** in its nose, rotated to the aim | rounded ends are what separate a cylinder from a second ambient head, and those two must never be confused — one of them is aimed |
+
+All five figures live in `TRACK_DIMS_IN` in `track.js`, not in the canvas, and
+**only the lengths are geometry.** A run's centreline is where the fixtures are,
+so drawing the profile heavier moves nothing whatever; the head's *length* does
+move things, because a body has to fit on the carrier it clips to. The canvas is
+the only reader of the widths.
+
+**The head fills invert on purpose.** Ambient is white in a dark run; directional
+is a dark body with a bright lens. That is what the products look like from below,
+and at a scale where a 1.5 in body is five pixels there is no room for a white
+shape inside a white shape — the lens would have lost its contrast.
+
+**The body is drawn to size; the arrow is not.** That is the line between the two
+kinds of mark. The cylinder is an object. The arrow is an annotation — it says
+what the fitting is *for*, it is read at one size everywhere on the sheet, and
+scaling it to a six-inch body would have shrunk the one mark whose job is to be
+noticed. Only its *start* moves out, to the nose of the body.
+
+Every track mark gets a **wider invisible hit target**, because an inch is a few
+pixels of pointer and the pill it opens is the main way anybody changes a ceiling.
+The profile is **clickable** like the cove line and for the same reason: it is the
+largest mark that chunk's decision left.
+
+#### `.hit` means the interior too, and that ate the way back to a coved chunk
+
+`.hit` is `pointer-events: all`, and on an SVG shape `all` means the **interior as
+well as the stroke — regardless of `fill`**. A closed path with `fill="none"` and
+`.hit` on it is therefore live over everything it encloses.
+
+That is exactly the bug the `.hit` note in `styles.css` warns about ("a layer that
+happens to be drawn after a control silently eats its clicks"), and it had claimed
+a third victim without anyone noticing. The cove **strip** is a closed dotted path
+drawn in the accents block — *after* the room group that draws the cove **line** —
+so it was live over the whole coved chunk and swallowed every click meant for the
+line. Which matters more than it sounds: a chunk whose cove carries it on its own
+has **no downlight left to click**, so the cove line is the only way back to its
+options. Switch a chunk to Cove and you could not switch it back.
+
+The track profile I added later had the same shape and the same fault.
+
+Two different fixes, because the two marks want different things:
+
+* the **strip** gets an explicit band — an invisible, *solid*, fat stroke over the
+  same path with `pointer-events: stroke` in an **inline style** (inline beats the
+  `.hit` class rule, where a `pointerEvents` attribute would lose to it). Solid
+  because `pointer-events: stroke` on a *dashed* stroke follows the dashes, so a
+  dotted mark would be clickable only on its dots. The hover card still comes up
+  on the tape, which is all it was ever for — a cove has no ends to drag.
+* the **cove line** keeps its live interior, now on purpose. A band would not be
+  reliable: the tape runs three inches outside the line, which at a normal zoom is
+  a couple of pixels, so bands round both would overlap and the tape — drawn
+  later — would take the click again. The cost is accepted: a click inside a coved
+  chunk opens the pill instead of clearing the selection. A control that can be
+  reached beats a deselect that can be done an inch to the left.
+* the **track profile** takes the band, not the interior, because unlike a cove it
+  always keeps its heads and so always has something better to click.
+
+Verified by hit-testing the real z-order and CSS in a browser rather than by
+reading the spec: middle of a coved ceiling → the cove line; on the tape → the
+strip; on a downlight → the downlight; outside → nothing.
+
+#### …and the fix shipped a crash, which is why `test-render.mjs` exists
+
+The band constant above was written initialised from `lw` **above the line that
+declares `lw`** — a temporal dead zone, which throws on the first render.
+`vite build` compiled it happily (the reference is legal; the *order* is a runtime
+fact) and every one of the thirty-six suites in `tools/` stayed green, because
+**not one of them had ever rendered a component.** It reached the browser as
+"Cannot access 'lw' before initialization".
+
+`tools/test-render.mjs` is the net: it loads the components the way the app does
+— vite's own SSR loader for the JSX, `react-dom/server` for the render, no jsdom
+and no new dependency — hands them props built from the *real* pipeline, and
+renders to a string. It catches anything that throws while a component is
+evaluated or rendered. Re-introducing the bug now fails it with that exact
+message while `vite build` and `eslint` still pass, which is the only way to know
+a net works.
+
+It is a **smoke test and should stay one.** It asserts the marks a design
+produces are present, never where they are — geometry belongs in `test-track.mjs`
+against the pure functions. A render test that pinned coordinates would fail on
+every legitimate change to the drawing and be deleted within a month.
+
+Its fixture is built from `designChunking` + `planCeilingDesign` rather than
+hand-written, and that fidelity paid immediately: the first render threw on
+`a.rect.x1` in the accents block — an unconditional dereference computing two
+variables that were never read (eslint had said so for a long time), one missing
+field away from taking the whole canvas down. Gone now.
+
+The heads keep the sheet's **pulse**, with the glow stretched into an ellipse the
+shape of the fitting — a round pool under an eight-inch lamp is the one detail
+that would have given the game away.
+
+### In the schedule
+
+Four lines on the schedule, which is the least that can be priced:
+
+| line | unit | note |
+|---|---|---|
+| Track — profile | m | whole metres, **rounded per run**, because a run is what gets bought; never rounded down to zero |
+| Track — corner join | nos | four per closed circuit, none on an open run |
+| Track spot — ambient | nos | 7 W / 36° |
+| Track spot — directional | nos | 5 W / 30° |
+
+**Two head lines and not five.** Everywhere else in this catalogue a different
+beam angle earns its own line, because the optic is the specification. A track
+range is not shaped that way: it is an ambient head and a directional head, and a
+12 W 60° recessed downlight absorbed into a track is bought as the ambient head —
+there is no track equivalent to buy. It is the one place where absorption changes
+what a fitting delivers, and `boq.js` says so out loud rather than hiding it in
+the geometry.
+
+The profile and the corner are `passive: true` — they draw nothing, the heads draw
+everything — which is a **statement**, where `watts: null` would land them in the
+schedule's list of omissions and read as though somebody had forgotten to fill
+them in. `passive` is also what keeps the track's metres out of `stripMetres`:
+tape and extrusion are two orders from two suppliers, and one figure covering
+both sends somebody nine metres of the wrong product.
+
+The DXF gets **two** new layers, by the same trade rule that earned the reverse
+cove its own.
+
+`superluminal_tracks` carries the profile: a track is the one thing on the
+drawing an electrician marks on the slab first and works to, as a closed polyline
+where the circuit closes and an open one where it does not.
+
+`superluminal_track_fixtures` carries the heads, and that is the rule taken one
+step further. The profile is set out and fixed on one visit; the heads are
+clipped in on another, are the only fittings on the drawing that can be slid
+along afterwards without touching the ceiling, and are a different order from a
+different page. Somebody setting out carrier wants the runs without forty modules
+on top of them; somebody commissioning wants the modules without the recessed
+schedule. So a head **leaves `superluminal_spots`** — it is not cut into the
+ceiling, so it is not part of the recessed schedule — and its aim arrow goes with
+it, so switching the recessed layer off does not strip the visible heads of what
+they point at.
+
+And a head exports as its **body**, not as a ring. Every other fitting here is a
+circle and a cross, which is the honest symbol for a round cut-out. A track head
+has a length and an orientation, and both are the reason it is on a track at all
+— the length decides how many fit between the corners, the rotation of a
+directional head is a thing an installer sets. A circle throws both away and the
+person who opens the file can no longer check either.
