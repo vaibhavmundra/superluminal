@@ -21,6 +21,7 @@
 
 import { buildAccentRequest, furnitureFromReply, DEFAULT_MODEL } from '../src/lib/accentPrompt.js';
 import { buildSurfaceRequest, surfacesFromReply } from '../src/lib/taskSurfaces.js';
+import { buildTvRequest, tvFromReply } from '../src/lib/tvDetect.js';
 import { buildRoomTypeRequest, roomTypeFromReply } from '../src/lib/roomTypes.js';
 import { buildBedFitRequest, bedFitFromReply } from '../src/lib/bedFit.js';
 import { buildRenderRequest, elementsFromReply,
@@ -156,7 +157,13 @@ export default async function handler(req, res) {
   // that English, and gets cell references back. Everything else on this route
   // — the key, the scrub, the size guard, the logging — is identical for them,
   // which is the whole reason they are tasks here rather than a third endpoint.
-  const task = ['surfaces', 'roomtype', 'bedfit', 'wallitems', 'wallgrid']
+  //
+  // `tv` is a NARROWING of the furniture question rather than a new kind of
+  // question: one room crop in, one box or null out. It exists because the
+  // electrical pass needs a television specifically, and the furniture pass —
+  // which has five things to look for — will not commit to a 200mm sliver on an
+  // otherwise empty wall. See tvDetect.js.
+  const task = ['surfaces', 'roomtype', 'bedfit', 'wallitems', 'wallgrid', 'tv']
     .includes(body.task) ? body.task : 'furniture';
   const projectId = typeof body.projectId === 'string' ? body.projectId : null;
 
@@ -214,6 +221,7 @@ export default async function handler(req, res) {
       : task === 'wallgrid' ? buildGridRequest({
           plan, elements: wallElements, anchorLines,
           rows: gridRows, cols: gridCols, cellFt: gridCellFt, model })
+      : task === 'tv' ? buildTvRequest({ plan, room, model })
       : buildAccentRequest({ plan, room, ceilingFt, model });
   } catch (err) {
     // An unknown project id reaches the prompt builder as a throw. That is a
@@ -261,10 +269,15 @@ export default async function handler(req, res) {
     : task === 'bedfit' ? bedFitFromReply(reply)
     : task === 'wallitems' ? elementsFromReply(reply)
     : task === 'wallgrid' ? cellsFromReply(reply, { rows: gridRows, cols: gridCols })
+    : task === 'tv' ? tvFromReply(reply, { w, h })
     : furnitureFromReply(reply, { w, h });
   // The room-type task returns one answer rather than a list, so there is
   // nothing to count. Logged as the answer itself.
-  const found = payload.furniture ?? payload.surfaces ?? payload.elements ?? payload.placed ?? null;
+  // The TV pass answers with one box or with null, so it is counted as the list
+  // of length one or zero that it is. `null` here means "this task does not
+  // return a list at all", which is a different thing and is logged differently.
+  const found = payload.furniture ?? payload.surfaces ?? payload.elements ?? payload.placed
+    ?? (task === 'tv' ? (payload.tv ? [payload.tv] : []) : null);
 
   // The model's own words. A refusal, a hedge, or "none of the rules apply to
   // this room" is the single most useful thing on the wire when a run comes

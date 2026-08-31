@@ -23,8 +23,10 @@ import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.j
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import LightPalette from './components/LightPalette.jsx';
 import ChunkIcon from './components/ChunkIcon.jsx';
+import BoltIcon from './components/BoltIcon.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
+import BusyModal from './components/BusyModal.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
 import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
@@ -55,6 +57,7 @@ import { shelfStripsFor } from './lib/shelfStrip.js';
 import RenderPassPanel from './components/RenderPassPanel.jsx';
 import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone,
          nearestWall, alongWallAt, RUN_EDIT } from './lib/accentPlace.js';
+import { planSwitchboards } from './lib/electrical.js';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
          sizeLabel, radiusFt, clampFt, resizeFromCorner, rotateTo, isRect,
          halfExtents, isUniform, applyResize, FAN_SWEEPS, sweepMm, withSweep,
@@ -547,7 +550,7 @@ const ftin = (v) => {
 // is about, in the other direction.
 const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: true,
   lights: true, labels: false, fan: true, zones: true, accents: true,
-  objects: true, spots: true,
+  objects: true, spots: true, switchboards: true,
   /* DARK MODE FOR THE DRAWING, AND IT IS A PIXEL INVERSION OF THE SCAN — the
      same thing ⌘I does in Photoshop, applied to the plan image and nothing
      else. It lives in `layers` because it is a preference about the picture
@@ -969,6 +972,17 @@ export default function App({
   // under room B's controls, over a button still offering to run.
   const [accentState, setAccentState] = useState({ status: 'idle', roomId: null });
   const [accentDismissed, setAccentDismissed] = useState([]);
+  // THE ELECTRICALS, keyed by room like everything else here.
+  //
+  // NO `dismissed` AND NO `manual` LIST, unlike accents and surfaces, and that
+  // is a scope decision rather than an oversight: a board cannot be dragged or
+  // thrown away yet, so a list of thrown-away ids would be a store with nothing
+  // to put in it. Both slot in beside this one without touching anything else
+  // the day they are wanted. `sbBusy` is the room being planned right now and
+  // is deliberately NOT serialised — a plan reopened mid-run would come back
+  // with a spinner over a pass nobody is running.
+  const [sbResults, setSbResults] = useState({});   // roomId -> { boards, notes }
+  const [sbBusy, setSbBusy] = useState(null);
   // The image that is actually sent. Held in state rather than made at call
   // time so the panel can show it: "what did it look at" is the first question
   // whenever an answer is strange, and a crop that is off the room or washed
@@ -1178,6 +1192,12 @@ export default function App({
      surface on the sheet. Admin-only, and it carries the same export caveat the
      audit overlay does. */
   const [showGrid, setShowGrid] = useState(false);
+  // A SWITCH OF ITS OWN, not a row under `audit`. The bed and surface overlays
+  // are looked at while asking why a layout came out the way it did; the doors
+  // are looked at while asking whether the SCALE is right, which happens on
+  // arrival and usually with nothing else on screen. One checkbox for both
+  // would mean turning on four overlays to check one number.
+  const [auditDoors, setAuditDoors] = useState(false);
   const svgRef = useRef(null);
 
   useEffect(() => {
@@ -1199,6 +1219,7 @@ export default function App({
     setDetections([]); setDetectState({ status: 'idle' }); setDismissed([]);
     setRoomState({ status: 'idle' });
     setAccentRoomId(null); setAccentResults({});
+    setSbResults({}); setSbBusy(null);
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
     setRenders({}); setRenderRefs({});
     setWallResults({}); setWallTranscripts({}); setRunTrims({});
@@ -1460,6 +1481,7 @@ export default function App({
     setCeilingObjs, setChunkPicks, setCeilingKinds, setDesignPicks,
     setAccentResults, setAccentDismissed, setManualAccents,
     setSurfaceResults, setSurfaceDismissed, setManualSurfaces, setArtDismissed,
+    setSbResults,
     // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
     // are a few hundred bytes of JSON and the renders are megabytes of
     // somebody's photographs, which do not belong in a jsonb column.
@@ -3025,6 +3047,99 @@ export default function App({
     return () => { alive = false; };
   }, [focus?.id, renderRefs, renders, renderStore]);
 
+  /**
+   * THE ELECTRICALS FOR ONE ROOM. Same shape as computeAccents: no state is
+   * touched, so the caller decides what to do with the answer.
+   *
+   * THE ACCENTS ARE A PREREQUISITE AND NOT AN OPTIMISATION. Two of the three
+   * rules read a fitting that pass placed — the bedside sconces, and the strip
+   * along the TV unit — and they read the PLACED fitting rather than the
+   * furniture box behind it. That is the point: a sconce is where accentPlace
+   * put it, including any hand slide, and a strip's wall came from wallForRun,
+   * which disagrees with nearestWall in a corner on purpose. Re-deriving either
+   * would put a board on a wall the fitting it feeds is not on. So if the
+   * accent pass has not run for this room, it runs here first.
+   *
+   * The television is the one thing that may need a fresh look. If the accent
+   * pass found no `tv_unit` — common, because a console is often not drawn —
+   * one narrow question goes out on its own. See tvDetect.js.
+   */
+  const computeElectrical = useCallback(async (r, { reuseShot = null } = {}) => {
+    let accents = accentResults[r.id];
+    let shot = reuseShot;
+    if (!accents?.zones) {
+      const out = await computeAccents(r, { reuseShot: shot });
+      accents = out.result;
+      shot = out.shot;
+    }
+    const zones = (accents?.zones ?? []).filter((z) => !accentDismissed.includes(z.id));
+
+    let tvRect = null;
+    const hasTv = zones.some((z) => z.from === 'tv_unit' && !z.rejected);
+    if (!hasTv) {
+      try {
+        shot = shot ?? await roomSnapshot({
+          source, img, polygonPx: r.plan.polygonPx,
+          lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
+        });
+        const payload = await requestAccents({
+          plan: shot, task: 'tv',
+          room: {
+            name: r.outline.name || null,
+            widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
+          },
+        });
+        const res = payload.result;
+        // OUT OF THE CROP AND BACK ONTO THE PLAN, exactly as computeAccents
+        // does. A box left in the crop's own space lands in the corner of the
+        // sheet.
+        if (res?.tv?.rect) tvRect = toPlanRect(res.tv.rect, shot.crop, res.image);
+      } catch (err) {
+        // A television nobody found is a note, not a failure. The door and the
+        // bedsides are still worth placing.
+        console.warn('[electrical] the TV pass did not answer:', err);
+      }
+    }
+
+    const out = planSwitchboards({
+      room: { id: r.id, polygonPx: r.plan.polygonPx },
+      // NAMES TOO. A note that has to say which OTHER space a door might belong
+      // to is unreadable as "o3" — see the shared-door note in electrical.js.
+      rooms: rooms.map((q) => ({
+        id: q.id, name: q.outline.name || null, polygonPx: q.plan.polygonPx,
+      })),
+      doors, roomTypes,
+      accentZones: zones,
+      tvRect, pxPerFt,
+    });
+    return { shot, result: out };
+  }, [accentResults, accentDismissed, computeAccents, rooms, doors, roomTypes,
+      pxPerFt, source, img, wallLayerSet]);
+
+  /**
+   * The bolt in the list of spaces. One room, one pass, one spinner.
+   *
+   * NOT PART OF runPipeline, deliberately. The electricals are asked for and
+   * not assumed: a lighting drawing is useful on its own, the pass costs a
+   * vision call, and the rules here are new enough to want looking at one room
+   * at a time. When it stops being new it can join the pipeline.
+   */
+  const planElectrical = useCallback(async (r) => {
+    if (sbBusy) return;
+    setSbBusy(r.id);
+    try {
+      const { result } = await computeElectrical(r);
+      setSbResults((m) => ({ ...m, [r.id]: result }));
+      console.log(`[electrical] ${r.outline.name || r.id}: ${result.boards.length} board(s)`
+        + `${result.notes.length ? ` — ${result.notes.join(' ')}` : ''}`);
+    } catch (err) {
+      console.warn('[electrical] the pass failed:', err);
+      setSbResults((m) => ({ ...m, [r.id]: { boards: [], notes: [String(err.message || err)] } }));
+    } finally {
+      setSbBusy(null);
+    }
+  }, [sbBusy, computeElectrical]);
+
   /** What kind of space is it? One small call, one word back. */
   const computeRoomType = useCallback(async (r, { reuseShot = null } = {}) => {
     const shot = reuseShot ?? await roomSnapshot({
@@ -3723,6 +3838,21 @@ export default function App({
     }
     return out;
   }, [rooms, wallResults, pxPerFt]);
+
+  /**
+   * Every switchboard still standing, in plan pixels.
+   *
+   * Refused boards are kept in `sbResults` — the panel and the console log want
+   * to know a board was refused and why — but they carry no geometry, so they
+   * are dropped on the way to the drawing rather than drawn at NaN.
+   */
+  const switchboardsPx = useMemo(() => {
+    const out = [];
+    for (const r of rooms) {
+      for (const b of sbResults[r.id]?.boards ?? []) if (!b.rejected && b.point) out.push(b);
+    }
+    return out;
+  }, [rooms, sbResults]);
 
   /**
    * The layout, in the one number a lighting drawing is actually judged on.
@@ -6585,6 +6715,7 @@ export default function App({
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
     wallResults, runTrims, manualCoves, renderRefs,
+    sbResults,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
@@ -6592,7 +6723,7 @@ export default function App({
        ceilingObjs, chunkPicks, designPicks, ceilingKinds,
        accentResults, accentDismissed, manualAccents,
        surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-       wallResults, runTrims, manualCoves, renderRefs,
+       wallResults, runTrims, manualCoves, renderRefs, sbResults,
        layers, zoom, view]);
 
   // --- UNDO, THE HALF THAT NEEDS THE DOCUMENT -------------------------------
@@ -6770,6 +6901,13 @@ export default function App({
         <ProjectTypeDialog planName={source.name} onPick={setProjectId}
           busy={doorState.status === 'running' ? 'Looking for doors…' : null}
           note="A door is a standard width, so one of them is the drawing's ruler." />
+      )}
+      {/* THE SAME BOX AS THE DOOR SEARCH, for the same reason: a few seconds of
+          work the user asked for, during which the rest of the screen is not
+          much use to them. See BusyModal. */}
+      {sbBusy && (
+        <BusyModal line="Planning the electricals…"
+          note="Finding the door that opens into this space, which way it swings, and the walls that will take a board." />
       )}
       {/* WHICH SHEET, ASKED BEFORE ANYTHING ELSE — and only when there is more
           than one. See PdfPagePicker. */}
@@ -7258,13 +7396,18 @@ export default function App({
               onZoneDown={readOnly ? null : onZoneDown}
               onZoneMove={readOnly ? null : onZoneMove}
               onZoneUp={readOnly ? null : onZoneUp}
-              accents={accentZonesPx} onFixture={setTip}
+              accents={accentZonesPx} switchboards={switchboardsPx} onFixture={setTip}
               /* The audit layer — now the lit task surfaces and the render
                  pass's wall cells. The BED zones used to be passed here too and
                  are not any more: see the note in PlanCanvas's audit group.
                  `detectedZones` still feeds `zoneList`, so the planner obeys
                  them exactly as before; only the box round them is gone. */
               audit={isAdmin && audit}
+              /* THE DOOR BOXES, on a switch of their own — they answer "is the
+                 SCALE right", which is asked on arrival and on its own. */
+              auditDoors={isAdmin && auditDoors}
+              doorBoxes={doors} doorRejects={doorState.rejected ?? []}
+              doorPickId={doorPick?.id ?? null}
               /* THE SCAFFOLDING UNDER THE LAYOUT. Same gate as the audit
                  overlay and for the same reason — it is working, not drawing —
                  but its own switch, because "why did this chunk split here" and
@@ -7663,6 +7806,14 @@ export default function App({
               const on = r.id === focusId;
               const chunked = r.chunking?.needsChoice;
               const coved = (r.coves?.length ?? 0) > 0;
+              // BEDROOMS IN HOMES ONLY, for now. The three rules downstream are
+              // a door, a bed and a television, and two of those are bedroom
+              // rules. An icon on a kitchen row would be a control that runs a
+              // pass with nothing to say — worse than no control, because it
+              // reads as a feature that does not work.
+              const electric = projectId === 'residential'
+                && roomTypes[r.id]?.type === 'bedroom';
+              const wired = sbResults[r.id];
               return (
                 <div key={r.id} ref={on ? openRowRef : null}
                   className={`group ${ROW_FLUSH} ${on ? ROW_ON : ROW_OFF}`}>
@@ -7721,6 +7872,26 @@ export default function App({
                           <ChunkIcon uid={r.id} ramp={THROW_STYLE.stops}
                             title={r.chunkingChosenBy === 'user'
                             ? 'Chunking — chosen by hand' : 'Chunking'} />
+                        </button>
+                      )}
+                      {electric && !readOnly && (
+                        /* NOT `ICON`, WHICH CARRIES `lp-chunk-btn` — that class
+                           paints the chunk glyph's ramp on hover and has nothing
+                           to say to a filled bolt. Same shape and same two
+                           states, without the paint server. */
+                        <button className={`${ICON_SHAPE} text-faint group-hover:text-muted hover:bg-surface disabled:cursor-default disabled:opacity-50`}
+                          disabled={!!sbBusy}
+                          title={wired
+                            ? `${wired.boards.filter((b) => !b.rejected).length} switchboard(s)`
+                              + ' — click to work them out again'
+                            : 'Plan the electricals for this space'}
+                          onClick={(e) => {
+                            // The row selects; this does something else entirely.
+                            e.stopPropagation();
+                            setFocusId(r.id);
+                            planElectrical(r);
+                          }}>
+                          <BoltIcon title={wired ? 'Electricals — planned' : 'Electricals'} />
                         </button>
                       )}
                     </div>
@@ -7810,6 +7981,22 @@ export default function App({
                           setWallTranscripts((m) => { const n = { ...m }; delete n[r.id]; return n; });
                         }} />
                     </div>
+                  )}
+                  {/* WHAT THE ELECTRICAL PASS DID, AND WHAT IT COULD NOT DO.
+                      A board that was refused and a television that was not
+                      there are the two things this pass most often has to
+                      report, and neither of them is visible on the drawing —
+                      the drawing shows what it placed. A silence here reads as
+                      "the bolt did nothing", which is the one thing it never
+                      does. */}
+                  {wired && (
+                    <p className={`${N} mt-0.5`}>
+                      {wired.boards.filter((b) => !b.rejected).length} switchboard
+                      {wired.boards.filter((b) => !b.rejected).length === 1 ? '' : 's'}
+                      {wired.boards.some((b) => b.clash) ? ' · two of them want the same piece of wall' : ''}
+                      {[...wired.boards.filter((b) => b.rejected).map((b) => b.rejected), ...wired.notes]
+                        .map((t, i) => <span key={i}> · {t}</span>)}
+                    </p>
                   )}
                 </div>
               );
@@ -8394,7 +8581,8 @@ export default function App({
             {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
               ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
               ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
-              ['accents', 'Accent lighting'], ['spots', 'Directional spots']].map(([k, l]) => (
+              ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
+              ['switchboards', 'Switchboards']].map(([k, l]) => (
               <label className={CHECK} key={k}>
                 <input className="lp-check" type="checkbox"
                   checked={layers[k]} onChange={toggle(k)} />{l}</label>
@@ -8509,6 +8697,67 @@ export default function App({
                     onChange={(e) => setAudit(e.target.checked)} />
                   Show what was identified
                 </label>
+                {/* THE DOORS, SEPARATELY. Every dimension on the sheet hangs off
+                    one of these boxes, so "did it find the doors" is a different
+                    question from "why is the layout like this" and is asked at a
+                    different moment. */}
+                <label className={`${CHECK} mt-2`}>
+                  <input className="lp-check" type="checkbox" checked={auditDoors}
+                    onChange={(e) => setAuditDoors(e.target.checked)} />
+                  Show the doors it found
+                </label>
+                <p className={`${N_ADMIN} mt-0.5`}>
+                  Every candidate box, kept and rejected, with the opening it
+                  measured. The one the scale is taken from is drawn solid.
+                  {isVector && ' This plan is a drawing, so the detector never ran'
+                    + ' on it — a DXF states its own scale.'}
+                </p>
+                {/* THE COUNTS STAY WITH THEIR OWN SWITCH rather than joining the
+                    ledger below. That one answers "what did the models see on
+                    this plan"; these four numbers answer "is the scale right",
+                    and they are read while the boxes are on the canvas. */}
+                {auditDoors && (
+                  <div className="mt-2 flex flex-col gap-[5px]">
+                    <div className={KV_ADMIN}><span>Doors kept</span><b>{doors.length}</b></div>
+                    <div className={KV_ADMIN}><span>Boxes rejected</span>
+                      <b>{doorState.restored ? '—' : (doorState.rejected?.length ?? 0)}</b></div>
+                    {/* A REOPENED PLAN HAS NO REJECTS TO SHOW. The kept doors are
+                        saved with the plan; the refused boxes are not, so a
+                        restored plan would otherwise report a confident zero and
+                        read as "it refused nothing". */}
+                    {doorState.restored && (
+                      <p className={`${N_ADMIN} mt-1`}>
+                        Restored from the saved plan, which keeps the doors but not
+                        the boxes it turned down. Re-run the detection to see those.
+                      </p>
+                    )}
+                    <div className={KV_ADMIN}><span>Scale</span>
+                      <b>{pxPerFt ? `${pxPerFt.toFixed(2)} px/ft` : 'not set'}</b></div>
+                    {doorPick?.id && (
+                      <div className={KV_ADMIN}><span>&nbsp;&nbsp;· from a door called</span>
+                        <b>{doorPick.mm ? `${doorPick.mm}mm` : '—'}</b></div>
+                    )}
+                    {doorState.status === 'error' && (
+                      <p className={`${NE} mt-1`}>
+                        The detector failed: {doorState.error}
+                      </p>
+                    )}
+                    {!doorState.restored && doorState.rejected?.length > 0 && (
+                      <details className={`${DISCLOSE_ADMIN} mt-1`}>
+                        <summary>Why each box was turned down</summary>
+                        {doorState.rejected.map((d, i) => (
+                          <p key={i} className={`${N_ADMIN} mt-1`}>
+                            <b>{(d.cls || 'box')} {(d.conf ?? 0).toFixed(2)}</b>{' — '}{d.reason}
+                          </p>
+                        ))}
+                      </details>
+                    )}
+                    <p className={`${N_ADMIN} mt-1`}>
+                      The gates are <code className={CODE}>DOOR_DEFAULTS</code> in{' '}
+                      <code className={CODE}>doors.js</code>.
+                    </p>
+                  </div>
+                )}
                 
 
                 {/* THE GRID, ON THE DRAWING. Its own switch and not part of the

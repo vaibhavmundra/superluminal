@@ -5,6 +5,8 @@ import { specsFor, runMetres, FIXTURE_BY_ID } from '../lib/boq.js';
 import { STRIP_STYLE, THROW_STYLE, GLINT_STYLE, PILL_STYLE,
          COVE_BAND_STYLE } from '../lib/settings.js';
 import { TRACK_DIMS_IN } from '../lib/track.js';
+import { SB_COLOUR, SB_MM } from '../lib/electrical.js';
+import { doorWidthAt } from '../lib/doors.js';
 
 // ---------------------------------------------------------------------------
 // PlanCanvas — the finished drawing. EVERY room on it, not one.
@@ -135,7 +137,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        grabbable, which is the right default for a canvas with no tools. */
     placing = false,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
-    selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [],
+    selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [], switchboards = [],
     // WHICH SPOT IS PICKED, AND HOW ONE GETS PICKED. Optional like every other
     // handler here: a canvas given neither is a drawing whose spots cannot be
     // selected, which is what the read-only sheet wants.
@@ -148,6 +150,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     // block near the bottom of this file for what it draws and why the marks it
     // restores were removed from the drawing proper.
     audit = false,
+    // THE DOOR DETECTOR'S OWN READING, on a switch of its own rather than on
+    // `audit`. The bed and surface overlays answer "why is the layout like
+    // this"; this one answers "is the SCALE right", which is a different
+    // question asked at a different moment — and it is the question, because
+    // every dimension on the sheet hangs off one of these boxes.
+    auditDoors = false, doorBoxes = [], doorRejects = [], doorPickId = null,
     /* THE PLANNER'S OWN SCAFFOLDING, ON REQUEST.
        The chunk boxes and the 
        cell lines every downlight was laid on. It came off the drawing because
@@ -2231,6 +2239,80 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         );
       })}
 
+      {/* THE SWITCHBOARDS. Above the accents, because a board sits on the same
+          wall as the sconce it feeds and the two would otherwise fight over the
+          same few pixels; the board is the smaller mark and wins by being on
+          top.
+
+          A FILLED RECTANGLE, AND NOT A SYMBOL. Everything else on this drawing
+          is a light and is drawn as one — a crosshair, a dotted run, a ring.
+          The board is not a light: it is the thing that turns them on, it is a
+          real plate of a real size, and it is drawn at that size, in plan, like
+          a piece of the building rather than a piece of notation. That is also
+          why it is blue and filled where the fittings are blue and stroked:
+          same layer, different kind of object.
+
+          A POLYGON RATHER THAN A ROTATED RECT, because the four corners are
+          already in hand — the placement pass returns the wall's own axes with
+          the point — and a transform would mean re-deriving a rotation, and its
+          sign, from vectors that already say it. */}
+      {layers.switchboards && switchboards.map((b) => {
+        const half = b.alongPx / 2, deep = b.deepPx;
+        const { along: u, inward: n, point: q } = b;
+        const pt = (a, d) => `${q.x + u.x * a + n.x * d},${q.y + u.y * a + n.y * d}`;
+        const poly = [pt(-half, 0), pt(half, 0), pt(half, deep), pt(-half, deep)].join(' ');
+
+        // WHEN TWO BOARDS WANT THE SAME PIECE OF WALL, THE CARD DESCRIBES BOTH.
+        //
+        // Not a nicety. Clashing plates are drawn at the same point, so they sit
+        // exactly on top of each other and only the last one painted can be
+        // hovered — which one that is comes down to array order. A card that
+        // described only the board on top would leave the other one with no way
+        // of being read at all, and the whole reason the clash is marked rather
+        // than tidied away is that the person has to decide between them.
+        //
+        // So the pile is described as a pile: what each board is for, and where
+        // each came from, in one card.
+        const group = b.clash?.length
+          ? [b, ...b.clash.map((cid) => switchboards.find((x) => x.id === cid)).filter(Boolean)]
+          : [b];
+        const spec = group.length > 1 ? {
+          id: 'switchboard',
+          label: `${group.length} switchboards, one spot`,
+          // The index prefix is not decoration: two bedside boards can clash,
+          // and FixtureTip keys its rows by the label.
+          rows: [
+            ['Plate', `${SB_MM.along} x ${SB_MM.deep} mm each`],
+            ...group.map((g, i) => [
+              `${i + 1} · ${g.servesShort || 'Board'}`,
+              g.shortWhy || g.why || '',
+            ]),
+          ],
+          note: 'They land within one plate of each other. Neither was moved, because'
+            + ' both positions are rules. On site these would be ganged into one plate.',
+        } : {
+          id: 'switchboard', label: 'Switchboard',
+          note: b.why || null,
+          rows: [
+            ['Plate', `${SB_MM.along} x ${SB_MM.deep} mm`],
+            ['Serves', b.serves || '—'],
+            ...(b.turnedCorner ? [['Note', 'turned the corner — the wall ran out']] : []),
+            ...(b.poor ? [['Note', b.poor]] : []),
+          ],
+        };
+
+        return (
+          <g key={b.id} {...feel(b.id, spec)}>
+            {/* White under the fill, so the plan's own line work cannot show
+                through a solid we are claiming is a solid. */}
+            <polygon points={poly} fill="#fff" />
+            <polygon className="hit" points={poly} fill={SB_COLOUR}
+              stroke="#fff" strokeWidth={lw * (hot === b.id ? 2.6 : 1.4)}
+              strokeLinejoin="round" />
+          </g>
+        );
+      })}
+
       {/* Room names, on the same switch as the light tags: both are annotation,
           and both are in the way when what you want to see is the layout. */}
       {layers.labels && laid.length > 1 && laid.map((r) => {
@@ -2315,6 +2397,71 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <text x={r.x0 + lw * 3} y={r.y0 - lw * 2} fill={C.lit}
                   fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
                   {sf.label || sf.type || 'surface'}{sf.rejected ? ' (rejected)' : ''}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      )}
+
+      {/* --- THE DOORS THE DETECTOR FOUND ------------------------------------
+          Same magenta, same "this is working, not a sheet" idiom as the layer
+          above, on its own toggle.
+
+          THE REJECTED ONES ARE THE POINT, and they are why this is not just a
+          debug print. A door that was found is visible in its consequence — the
+          scale is right, the dimensions read true. A door that was REFUSED is
+          invisible everywhere: the drawing looks the same, it just quietly had
+          one fewer candidate to measure with. When the detector misses the only
+          door on a plan, the reason it gave is the whole diagnosis, so it is
+          drawn where the box was rather than counted in a panel.
+
+          Rejects go down FIRST so a kept door sits on top of one it overlaps —
+          which is exactly the case worth looking at, since that is what the
+          de-dup pass just did. */}
+      {auditDoors && (
+        <g className="audit" pointerEvents="none">
+          {doorRejects.map((d, i) => d.rect && (
+            <g key={'dr' + i} opacity="0.45">
+              <rect x={d.rect.x0} y={d.rect.y0}
+                width={d.rect.x1 - d.rect.x0} height={d.rect.y1 - d.rect.y0}
+                fill="none" stroke="#C026D3" strokeWidth={lw * 1.2}
+                strokeDasharray={`${lw * 2} ${lw * 3}`} />
+              <text x={d.rect.x0 + lw * 3} y={d.rect.y1 + Math.max(width, height) / 120} fill="#C026D3"
+                fontSize={Math.max(width, height) / 150} fontFamily="The Neue Montreal, sans-serif">
+                {(d.reason || 'rejected').slice(0, 44)}
+              </text>
+            </g>
+          ))}
+          {doorBoxes.map((d) => {
+            // THE ONE THAT SET THE SCALE, drawn heavier. Out of every box here
+            // exactly one is load-bearing: the door the user named a width for.
+            // `typical` is only the one this pass OFFERED as that ruler — the
+            // median opening — and the two are different claims worth telling
+            // apart when a plan comes out at half size.
+            const ruler = d.id === doorPickId;
+            const mm = pxPerFt > 0 ? doorWidthAt(d.rect, pxPerFt) : null;
+            return (
+              <g key={'dk' + d.id}>
+                <rect x={d.rect.x0} y={d.rect.y0}
+                  width={d.rect.x1 - d.rect.x0} height={d.rect.y1 - d.rect.y0}
+                  fill="#C026D3" fillOpacity={ruler ? 0.12 : 0.05} stroke="#C026D3"
+                  strokeWidth={lw * (ruler ? 2.8 : 1.6)}
+                  strokeDasharray={ruler ? undefined : `${lw * 5} ${lw * 3}`} />
+                {/* The opening itself — the shorter side, which is the number
+                    the scale is actually derived from. Drawn as a bar across
+                    the box so a box that got its short side from a frame or a
+                    neighbouring wall is visible as one. */}
+                <line
+                  x1={d.rect.x0} y1={d.rect.y1 + lw * 2}
+                  x2={d.rect.x0 + d.openingPx} y2={d.rect.y1 + lw * 2}
+                  stroke="#C026D3" strokeWidth={lw * 2} />
+                <text x={d.rect.x0 + lw * 3} y={d.rect.y0 - lw * 2} fill="#C026D3"
+                  fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
+                  {ruler ? 'the ruler · ' : d.typical ? 'typical · ' : ''}
+                  {d.openingPx.toFixed(0)}px
+                  {mm ? ` · ${mm.toFixed(0)}mm` : ''}
+                  {` · ${(d.conf ?? 1).toFixed(2)}`}
                 </text>
               </g>
             );

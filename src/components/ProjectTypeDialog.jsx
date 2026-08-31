@@ -1,5 +1,6 @@
 import React from 'react';
 import { PROJECT_TYPES } from '../lib/roomTypes.js';
+import BusyModal from './BusyModal.jsx';
 
 // ---------------------------------------------------------------------------
 // ProjectTypeDialog — one question, once, before anything else happens.
@@ -28,18 +29,14 @@ import { PROJECT_TYPES } from '../lib/roomTypes.js';
 // ---------------------------------------------------------------------------
 
 export default function ProjectTypeDialog({ planName, onPick, busy = null, note = null }) {
+  // The busy face of this dialog is BusyModal's now, so the electrical pass can
+  // wear the same one without a second copy of the markup drifting away from
+  // this one.
+  if (busy) return <BusyModal line={busy} note={note} />;
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]">
       <div className="w-[min(520px,calc(100vw-40px))] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop">
-        {busy ? (
-          <div className="flex items-center gap-[14px] py-[10px] px-0.5 min-h-[74px]">
-            <div className="lp-spin w-[22px] h-[22px] flex-none" aria-hidden="true" />
-            <div>
-              <b className="text-sm block text-white">{busy}</b>
-              {note && <p className="text-[11.5px] text-muted leading-normal m-0 mt-1">{note}</p>}
-            </div>
-          </div>
-        ) : (<>
+        <>
           <h2 className="m-0 mb-1.5 text-[17px] tracking-[-0.01em]">What are you planning?</h2>
           <p className="text-[11.5px] text-muted leading-normal m-0 mb-3.5">
             {planName ? <><b>{planName}</b> — </> : null}
@@ -54,7 +51,7 @@ export default function ProjectTypeDialog({ planName, onPick, busy = null, note 
               </button>
             ))}
           </div>
-        </>)}
+        </>
       </div>
     </div>
   );

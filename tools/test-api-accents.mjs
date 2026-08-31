@@ -20,6 +20,7 @@ import handler from '../api/accents.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
+const near = (a, b, e = 1e-6) => Math.abs(a - b) <= e;
 
 process.env.OPENAI_API_KEY = 'sk-test-not-a-real-key';
 
@@ -91,10 +92,29 @@ console.log('\n-- furniture and surfaces still return lists --');
   ok(b.json.meta.task === 'surfaces' && b.json.meta.found === 1, 'and its meta is right');
 }
 
+console.log('\n-- tv: one box, or a clean nothing --');
+{
+  stubOpenAI('{"room":"bedroom","tv":{"x0":0.2,"y0":0.9,"x1":0.6,"y1":0.93,"confidence":0.8}}');
+  const a = await call({ plan: PLAN, task: 'tv', room: ROOM });
+  ok(a.code === 200 && a.json.result.tv, 'a television comes back');
+  ok(a.json.meta.task === 'tv' && a.json.meta.found === 1,
+    `and is counted as the list of one that it is: found=${a.json.meta.found}`);
+  ok(near(a.json.result.tv.rect.x0, 160), 'the box is resolved against the sent size');
+  ok(/BED IS YOUR STARTING POINT/.test(sent.messages[0].content[1].text),
+    'the question that went out is the bedroom one');
+
+  // The answer "no television" must not look like a broken call from out here.
+  stubOpenAI('{"room":"bedroom","tv":null}');
+  const b = await call({ plan: PLAN, task: 'tv', room: ROOM });
+  ok(b.code === 200 && b.json.result.tv === null && b.json.meta.found === 0,
+    'no television is a 200 with found=0, not an error and not a 500');
+  ok(b.json.meta.skipped === 0, 'and nothing is reported dropped, because nothing was');
+}
+
 console.log('\n-- every task survives a reply it cannot parse --');
 {
   for (const [task, extra] of [['roomtype', { projectId: 'residential' }],
-                               ['furniture', {}], ['surfaces', {}]]) {
+                               ['furniture', {}], ['surfaces', {}], ['tv', {}]]) {
     stubOpenAI('I am afraid I cannot help with that.');
     const { code, json } = await call({ plan: PLAN, task, room: ROOM, ...extra });
     ok(code === 200 && json.result, `${task}: a refusal is a 200 with an empty result, not a throw`);

@@ -185,6 +185,16 @@ export function serialiseEditor(s) {
     // JPEG at quality 0.82, and that fact is part of the row.
     renderRefs: s.renderRefs,
 
+    // --- the electricals, keyed by room like the two above.
+    //
+    // ONE KEY AND NOT THREE, because a board cannot yet be dragged or thrown
+    // away, so there is no dismissal list and no store of hand-placed ones to
+    // keep. The pass is on-demand rather than part of the pipeline, so a room
+    // that has never been asked simply has no entry — which is a different
+    // thing from a room that was asked and got nothing, and that one comes back
+    // with its `notes` saying why.
+    sbResults: s.sbResults,
+
     // --- view preferences. Cheap, and jarring to lose.
     ui: { layers: s.layers, zoom: s.zoom, view: s.view },
   };
@@ -260,6 +270,7 @@ export function applyEditor(p, set) {
   // THE POINTERS, NOT THE PIXELS. App fetches the bytes back from the bucket
   // afterwards and only for the space that is open — see the rehydrate effect.
   set.setRenderRefs?.(p.renderRefs ?? {});
+  set.setSbResults?.(p.sbResults ?? {});
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);
