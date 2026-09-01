@@ -167,12 +167,22 @@ export async function svgToPNG(svgEl, width) {
   return new Promise((res) => cv.toBlob(res, 'image/png'));
 }
 
-// --- minimal DXF (R12 ASCII) so this lands straight in AutoCAD -------------
+// --- DXF primitives (R12 ASCII) --------------------------------------------
+//
+// ONE DXF EXPORT, and this is the only block that writes one. There used to be
+// two — a "standalone" drawing on ROOM / CHUNK / GRID / NO-LIGHT layers and the
+// CAD overlay below — and the standalone one was the file people actually got
+// off the DXF button. It carried the planner's WORKING onto a deliverable
+// sheet: every chunk boundary, every grid line, every no-light box, none of
+// which anybody outside this app has a use for. It also predated the layer
+// scheme and the fitting symbols entirely, so the file that came out looked
+// nothing like the drawing on screen that it was supposed to be a copy of.
+//
+// So there is one exporter now, and the coordinate system is the only thing
+// that varies: it lands ON the original drawing when there is one to land on,
+// and falls back to feet with Y flipped when the plan came from an image. Same
+// layers, same symbols, same fills, either way.
 
-function dxfHeader() {
-  return ['0','SECTION','2','HEADER','9','$INSUNITS','70','2','0','ENDSEC',
-          '0','SECTION','2','ENTITIES'];
-}
 function dxfLine(layer, x1, y1, x2, y2) {
   return ['0','LINE','8',layer,'10',x1.toFixed(4),'20',y1.toFixed(4),'30','0.0',
           '11',x2.toFixed(4),'21',y2.toFixed(4),'31','0.0'];
@@ -180,114 +190,92 @@ function dxfLine(layer, x1, y1, x2, y2) {
 function dxfCircle(layer, x, y, r) {
   return ['0','CIRCLE','8',layer,'10',x.toFixed(4),'20',y.toFixed(4),'30','0.0','40',r.toFixed(4)];
 }
-function dxfText(layer, x, y, hgt, str) {
-  return ['0','TEXT','8',layer,'10',x.toFixed(4),'20',y.toFixed(4),'30','0.0','40',hgt.toFixed(4),'1',str];
-}
 
 /**
- * DXF in feet, Y flipped so the drawing is right-way-up in CAD (screen Y grows
- * downward, CAD Y grows upward).
+ * A FILLED SHAPE, IN A DIALECT THAT HAS NO HATCH.
  *
- * The flip is about the WHOLE SHEET and not about each room's own extent, which
- * is the one thing to get right here: flipping each room about its own top edge
- * would mirror the plan's vertical arrangement, putting the bedroom above the
- * living room. `heightFt` is the plan image's height in feet, so every room is
- * reflected in the same line and the drawing comes out as it looks on screen.
- *
- * Each room's entities carry its name on the layer, so a lighting layer can be
- * isolated per room in CAD without re-tracing anything.
+ * R12 predates HATCH, so the only primitive in the file that arrives with ink
+ * inside it is SOLID — and SOLID is the one entity in DXF whose vertices are
+ * NOT in ring order. The quad is traversed 10 -> 11 -> 13 -> 12: the third and
+ * fourth points are swapped. Feed it four corners going round a rectangle and
+ * you get a bow tie, which is exactly the bug this pair of wrappers exists to
+ * make unwriteable. Nothing calls `dxfSolid` directly.
  */
-export function toDXF(rooms, { pxPerFt, heightPx } = {}) {
-  const out0 = dxfHeader();
-  const list = laidOut(rooms, pxPerFt);
-  const H = heightPx != null ? heightPx / pxPerFt
-    : Math.max(0, ...list.flatMap((r) => r.polygon.map((p) => p.y)));
-  const fy = (y) => H - y;
-  // A layer name cannot carry a comma, a space is tolerated but awkward, and
-  // CAD is happier with upper case. "Living / Dining" becomes LIVING-DINING.
-  //
-  // An UNNAMED room gets no suffix at all, so a single-room export produces the
-  // plain ROOM / CHUNK / GRID layers it always did. Suffixing everything would
-  // rename the layers in every existing consumer's drawing to buy nothing.
-  const tag = (name) => String(name || '').toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || null;
-  const on = (base, t) => (t ? `${base}-${t}` : base);
-  let out = out0;
+function dxfSolid(layer, a, b, c, d) {
+  return ['0','SOLID','8',layer,
+          '10',a.x.toFixed(6),'20',a.y.toFixed(6),'30','0.0',
+          '11',b.x.toFixed(6),'21',b.y.toFixed(6),'31','0.0',
+          '12',c.x.toFixed(6),'22',c.y.toFixed(6),'32','0.0',
+          '13',d.x.toFixed(6),'23',d.y.toFixed(6),'33','0.0'];
+}
+/** Four corners IN RING ORDER, filled. The swap happens here and only here. */
+function dxfSolidQuad(layer, ring) {
+  const [a, b, c, d] = ring;
+  return dxfSolid(layer, a, b, d, c);
+}
+/** A triangle: the degenerate SOLID, fourth vertex repeating the third. */
+function dxfSolidTri(layer, a, b, c) {
+  return dxfSolid(layer, a, b, c, c);
+}
 
-  for (const r of list) {
-    const t = tag(r.name);
-    const poly = r.polygon;
-    for (let i = 0; i < poly.length; i++) {
-      const a = poly[i], b = poly[(i + 1) % poly.length];
-      out = out.concat(dxfLine(on('ROOM', t), a.x, fy(a.y), b.x, fy(b.y)));
-    }
-    // The room's name, at the top-left inside corner of its bounding box. Only
-    // when it has one — a TEXT entity reading "Room" is noise in a drawing.
-    if (t) {
-      const minX = Math.min(...poly.map((p) => p.x));
-      const minY = Math.min(...poly.map((p) => p.y));
-      out = out.concat(dxfText('ROOM-NAME', minX + 0.3, fy(minY + 1.1), 0.6, String(r.name)));
-    }
+// How many triangles a filled dot is made of. Sixteen is the point where the
+// facets stop being visible at the zoom anybody checks a downlight at, and a
+// downlight's dot is a couple of inches across — going finer buys nothing and
+// every fitting on the sheet pays for it.
+const DISC_FACETS = 16;
 
-    for (const ch of r.chunks) {
-      out = out.concat(dxfLine(on('CHUNK', t), ch.x0, fy(ch.y0), ch.x1, fy(ch.y0)));
-      out = out.concat(dxfLine(on('CHUNK', t), ch.x1, fy(ch.y0), ch.x1, fy(ch.y1)));
-      out = out.concat(dxfLine(on('CHUNK', t), ch.x1, fy(ch.y1), ch.x0, fy(ch.y1)));
-      out = out.concat(dxfLine(on('CHUNK', t), ch.x0, fy(ch.y1), ch.x0, fy(ch.y0)));
-      for (const x of ch.xLines.slice(1, -1)) out = out.concat(dxfLine(on('GRID', t), x, fy(ch.y0), x, fy(ch.y1)));
-      for (const y of ch.yLines.slice(1, -1)) out = out.concat(dxfLine(on('GRID', t), ch.x0, fy(y), ch.x1, fy(y)));
-    }
-
-    for (const z of r.zones) {
-      out = out.concat(dxfLine('NO-LIGHT', z.x0, fy(z.y0), z.x1, fy(z.y0)));
-      out = out.concat(dxfLine('NO-LIGHT', z.x1, fy(z.y0), z.x1, fy(z.y1)));
-      out = out.concat(dxfLine('NO-LIGHT', z.x1, fy(z.y1), z.x0, fy(z.y1)));
-      out = out.concat(dxfLine('NO-LIGHT', z.x0, fy(z.y1), z.x0, fy(z.y0)));
-      out = out.concat(dxfLine('NO-LIGHT', z.x0, fy(z.y0), z.x1, fy(z.y1)));
-      out = out.concat(dxfLine('NO-LIGHT', z.x0, fy(z.y1), z.x1, fy(z.y0)));
-    }
-
-    for (const l of r.lights) {
-      // A SEPARATE LAYER, because that is how a DXF says "different fitting" to
-      // the person who opens it: they turn one off and count the other.
-      const narrow = (l.fixture || l.kind) === 'small-narrow';
-      const layer = l.kind === 'large' ? 'LIGHT-LARGE'
-        : narrow ? 'LIGHT-SMALL-NARROW' : 'LIGHT-SMALL';
-      const rad = (l.kind === 'large' ? 0.5 : 0.29) * (narrow ? 0.8 : 1);
-      out = out.concat(dxfCircle(layer, l.x, fy(l.y), rad));
-      out = out.concat(dxfLine(layer, l.x - rad, fy(l.y), l.x + rad, fy(l.y)));
-      out = out.concat(dxfLine(layer, l.x, fy(l.y) - rad, l.x, fy(l.y) + rad));
-      // L1 in the kitchen and L1 in the hall are two fittings. Prefixed with
-      // the room where there is one, so a schedule can be ordered from.
-      out = out.concat(dxfText('LIGHT-TAG', l.x + rad + 0.15, fy(l.y) - 0.15, 0.35,
-        t ? `${t}-${l.id}` : l.id));
-    }
-
-    for (const fan of r.fans) {
-      out = out.concat(dxfCircle('FAN', fan.x, fy(fan.y), fan.r || 2));
-    }
+/**
+ * A FILLED DISC, as a fan of triangles about its centre.
+ *
+ * The alternative was AutoCAD's donut trick — a two-vertex closed polyline with
+ * a width — which is one entity instead of sixteen and renders as a true circle
+ * rather than a sixteen-gon. It was rejected because a viewer that ignores
+ * polyline width draws it as a thin ring, and a ring is precisely the mark this
+ * fill is here to be distinguished FROM. A SOLID is filled everywhere or the
+ * file is not being read at all.
+ */
+function dxfDisc(layer, c, r) {
+  let out = [];
+  for (let i = 0; i < DISC_FACETS; i++) {
+    const a0 = (i / DISC_FACETS) * Math.PI * 2;
+    const a1 = ((i + 1) / DISC_FACETS) * Math.PI * 2;
+    out = out.concat(dxfSolidTri(layer, c,
+      { x: c.x + r * Math.cos(a0), y: c.y + r * Math.sin(a0) },
+      { x: c.x + r * Math.cos(a1), y: c.y + r * Math.sin(a1) }));
   }
-
-  out = out.concat(['0','ENDSEC','0','EOF']);
-  return out.join('\n');
+  return out;
 }
 
 // ---------------------------------------------------------------------------
-// THE CAD EXPORT — a DXF that lands ON the drawing it came from.
+// THE DXF EXPORT — the drawing on screen, as a drawing.
 //
-// This is a different animal to toDXF above and the difference is the whole
-// point. toDXF produces a STANDALONE drawing: feet, Y flipped, its own layer
-// names, everything the planner knows. Useful to look at, useless to overlay.
+// THE FILE IS A COPY OF THE CANVAS, and that is the standard every decision
+// below is held to. If a fitting is a ring with a filled dot in it on screen it
+// is a ring with a filled dot in the file; if a reverse cove is a filled band it
+// is a filled band; if a strip is dotted it is dotted. The planner's WORKING —
+// chunk boundaries, grid lines, cells, no-light boxes — is on screen behind a
+// checkbox and is not in the file at all. What is left of the plan itself is the
+// space outline, because a fitting with nothing round it cannot be read.
 //
-// This one is meant to be imported into the drawing the user started from, so
-// every entity has to come back out in THE ORIGINAL FILE'S OWN COORDINATES —
-// its units, its origin, its Y-up orientation — or it lands somewhere in the
-// next field along and at the wrong scale.
+// WHERE IT LANDS is the one thing that varies, and it varies on what the plan
+// came from:
 //
-// `source.toDu` is exactly that mapping, inverted from the one that brought the
-// drawing in, so it is used for every single point and nothing is converted by
-// hand. Which leads to the one rule worth stating: TRANSFORM POINTS, NEVER
-// ANGLES. Screen Y grows downward and CAD Y grows upward, so a rotation carried
+//   a DXF     every entity comes back out in THE ORIGINAL FILE'S OWN
+//             COORDINATES — its units, its origin, its Y-up orientation — so it
+//             imports straight onto the drawing the user started from.
+//             `source.toDu` is that mapping, inverted from the one that brought
+//             the drawing in, so it is used for every single point and nothing
+//             is converted by hand.
+//   an image  there is nothing to line up with, so the file is feet with Y
+//             flipped about the WHOLE SHEET. Flipping each space about its own
+//             top edge would mirror the plan's vertical arrangement and put the
+//             bedroom above the living room; `heightPx` is the plan's height, so
+//             every space is reflected in the same line.
+//
+// Same layers, same symbols, same fills down both routes. Only `P` differs.
+//
+// And the one rule worth stating: TRANSFORM POINTS, NEVER ANGLES. Screen Y
+// grows downward and CAD Y grows upward, so a rotation carried
 // across as a number comes out mirrored; carried across as four corners it
 // cannot. The AC unit's rectangle is built in pixels, rotated in pixels, and
 // only then converted — which is why there is no minus sign anywhere below.
@@ -364,6 +352,50 @@ const SL_COLOUR = {
   rooms: 3,        // green
 };
 
+/**
+ * A DOTTED LINE IS THE DRAWING CONVENTION FOR "THIS IS BEHIND SOMETHING", and
+ * that is what a strip is: tape in a pocket, in a slot, under a shelf, never in
+ * the open. The canvas has drawn it dotted from the beginning; the file used to
+ * hand over a continuous polyline, which on somebody else's sheet reads as a
+ * pipe or a setting-out line.
+ *
+ * SET ON THE LAYER, NOT ON THE ENTITY. Every run in the file is tape, so there
+ * is nothing to vary per entity — and a layer that carries its own linetype
+ * survives being copied into another drawing, where a per-entity override is the
+ * first thing a purge or a layer standard strips out.
+ */
+const SL_LINETYPE = { strips: 'DOTTED' };
+
+// The dot and the gap, IN FEET, converted to the drawing's units at write time
+// so the pattern is the same size on a plan drawn in millimetres and one drawn
+// in metres. $LTSCALE stays at 1: scaling a pattern that is already correct is
+// how a dotted line ends up looking solid in somebody else's drawing, because
+// LTSCALE is a document setting they may well have their own value for.
+const DOT_FT = 0.05;   // ~15 mm of ink
+const GAP_FT = 0.10;   // ~30 mm of air
+
+// The filled centre dot on a fitting whose BODY is large — a chandelier, a
+// pendant. A downlight's dot is 0.42 of a 0.29 ft ring, and this is that number,
+// held still so a big fitting does not get a big blob. See the chandelier branch.
+const DOT_MARK_FT = 0.29 * 0.42;
+
+/**
+ * One LTYPE table entry. `dashes` is the pattern in drawing units: positive is
+ * ink, negative is gap, and an empty list is CONTINUOUS.
+ *
+ * A SHORT DASH RATHER THAN A TRUE ZERO-LENGTH DOT. AutoCAD renders a 0 in the
+ * pattern as a point and it looks right; several lighter viewers render it as
+ * nothing at all and the strip disappears from the drawing entirely. Fifteen
+ * millimetres of ink is a dot at any scale a floor plan is looked at.
+ */
+function slLtype(name, descr, dashes) {
+  const total = dashes.reduce((sum, d) => sum + Math.abs(d), 0);
+  const out = ['0','LTYPE','2',name,'70','0','3',descr,'72','65',
+               '73',String(dashes.length),'40',total.toFixed(6)];
+  for (const d of dashes) out.push('49', d.toFixed(6));
+  return out;
+}
+
 function dxfPolyline(layer, pts, closed = true) {
   if (!pts?.length) return [];
   const out = ['0','POLYLINE','8',layer,'66','1','70',closed ? '1' : '0',
@@ -376,23 +408,38 @@ function dxfPolyline(layer, pts, closed = true) {
   return out;
 }
 
-function slHeader(insunits) {
-  const layer = (name, colour) => ['0','LAYER','2',name,'70','0',
-                                   '62',String(colour),'6','CONTINUOUS'];
+function slHeader(insunits, duPerFt) {
+  const keys = Object.keys(SUPERLUMINAL_LAYERS);
+  const layer = (k) => ['0','LAYER','2',SUPERLUMINAL_LAYERS[k],'70','0',
+                        '62',String(SL_COLOUR[k]),
+                        '6',SL_LINETYPE[k] || 'CONTINUOUS'];
   return [
     '0','SECTION','2','HEADER',
     '9','$ACADVER','1','AC1009',
     // The ORIGINAL drawing's units, not ours. Import scaling keys off this, and
     // a file that says feet while holding millimetres arrives 300x too big.
     '9','$INSUNITS','70',String(insunits ?? 0),
+    // ONE, DELIBERATELY. See DOT_FT: the pattern is written in this drawing's
+    // own units, so it is already the right size and multiplying it is how it
+    // stops being.
+    '9','$LTSCALE','40','1.0',
     '0','ENDSEC',
+    '0','SECTION','2','TABLES',
+    // THE LTYPE TABLE COMES FIRST, and it has to: a LAYER entry names a
+    // linetype, and a CAD that reads the layer before the pattern exists throws
+    // the reference away — silently, so the only symptom is a strip that arrives
+    // continuous. CONTINUOUS is defined here too even though every CAD has it
+    // built in, because every other layer in the table references it by name.
+    '0','TABLE','2','LTYPE','70','2',
+    ...slLtype('CONTINUOUS', 'Solid line', []),
+    ...slLtype('DOTTED', 'Dotted . . . . . . . . . . . . . . . . . .',
+               [DOT_FT * duPerFt, -GAP_FT * duPerFt]),
+    '0','ENDTAB',
     // An explicit LAYER table. Most CAD will invent a layer named by an entity
     // that references a missing one, but "most" is not a promise, and inventing
     // it loses the colour.
-    '0','SECTION','2','TABLES','0','TABLE','2','LAYER',
-    '70',String(Object.keys(SUPERLUMINAL_LAYERS).length),
-    ...Object.keys(SUPERLUMINAL_LAYERS)
-      .flatMap((k) => layer(SUPERLUMINAL_LAYERS[k], SL_COLOUR[k])),
+    '0','TABLE','2','LAYER','70',String(keys.length),
+    ...keys.flatMap(layer),
     '0','ENDTAB','0','ENDSEC',
     '0','SECTION','2','ENTITIES',
   ];
@@ -409,29 +456,57 @@ function slHeader(insunits) {
  * chandelier lands on `decorative` and not on `ceiling_objects`, which is where
  * it lives everywhere else in the code.
  */
-export function toSuperluminalDXF({ source, rooms = [], objects = [],
-                                    accents = [], spots = [] } = {}) {
-  if (source?.kind !== 'vector') {
-    throw new Error('The CAD export needs the original DXF to line up with.');
-  }
-  const units = source.drawing?.units;
-  const duPerFt = 1 / (units?.toFeet || 1);
-  const P = (p) => source.toDu(p);              // plan pixels -> drawing units
+export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
+                                    objects = [], accents = [],
+                                    spots = [] } = {}) {
+  // A DXF SOURCE OVERLAYS; ANYTHING ELSE IS A SHEET OF ITS OWN. This used to
+  // throw on an image, which is why there was a second exporter and why the
+  // second exporter was the one most people actually got.
+  const overlay = source?.kind === 'vector';
+  const units = overlay ? source.drawing?.units : null;
+  const px = (overlay ? source.pxPerFt : null) || pxPerFt || null;
+  if (!px) throw new Error('The DXF export needs the plan scale.');
+  // In overlay mode the drawing's own unit; on a sheet of our own, feet.
+  const duPerFt = overlay ? 1 / (units?.toFeet || 1) : 1;
+  const insunits = overlay ? units?.code : 2;   // 2 = feet
+  // THE FLIP IS ABOUT THE WHOLE SHEET, not about each space's own extent:
+  // reflecting every space in its own top edge would mirror the plan's vertical
+  // arrangement and stand the drawing on its head one room at a time.
+  const H = (heightPx ?? source?.h ?? 0) / px;
+  const P = overlay
+    ? (p) => source.toDu(p)                     // plan pixels -> drawing units
+    : (p) => ({ x: p.x / px, y: H - p.y / px }); // plan pixels -> feet, Y up
   const L = (ft) => ft * duPerFt;               // feet -> drawing units
   const { spots: LY_S, strips: LY_T, reverseCoves: LY_C, decorative: LY_D,
           objects: LY_O, rooms: LY_R, tracks: LY_K,
           trackFixtures: LY_KF } = SUPERLUMINAL_LAYERS;
 
-  let out = slHeader(units?.code);
+  let out = slHeader(insunits, duPerFt);
   const add = (e) => { out = out.concat(e); };
 
-  // A ring and a cross: the fitting symbol, in real size, so it can be
-  // measured off the drawing rather than just seen.
+  /**
+   * THE FITTING SYMBOL: A RING WITH A FILLED DOT INSIDE IT.
+   *
+   * WHICH IS WHAT IS ON SCREEN, and that is the whole justification. It used to
+   * be a ring with a crosshair through it — the CAD convention for a centre
+   * mark, chosen so a fitting could be snapped to — and it was wrong twice over.
+   * A crosshair is what a drawing puts on a HOLE, so forty of them read as a
+   * setting-out drawing for coring rather than as forty lamps; and it did not
+   * match the sheet the designer had just approved, which is the only reference
+   * anybody has for whether the file is right.
+   *
+   * The dot is not decoration: it is the lamp, and the ring is the trim round
+   * it. Both are drawn AT REAL SIZE, so the ring can still be measured off the
+   * drawing and the dot still gives the centre something to snap to — a filled
+   * SOLID fan has its own centre vertex on every one of its sixteen triangles.
+   */
   const marker = (layer, at, rFt) => {
     const c = P(at), r = L(rFt);
     add(dxfCircle(layer, c.x, c.y, r));
-    add(dxfLine(layer, c.x - r, c.y, c.x + r, c.y));
-    add(dxfLine(layer, c.x, c.y - r, c.x, c.y + r));
+    // 0.42 of the ring, which is the ratio the canvas draws (see PlanCanvas —
+    // `r={R * 0.42}`). Copied rather than re-judged: the point is that the two
+    // drawings match, so the number has one home and this is a quotation of it.
+    add(dxfDisc(layer, c, r * 0.42));
   };
 
   /**
@@ -449,7 +524,6 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
    * four points cannot.
    */
   const trackBody = (at, lenFt, wideFt, angle) => {
-    const px = source.pxPerFt || 1;
     const c = Math.cos(angle || 0), sn = Math.sin(angle || 0);
     const hx = (lenFt * px) / 2, hy = (wideFt * px) / 2;
     const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
@@ -478,11 +552,19 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
     // planner. Same symbol, different layer.
     if (o.kind === 'chandelier') {
       const c = P({ x: o.x, y: o.y });
-      const rFt = (o.r || 0) / (source.pxPerFt || 1);
+      // A CHANDELIER IS A LIGHT FITTING, so it takes the fitting symbol: the
+      // ring at the body's real radius with the filled dot at its centre. It had
+      // a crosshair for the same wrong reason every other fitting did.
+      //
+      // THE DOT DOES NOT SCALE WITH THE BODY, though, and that is the one place
+      // the 0.42 ratio is wrong. A chandelier's ring is as wide as the fitting
+      // actually is — three feet across on a dining pendant — and 0.42 of that
+      // is a nine-inch blob of ink that reads as a column, not a lamp. The dot
+      // means "this emits"; it is a mark, not a measurement, so it is drawn at
+      // a downlight's size and the RING carries the real dimension.
+      const rFt = (o.r || 0) / px;
       add(dxfCircle(LY_D, c.x, c.y, L(rFt)));
-      const t = L(0.3);
-      add(dxfLine(LY_D, c.x - t, c.y, c.x + t, c.y));
-      add(dxfLine(LY_D, c.x, c.y - t, c.x, c.y + t));
+      add(dxfDisc(LY_D, c, Math.min(L(rFt) * 0.42, L(DOT_MARK_FT))));
       continue;
     }
     if (o.w > 0 && o.h > 0 && (o.kind === 'ac' || o.kind === 'trapdoor')) {
@@ -496,10 +578,13 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
       add(dxfPolyline(LY_O, corners, true));
     } else {
       const c = P({ x: o.x, y: o.y });
-      const rFt = (o.r || 0) / (source.pxPerFt || 1);
+      const rFt = (o.r || 0) / px;
       add(dxfCircle(LY_O, c.x, c.y, L(rFt)));
-      // A cross at the centre: a circle alone gives nothing to snap to, and the
-      // centre is what an electrician sets out from.
+      // A CROSS AND NOT A FILLED DOT, and the difference is the point of the
+      // layer. A fan is not a lamp: nothing on `ceiling_objects` emits, so
+      // nothing on it gets the filled symbol that means "this is a light". The
+      // cross stays because a circle alone gives nothing to snap to and the
+      // centre is what a fan gets set out from.
       const t = L(0.3);
       add(dxfLine(LY_O, c.x - t, c.y, c.x + t, c.y));
       add(dxfLine(LY_O, c.x, c.y - t, c.x, c.y + t));
@@ -536,8 +621,22 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
                   l.trackAxis === 'v' ? Math.PI / 2 : 0);
         continue;
       }
-      marker(LY_S, l, (l.kind === 'large' ? 0.5 : 0.29)
-        * ((l.fixture || l.kind) === 'small-narrow' ? 0.8 : 1));
+      const rFt = (l.kind === 'large' ? 0.5 : 0.29)
+        * ((l.fixture || l.kind) === 'small-narrow' ? 0.8 : 1);
+      marker(LY_S, l, rFt);
+      // THE BAR THROUGH A LARGE FITTING, WHICH IS ITS ORIENTATION AND NOT
+      // DECORATION. A large fitting sits ON a grid line rather than in a cell,
+      // and which line it sits on is the thing the layout decided — so the bar
+      // lies along that axis and runs past the ring, exactly as on screen. Drawn
+      // from the transformed centre outward along a SCREEN axis and then
+      // converted, for the reason at the top of this block: an axis is an angle,
+      // and angles do not survive the flip. Vertical on screen is vertical in
+      // the file either way, which is why this one is safe to write directly.
+      if (l.kind === 'large') {
+        const c = P(l), bar = L(rFt * 1.7);
+        if (l.axis === 'v') add(dxfLine(LY_S, c.x, c.y - bar, c.x, c.y + bar));
+        else add(dxfLine(LY_S, c.x - bar, c.y, c.x + bar, c.y));
+      }
     }
   }
 
@@ -555,8 +654,22 @@ export function toSuperluminalDXF({ source, rooms = [], objects = [],
     // information and one more thing to snap to by accident.
     if (a.fixture === 'reverse-cove' && a.rect) {
       const { x0, y0, x1, y1 } = a.rect;
-      add(dxfPolyline(LY_C, [{ x: x0, y: y0 }, { x: x1, y: y0 },
-                             { x: x1, y: y1 }, { x: x0, y: y1 }].map(P), true));
+      const ring = [{ x: x0, y: y0 }, { x: x1, y: y0 },
+                    { x: x1, y: y1 }, { x: x0, y: y1 }].map(P);
+      // FILLED, BECAUSE EIGHT INCHES OF CEILING IS AN AREA AND NOT A LINE.
+      //
+      // An outline alone was the whole of this before, and on a busy sheet it is
+      // indistinguishable from the wall it runs beside — four thin lines that
+      // could be a bulkhead, a skirting, a change of floor finish, anything. The
+      // fill is what says the band IS the detail: this rectangle of ceiling has
+      // been given over to lighting.
+      //
+      // AND THE OUTLINE STAYS ON TOP OF IT. A SOLID has vertices but no edges,
+      // so a fill on its own has nothing to snap to and nothing to dimension
+      // from — and the lip of the slot is exactly what gets set out on site. So
+      // both: the fill to be seen, the closed polyline to be measured.
+      add(dxfSolidQuad(LY_C, ring));
+      add(dxfPolyline(LY_C, ring, true));
       continue;
     }
     // A strip is its RUN — the two ends are the whole specification, and they

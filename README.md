@@ -4179,24 +4179,88 @@ hundred kilobytes. What the × means is "not this one, next time".
 `db.listRenders(plan)` enumerates everything stored for a plan, for the
 analytics side.
 
-## Export for CAD: a DXF that lands on the drawing it came from
+## The DXF export: the drawing on screen, as a drawing
 
-**Offered only on a DXF**, because it is only meaningful on one. It comes back
-out in the *original file's own coordinates* so it overlays the drawing you
-started from — and an image's pixels have nothing to line up with.
+**One button.** There used to be two — an "Export for CAD" that appeared only on
+a vector plan, and a DXF button that was always there — and they produced
+*different drawings*. The always-there one was on invented `ROOM` / `CHUNK` /
+`GRID` / `NO-LIGHT` layers, drew every fitting as a ring with a crosshair, put
+the planner's grid and no-light boxes onto a deliverable sheet, and exported no
+coves or strips at all. It was also, being the one that was always there, the
+file most people actually got. It is gone.
 
-Five layers, and nothing else in the file:
+**The file is a copy of the canvas**, and that is the standard every decision in
+it is held to:
+
+| on screen | in the file |
+|---|---|
+| a fitting is a ring with a filled centre | `CIRCLE` + a filled `SOLID` disc, both at real size |
+| a reverse cove is a filled band | a filled `SOLID` quad **and** a closed polyline round it |
+| a strip run is dotted | a polyline on a layer whose linetype is `DOTTED` |
+| a large fitting has a bar showing its axis | a `LINE` along that axis, past the ring |
+| the grid, the cells, the no-light boxes | *nothing* — that is the planner's working |
+
+Nine layers, and nothing else in the file:
 
 | layer | what is on it |
 |---|---|
 | `superluminal_spots` | every recessed fitting — ambient downlights **and** directional task spots |
-| `superluminal_led_strips` | accent strip runs, as open polylines |
+| `superluminal_led_strips` | strip runs — open, or closed for a cove — **dotted** |
+| `superluminal_reverse_coves` | the slot, as a filled band with its lip drawn round it |
+| `superluminal_tracks` | track profiles: the line the heads are set out along |
+| `superluminal_track_fixtures` | the heads clipped into a track, as bodies with a length and an angle |
 | `superluminal_decorative` | chandeliers and wall sconces |
 | `superluminal_ceiling_objects` | fans, AC cassettes, trap doors |
-| `superluminal_rooms` | one closed polyline per room outline |
+| `superluminal_rooms` | one closed polyline per space outline |
 
-No grid, no cells, no no-light zones, no chunk boundaries. Those are the
-planner's working, not the drawing.
+**Nothing on `ceiling_objects` gets a filled dot**, and that is the point of the
+layer rather than an oversight. The dot means *this emits*. A fan keeps the
+centre crosshair, because a circle alone gives nothing to snap to and a fan does
+get set out from its centre — but it is not a lamp and does not read as one.
+
+### Where it lands
+
+The coordinate system is the only thing that varies, and it is not a choice
+anybody makes from the panel — the exporter reads `source.kind`:
+
+- **the plan came from a DXF** — every entity comes back out in the *original
+  file's own coordinates*: its units, its origin, its Y-up orientation. It
+  imports straight onto the drawing you started from. Verified by round-tripping
+  the export back through `parseDXF` and checking the outline's bounding box
+  against the original walls, on a drawing whose origin is 152 m from zero.
+- **the plan came from an image** — there is nothing to line up with, so it is
+  feet (`$INSUNITS` 2) with Y flipped **about the whole sheet**. Flipping each
+  space about its own top edge would mirror the plan's vertical arrangement and
+  put the bedroom above the living room.
+
+### Fills, in a dialect that has no HATCH
+
+R12 predates `HATCH`, so the only primitive that arrives with ink inside it is
+`SOLID` — and `SOLID` is the one entity in DXF whose vertices are **not** in ring
+order: the quad is traversed `10 → 11 → 13 → 12`. Feed it four corners going
+round a rectangle and you get a bow tie. `dxfSolidQuad` and `dxfSolidTri` do the
+swap, and nothing calls `dxfSolid` directly.
+
+A filled dot is a fan of sixteen triangles. The alternative was AutoCAD's donut
+trick — a two-vertex closed polyline with a width, one entity instead of sixteen
+and a true circle rather than a sixteen-gon — and it was rejected because a
+viewer that ignores polyline width draws it as a **thin ring**, which is
+precisely the mark the fill exists to be distinguished from.
+
+### The dotted linetype
+
+An explicit `LTYPE` table, and it comes **before** the `LAYER` table: a layer
+entry names a linetype, and a CAD that reads the layer before the pattern exists
+throws the reference away silently. The only symptom is a strip that arrives
+continuous.
+
+The pattern is written in **the drawing's own units** — 15 mm of ink, 30 mm of
+air, converted from feet at write time — and `$LTSCALE` stays at `1`. Scaling a
+pattern that is already correct is how a dotted line ends up solid in somebody
+else's drawing, because `LTSCALE` is a document setting they have their own value
+for. And it is a short dash rather than a true zero-length dot: AutoCAD renders a
+`0` as a point and it looks right, but several lighter viewers render it as
+nothing at all and the strip vanishes.
 
 ### The space outline is off on the layout screen
 

@@ -122,17 +122,22 @@ export default function ViewerPanel({
           onClick={onOpenBOQ}>
           Open the schedule
         </button>
-        {isVector && (
-          <button className="btn primary" style={{ width: '100%', marginBottom: 8 }}
-            disabled={!totals.rooms} onClick={() => onExport('cad')}>
-            Export for CAD
-          </button>
-        )}
+        {/* ONE DXF, NOT TWO. The "Export for CAD" button that used to sit here
+            produced a different drawing to the DXF button below it, and the
+            operator on this screen has no way of knowing which one the designer
+            meant. See the Export section in App.jsx. */}
         <div className="btnrow">
           <button className="btn" disabled={!totals.rooms} onClick={() => onExport('dxf')}>DXF</button>
           <button className="btn" onClick={() => onExport('svg')}>SVG</button>
           <button className="btn" onClick={() => onExport('png')}>PNG</button>
         </div>
+        <p className="note" style={{ marginTop: 8 }}>
+          The DXF is the drawing on screen, on <code>superluminal_</code> layers
+          split by trade —{' '}
+          {isVector
+            ? 'in the original drawing\u2019s own units and origin.'
+            : 'in feet, since this plan came from an image.'}
+        </p>
       </div>
     </>
   );

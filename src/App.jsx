@@ -18,7 +18,7 @@ import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, DOOR_WIDTHS } from './lib/doors.js';
 import { proposeOutlines } from './lib/outlineSources.js';
 import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, plausibleBed, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER, wireProvider } from './lib/furniture.js';
-import { download, toJSON, toDXF, toSuperluminalDXF, svgString, svgToPNG } from './lib/exporters.js';
+import { download, toJSON, toSuperluminalDXF, svgString, svgToPNG } from './lib/exporters.js';
 import LightPalette from './components/LightPalette.jsx';
 import ChunkIcon from './components/ChunkIcon.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
@@ -5686,18 +5686,18 @@ export default function App({
             isVector={isVector}
             onOpenBOQ={() => setView('boq')}
             onExport={(kind) => {
-              if (kind === 'cad') {
-                download(`${exportBase}-superluminal.dxf`, toSuperluminalDXF({
-                  source,
+              /* ONE DXF, AND IT IS THE SAME ONE ON BOTH SCREENS. There were two
+                 — a CAD overlay and a "standalone" file on its own invented
+                 layers — and the standalone one carried the planner's working
+                 onto a deliverable sheet. See the header of the DXF block in
+                 exporters.js. The exporter decides for itself whether it can
+                 overlay, from `source.kind`. */
+              if (kind === 'dxf') {
+                download(`${exportBase}-lights.dxf`, toSuperluminalDXF({
+                  source, pxPerFt, heightPx: source.h,
                   rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
                   objects: obstaclesPx, accents: accentZonesPx, spots: taskSpotsPx,
                 }), 'application/dxf');
-                return;
-              }
-              if (kind === 'dxf') {
-                download(`${exportBase}-lights.dxf`,
-                  toDXF(rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                        { pxPerFt, heightPx: source.h }), 'application/dxf');
                 return;
               }
               if (kind === 'svg') {
@@ -6231,55 +6231,43 @@ export default function App({
 
           <div className="sec">
             <h3>Export</h3>
-            {/* THE CAD EXPORT, and it is only offered on a DXF because it is
-                only meaningful on one: it comes back out in the ORIGINAL file's
-                coordinates so it overlays the drawing it came from. There is
-                nothing for an image's pixels to line up with. */}
-            {isVector && (
-              <>
-                <button className="btn primary" style={{ width: '100%', marginBottom: 8 }}
-                  disabled={!totals.rooms}
-                  onClick={() => download(`${exportBase}-superluminal.dxf`,
-                    toSuperluminalDXF({
-                      source,
-                      rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                      objects: obstaclesPx,
-                      accents: accentZonesPx,
-                      spots: taskSpotsPx,
-                    }), 'application/dxf')}>
-                  Export for CAD
-                </button>
-                <p className="note" style={{ marginBottom: 10 }}>
-                  Five layers, split by trade — <code>superluminal_spots</code>
-                  {' '}(ambient and directional), <code>superluminal_led_strips</code>,
-                  {' '}<code>superluminal_decorative</code> (chandeliers and sconces),
-                  {' '}<code>superluminal_ceiling_objects</code> (fans, AC, trap doors)
-                  {' '}and <code>superluminal_rooms</code> — in this drawing's own units
-                  and origin, so it lands straight on top of the original.
-                </p>
-              </>
-            )}
-
+            {/* ONE DXF BUTTON, AND IT IS NOT GATED ON THE SOURCE ANY MORE.
+                There were two here: this row's DXF, and an "Export for CAD"
+                above it that only appeared on a vector plan. They produced
+                DIFFERENT DRAWINGS — different layers, different symbols, and one
+                of them carried the planner's grid onto the sheet — and the one
+                everybody actually clicked was the wrong one, because it was the
+                one that was always there.
+                The coordinate system is the only real difference between them and
+                it is not a decision a person should be making from a panel: the
+                exporter reads `source.kind` and overlays the original when there
+                IS an original. So the choice is gone and the note says what
+                happened instead. */}
             <div className="btnrow">
-              {/* THREE, AND THEY ARE THE THREE PEOPLE ACTUALLY TAKE AWAY: a
-                  drawing to work on, a drawing to send, a picture to paste. CSV
-                  and JSON went — a coordinate dump is not a deliverable to
-                  anybody in this workflow, and every extra button in a row of
-                  five is a moment spent deciding.
-                  THE MILESTONE MOVED HERE. Somebody taking an export away is the
-                  strongest signal available that the design was considered
-                  finished — a far better label than "the pipeline completed" —
-                  and it used to hang off the JSON button, which is now gone. */}
               <button className="btn" disabled={!totals.rooms}
                 onClick={() => {
-                  download(`${exportBase}-lights.dxf`,
-                    toDXF(rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                          { pxPerFt, heightPx: source.h }), 'application/dxf');
+                  download(`${exportBase}-lights.dxf`, toSuperluminalDXF({
+                    source, pxPerFt, heightPx: source.h,
+                    rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
+                    objects: obstaclesPx,
+                    accents: accentZonesPx,
+                    spots: taskSpotsPx,
+                  }), 'application/dxf');
                   milestone.current?.('export');
                 }}>DXF</button>
               <button className="btn" disabled={!source} onClick={() => download(`${exportBase}-lights.svg`, svgString(svgRef.current), 'image/svg+xml')}>SVG</button>
               <button className="btn" disabled={!source} onClick={async () => download(`${exportBase}-lights.png`, await svgToPNG(svgRef.current, source.w))}>PNG</button>
             </div>
+            <p className="note" style={{ marginTop: 8 }}>
+              The DXF is the drawing on this screen: fittings as a ring with a
+              filled centre, reverse coves as filled bands, strip runs dotted, and
+              the space outline. No grid, no cells, no no-light boxes — those are
+              the planner's working. Everything is on a{' '}
+              <code>superluminal_</code> layer, split by trade.
+              {isVector
+                ? ' In this drawing\u2019s own units and origin, so it lands straight on top of the original.'
+                : ' In feet, since an image has no coordinates to line up with.'}
+            </p>
 
             {/* ----------------------------------------------------------------
                 ADMIN. Role 1 in `profiles` — an owner of this app, not a user of
