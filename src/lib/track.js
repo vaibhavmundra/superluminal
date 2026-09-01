@@ -55,6 +55,15 @@
 // land on the same inch of profile. The nearer one is absorbed and the further
 // one stays recessed.
 //
+// ...UNLESS THE CALLER ALLOWS A DODGE, AND THE AMBIENT PASS DOES NOT. A body
+// may be allowed to slide a module length along the run to get past one that is
+// already there — see DODGE_FT — and that is switched off here for the ambient
+// heads on purpose: their spacing along a row IS the layout, and preserving it
+// is the claim this file makes to anybody flipping a chunk to Track. A
+// directional spot has no such row to keep step with; it is aimed at one object
+// and its position along the profile is nobody else's business, so the spot
+// pass turns the dodge on. See App.jsx's second absorption pass.
+//
 // HOW CLOSE IS TOO CLOSE IS THE TWO BODIES' BUSINESS, and the answer is that
 // they may touch but not overlap. It is worth stating up here because getting it
 // wrong was visible on a drawing, twice: a pair of task spots straddling a run
@@ -179,6 +188,38 @@ export const MODULE_JOINT_FT = 0.5 / 12;      // half an inch
 
 /** The least centre-to-centre distance between two bodies of these lengths. */
 export const moduleGap = (a, b) => (a + b) / 2 + MODULE_JOINT_FT;
+
+/**
+ * HOW FAR A BODY MAY SLIDE ALONG A RUN TO GET PAST A MODULE THAT IS ALREADY
+ * THERE, in feet. One module length.
+ *
+ * WHY THERE HAS TO BE SUCH A THING. Absorption used to make exactly one bid per
+ * fitting: the best run, the perpendicular landing on it, and if a module was
+ * already holding that inch of profile the fitting was dropped. Not moved,
+ * not offered the free profile nine inches to the left — dropped, and drawn as
+ * an ordinary recessed spot on a ceiling whose whole point is the track.
+ *
+ * That is the wrong answer to a contest over one inch. "Nearest wins" is right
+ * about WHO gets a contested position; the loser should be looking for another
+ * position, not going home. And the profile is continuous: a module clips
+ * anywhere along it, so the position nine inches along is not a compromise, it
+ * is the same fitting on the same run.
+ *
+ * BOUNDED SEPARATELY FROM THE PERPENDICULAR REACH, and that is deliberate. The
+ * two moves are not the same kind of thing. ABSORB_FT is a rule about whether
+ * this fitting BELONGS to this run — three feet is how far a light may be
+ * carried off its own cell centre and still be lighting that cell. A slide
+ * along the run does not change which cell is lit or which run carries the
+ * body; it only changes where on the profile it clips. So it gets its own,
+ * smaller allowance rather than eating into the other one.
+ *
+ * ONE MODULE LENGTH is the figure because that is the size of the obstacle: a
+ * body needs to clear the one already there, and half of each plus a joint is
+ * always less than one whole head. Anything further and the fitting is no
+ * longer where the layout put it, which is the line ABSORB_FT is drawing from
+ * the other direction.
+ */
+export const DODGE_FT = HEAD_LEN_FT;
 
 /**
  * HOW FAR A RUN KEEPS OFF A WALL.
@@ -691,6 +732,11 @@ function nearestOn(run, p, fit = 0) {
     : Math.min(Math.max(foot, fit), len - fit);
   const t = len < 1e-12 ? 0 : along / len;
   return {
+    // WHERE THE PERPENDICULAR ACTUALLY LANDED, before the end clamp and before
+    // any dodge. Reported because it is the origin both of those moves are
+    // measured from, and a caller that slides the body along the run has to be
+    // able to say how far it went in total. See `slideTo` in absorbPoints.
+    foot, len,
     t, along, perp, slide: Math.abs(along - foot),
     x: run.a.x + dx * t, y: run.a.y + dy * t,
     dist: perp,
@@ -719,11 +765,19 @@ function nearestOn(run, p, fit = 0) {
  * the fitting that barely moves is never displaced by one dragged three feet:
  * the profile is a scarce resource and the fitting with the strongest claim to
  * a piece of it is the one that was nearly on it already.
+ *
+ * AND THE LOSER OF THAT CONTEST LOOKS FOR ANOTHER INCH RATHER THAN GOING HOME,
+ * when `dodge` allows it. This made exactly one bid per fitting and dropped it
+ * if the landing was taken — which on a closed loop meant a spot aimed at an
+ * end table, a foot and a half off the profile, coming out recessed because the
+ * corner head was holding the nine inches it wanted, with twelve feet of empty
+ * profile beside it. See DODGE_FT and `slideTo`.
  */
 export function absorbPoints(runs, points = [], { absorb = ABSORB_FT,
                                                   len = HEAD_LEN_FT,
                                                   fit = null,
                                                   joint = MODULE_JOINT_FT,
+                                                  dodge = 0,
                                                   keepOff = [],
                                                   occupied = [] } = {}) {
   const out = points.map(() => null);
@@ -775,13 +829,81 @@ export function absorbPoints(runs, points = [], { absorb = ABSORB_FT,
   });
   bids.sort((a, b) => a.perp - b.perp);
 
+  /** Is this position on this run clear of everything already clipped to it? */
+  const freeAt = (ri, along) => !taken.some((t) => t.run === ri
+    && Math.abs(t.along - along) < moduleGap(len, t.len) - 1e-9);
+
+  /**
+   * WHERE ON THE RUN THE BODY ACTUALLY GOES, having found its landing spot
+   * taken.
+   *
+   * The perpendicular landing if it is free, and otherwise the nearest free
+   * position along the same profile, inside the dodge allowance. See DODGE_FT
+   * for why there is an allowance at all and why it is its own number.
+   *
+   * THE CANDIDATES ARE EXACT RATHER THAN SAMPLED. A blocked position is blocked
+   * by a module, and the nearest free position is a module-gap either side of
+   * that module's centre — so the answer is one of a handful of points that can
+   * be written down, not something to search for in steps. Every one of them is
+   * clamped into the run by half a body, because a dodge that hangs the fitting
+   * off the end of the profile has solved nothing.
+   *
+   * AND EVERY CANDIDATE IS RE-CHECKED AGAINST keepOff. Sliding is a real move
+   * along the ceiling: the position nine inches away can be over the bed even
+   * though the original was not, and the zones do not care which of the two
+   * moves put a fitting there.
+   */
+  const slideTo = (b) => {
+    const run = runs[b.run];
+    if (freeAt(b.run, b.along)) return { along: b.along, dodge: 0 };
+    if (!(dodge > 0)) return null;
+    const L = Math.hypot(run.b.x - run.a.x, run.b.y - run.a.y);
+    const lo = Math.min(clear, L / 2), hi = Math.max(L - clear, L / 2);
+    const at = (along) => {
+      const t = L < 1e-12 ? 0 : along / L;
+      return { x: run.a.x + (run.b.x - run.a.x) * t,
+               y: run.a.y + (run.b.y - run.a.y) * t };
+    };
+    const tries = [];
+    for (const t of taken) {
+      if (t.run !== b.run) continue;
+      const gap = moduleGap(len, t.len);
+      for (const v of [t.along - gap, t.along + gap]) tries.push(v);
+    }
+    const ok = tries
+      .filter((v) => v >= lo - 1e-9 && v <= hi + 1e-9)
+      .filter((v) => Math.abs(v - b.along) <= dodge + 1e-9)
+      .filter((v) => freeAt(b.run, v))
+      .filter((v) => !inKeepOff(at(v), keepOff))
+      // The smallest move wins; a tie goes to the position with more profile
+      // around it, which is the one further from an end.
+      .sort((x, y) => Math.abs(x - b.along) - Math.abs(y - b.along)
+        || Math.min(y - lo, hi - y) - Math.min(x - lo, hi - x));
+    if (!ok.length) return null;
+    return { along: ok[0], dodge: Math.abs(ok[0] - b.along) };
+  };
+
   for (const b of bids) {
-    const clash = taken.some((t) => t.run === b.run
-      && Math.abs(t.along - b.along) < moduleGap(len, t.len) - 1e-9);
-    if (clash) continue;
-    taken.push({ run: b.run, along: b.along, len });
-    out[b.i] = { run: b.run, t: b.t, along: b.along, x: b.x, y: b.y, len,
-                 dist: b.perp, perp: b.perp, slide: b.slide,
+    const got = slideTo(b);
+    if (!got) continue;
+    const run = runs[b.run];
+    const L = Math.hypot(run.b.x - run.a.x, run.b.y - run.a.y);
+    const t = L < 1e-12 ? 0 : got.along / L;
+    taken.push({ run: b.run, along: got.along, len });
+    out[b.i] = { run: b.run, t, along: got.along,
+                 x: run.a.x + (run.b.x - run.a.x) * t,
+                 y: run.a.y + (run.b.y - run.a.y) * t,
+                 len,
+                 dist: b.perp, perp: b.perp,
+                 // The whole move along the run, from where the perpendicular
+                 // landed to where the body ended up...
+                 slide: Math.abs(got.along - b.foot),
+                 // ...and how much of it was spent getting past a module rather
+                 // than keeping the body on the profile. Reported apart because
+                 // they are bounded by different figures — the end clamp by half
+                 // a body, this by DODGE_FT — and a single number would look
+                 // like one rule being broken.
+                 dodge: got.dodge,
                  // How much of the perpendicular move was the fitting spending
                  // its OWN legal band, and how much was absorption proper. Kept
                  // apart because only the second is bounded by ABSORB_FT, and a

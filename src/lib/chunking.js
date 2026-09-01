@@ -35,8 +35,24 @@ const R6 = (v) => Math.round(v * 1e6) / 1e6;
 // --- no-light zones ---------------------------------------------------------
 
 /** Put a rectangle's corners in canonical order, whatever way it was dragged. */
+/**
+ * A zone in canonical order — and CARRYING WHATEVER ELSE IT ARRIVED WITH.
+ *
+ * The spread is not tidiness. This used to return the four numbers alone, which
+ * meant that by the time a zone reached a placer it was an anonymous rectangle:
+ * a hole for a beam, a bed, an enclosed room and a reverse cove were the same
+ * object, and a rule that wants to treat one of them differently had nothing to
+ * test. That is exactly what SPOT_DEFAULTS.overBed needs — `cls: 'bed'` is the
+ * only evidence that a rectangle is a mattress rather than a hole in the
+ * plasterboard, and it was being thrown away here, one call before the code
+ * that needed it.
+ *
+ * Nothing else in the chunker reads anything but the bounds, so the extra
+ * fields are inert everywhere they are not wanted.
+ */
 export function normalizeZone(z) {
   return {
+    ...z,
     x0: Math.min(z.x0, z.x1), x1: Math.max(z.x0, z.x1),
     y0: Math.min(z.y0, z.y1), y1: Math.max(z.y0, z.y1),
   };

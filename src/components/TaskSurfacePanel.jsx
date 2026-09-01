@@ -109,9 +109,23 @@ export default function TaskSurfacePanel({
                           ? ' through the group'
                           : ` ${sp.run.standoff.toFixed(1)} ft off the group`}.</div>;
                     }
+                    // A SPOT PAST THE CAP IS ITS OWN OUTCOME, and it is neither
+                    // of the two above. It is on the grid and it is aimed at the
+                    // right thing, and it is doing so from far enough away that
+                    // the beam grazes — which is a compromise somebody should
+                    // either accept or fix by dragging it, not a detail to bury
+                    // under the same sentence as an ordinary placement.
+                    if (sp.far) {
+                      return <div className="accent-why warn">Nothing on the grid
+                        within reach of this surface — the nearest position that
+                        works is {sp.aimFt?.toFixed(1)} ft away, so the beam
+                        grazes rather than lights. Drag the spot if the ceiling
+                        has somewhere better.</div>;
+                    }
                     return <div className="accent-why">Spot on the secondary grid,
                       {sp.via === 'light-light'
-                        ? ' between two lights' : ' between a light and the chunk edge'}.</div>;
+                        ? ' between two lights' : ' between a light and the chunk edge'}
+                      {sp.track ? ', clipped into the track' : ''}.</div>;
                   })()}
                   <div className="accent-meta">
                     {s.widthFt != null && (

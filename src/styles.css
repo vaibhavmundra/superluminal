@@ -588,13 +588,23 @@ input:focus,select:focus,textarea:focus{
 /* ---------- no-light zones ----------
    The gesture, drawn. See the note at the call site for why a picture beats the
    sentence it replaces. */
-.zone-hint{
+/* THE GESTURE CARD. Named for what it is rather than for the tab it was born in
+   — it was `.zone-hint`, and then the directional spot needed the same card for
+   the same reason (see the picture-is-the-instruction note in App.jsx's zones
+   tab), at which point a class called "zone" describing two things that are not
+   zones was a name that had stopped being true. One rule, both callers. */
+.gesture-hint{
   display:flex;flex-direction:column;align-items:center;gap:8px;
   padding:14px 16px 12px;border:1px solid var(--border);border-radius:10px;
   background:var(--input-bg);text-align:center
 }
-.zone-hint svg{width:72px;height:46px;display:block;overflow:visible}
-.zone-hint p{margin:0;font-size:11px;line-height:1.5;color:var(--text-muted);max-width:30ch}
+.gesture-hint svg{width:72px;height:46px;display:block;overflow:visible}
+.gesture-hint p{margin:0;font-size:11px;line-height:1.5;color:var(--text-muted);max-width:30ch}
+/* Under the palette it needs air; as the first thing in a tab it does not. The
+   sibling selector is what tells the two apart without a second class. */
+.palette+.gesture-hint{margin-top:8px}
+/* The way out, said quieter than the way in. */
+.gesture-hint .esc{color:var(--text-subtle)}
 .zone-list{margin-top:12px}
 .zone-list-head{color:var(--text-subtle)}
 .zone-add{width:100%;margin-top:12px}
@@ -837,6 +847,23 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
   transition:background .12s ease,color .12s ease
 }
 .tabs button:hover{color:var(--text)}
+/* THE UNDO PAIR. The same shell as the tab pair — it sits beside it in the top
+   bar and two adjacent controls of the same size should look like two controls
+   of the same size — with a squarer button, because an arrow is a glyph and not
+   a word. `disabled` is the whole point of the pair being here rather than the
+   shortcut alone: greyed out, it says there is nothing to go back to, which is
+   the one question a person asks before pressing it. */
+/* FLEX, BECAUSE THE CHILD IS A DRAWING AND NOT A WORD. A tab button lays out
+   text and centres it on a baseline; an inline SVG on that baseline sits low and
+   leaves a descender's worth of space under it, which is what made the pair look
+   like it was falling out of the bar. Centred both ways, the icon is centred in
+   the button — and the button keeps the tab pair's own height so two adjacent
+   controls are two controls of the same size. */
+.tabs.steps button{display:inline-flex;align-items:center;justify-content:center;
+  padding:4px 8px;line-height:0}
+.tabs.steps button svg{display:block}
+.tabs.steps button:disabled{opacity:.35;cursor:default}
+.tabs.steps button:disabled:hover{color:var(--text-subtle)}
 .tabs button.on{background:var(--surface);color:var(--ink);
   box-shadow:0 1px 2px rgba(10,10,10,.06)}
 

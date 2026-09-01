@@ -41,7 +41,7 @@
 // ---------------------------------------------------------------------------
 
 import { WALL_BY_ID } from './wallPrompt.js';
-import { secondaryGrid, spotLegality, chunkFor, rectDistance,
+import { secondaryGrid, spotLegality, chunkFor, rectDistance, carriedByTrack,
          SPOT_DEFAULTS } from './taskSpots.js';
 
 export const ART_SPOT = {
@@ -308,7 +308,7 @@ const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
  */
 export function placeArtCluster(element, { chunks = [], lights = [], polygon = [],
                                            fixtures = [], zones = [], coves = [],
-                                           taken = [], opt = {} } = {}) {
+                                           taken = [], tracks = [], opt = {} } = {}) {
   const o = { ...ART_SPOT, ...opt };
   const so = { ...SPOT_DEFAULTS, ...opt };
   const rect = element.rect;
@@ -323,8 +323,15 @@ export function placeArtCluster(element, { chunks = [], lights = [], polygon = [
   if (!chunk) return { rejected: 'This artwork is not on any chunk of ceiling.' };
 
   const reasons = new Set();
+  // A ROW OVER A BED IS THE CASE THIS RULE WAS WRITTEN FOR, and it is worth
+  // saying so here rather than only in taskSpots.js. The wall behind a bed is
+  // the wall a bedroom's art is on, the bed is pushed against it, and the only
+  // ceiling within four feet of that wall is the ceiling over the mattress. The
+  // row was refused there and the piece came back "no line off that wall" — a
+  // true sentence about a rule that should not have applied. See
+  // SPOT_DEFAULTS.overBed; every other zone still refuses a fitting outright.
   const legal = spotLegality({ polygon, zones, fixtures, coves, clearance,
-                               wallMin: minStand, reasons });
+                               wallMin: minStand, overBed: so.overBed, reasons });
 
   // THE LINE HAS TO RUN THE SAME WAY THE ARTWORK DOES. A piece on a horizontal
   // wall has a horizontal run, and the row that lights it is a horizontal line
@@ -332,14 +339,30 @@ export function placeArtCluster(element, { chunks = [], lights = [], polygon = [
   // spot in the row is at a different distance from the wall, which is the
   // failure this whole function is here to make impossible.
   const axis = element.horizontal ? 'h' : 'v';
-  const grid = secondaryGrid(chunk, lights, so);
+  // ACROSS A BED, WHERE THERE IS ONE. The chunk stops at the foot of the
+  // mattress, so without this the lines this row may stand on start six feet
+  // off the wall the art is on — outside maxStandoffFt, which is why the group
+  // was dropped. See spotSpan in taskSpots.js.
+  const grid = secondaryGrid(chunk, lights, { ...so, spanZones: zones });
+  const rail = tracks.length ? (p) => carriedByTrack(p, tracks, so) : null;
+  const alongMid = axis === 'h' ? (rect.x0 + rect.x1) / 2 : (rect.y0 + rect.y1) / 2;
   const candidates = grid.lines
     .filter((l) => l.axis === axis)
-    .map((l) => ({ l, d: standoff(l, rect) }))
+    .map((l) => {
+      const d = standoff(l, rect);
+      // A LINE THE TRACK CAN CARRY IS WORTH A LITTLE EXTRA STANDOFF. A row of
+      // art heads clipped into a profile that is already there is the fitting
+      // this ceiling is built for; the same row a yard off it is three recessed
+      // spots and three holes. Charged rather than required — see
+      // SPOT_DEFAULTS.trackMissFt — so a rail outside the band still loses to a
+      // line inside it, because the band is about lighting the picture.
+      const at = axis === 'h' ? { x: alongMid, y: l.at } : { x: l.at, y: alongMid };
+      return { l, d, rank: d + (rail && !rail(at) ? so.trackMissFt : 0) };
+    })
     // Inside the band, and nearest the wall first — a row further out than it
     // needs to be is a row grazing the picture at a flatter angle for nothing.
     .filter((q) => q.d >= minStand - 1e-9 && q.d <= o.maxStandoffFt + 1e-9)
-    .sort((a, b) => a.d - b.d);
+    .sort((a, b) => a.rank - b.rank || a.d - b.d);
 
   if (!candidates.length) {
     return { rejected: grid.lines.some((l) => l.axis === axis)

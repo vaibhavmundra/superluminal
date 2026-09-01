@@ -78,6 +78,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     accents = [], objMode = false, selObjId = null, onObjPointerDown,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [],
+    // WHICH SPOT IS PICKED, AND HOW ONE GETS PICKED. Optional like every other
+    // handler here: a canvas given neither is a drawing whose spots cannot be
+    // selected, which is what the read-only sheet wants.
+    selSpotId = null, onSpotPointerDown = null,
     // THE RENDER PASS'S READING. A list of wall features, each already reduced
     // to ONE rectangle in plan pixels — the union of its run of grid cells —
     // plus the individual cells for the tick marks. See wallGrid.js.
@@ -1435,6 +1439,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const hl = hot === sp.id
           ? (sp.highlight ?? surfaces.find((sf) => sf.id === sp.surfaceId)?.rect ?? null)
           : null;
+        const spotSel = sp.id === selSpotId;
+        // The selection ring's own size, CONSTANT ON SCREEN like every other
+        // control on this canvas — see the ceiling-object handles. A ring drawn
+        // in drawing units would vanish at low zoom on the one fitting somebody
+        // is trying to confirm they have hold of.
+        const SR = Math.max(R * 2.1, (Math.max(width, height) / 150) / (zoom || 1));
+        const SFW = (Math.max(width, height) / 1400) / (zoom || 1);
         return (
           // THE SAME SYMBOL FOR BOTH, deliberately. A spot aimed at a painting
           // and one aimed at a desk are the same fitting in the same ceiling and
@@ -1443,7 +1454,27 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           // What differs is the OPTIC, and that is a specification rather than a
           // drawing — so it is on the hover card and on the schedule, which is
           // where specifications belong. `sp.fixture` names the catalogue line.
-          <g key={sp.id} {...feel(sp.id, specsFor(sp.fixture || 'spot'))}>
+          //
+          // THE WHOLE GROUP TAKES THE CLICK, not the body alone, and the body is
+          // six inches of ceiling: at any sensible zoom that is a few pixels, and
+          // a fitting you have to hit within two pixels to select is one nobody
+          // will select. The hit shapes inside — the capsule's rect, the recessed
+          // circle — are what the pointer actually lands on, and the arrow and
+          // the ring come with them.
+          <g key={sp.id} {...feel(sp.id, specsFor(sp.fixture || 'spot'))}
+            onPointerDown={onSpotPointerDown
+              ? (ev) => onSpotPointerDown(ev, sp.id) : undefined}>
+            {/* PICKED. A ring around the fitting and nothing else: a spot has no
+                grips, because there is nothing about one to drag — where it
+                stands is a consequence of what it lights (see spotPointerDown in
+                App.jsx). So the ring's only job is to say "this is the one the
+                Delete key will take", and it says it in the control colour that
+                means selection everywhere else on this canvas. */}
+            {spotSel && (
+              <circle cx={sp.x} cy={sp.y} r={SR} fill="none"
+                stroke={C.sel} strokeWidth={SFW * 1.6}
+                strokeDasharray={`${SFW * 5} ${SFW * 3.5}`} pointerEvents="none" />
+            )}
             {hl && (
               <g pointerEvents="none">
                 <rect x={hl.x0} y={hl.y0}

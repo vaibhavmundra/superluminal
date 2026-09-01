@@ -120,6 +120,15 @@ export function serialiseEditor(s) {
     surfaceResults: s.surfaceResults,
     surfaceDismissed: s.surfaceDismissed,
     manualSurfaces: s.manualSurfaces,
+    // THE PIECES OF ART SOMEBODY DECIDED NOT TO LIGHT.
+    //
+    // A third dismissal list rather than a flag on the wall element, and for the
+    // reason `accentDismissed` is separate too: the element belongs to the render
+    // pass's answer, which is a record of what the model saw, and re-running that
+    // pass must not be able to overwrite a decision a person made about it.
+    // "There is a painting on this wall" and "do not light it" are two facts and
+    // they have two owners.
+    artDismissed: s.artDismissed,
 
     // --- the render pass's reading of the walls.
     //
@@ -220,6 +229,9 @@ export function applyEditor(p, set) {
   set.setSurfaceResults(p.surfaceResults ?? {});
   set.setSurfaceDismissed(p.surfaceDismissed ?? []);
   set.setManualSurfaces(p.manualSurfaces ?? []);
+  // Optional on purpose: a plan saved before this existed has no key here, and
+  // the default is the honest reading of that — nothing was dismissed.
+  set.setArtDismissed?.(p.artDismissed ?? []);
   set.setWallResults?.(p.wallResults ?? {});
   set.setRunTrims?.(p.runTrims ?? {});
   // THE POINTERS, NOT THE PIXELS. App fetches the bytes back from the bucket

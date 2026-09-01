@@ -10,7 +10,9 @@ import { PLAN_OPTIONS, FITTING_LUMENS, WALL_WEIGHT_IN, OTHER_STROKE_PX,
 import { planLights } from './lib/planner.js';
 import { enumerateChunkings, findChunking } from './lib/chunking.js';
 import { designChunking, planCeilingDesign } from './lib/ceilingDesign.js';
-import { absorbPoints, SPOT_LEN_FT } from './lib/track.js';
+import { absorbPoints, SPOT_LEN_FT, DODGE_FT } from './lib/track.js';
+import { newHistory, record, stepBack, stepForward, historyDepth,
+         QUIET_MS } from './lib/undo.js';
 import { bbox, pointInPolygon } from './lib/geometry.js';
 import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, DOOR_WIDTHS } from './lib/doors.js';
@@ -29,7 +31,8 @@ import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
 import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, targetAreaFor, fixtureFor } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
 import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
-import { planTaskSpots, chunkFor } from './lib/taskSpots.js';
+import { planTaskSpots, chunkFor, isBedZone,
+         SPOT_DEFAULTS } from './lib/taskSpots.js';
 import { roomSnapshot, requestAccents, toPlanRect } from './lib/accentMask.js';
 import { BED_SOURCES, splitByProvider, label as labelBeds, bedsIn, contestFor, judgeNote,
          applyVerdict } from './lib/bedFit.js';
@@ -458,6 +461,38 @@ export default function App({
   const [surfaceResults, setSurfaceResults] = useState({});
   const [surfaceState, setSurfaceState] = useState({ status: 'idle', roomId: null });
   const [surfaceDismissed, setSurfaceDismissed] = useState([]);
+  // THE ART SOMEBODY DECIDED NOT TO LIGHT, by wall-element id. Deleting a spot
+  // aimed at a painting takes the piece out of the LIGHTING design, not out of
+  // the render pass's reading of the wall — see planState.js.
+  const [artDismissed, setArtDismissed] = useState([]);
+  // WHICH SPOT IS PICKED. Its own selection and not `selAccId`, because a spot
+  // is not an accent: the two panels describe different things and a click on
+  // one must not leave the other looking selected. Same shape and same lifetime
+  // as `selObjId` next door.
+  const [selSpotId, setSelSpotId] = useState(null);
+
+  // --- UNDO ------------------------------------------------------------------
+  //
+  // FIVE REFS AND ONE PIECE OF STATE, and the split is the whole reason this
+  // works without re-rendering the editor on every keystroke.
+  //
+  // The history, the in-flight burst timer and the "this change is my own doing"
+  // flag are REFS: nothing on screen depends on them, and making any of them
+  // state would re-render the app in the middle of recording a change to it.
+  // `undoDepth` IS state, because two buttons are greyed out by it.
+  //
+  // `docRef` and `undoRef` are the file's existing latest-values pattern (see
+  // `live` further down): the serialised document and the two actions are
+  // defined AFTER the state they read, and the keydown handler is bound BEFORE
+  // it. A ref is how the earlier listener calls the later function without a
+  // dependency on a value that does not exist yet — which is the temporal dead
+  // zone the `detectedZones` note describes, met from the other side.
+  const history = useRef(newHistory());
+  const undoing = useRef(false);
+  const quietTimer = useRef(null);
+  const docRef = useRef(null);
+  const undoRef = useRef(null);
+  const [undoDepth, setUndoDepth] = useState({ past: 0, future: 0 });
 
   const [selAccId, setSelAccId] = useState(null);
   const [accDrag, setAccDrag] = useState(null);   // {roomId, id, mode}
@@ -555,6 +590,7 @@ export default function App({
     setDoors([]); setDoorPick(null); setDoorState({ status: 'idle' });
     setSurfaceRoomId(null); setSurfaceResults({});
     setSurfaceState({ status: 'idle', roomId: null }); setSurfaceDismissed([]);
+    setArtDismissed([]); setSelSpotId(null);
     setCeilingObjs([]); setObjMode(false); setSelObjId(null); setObjDrag(null);
     setArmed(null); setGuides([]); setGhost(null);
     setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
@@ -715,36 +751,51 @@ export default function App({
   // later render, which is the same render that carries the restored values.
   const [restoreApplied, setRestoreApplied] = useState(!restore);
   const restored = useRef(false);
+
+  /**
+   * EVERY SETTER `applyEditor` NEEDS, AS ONE OBJECT.
+   *
+   * Lifted out of the restore effect because there are now TWO callers — opening
+   * a saved plan, and Ctrl+Z — and planState.js's own header explains why they
+   * must not each carry their own list: a field added to the writer and
+   * forgotten in one reader is a change that silently does not come back. One
+   * bundle, one place to add to.
+   *
+   * Stable for the life of the component: every value in it is a useState setter
+   * except the `setLayers` wrapper, which closes over one.
+   */
+  const stateSetters = useMemo(() => ({
+    setUnitId, setScaleMode, setRefId, setCustomFt, setMeasure, setDoorPick, setCeilingFt,
+    setOutlines, setLitIds, setFocusId, setSelectedOutlineId, setRoomState,
+    // `projectId` in here is the kind of BUILDING (residential, hospitality —
+    // see roomTypes.js), not the database project. The alias is the whole
+    // reason planState.js calls it projectType.
+    setProjectType: setProjectId,
+    setPdfPage,
+    setRoomTypes, setDetections, setDismissed, setBedVerdicts, setProvider, setZones,
+    setDoors, setDoorState, setDetectState,
+    setCeilingObjs, setChunkPicks, setCeilingKinds, setDesignPicks,
+    setAccentResults, setAccentDismissed, setManualAccents,
+    setSurfaceResults, setSurfaceDismissed, setManualSurfaces, setArtDismissed,
+    // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
+    // are a few hundred bytes of JSON and the renders are megabytes of
+    // somebody's photographs, which do not belong in a jsonb column.
+    setWallResults,
+    // ...and the lengths somebody dragged. Two numbers per run, and the only
+    // thing about these derived fittings a person actually chose.
+    setRunTrims,
+    // ...and where the views themselves are. The bytes are fetched back out
+    // of the bucket by the effect below, lazily and per space.
+    setRenderRefs,
+    // MERGED OVER THE DEFAULTS, not assigned. See LAYER_DEFAULTS.
+    setLayers: (saved) => setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
+    setZoom, setView,
+  }), []);
+
   useEffect(() => {
     if (!restore || restored.current || !source) return;
     restored.current = true;
-    applyEditor(restore, {
-      setUnitId, setScaleMode, setRefId, setCustomFt, setMeasure, setDoorPick, setCeilingFt,
-      setOutlines, setLitIds, setFocusId, setSelectedOutlineId, setRoomState,
-      // `projectId` in here is the kind of BUILDING (residential, hospitality —
-      // see roomTypes.js), not the database project. The alias is the whole
-      // reason planState.js calls it projectType.
-      setProjectType: setProjectId,
-      setPdfPage,
-      setRoomTypes, setDetections, setDismissed, setBedVerdicts, setProvider, setZones,
-      setDoors, setDoorState, setDetectState,
-      setCeilingObjs, setChunkPicks, setCeilingKinds, setDesignPicks,
-      setAccentResults, setAccentDismissed, setManualAccents,
-      setSurfaceResults, setSurfaceDismissed, setManualSurfaces,
-      // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
-      // are a few hundred bytes of JSON and the renders are megabytes of
-      // somebody's photographs, which do not belong in a jsonb column.
-      setWallResults,
-      // ...and the lengths somebody dragged. Two numbers per run, and the only
-      // thing about these derived fittings a person actually chose.
-      setRunTrims,
-      // ...and where the views themselves are. The bytes are fetched back out
-      // of the bucket by the effect below, lazily and per space.
-      setRenderRefs,
-      // MERGED OVER THE DEFAULTS, not assigned. See LAYER_DEFAULTS.
-      setLayers: (saved) => setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
-      setZoom, setView,
-    });
+    applyEditor(restore, stateSetters);
     setRestoreApplied(true);
     console.log('[plan] restored', {
       outlines: restore.outlines?.length ?? 0, lit: restore.litIds?.length ?? 0,
@@ -1298,9 +1349,17 @@ export default function App({
             ? { shape: 'rect', w: f.w / pxPerFt, h: f.h / pxPerFt, rot: f.rot || 0 }
             : { shape: 'circle' }),
         })),
+        // WHAT THE ZONE IS TRAVELS WITH WHERE IT IS. The conversion used to
+        // return four numbers, and that is how a bed, a hole for a beam, an
+        // enclosed room and a reverse cove arrived at the placers as the same
+        // anonymous rectangle. They are not the same fact — a directional spot
+        // may stand over a bed and may not stand in any of the others (see
+        // SPOT_DEFAULTS.overBed) — and `cls`/`kind`/`source` is the only
+        // evidence of which is which. Cheap to carry, impossible to recover.
         zonesFt: myZones.map((z) => {
           const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
-          return { x0: a.x, y0: a.y, x1: c.x, y1: c.y };
+          return { id: z.id, cls: z.cls, kind: z.kind, source: z.source,
+                   x0: a.x, y0: a.y, x1: c.x, y1: c.y };
         }),
         // THE SAME ROOM, WITHOUT THE FURNITURE. A bed is a no-light zone and a
         // no-light zone carves the room up — which is right for the grid (a
@@ -2412,6 +2471,12 @@ export default function App({
       if (!grid) continue;
       for (const e of res.elements) {
         if (!litByArtSpots(e.type)) continue;
+        // NOT LIT, BY SOMEBODY'S DECISION. Dropped here rather than filtered out
+        // of the finished spots, so the row's segments go back to the ceiling and
+        // the piece stops appearing as a refusal in the panel. A deleted fitting
+        // should leave no trace of itself in the layout, and a rejection with no
+        // fitting is a trace.
+        if (artDismissed.includes(e.id)) continue;
         const rect = e.cells?.length ? cellsToRect(e.cells, grid) : null;
         if (!rect) continue;
         const { ft, from } = artWidthFt(e, grid);
@@ -2428,7 +2493,7 @@ export default function App({
       }
     }
     return out;
-  }, [rooms, wallResults, pxPerFt]);
+  }, [rooms, wallResults, pxPerFt, artDismissed]);
 
   const taskSpotsPx = useMemo(() => {
     const out = [];
@@ -2457,6 +2522,24 @@ export default function App({
         // same reason every other fitting does. `plan.opt` is the resolved
         // options the layout was actually built with, coves included.
         coves: r.plan.opt?.coves ?? [],
+        // THE RAILS, FLATTENED, SO THE PLACER IS NOT TRACK-BLIND.
+        //
+        // Step 3 below still pulls a finished spot onto the profile if it
+        // landed within reach of one, and that pass is not going away: it is
+        // what actually moves the fitting and it is the only thing that knows
+        // which inches of profile the ambient modules already hold. What it
+        // cannot do is influence WHICH candidate position the placer picks, so
+        // on a track ceiling the placer was choosing between a position that
+        // becomes a track module and one that becomes a separate recessed
+        // fitting without knowing that was the choice. Now it knows, and prefers
+        // the rail by a stated amount rather than by luck. See
+        // SPOT_DEFAULTS.trackMissFt.
+        //
+        // `absorb` rides on each run because it is the track's own figure and a
+        // preference derived from a different one would disagree with the pass
+        // that does the moving.
+        tracks: (r.tracks ?? []).flatMap((t) =>
+          (t.runs ?? []).map((run) => ({ ...run, absorb: t.absorb }))),
         opt,
       };
 
@@ -2495,6 +2578,14 @@ export default function App({
           target: t,
           angle: Math.atan2(t.y - p.y, t.x - p.x),
           via: res.spot.via,
+          // HOW FAR IT IS AIMING, AND WHETHER THAT IS TOO FAR. A spot past the
+          // cap is placed rather than refused — a fitting a person can see and
+          // drag beats a sentence in a panel — but it is a compromise, and the
+          // drawing and the panel have to be able to say so. Without this the
+          // only difference between a good spot and one grazing a wall from
+          // eleven feet is how the arrow looks.
+          aimFt: res.spot.aimFt,
+          far: res.spot.far ?? false,
           // Present only on a spot standing in a run, so the drawing and the
           // tooltip can say WHY it is where it is: the lane was chosen for the
           // group, not for this table on its own.
@@ -2612,14 +2703,41 @@ export default function App({
         // is half the length of an ambient one, so passing the ambient figure
         // both pushes it needlessly far in from a corner AND refuses a second
         // spot beside it that would physically clear the first by eight inches.
+        // THE SAME ZONES THE AMBIENT PASS OBEYED, LESS THE BEDS.
+        //
+        // This said "a spot dragged over a bed is as wrong as a downlight
+        // there", and that is the sentence the whole overBed rule disagrees
+        // with: a bed is a no-light zone because a downlight fires into the
+        // eyes of somebody lying under it, and a directional head fires where
+        // it is pointed. Keeping the beds in here would have contradicted the
+        // placer one step after it — a spot deliberately stood over a mattress
+        // to light the wall behind the bed would be the one spot the rail
+        // running along that wall refused to carry, and it would come out
+        // recessed six inches off the profile.
+        //
+        // Everything else in the list stays. A hole for a beam and a slot with
+        // tape in it are places where there is no ceiling to clip a module to,
+        // and that is true of a track head as much as of a downlight.
+        const spotKeepOff = (SPOT_DEFAULTS.overBed && (opt.overBed ?? true))
+          ? (t.keepOff ?? []).filter((z) => !isBedZone(z))
+          : (t.keepOff ?? []);
         const got = absorbPoints(t.runs, ptsFt, { absorb: t.absorb, len: SPOT_LEN_FT,
-                                                 // The same zones the ambient
-                                                 // pass obeyed — a spot dragged
-                                                 // over a bed is as wrong as a
-                                                 // downlight there. The track
-                                                 // carries them so this cannot
-                                                 // be handed a different list.
-                                                 keepOff: t.keepOff ?? [],
+                                                 // A SPOT MAY SLIDE ALONG THE
+                                                 // PROFILE TO GET PAST A MODULE
+                                                 // THAT IS ALREADY THERE, and an
+                                                 // ambient head may not: a head
+                                                 // is one of a row whose spacing
+                                                 // is the layout, a spot is
+                                                 // aimed at one object and owes
+                                                 // nothing to its neighbours.
+                                                 // Without this a spot whose
+                                                 // landing was held by the
+                                                 // corner head was dropped and
+                                                 // drawn recessed, on a ceiling
+                                                 // that is a track. See
+                                                 // DODGE_FT.
+                                                 dodge: DODGE_FT,
+                                                 keepOff: spotKeepOff,
                                                  occupied: t.occupied });
         got.forEach((a, k) => {
           if (!a) return;
@@ -3741,19 +3859,145 @@ export default function App({
     setAccDrag(null);
   };
 
+  // --- picking a spot, and deleting one ---------------------------------------
+
+  /**
+   * A CLICK ON A DIRECTIONAL SPOT PICKS IT.
+   *
+   * Same gesture, same shape and the same three lines as `accPointerDown` — one
+   * selection at a time, and arming a tool is cancelled — because a person
+   * should not have to know which kind of fitting they are pointing at to know
+   * what clicking it does.
+   *
+   * NO DRAG. A spot is not dragged and this is not a stub for one: where it goes
+   * is a consequence of what it lights and of the grid it stands on, and a spot
+   * moved by hand would be a fitting the placer no longer explains — the arrow,
+   * the segment, the track absorption and the panel's account of it would all
+   * still describe the position it was dragged away from. Moving the SURFACE is
+   * how you move the spot.
+   *
+   * AND IT SELECTS THE SPACE. Clicking a fitting in a room the panel is not
+   * describing and having the panel stay on the last room is the disagreement
+   * the canvas selection exists to prevent — the same argument as
+   * `pickChunkOptions`.
+   */
+  const spotPointerDown = (e, id) => {
+    if (e.button != null && e.button !== 0) return;   // middle button is the pan
+    // A TOOL IN HAND WINS, AND SO DOES A ZONE BEING DRAWN. While something is
+    // armed for placement the next click belongs to the ceiling underneath —
+    // somebody dropping a spot beside an existing one, or boxing a no-light zone
+    // across it, is aiming at the drawing and not at the fitting in the way. So
+    // this does not intercept, and the click falls through to the canvas exactly
+    // as if the fitting were not there.
+    if (addTool || zoneMode) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setSelSpotId(id);
+    setSelAccId(null);
+    setSelObjId(null);
+    setArmed(null);
+    const sp = taskSpotsPx.find((q) => q.id === id);
+    if (sp?.roomId) setFocusId(sp.roomId);
+  };
+
+  /**
+   * DELETE A SPOT — WHICH MEANS DELETING THE THING IT WAS PLACED FOR.
+   *
+   * A spot is not a fitting somebody positioned; it is what the placer does
+   * about a surface or a piece of art. So there is no "the spot" to remove
+   * independently of its reason: suppress the fitting and leave the reason, and
+   * the plan holds a surface that is invisible on the sheet (the boxes came off
+   * the drawing long ago), silently holding a segment of the secondary grid
+   * against a fitting that no longer exists, and re-appearing as a refusal in
+   * the panel. The reason is what a person is actually deleting.
+   *
+   * THREE SOURCES, THREE VERBS, and they are the verbs this app already uses —
+   * see the note in the accent branch of the keydown handler for the argument:
+   *
+   *   · A HAND-PLACED SURFACE is removed. It has no generator to come back
+   *     from, so dismissing it would leave an id suppressing something that no
+   *     longer exists for the life of the plan.
+   *   · A DETECTED SURFACE is dismissed. The pass can run again and must not
+   *     put it back — "the model proposed this and I said no" is a decision, and
+   *     it persists.
+   *   · A PIECE OF ART is dismissed by element id, which takes the WHOLE ROW
+   *     with it. Deliberately: artSpots.js places a row as one formation, all of
+   *     it or none, because two spots lighting one picture are one decision.
+   *     Deleting one of a pair would leave a lopsided half of a design nobody
+   *     drew. The wall element itself stays — the render pass saw a painting and
+   *     it is still there; what changed is that it is not being lit.
+   *
+   * EITHER WAY THE SEGMENT GOES BACK TO THE CEILING, which is why this deletes
+   * the source rather than filtering the output: the room re-places, and another
+   * surface that lost that segment can now have it. A fitting elsewhere may move
+   * as a result. That is not a side effect to be suppressed — it is the layout
+   * being correct about a ceiling that now has one less thing to light.
+   */
+  const deleteSpot = useCallback((id) => {
+    const sp = taskSpotsPx.find((q) => q.id === id);
+    setSelSpotId(null);
+    if (!sp) return;
+    if (sp.surfaceId) {
+      if (manualSurfaces.some((sf) => sf.id === sp.surfaceId)) {
+        setManualSurfaces((list) => list.filter((sf) => sf.id !== sp.surfaceId));
+      } else {
+        setSurfaceDismissed((d) => (d.includes(sp.surfaceId) ? d : [...d, sp.surfaceId]));
+      }
+      return;
+    }
+    if (sp.wallId) {
+      setArtDismissed((d) => (d.includes(sp.wallId) ? d : [...d, sp.wallId]));
+    }
+  }, [taskSpotsPx, manualSurfaces]);
+
   /** Escape backs out, Delete removes. The two keys every editor answers to. */
   useEffect(() => {
-    if (!objMode && !armed && !selAccId && !addTool && !focusId) return;
+    // NO GUARD ANY MORE, AND THAT IS BECAUSE OF CTRL+Z. This bound the listener
+    // only when something was selected or armed, which is right for keys that
+    // act on a selection and wrong for one that acts on the document: undo has
+    // to answer when nothing is picked, which is exactly the state somebody is
+    // in immediately after deleting the thing they had selected. Every branch
+    // below already checks its own condition, so an always-bound listener does
+    // nothing it did not do before — and the read-only guard further down is
+    // still the one that decides whether to listen at all.
     const onKey = (e) => {
       const t = e.target;
       if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+      // UNDO, BEFORE EVERY OTHER BRANCH. Not because the order matters to the
+      // keys — nothing else here answers to Ctrl+Z — but because this is the one
+      // branch that is about the editor as a whole rather than about whatever
+      // happens to be selected, and reading it first says so.
+      //
+      // BOTH MODIFIERS, because this app runs on both kinds of keyboard and
+      // neither audience should have to learn the other's shortcut. Shift+Z and
+      // Ctrl+Y are both redo for the same reason.
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        if (e.shiftKey) undoRef.current?.redo(); else undoRef.current?.undo();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        undoRef.current?.redo();
+        return;
+      }
       if (e.key === 'Escape') {
         if (addTool) { disarmAdd(); }
         if (armed) { setArmed(null); setGhost(null); setGuides([]); }
+        else if (selSpotId) setSelSpotId(null);
         else if (selAccId) setSelAccId(null);
         else if (selObjId) setSelObjId(null);
         else if (focusId) setFocusId(null);
         else setObjMode(false);
+      }
+      // A SELECTED SPOT, FIRST AMONG THE DELETES. A spot is the smallest and most
+      // specific thing on this sheet, so it wins the key over the accent, the
+      // ceiling object and the space — the same most-specific-first ordering the
+      // note above the room branch describes.
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selSpotId) {
+        e.preventDefault();
+        deleteSpot(selSpotId);
+        return;
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selAccId && !accDrag) {
         e.preventDefault();
@@ -3807,7 +4051,7 @@ export default function App({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [objMode, armed, selObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
-      manualAccents, focusId, readOnly]);
+      manualAccents, focusId, readOnly, selSpotId, deleteSpot]);
 
   /**
    * OPEN A CHUNK'S OPTIONS. Called by a click on any ambient light — the light
@@ -4759,7 +5003,7 @@ export default function App({
     doors,
     ceilingObjs, chunkPicks, designPicks, ceilingKinds,
     accentResults, accentDismissed, manualAccents,
-    surfaceResults, surfaceDismissed, manualSurfaces,
+    surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
     wallResults, runTrims, renderRefs,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
@@ -4767,8 +5011,95 @@ export default function App({
        detections, dismissed, bedVerdicts, provider, zones, doors,
        ceilingObjs, chunkPicks, designPicks, ceilingKinds,
        accentResults, accentDismissed, manualAccents,
-       surfaceResults, surfaceDismissed, manualSurfaces, wallResults, runTrims, renderRefs,
+       surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
+       wallResults, runTrims, renderRefs,
        layers, zoom, view]);
+
+  // --- UNDO, THE HALF THAT NEEDS THE DOCUMENT -------------------------------
+  //
+  // Here rather than beside its refs at the top, because all of it reads
+  // `editorState` — which cannot be computed until every piece of state it
+  // serialises exists. The refs are declared up there so the keydown handler,
+  // bound in between, can reach these functions. See undo.js for what a step is.
+  docRef.current = editorState;
+
+  /**
+   * RECORD A GESTURE, ONCE IT HAS FINISHED.
+   *
+   * Every change to the document restarts a timer; the push happens when the
+   * timer finally runs, and what it pushes is the state from BEFORE the burst.
+   * That is what makes one drag one undo instead of forty — see QUIET_MS.
+   *
+   * NOT WHILE RESTORING. `restoreApplied` gates the first document a reopened
+   * plan produces, which is not a change anybody made and must not become a step
+   * you can undo BACK to an empty editor. And `undoing` gates the documents that
+   * this feature itself causes: applying a step changes the state, which produces
+   * a new document, which would otherwise be recorded as a fresh change and
+   * poison the redo stack.
+   */
+  useEffect(() => {
+    if (readOnly || !restoreApplied) return undefined;
+    if (undoing.current) {
+      undoing.current = false;
+      history.current.base = editorState;
+      return undefined;
+    }
+    if (history.current.base == null) { history.current.base = editorState; return undefined; }
+    clearTimeout(quietTimer.current);
+    quietTimer.current = setTimeout(() => {
+      if (record(history.current, editorState)) {
+        setUndoDepth(historyDepth(history.current));
+      }
+    }, QUIET_MS);
+    return () => clearTimeout(quietTimer.current);
+  }, [editorState, readOnly, restoreApplied]);
+
+  /**
+   * APPLY A STEP.
+   *
+   * THE VIEWPORT AND THE SELECTION ARE HELD BACK, by handing `applyEditor`
+   * no-ops for them. The document carries zoom, pan, the layer switches, the
+   * selected space — because reopening a plan should put you back where you were
+   * looking — and none of that is what Ctrl+Z is for. Undoing a change while the
+   * canvas jumps to where it was two gestures ago is a worse experience than not
+   * having undo: the person loses their place and cannot see what changed.
+   *
+   * Zoom and layers are left ALONE rather than restored, which is the only
+   * behaviour that makes the two independent: pan somewhere, undo three
+   * gestures, and you are still looking at the thing you were looking at.
+   */
+  const applyStep = useCallback((doc) => {
+    if (!doc) return;
+    undoing.current = true;
+    const hold = () => {};
+    applyEditor(doc, { ...stateSetters,
+                       setFocusId: hold, setSelectedOutlineId: hold, setRoomState: hold,
+                       setLayers: hold, setZoom: hold, setView: hold });
+    // A FITTING THAT NO LONGER EXISTS CANNOT STAY SELECTED. Cheaper and more
+    // honest than reconciling every selection against the restored document:
+    // whatever was picked, the picture just changed under it.
+    setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+    setUndoDepth(historyDepth(history.current));
+  }, [stateSetters]);
+
+  const undo = useCallback(() => {
+    // THE IN-FLIGHT BURST IS CLOSED FIRST, so a change made half a second ago is
+    // undoable rather than invisible. Without this, hitting Ctrl+Z immediately
+    // after a click would step past the click — the timer had not run, so the
+    // click was never recorded, and the state it would return to is the state
+    // you are already in.
+    clearTimeout(quietTimer.current);
+    record(history.current, docRef.current);
+    applyStep(stepBack(history.current, docRef.current));
+  }, [applyStep]);
+
+  const redo = useCallback(() => {
+    clearTimeout(quietTimer.current);
+    applyStep(stepForward(history.current, docRef.current));
+  }, [applyStep]);
+
+  // ...and the handle the keydown listener bound further up reaches them by.
+  undoRef.current = { undo, redo };
 
   const stats = useMemo(() => statsFrom({ totals, rooms, boq }), [totals, rooms, boq]);
   const status = useMemo(() => statusFrom({ outlines, litIds, totals }), [outlines, litIds, totals]);
@@ -4953,6 +5284,51 @@ export default function App({
               </button>
             : <div className="pill">{UPLOAD_LABEL[uploadState]}</div>
         )}
+        {/* UNDO AND REDO. The keyboard is the gesture people will actually use,
+            and the buttons are here because a shortcut nobody knows about is not
+            a feature: the pair is the only thing on screen that says this plan
+            HAS a history, and its disabled state says how much of one. Off on
+            the read-only sheet, along with every other mutation. */}
+        {source && !readOnly && (
+          <div className="tabs steps" role="group" aria-label="History">
+            {/* HEROICONS' arrow-uturn-left / arrow-uturn-right, DRAWN RATHER
+                THAN LOADED — the same decision as the rail's house and the
+                lit-aperture mark: two paths inline take the ink colour with
+                them, stay sharp at any density, and cost nothing at build time,
+                where a dependency for two icons would be a package to keep in
+                step forever.
+
+                THE GLYPHS THEY REPLACE WERE TYPE, and that was the problem with
+                them. ↶ and ↷ are characters, so their weight, size and baseline
+                came from whatever font resolved them — they sat light and small
+                beside the Design/BOQ tabs and shifted between platforms. A path
+                is drawn to this chrome's own stroke weight and sits where it is
+                put.
+
+                1.7 AND NOT HEROICONS' 1.5, which is the one liberty taken with
+                them: the rest of the chrome's icons are 1.7 (see ProfileRail),
+                and at 15px a 1.5 stroke reads a shade thinner than the tab
+                labels beside it. Same paths, this app's weight. */}
+            <button type="button" title="Undo — ⌘Z or Ctrl+Z"
+              aria-label="Undo" disabled={!undoDepth.past}
+              onClick={() => undoRef.current?.undo()}>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+                strokeLinejoin="round" aria-hidden="true">
+                <path d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+              </svg>
+            </button>
+            <button type="button" title="Redo — ⇧⌘Z or Ctrl+Y"
+              aria-label="Redo" disabled={!undoDepth.future}
+              onClick={() => undoRef.current?.redo()}>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+                strokeLinejoin="round" aria-hidden="true">
+                <path d="m15 15 6-6m0 0-6-6m6 6H9a6 6 0 0 0 0 12h3" />
+              </svg>
+            </button>
+          </div>
+        )}
         {/* THE TAB PAIR, and it is only there once there is something to
             schedule. An empty BOQ tab on the drop screen is an invitation to a
             blank page. */}
@@ -5078,6 +5454,8 @@ export default function App({
               selAccId={readOnly ? null : selAccId}
               onAccPointerDown={readOnly ? null : accPointerDown}
               surfaces={surfacesPx} taskSpots={taskSpotsPx}
+              selSpotId={readOnly ? null : selSpotId}
+              onSpotPointerDown={readOnly ? null : spotPointerDown}
               /* THE GRID CELLS ARE A READING, NOT A FITTING, and they have
                  moved to where the other readings live.
                  They were a public layer while the render pass was being built,
@@ -5572,7 +5950,7 @@ export default function App({
                   is the gesture itself, at a glance, and it stays on screen
                   after the first zone is drawn because the tab is also where
                   somebody comes to draw the second. */}
-              <div className="zone-hint">
+              <div className="gesture-hint">
                 <svg viewBox="0 0 72 46" aria-hidden="true">
                   {/* The zone being swept out: a dashed box with a live corner. */}
                   <rect x="7" y="7" width="44" height="28" rx="2"

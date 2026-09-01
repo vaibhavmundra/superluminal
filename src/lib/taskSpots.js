@@ -22,10 +22,29 @@
 //      rule. This is the fallback for a surface out at the edge of a room,
 //      where there is no pair of lights on the near side of it.
 //
+// ...BUT NEAR COMES FIRST. That order holds among candidates that actually
+// light the thing; it is not a licence to prefer a tidy fitting twelve feet
+// away to an untidy one beside the table. Everything inside maxAimFt is
+// considered before anything outside it, and a position outside it is placed
+// only as an admitted compromise — see the cap note in placeTaskSpot.
+//
 // A candidate has to survive the same rules the ambient layer obeys — clear of
 // the ceiling objects, clear of the walls, out of the no-light zones — because
 // a spot is a fitting in the same ceiling and the reasons those rules exist do
 // not care what the fitting is for.
+//
+// WITH ONE EXCEPTION, AND IT IS A BED. A bed is a no-light zone because a
+// downlight fires into the eyes of somebody lying under it. A directional spot
+// fires where it is pointed, and the ceiling over a bed is often the only place
+// the wall behind that bed can be lit from. So a spot may stand there, and the
+// grid reaches across a bed to offer it somewhere to stand — see
+// SPOT_DEFAULTS.overBed and spotSpan. No other zone gives way to anything.
+//
+// AND IN A ROOM WITH A TRACK, A POSITION ON THE RAIL IS WORTH MORE THAN ITS
+// DISTANCE SAYS. See SPOT_DEFAULTS.trackMissFt: a head that clips into a
+// profile that is already there and a head three and a half feet off it are two
+// different products, so the placer is told where the rails are rather than
+// leaving it to the absorption pass to catch whatever it happens to produce.
 //
 // EVERYTHING HERE IS IN THE ROOM'S OWN FEET, the space planner.js works in.
 // The caller converts.
@@ -83,6 +102,53 @@ export const SPOT_DEFAULTS = {
   // not centre to centre, which would let a five-foot fitting hang directly
   // over a table and still be counted as three feet away from it.
   chandelierNear: 3.0,
+
+  // A DIRECTIONAL SPOT MAY STAND OVER A BED. THE OTHER ZONES STILL REFUSE IT.
+  //
+  // A no-light zone is one rectangle in the code and two completely different
+  // facts on site, and treating them as one is what put a spot across the room
+  // from the wall it was meant to light.
+  //
+  //   · A HOLE. An enclosed room, a hand-drawn box, a reverse cove: there is no
+  //     ceiling there, or a person has said nothing goes there. Nothing may be
+  //     placed in one, ever, whatever it is aimed at.
+  //   · A BED. There is ordinary plasterboard over a bed. The rule exists
+  //     because of GLARE: a downlight fires straight down, and straight down
+  //     from there is somebody's open eyes.
+  //
+  // A directional spot is not that fitting. It is a narrow beam turned at a
+  // wall or a table, and its glare is where it POINTS — which is why the
+  // fitting is drawn with an arrow. The one thing under it is its own trim.
+  //
+  // Refusing it there cost exactly the case the rule was written to protect: a
+  // bed pushed against the head wall, art or panelling above it, and the only
+  // piece of ceiling from which either can be lit is the ceiling over the
+  // mattress. Every candidate in it was refused, and the fall-through found the
+  // nearest position that was legal — the far side of the room, aimed at a wall
+  // eleven feet away. A spot over the pillow pointing AT the headboard is the
+  // design; a spot across the room pointing at it is nothing.
+  //
+  // Set false to go back to treating all zones alike.
+  overBed: true,
+
+  // WHAT IT COSTS A CANDIDATE THAT NO TRACK RAIL CAN CARRY, in feet of
+  // apparent distance. Only ever charged in a room that HAS a track.
+  //
+  // The absorption pass in track.js pulls a finished spot onto the profile if
+  // it lands within three feet of one, and that is the whole of the track's
+  // influence on where a spot goes — which is to say the placer chooses
+  // blind and the track either catches the answer or does not. In a room
+  // whose ceiling IS a track that is the wrong way round: a directional head
+  // on the rail is a module that clips into a profile that is already there,
+  // and one three and a half feet off it is a separate recessed fitting, a
+  // separate hole and a separate circuit. Two positions a foot apart on the
+  // drawing, and one of them is a different specification.
+  //
+  // A SURCHARGE AND NOT A VETO, for the same reason shareSurchargeFt is one: a
+  // rail that cannot be reached from anywhere near the thing being lit should
+  // lose to a recessed spot that can. A foot and a half is enough that a
+  // comparable off-rail alternative loses and a much better one still wins.
+  trackMissFt: 1.5,
 };
 
 const EPS = 1e-9;
@@ -95,6 +161,99 @@ export function rectDistance(p, r) {
 }
 
 const centreOf = (r) => ({ x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 });
+
+/**
+ * IS THIS NO-LIGHT ZONE A BED?
+ *
+ * `cls` is what the furniture detector puts on the rectangle it produces, and
+ * it is the only field that says WHY a zone exists — which is the thing
+ * SPOT_DEFAULTS.overBed has to know. Everything else that becomes a zone
+ * carries something else or nothing at all: an enclosed room is `cls: 'room'`,
+ * a reverse cove is `kind: 'reverse-cove'`, and a box a person dragged on the
+ * plan has neither. So the test is positive and narrow, and anything it cannot
+ * identify stays a hole in the ceiling — which is the safe answer.
+ */
+export const isBedZone = (z) => z?.cls === 'bed';
+
+/**
+ * HOW FAR THE SPOT GRID REACHES, which is FURTHER THAN THE CHUNK when a bed is
+ * pushed up against it.
+ *
+ * A chunk is what is left of the ceiling after the zones are subtracted, so a
+ * bed against the head wall does not merely forbid fittings over itself — it
+ * ENDS THE CHUNK at the foot of the mattress. Relaxing the legality rule alone
+ * therefore changed nothing at all: the candidate positions are built from the
+ * chunk's own bounds, and there were none over the bed to make legal. The line
+ * nearest the head wall was still on the far side of six feet of bed.
+ *
+ * So a chunk lends its grid across any bed that ABUTS it: the lines run on to
+ * the far edge of the mattress, and the light-to-outline segment at that end
+ * reaches the head wall rather than stopping at the foot of the bed. That is
+ * the one stretch of ceiling from which the wall behind a bed can be lit.
+ *
+ * IT IS A GRID AND NOT A PERMISSION. Every point on it still goes through
+ * `spotLegality` — inside the room, off the walls, clear of the fans and the
+ * cove, and inside a zone only if that zone is a bed and the caller allows it.
+ * Extending the reach cannot make anything legal that was not; it can only
+ * offer positions that were never on the table.
+ *
+ * ABUTTING, NOT MERELY NEARBY: the zone's edge has to be on the chunk's edge,
+ * and the two have to overlap across it by more than a token amount. A bed at
+ * the other end of the room shares no boundary with this chunk and lends it
+ * nothing.
+ */
+export function spotSpan(chunk, zones = [], opt = {}) {
+  const o = { ...SPOT_DEFAULTS, ...opt };
+  const span = { x0: chunk.x0, x1: chunk.x1, y0: chunk.y0, y1: chunk.y1 };
+  if (!o.overBed) return span;
+  const tol = o.spanAbutTol ?? 0.25;
+  const minOverlap = o.spanMinOverlap ?? 0.5;
+  for (const z of zones) {
+    if (!isBedZone(z)) continue;
+    const overX = Math.min(chunk.x1, z.x1) - Math.max(chunk.x0, z.x0);
+    const overY = Math.min(chunk.y1, z.y1) - Math.max(chunk.y0, z.y0);
+    if (overX > minOverlap) {
+      if (Math.abs(z.y1 - chunk.y0) <= tol) span.y0 = Math.min(span.y0, z.y0);
+      if (Math.abs(z.y0 - chunk.y1) <= tol) span.y1 = Math.max(span.y1, z.y1);
+    }
+    if (overY > minOverlap) {
+      if (Math.abs(z.x1 - chunk.x0) <= tol) span.x0 = Math.min(span.x0, z.x0);
+      if (Math.abs(z.x0 - chunk.x1) <= tol) span.x1 = Math.max(span.x1, z.x1);
+    }
+  }
+  return span;
+}
+
+/**
+ * IS THIS POSITION ONE A TRACK RAIL COULD CARRY?
+ *
+ * The same question `absorbPoints` in track.js answers when it decides whether
+ * to pull a finished fitting onto the profile, asked early enough to influence
+ * where the fitting goes — see SPOT_DEFAULTS.trackMissFt. Perpendicular reach
+ * only, and inside the run's own ends, because that is the move absorption
+ * makes: a module slides straight onto the rail and keeps its position along it.
+ *
+ * Deliberately a LITTLE MEANER than the absorption pass: a candidate right on
+ * the edge of the band would be scored as carried here and then refused there
+ * for want of an inch of free profile, so the reach is shaded in by a foot.
+ * Being wrong in this direction costs a preference; being wrong in the other
+ * costs a spot that thought it was a track module and came out recessed.
+ */
+export function carriedByTrack(p, runs = [], opt = {}) {
+  const o = { ...SPOT_DEFAULTS, ...opt };
+  for (const run of runs) {
+    if (!run?.a || !run?.b) continue;
+    const reach = Math.max(0, (run.absorb ?? o.trackAbsorb ?? 3) - 1);
+    const horizontal = Math.abs(run.b.y - run.a.y) <= Math.abs(run.b.x - run.a.x);
+    const perp = horizontal ? Math.abs(p.y - run.a.y) : Math.abs(p.x - run.a.x);
+    if (perp > reach + EPS) continue;
+    const lo = horizontal ? Math.min(run.a.x, run.b.x) : Math.min(run.a.y, run.b.y);
+    const hi = horizontal ? Math.max(run.a.x, run.b.x) : Math.max(run.a.y, run.b.y);
+    const along = horizontal ? p.x : p.y;
+    if (along >= lo - EPS && along <= hi + EPS) return true;
+  }
+  return false;
+}
 
 /** Group values that are within `tol` of each other, and return one per group. */
 function lanes(values, tol) {
@@ -163,9 +322,15 @@ export function secondaryGrid(chunk, lights, opt = {}) {
   const rows = lanes(inside.map((l) => l.y), o.alignTol);
   const cols = lanes(inside.map((l) => l.x), o.alignTol);
 
+  // HOW FAR THE LINES AND THE END SEGMENTS REACH. The chunk's own bounds, plus
+  // any bed pushed against them — see spotSpan for why the chunk alone is not
+  // enough, and why lending the grid across a mattress cannot make a single
+  // position legal that was not already.
+  const span = spotSpan(chunk, opt.spanZones ?? [], o);
+
   const lines = [
-    ...rows.map((r) => ({ axis: 'h', at: r.at, a: { x: chunk.x0, y: r.at }, b: { x: chunk.x1, y: r.at } })),
-    ...cols.map((c) => ({ axis: 'v', at: c.at, a: { x: c.at, y: chunk.y0 }, b: { x: c.at, y: chunk.y1 } })),
+    ...rows.map((r) => ({ axis: 'h', at: r.at, a: { x: span.x0, y: r.at }, b: { x: span.x1, y: r.at } })),
+    ...cols.map((c) => ({ axis: 'v', at: c.at, a: { x: c.at, y: span.y0 }, b: { x: c.at, y: span.y1 } })),
   ];
 
   const segments = [];
@@ -176,8 +341,10 @@ export function secondaryGrid(chunk, lights, opt = {}) {
     if (!on.length) return;
     const at = (v) => (axis === 'h' ? { x: v, y: lane.at } : { x: lane.at, y: v });
     const coord = (l) => (axis === 'h' ? l.x : l.y);
-    const lo = axis === 'h' ? chunk.x0 : chunk.y0;
-    const hi = axis === 'h' ? chunk.x1 : chunk.y1;
+    const lo = axis === 'h' ? span.x0 : span.y0;
+    const hi = axis === 'h' ? span.x1 : span.y1;
+    const cLo = axis === 'h' ? chunk.x0 : chunk.y0;
+    const cHi = axis === 'h' ? chunk.x1 : chunk.y1;
 
     const push = (v0, v1, kind, ends) => {
       if (Math.abs(v1 - v0) < o.minSegment) return;
@@ -190,8 +357,27 @@ export function secondaryGrid(chunk, lights, opt = {}) {
       push(coord(on[i]), coord(on[i + 1]), 'light-light', [on[i].id, on[i + 1].id]);
     }
     // outermost light -> the chunk's own outline
-    push(lo, coord(on[0]), 'light-edge', ['edge', on[0].id]);
-    push(coord(on[on.length - 1]), hi, 'light-edge', [on[on.length - 1].id, 'edge']);
+    push(cLo, coord(on[0]), 'light-edge', ['edge', on[0].id]);
+    push(coord(on[on.length - 1]), cHi, 'light-edge', [on[on.length - 1].id, 'edge']);
+
+    // ...AND ON ACROSS A BED, AS AN EXTRA CANDIDATE AND NOT A REPLACEMENT.
+    //
+    // The reach matters because of where a segment's MIDPOINT lands, and that
+    // cuts both ways: extending the stub at the head end from "foot of the bed
+    // → first light" to "head wall → first light" moves its middle several feet
+    // towards the wall, which is the whole point for the wall — and would be a
+    // loss for a desk sitting at the foot of the bed, whose best position was
+    // the old middle. Replacing one with the other trades one surface's answer
+    // for another's, which is not a fix.
+    //
+    // So both are offered and the ranking decides, per surface, on the only
+    // thing that matters: which midpoint is nearer the thing being lit. They
+    // overlap, and two spots landing on the overlap are held apart by
+    // minSpotGap exactly as two spots on neighbouring segments always were.
+    if (lo < cLo - EPS) push(lo, coord(on[0]), 'light-edge', ['bed-edge', on[0].id]);
+    if (hi > cHi + EPS) {
+      push(coord(on[on.length - 1]), hi, 'light-edge', [on[on.length - 1].id, 'bed-edge']);
+    }
   };
   rows.forEach((r) => build(r, 'h'));
   cols.forEach((c) => build(c, 'v'));
@@ -215,11 +401,19 @@ export function secondaryGrid(chunk, lights, opt = {}) {
  * "every position is inside the fan's clearance" is.
  */
 export function spotLegality({ polygon, zones = [], fixtures = [], coves = [],
-                               clearance = 0, wallMin = 0, reasons = null } = {}) {
+                               clearance = 0, wallMin = 0, overBed = false,
+                               reasons = null } = {}) {
   const note = (s) => { reasons?.add(s); return false; };
   return (p) => {
     if (!pointInPolygon(p, polygon)) return note('outside the space');
     for (const z of zones) {
+      // A BED IS THE ONE ZONE A DIRECTIONAL SPOT MAY CROSS, and only because
+      // the caller said so. See SPOT_DEFAULTS.overBed: the glare rule that
+      // makes a bed a no-light zone is a rule about a fitting firing straight
+      // down, and this is not that fitting. Every other zone is a hole in the
+      // ceiling or somebody's instruction, and neither of those cares what the
+      // fitting is aimed at.
+      if (overBed && isBedZone(z)) continue;
       if (p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1) {
         return note('inside a no-light zone');
       }
@@ -257,19 +451,27 @@ export function spotLegality({ polygon, zones = [], fixtures = [], coves = [],
  */
 export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
                                          zones = [], coves = [], usedSegments = null,
-                                         taken = [], opt = {} } = {}) {
+                                         taken = [], tracks = [], opt = {} } = {}) {
   const o = { ...SPOT_DEFAULTS, ...RUN_DEFAULTS, ...opt };
   const wallMin = o.wallDistance ?? opt.minWallDistance ?? 0;
   const clearance = opt.fanClearance ?? 0;
   const centre = centreOf(surface);
 
-  const grid = secondaryGrid(chunk, lights, o);
+  // THE ZONES GO IN TWICE, TO TWO DIFFERENT QUESTIONS. `spanZones` asks which
+  // of them lends this chunk a stretch of grid (a bed against it does); the
+  // legality predicate below asks which of them a fitting may stand in (a bed,
+  // if `overBed`). Same list, and it has to be the same list — a grid extended
+  // over a bed the legality rule still refuses would offer nothing but
+  // rejections, and the reverse would place a fitting on ceiling that has no
+  // grid on it.
+  const grid = secondaryGrid(chunk, lights, { ...o, spanZones: zones });
   if (!grid.segments.length) {
     return { rejected: 'This piece of ceiling has no grid to stand a spot on.' };
   }
 
   const reasons = new Set();
-  const base = spotLegality({ polygon, zones, fixtures, coves, clearance, wallMin, reasons });
+  const base = spotLegality({ polygon, zones, fixtures, coves, clearance, wallMin,
+                              overBed: o.overBed, reasons });
   const legal = (p) => {
     if (!base(p)) return false;
     // A spot standing ON its surface has no direction to point in. THE ONE RULE
@@ -290,14 +492,71 @@ export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
     return true;
   };
 
-  // Light-to-light first, exhausted before the edge fallback is considered at
-  // all — the order is the rule, not a tie-break, so a poor pair beats a good
-  // edge every time.
+  /** One chosen position, as the spot the caller gets back. */
+  const made = (p, seg, kind, d, aimFt, far) => {
+    const dx = centre.x - p.x, dy = centre.y - p.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return {
+      x: p.x, y: p.y,
+      aim: { x: dx / len, y: dy / len },
+      angle: Math.atan2(dy, dx),
+      target: centre,
+      via: kind, segment: seg, distance: d,
+      // HOW FAR IT IS ACTUALLY AIMING, from the fitting to the thing it lights.
+      // `distance` above is measured from the middle of the segment and was
+      // only ever a ranking figure; this is the one the drawing and the panel
+      // can quote, because it is measured from where the fitting ended up.
+      aimFt,
+      // PAST THE CAP, AND SAYING SO. See the note above the search: a spot
+      // aiming further than maxAimFt is grazing rather than lighting, and it is
+      // drawn because the alternative is nothing at all — not because it is
+      // right. Absent on an ordinary spot, so `sp.far` reads as the exception
+      // it is.
+      ...(far ? { far: true } : {}),
+      // How far off the middle of its own run it had to stand, in feet. 0
+      // for the ordinary case, and worth carrying because a spot that slid
+      // is a spot the drawing should be able to explain.
+      slid: Math.hypot(p.x - seg.mid.x, p.y - seg.mid.y),
+    };
+  };
+
+  // NEAR BEATS THE KIND OF SEGMENT, AND THAT IS A CHANGE FROM WHAT THIS DID.
+  //
+  // Light-to-light used to be exhausted before an edge segment was considered
+  // at all, and the argument for that was about the DRAWING: a fitting halfway
+  // between two downlights reads as part of the layout, and one on a stub out
+  // to the wall reads less so. It is a good argument about two candidates
+  // beside the same table. It is the wrong argument when the two candidates are
+  // twelve feet apart, because then the choice is not "which of these reads
+  // better" but "does this fitting light the thing it is for" — and a tidy spot
+  // aiming across the room lights nothing.
+  //
+  // So the cap is the OUTER tier and the kind is the inner one: everything
+  // inside maxAimFt is considered, light-to-light first exactly as before, and
+  // a position past the cap is taken only when nothing inside it worked.
+  //
+  // A CAP AND NOT A VETO, deliberately. A run dissolves when no lane will take
+  // it inside the cap, because it has somewhere to fall back to — its members
+  // become singletons. A singleton has nowhere: the honest options are a spot
+  // that grazes and admits it, or no spot at all, and a fitting a person can
+  // see and drag is worth more than a sentence in a panel. So it is placed,
+  // marked `far`, and the drawing says so.
+  const rail = tracks.length ? (p) => carriedByTrack(p, tracks, o) : null;
+  let far = null;
+
   for (const kind of ['light-light', 'light-edge']) {
     const ranked = grid.segments
       .filter((s) => s.kind === kind)
-      .map((s) => ({ s, d: rectDistance(s.mid, surface) }))
-      .sort((a, b) => a.d - b.d || a.s.length - b.s.length);
+      .map((s) => {
+        const d = rectDistance(s.mid, surface);
+        // A CANDIDATE NO RAIL CAN CARRY COSTS EXTRA, in a room that has a
+        // track. See SPOT_DEFAULTS.trackMissFt — on a track ceiling, a head on
+        // the profile and a head three and a half feet off it are two different
+        // products, not two positions.
+        const miss = rail && !rail(s.mid) ? o.trackMissFt : 0;
+        return { s, d, rank: d + miss };
+      })
+      .sort((a, b) => a.rank - b.rank || a.s.length - b.s.length);
     for (const { s, d } of ranked) {
       // Spent by another surface. Not a rule about geometry, so it is checked
       // before the geometry — no point reporting "inside a clearance" about a
@@ -305,23 +564,20 @@ export function placeTaskSpot(surface, { chunk, lights, polygon, fixtures = [],
       if (usedSegments?.has(segmentKey(s))) { reasons.add('already used by another surface'); continue; }
       const p = standIn(s, o, legal, surface);
       if (!p) continue;
-      const dx = centre.x - p.x, dy = centre.y - p.y;
-      const len = Math.hypot(dx, dy) || 1;
-      return {
-        spot: {
-          x: p.x, y: p.y,
-          aim: { x: dx / len, y: dy / len },
-          angle: Math.atan2(dy, dx),
-          target: centre,
-          via: kind, segment: s, distance: d,
-          // How far off the middle of its own run it had to stand, in feet. 0
-          // for the ordinary case, and worth carrying because a spot that slid
-          // is a spot the drawing should be able to explain.
-          slid: Math.hypot(p.x - s.mid.x, p.y - s.mid.y),
-        },
-        grid,
-      };
+      const aimFt = rectDistance(p, surface);
+      if (aimFt > o.maxAimFt + EPS) {
+        // The NEAREST of the far ones, not the first found: the ranking is per
+        // kind, so the first light-light candidate past the cap can be further
+        // out than an edge candidate this loop has not reached yet.
+        if (!far || aimFt < far.aimFt) far = { p, s, kind, d, aimFt };
+        continue;
+      }
+      return { spot: made(p, s, kind, d, aimFt, false), grid };
     }
+  }
+
+  if (far) {
+    return { spot: made(far.p, far.s, far.kind, far.d, far.aimFt, true), grid };
   }
 
   return {
@@ -572,7 +828,7 @@ function bboxOf(rects) {
  * other rule, so a member whose best node is already taken by its neighbour
  * SLIDES rather than failing — the nudge falls out of standIn for free.
  */
-function runOnLane(lane, members, segs, o, legalBase, taken) {
+function runOnLane(lane, members, segs, o, legalBase, taken, rail = null) {
   const along = lane.axis === 'h' ? 'x' : 'y';
   const order = members
     .map((m) => ({ m, at: centreOf(m.s)[along] }))
@@ -606,7 +862,14 @@ function runOnLane(lane, members, segs, o, legalBase, taken) {
         .filter((s) => s.kind === kind)
         .map((s) => {
           const d = rectDistance(s.mid, m.s);
-          return { s, d, rank: d + (spent.has(segmentKey(s)) ? o.shareSurchargeFt : 0) };
+          // TWO SURCHARGES, ADDED, AND THEY ARE ABOUT DIFFERENT THINGS: one
+          // says a sibling is already standing here, the other says no rail can
+          // carry this. Both are preferences on the same scale, so they compose
+          // — a node that is both taken and off the profile is worth three feet
+          // less than it looks, which is the right answer.
+          const miss = rail && !rail(s.mid) ? o.trackMissFt : 0;
+          return { s, d,
+                   rank: d + miss + (spent.has(segmentKey(s)) ? o.shareSurchargeFt : 0) };
         })
         .sort((a, b) => a.rank - b.rank || a.s.length - b.s.length);
       for (const { s, d } of ranked) {
@@ -650,10 +913,13 @@ export function placeRun(members, axis, ctx = {}) {
   const clearance = ctx.opt?.fanClearance ?? 0;
   const legalBase = spotLegality({
     polygon: ctx.polygon, zones: ctx.zones ?? [], fixtures: ctx.fixtures ?? [],
-    coves: ctx.coves ?? [], clearance, wallMin,
+    coves: ctx.coves ?? [], clearance, wallMin, overBed: o.overBed,
   });
 
-  const grid = secondaryGrid(chunk, ctx.lights ?? [], o);
+  // The same two questions of the same list as in placeTaskSpot: which zones
+  // lend this chunk grid, and which a fitting may stand in.
+  const grid = secondaryGrid(chunk, ctx.lights ?? [], { ...o, spanZones: ctx.zones ?? [] });
+  const rail = ctx.tracks?.length ? (p) => carriedByTrack(p, ctx.tracks, o) : null;
   const box = bboxOf(members.map((m) => m.s));
 
   // LANES PARALLEL TO THE GROUP'S OWN AXIS. A vertical lane serving a pair of
@@ -676,11 +942,23 @@ export function placeRun(members, axis, ctx = {}) {
   // same ordering, as the art rows next door. A lane already further from the
   // group than the cap allows can serve nobody, so it is dropped here rather
   // than discovered member by member.
+  //
+  // AND A LANE A RAIL CAN CARRY WINS A TIE AND A LITTLE MORE, in a room with a
+  // track: a run of directional heads on the profile is one circuit and one
+  // piece of ironmongery, and the same run a yard off it is a row of separate
+  // recessed fittings. Charged the same way and on the same scale as everything
+  // else here — see SPOT_DEFAULTS.trackMissFt — so a rail out past the cap
+  // still loses to a lane that can actually serve the group.
+  const alongMid = axis === 'h' ? (box.x0 + box.x1) / 2 : (box.y0 + box.y1) / 2;
   const lanes = grid.lines
     .filter((l) => l.axis === axis)
-    .map((l) => ({ l, off: laneOffset(l, box, axis) }))
+    .map((l) => {
+      const off = laneOffset(l, box, axis);
+      const at = axis === 'h' ? { x: alongMid, y: l.at } : { x: l.at, y: alongMid };
+      return { l, off, rank: off + (rail && !rail(at) ? o.trackMissFt : 0) };
+    })
     .filter((q) => q.off <= o.maxAimFt + EPS)
-    .sort((a, b) => a.off - b.off);
+    .sort((a, b) => a.rank - b.rank || a.off - b.off);
 
   const taken = [...(ctx.taken ?? [])];
 
@@ -688,7 +966,7 @@ export function placeRun(members, axis, ctx = {}) {
     const segs = grid.segments.filter((s) => s.axis === axis
       && Math.abs((axis === 'h' ? s.a.y : s.a.x) - l.at) <= o.alignTol);
     if (!segs.length) continue;
-    const chosen = runOnLane(l, members, segs, o, legalBase, taken);
+    const chosen = runOnLane(l, members, segs, o, legalBase, taken, rail);
     if (chosen) return { chosen, grid, lane: l, standoff: off };
   }
   return null;
@@ -781,7 +1059,15 @@ export function planTaskSpots(surfaces, ctx = {}) {
     // is drawn and how it would actually be installed. Nearest-first matters:
     // it is what keeps the spot beside the thing it is lighting rather than
     // wherever the first chunk in the list happens to be.
-    if (!res.spot) {
+    //
+    // AND A `far` SPOT COUNTS AS A REFUSAL FOR THIS PURPOSE. It is a position
+    // in the right chunk that grazes its surface from beyond the cap, and the
+    // whole reason the other chunks are consulted is that the right chunk
+    // sometimes has nothing to offer. A compromise in the own chunk is not a
+    // reason to stop looking — but it IS the answer unless one of the others
+    // aims from closer, which is what the comparison below is for. Nothing
+    // moves for the sake of moving.
+    if (!res.spot || res.spot.far) {
       const centre = centreOf(s);
       const others = chunks
         .filter((c) => c !== chunk)
@@ -790,8 +1076,11 @@ export function planTaskSpots(surfaces, ctx = {}) {
       for (const { c } of others) {
         const alt = placeTaskSpot(s, { ...ctx, chunk: c, usedSegments, taken });
         if (!alt.spot) continue;
+        if (res.spot && !(alt.spot.aimFt < res.spot.aimFt - EPS)) continue;
         res = { ...alt, spot: { ...alt.spot, viaChunk: 'nearest' } };
-        break;
+        // A nearer compromise is still a compromise: keep looking for a chunk
+        // that can serve the surface inside the cap.
+        if (!res.spot.far) break;
       }
     }
 
@@ -825,6 +1114,11 @@ export function planTaskSpots(surfaces, ctx = {}) {
               angle: Math.atan2(dy, dx),
               target: centre,
               via: c.kind, segment: c.s, distance: c.d,
+              // The same field a singleton carries, and never `far`: a run is
+              // only ever assembled inside the cap — runOnLane refuses a member
+              // past it and the lane fails — so a run member cannot be a
+              // compromise of this kind. See the cap note in placeTaskSpot.
+              aimFt: rectDistance(c.p, c.m.s),
               slid: Math.hypot(c.p.x - c.s.mid.x, c.p.y - c.s.mid.y),
               // WHAT THE DRAWING NEEDS TO EXPLAIN ITSELF. A spot that stands
               // where it does because of its neighbours rather than because of
