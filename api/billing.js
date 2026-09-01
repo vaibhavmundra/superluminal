@@ -44,8 +44,31 @@
 // defensively: Vercel parses JSON, Vite does not.
 // ---------------------------------------------------------------------------
 import { createHmac } from 'node:crypto';
-import { TIER, TIERS, tierOf, windowStart, balanceFromTotals, canSpend,
-         MAX_CLAIM_SQFT, MIN_CLAIM_SQFT } from '../src/lib/plans.js';
+import { TIER, TIERS, tierOf, sellableTier, windowStart, balanceFromTotals, canSpend,
+         MAX_CLAIM_SQFT, MIN_CLAIM_SQFT, normaliseEmail } from '../src/lib/plans.js';
+
+/**
+ * THE CONFLICT TARGETS, NAMED, BECAUSE POSTGREST WILL NOT GUESS THEM.
+ *
+ * `Prefer: resolution=ignore-duplicates` with no `on_conflict=` infers the
+ * PRIMARY KEY — and every one of these tables has a surrogate `id uuid default
+ * gen_random_uuid()` that is never in the payload, so the emitted `ON CONFLICT
+ * (id)` can never fire and the unique-index violation we were relying on came
+ * back as a 409 that `rest()` throws.
+ *
+ * That silently broke the idempotency of the whole flow: the replay guard in
+ * verifyAction never returned an empty array (it threw), so both of its branches
+ * were dead, and a retried webhook 500'd for ever. Named here, once, beside each
+ * other, so a fourth table cannot be added without noticing that it needs one.
+ *
+ * These must match a NON-PARTIAL unique index — Postgres cannot use a partial one
+ * as an arbiter unless the statement repeats its predicate, which PostgREST does
+ * not do. See the note in migration 0005.
+ */
+const ON_CONFLICT = {
+  payments: 'provider,provider_payment_id,event',
+  usage_events: 'owner,kind,fingerprint',
+};
 
 const PROJECT_URL = process.env.SUPABASE_URL
   || (process.env.SUPABASE_PROJECT_ID ? `https://${process.env.SUPABASE_PROJECT_ID}.supabase.co` : '')
@@ -177,22 +200,58 @@ async function readBody(req) {
 }
 
 /**
- * WHO IS ASKING. The token is the credential and only Supabase can validate it,
- * so that is who is asked — with the anon key, which is a public operation.
- * Nothing here reads a claim out of the JWT: a claim is whatever was minted when
- * the session began, and this endpoint spends money.
+ * WHO IS ASKING. EVERY ACTION HERE NEEDS A SESSION — including checkout, and that
+ * is a product decision rather than a technical constraint: a subscription belongs
+ * to an account, so there has to be an account before there is a subscription.
+ *
+ * Resolved separately from being required so that the requirement lives in ONE
+ * place, in the handler, rather than as an `if` at the top of six functions where
+ * the seventh would forget it.
+ *
+ * THE TOKEN IS THE CREDENTIAL AND ONLY SUPABASE CAN VALIDATE IT, so that is who
+ * is asked — with the anon key, which is a public operation. Nothing here reads a
+ * claim out of the JWT: a claim is whatever was minted when the session began,
+ * and this endpoint spends money.
+ *
+ * AND THE ROLE IS READ FROM THE DATABASE, WITH THE SERVICE KEY. Role 1 is
+ * unmetered (see ADMIN in src/lib/plans.js), which makes `isAdmin` a spending
+ * decision rather than a cosmetic one — so it is established exactly the way
+ * api/admin.js establishes it, and for the reasons documented there at length:
+ * not from the token's claims, which are as old as the session, and certainly
+ * not from anything the caller sent. The column is frozen against self-service
+ * promotion by a trigger in migration 0003, so the two halves agree.
  */
-async function requireUser(req) {
+async function resolveUser(req) {
   const raw = req.headers?.authorization || req.headers?.Authorization || '';
   const token = /^Bearer\s+(.+)$/i.exec(raw)?.[1]?.trim();
-  if (!token) { const e = new Error('Not signed in'); e.status = 401; throw e; }
+  if (!token) return null;
+
   const who = await fetch(`${PROJECT_URL}/auth/v1/user`, {
     headers: { apikey: ANON_KEY, Authorization: `Bearer ${token}` },
   });
-  if (!who.ok) { const e = new Error('Not signed in'); e.status = 401; throw e; }
+  if (!who.ok) return null;
   const user = await who.json();
-  if (!user?.id) { const e = new Error('Not signed in'); e.status = 401; throw e; }
-  return { id: user.id, email: user.email || '' };
+  if (!user?.id) return null;
+
+  let role = null;
+  try {
+    const rows = await rest(`profiles?select=role&id=eq.${enc(user.id)}&limit=1`);
+    role = rows[0]?.role ?? null;
+  } catch (err) {
+    // A PROFILE READ THAT FAILS MUST NOT PROMOTE ANYBODY, and it must not lock a
+    // paying customer out either. Falling through with role null means "a normal
+    // user", which is the safe reading in both directions.
+    console.warn('[billing] could not read the role', err.message);
+  }
+
+  // ROLE 1 AND NOTHING ELSE. Not >= 1, not truthy — a role column that grows a
+  // third value later must not silently hand that value an unmetered account.
+  return { id: user.id, email: user.email || '', isAdmin: role === 1 };
+}
+
+function requireUser(user) {
+  if (!user) { const e = new Error('Not signed in'); e.status = 401; throw e; }
+  return user;
 }
 
 const uuid = (v) => (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -237,15 +296,25 @@ async function totalsOf(userId, sub) {
   return { area: Number(r?.area) || 0, passes: Number(r?.passes) || 0 };
 }
 
-async function balanceOf(userId) {
-  const sub = await subscriptionOf(userId);
-  const totals = await totalsOf(userId, sub);
-  return { sub, balance: balanceFromTotals(sub, totals) };
+async function balanceOf(user) {
+  // TAKES THE USER OBJECT AND NOT AN ID, so that `isAdmin` cannot be forgotten at
+  // a call site. It was an id; every caller then had to remember to pass a second
+  // argument, and the one that forgot would silently meter an admin.
+  const id = typeof user === 'string' ? user : user.id;
+  const isAdmin = typeof user === 'string' ? false : !!user.isAdmin;
+  const sub = await subscriptionOf(id);
+  const totals = await totalsOf(id, sub);
+  return { sub, balance: balanceFromTotals(sub, totals, { isAdmin }) };
 }
 
 /** The shape the browser gets. Never the provider ids — it has no use for them. */
 const publicState = (sub, balance) => ({
   tier: balance.tier.slug,
+  // NULL ALLOWANCES TRAVEL AS NULL AND THE FLAG IS WHAT THE UI READS. Infinity
+  // does not survive JSON.stringify — it becomes null — so an unlimited balance
+  // that relied on the number would arrive as "no allowance at all", which is the
+  // exact opposite of what it means.
+  unlimited: !!balance.unlimited,
   status: sub?.status ?? 'inactive',
   mode: sub?.mode ?? null,
   cancelAtPeriodEnd: !!sub?.cancel_at_period_end,
@@ -263,7 +332,7 @@ const publicState = (sub, balance) => ({
 
 /** GET-shaped: what am I on, and what is left. */
 async function stateAction(user) {
-  const { sub, balance } = await balanceOf(user.id);
+  const { sub, balance } = await balanceOf(user);
   return { state: publicState(sub, balance) };
 }
 
@@ -292,9 +361,16 @@ async function checkoutAction(user, body) {
   }
 
   const name = String(body.name || '').trim().slice(0, 120);
-  const email = String(body.email || user.email || '').trim().slice(0, 200);
+  // THE ACCOUNT'S ADDRESS, NOT THE TYPED ONE. Somebody who types a different
+  // address in the form is not buying for that address — they are buying for the
+  // account they are sitting in, and the receipt should say so. The form field is
+  // read-only for the same reason (see CheckoutDialog).
+  const email = normaliseEmail(user.email || body.email).slice(0, 200);
   const contact = String(body.contact || '').replace(/[^\d+]/g, '').slice(0, 20);
-  const notes = { owner: user.id, tier: slug, app: 'super-luminal' };
+
+  // WRITTEN SERVER-SIDE AND NEVER TOUCHED BY THE BROWSER, which is the entire
+  // reason verifyAction is allowed to believe them.
+  const notes = { owner: user.id, tier: slug, email, app: 'super-luminal' };
 
   if (RZP_MODE === 'subscription') {
     const planId = PLAN_IDS[slug];
@@ -486,23 +562,48 @@ async function verifyAction(user, body) {
   // OUR OWN NOTES, WRITTEN SERVER-SIDE AT CHECKOUT. The browser never sees them
   // and cannot set them, which is what makes them worth reading.
   const paidOwner = String(notes?.owner || '');
-  const paidTier = String(notes?.tier || '');
-  const tier = TIER[paidTier];
+  const paidEmail = normaliseEmail(notes?.email);
+  // SELLABLE ONLY, not the full TIER map — which now contains the unmetered admin
+  // tier. `usd <= 0` below already refused it, but relying on the price to keep
+  // an entitlement out is relying on the wrong property; the webhook made exactly
+  // that mistake with the full map and it was worth ten dollars. See SELLABLE in
+  // src/lib/plans.js.
+  const tier = sellableTier(notes?.tier);
 
   if (!tier || tier.usd <= 0) {
-    console.warn('[billing] no usable tier on the gateway object', { paymentId, paidTier });
+    console.warn('[billing] no usable tier on the gateway object', { paymentId, notes });
     const e = new Error('This payment is not for a known plan'); e.status = 400; throw e;
   }
-  // THE PAYMENT MUST BE THIS USER'S. Not the email on the card — that is a string
-  // somebody typed on a checkout form, and matching on it would let anyone attach
-  // their payment to another account by typing that address.
-  if (paidOwner !== user.id) {
-    console.warn('[billing] payment belongs to another account', { paymentId, paidOwner });
-    const e = new Error('This payment belongs to a different account'); e.status = 403; throw e;
+
+  // ------------------------------------------------------------------------
+  // WHOSE PAYMENT IS THIS. Two checks, and both are against the gateway's own
+  // record rather than the request body.
+  //
+  // `notes.owner` is written server-side in checkoutAction and is the primary
+  // answer. The email is a second, weaker one, and it is here only for the case
+  // where the notes predate that field — it must match the CALLER'S OWN verified
+  // address, so it can never be used to point a payment at somebody else.
+  //
+  // ANYTHING ELSE IS A REFUSAL, NOT A GUESS. A payment we cannot attribute to the
+  // person asking is somebody else's money.
+  // ------------------------------------------------------------------------
+  const mine = paidOwner
+    ? paidOwner === user.id
+    : (!!paidEmail && paidEmail === normaliseEmail(user.email));
+
+  if (!mine) {
+    console.warn('[billing] payment does not belong to the caller',
+      { paymentId, paidOwner: paidOwner || null });
+    const e = new Error('This payment belongs to a different account');
+    e.status = 403; throw e;
   }
+
   // AND IT MUST BE FOR THE RIGHT MONEY. Order mode can be checked exactly;
   // subscription mode is checked through the plan id, which is what carries the
-  // price at the gateway.
+  // price at the gateway. Without this, a Starter payment re-posted with
+  // `tier: 'pro'` would still have been refused — the tier now comes from the
+  // notes, not the body — but a plan whose price was changed in the dashboard
+  // would silently sell the wrong thing.
   const expected = amountMinor(tier.slug);
   if (mode === 'order' && expected && amount !== expected) {
     console.warn('[billing] amount does not match the tier', { paymentId, amount, expected });
@@ -527,7 +628,7 @@ async function verifyAction(user, body) {
   // A user re-posting last month's triple therefore gets a 409 instead of a
   // renewed period, and two tabs verifying the same payment settle it between
   // themselves.
-  const burned = await rest('payments', {
+  const burned = await rest(`payments?on_conflict=${ON_CONFLICT.payments}`, {
     method: 'POST', prefer: 'resolution=ignore-duplicates,return=representation',
     body: [{
       owner: user.id, provider: 'razorpay',
@@ -539,34 +640,34 @@ async function verifyAction(user, body) {
     }],
   });
   if (!Array.isArray(burned) || !burned.length) {
-    // NOT AN ERROR TO THE USER IF THEY ARE ALREADY ON IT. The commonest way to
-    // land here is a double-submitted handler, and telling somebody who is on Pro
-    // that their payment was rejected is worse than saying nothing.
-    const { sub, balance } = await balanceOf(user.id);
+    // ALREADY SEEN. The commonest way to land here is a double-submitted handler
+    // or the webhook having beaten us to it, so it is only an error if the payment
+    // has not in fact been honoured — telling somebody who is already on Pro that
+    // their payment was rejected is worse than saying nothing.
+    const { sub, balance } = await balanceOf(user);
     if (balance.tier.slug === tier.slug) return { state: publicState(sub, balance) };
     const e = new Error('That payment has already been used'); e.status = 409; throw e;
   }
 
+  const row = {
+    tier: tier.slug,
+    provider: 'razorpay',
+    provider_subscription_id: subId || null,
+    provider_plan_id: mode === 'subscription' ? planId : null,
+    mode,
+    currency: CURRENCY,
+    amount_minor: expected,
+    current_period_start: start.toISOString(),
+    current_period_end: end.toISOString(),
+  };
+
   await rest('subscriptions', {
     method: 'POST',
     prefer: 'resolution=merge-duplicates,return=representation',
-    body: [{
-      owner: user.id,
-      tier: tier.slug,
-      status,
-      provider: 'razorpay',
-      provider_subscription_id: subId || null,
-      provider_plan_id: mode === 'subscription' ? planId : null,
-      mode,
-      currency: CURRENCY,
-      amount_minor: expected,
-      current_period_start: start.toISOString(),
-      current_period_end: end.toISOString(),
-      cancel_at_period_end: false,
-    }],
+    body: [{ owner: user.id, status, cancel_at_period_end: false, ...row }],
   });
 
-  const { sub, balance } = await balanceOf(user.id);
+  const { sub, balance } = await balanceOf(user);
   return { state: publicState(sub, balance) };
 }
 
@@ -600,7 +701,7 @@ async function consumeAction(user, body) {
     planStats = rows[0].stats ?? null;
   }
 
-  const { sub, balance } = await balanceOf(user.id);
+  const { sub, balance } = await balanceOf(user);
 
   if (kind === 'render_pass') {
     const fingerprint = String(body.fingerprint || '').slice(0, 64);
@@ -622,11 +723,12 @@ async function consumeAction(user, body) {
     const verdict = canSpend(balance, { passes: 1 });
     if (!verdict.ok) return { ok: false, ...verdict, state: publicState(sub, balance) };
 
-    await rest('usage_events', { method: 'POST', prefer: 'resolution=ignore-duplicates',
+    await rest(`usage_events?on_conflict=${ON_CONFLICT.usage_events}`,
+      { method: 'POST', prefer: 'resolution=ignore-duplicates',
       body: [{ owner: user.id, plan_id: planId, kind: 'render_pass', units: 1,
                fingerprint, note: String(body.note || '').slice(0, 200) || null }] });
 
-    const after = await balanceOf(user.id);
+    const after = await balanceOf(user);
     return { ok: true, charged: { passes: 1 }, state: publicState(after.sub, after.balance) };
   }
 
@@ -685,7 +787,8 @@ async function consumeAction(user, body) {
     return { ok: false, ...verdict, spaces: fresh.length, state: publicState(sub, balance) };
   }
 
-  await rest('usage_events', { method: 'POST', prefer: 'resolution=ignore-duplicates',
+  await rest(`usage_events?on_conflict=${ON_CONFLICT.usage_events}`,
+      { method: 'POST', prefer: 'resolution=ignore-duplicates',
     body: fresh.map((c) => ({
       owner: user.id, plan_id: planId, kind: 'layout',
       area_sqft: c.sqft, claimed_sqft: c.sqft, units: 1,
@@ -696,7 +799,7 @@ async function consumeAction(user, body) {
       note: c.outlineId ? `space ${c.outlineId}` : null,
     })) });
 
-  const after = await balanceOf(user.id);
+  const after = await balanceOf(user);
   if (planStats?.areaSqft && total > planStats.areaSqft * 4) {
     // Not a refusal — a plan legitimately grows between saves — but a ratio this
     // far out is worth a line in the log, because the alternative reading is a
@@ -750,15 +853,17 @@ async function releaseAction(user, body) {
     + `&fingerprint=eq.${enc(fingerprint)}&units=eq.1`
     + `&created_at=gte.${enc(cutoff)}&select=id,plan_id&limit=1`);
   if (!charge.length) {
-    const balance = balanceFromTotals(sub, await totalsOf(user.id, sub));
+    const balance = balanceFromTotals(sub, await totalsOf(user.id, sub),
+                                      { isAdmin: !!user.isAdmin });
     return { ok: false, reason: 'nothing-to-release', state: publicState(sub, balance) };
   }
 
-  await rest('usage_events', { method: 'POST', prefer: 'resolution=ignore-duplicates',
+  await rest(`usage_events?on_conflict=${ON_CONFLICT.usage_events}`,
+      { method: 'POST', prefer: 'resolution=ignore-duplicates',
     body: [{ owner: user.id, plan_id: charge[0].plan_id, kind: 'render_pass', units: -1,
              fingerprint: `${fingerprint}:rev`, note: 'render pass failed' }] });
 
-  const after = await balanceOf(user.id);
+  const after = await balanceOf(user);
   return { ok: true, state: publicState(after.sub, after.balance) };
 }
 
@@ -786,12 +891,21 @@ async function cancelAction(user) {
   await rest(`subscriptions?owner=eq.${enc(user.id)}`, {
     method: 'PATCH', body: { cancel_at_period_end: true } });
 
-  const after = await balanceOf(user.id);
+  const after = await balanceOf(user);
   return { state: publicState(after.sub, after.balance) };
 }
 
 // ---------------------------------------------------------------------------
 
+/**
+ * THE SIX ACTIONS. EVERY ONE OF THEM NEEDS A SESSION.
+ *
+ * `requireUser` is applied once, by the handler below, rather than at the top of
+ * each of these — so a seventh action added later is protected by default instead
+ * of by whoever remembers. There was briefly an `anon: true` flag here for a
+ * buy-before-you-sign-in flow; it is gone, and with it the table of exceptions
+ * that made this list something to read carefully rather than at a glance.
+ */
 const ACTIONS = {
   state: (user) => stateAction(user),
   checkout: (user, body) => checkoutAction(user, body),
@@ -821,7 +935,7 @@ export default async function handler(req, res) {
     const run = ACTIONS[String(body.action || '')];
     if (!run) return send(400, { error: 'Unknown action' });
 
-    const user = await requireUser(req);
+    const user = requireUser(await resolveUser(req));
     const out = await run(user, body);
     return send(200, { ...out, tiers: TIERS.map((t) => t.slug), mode: RZP_MODE });
   } catch (err) {

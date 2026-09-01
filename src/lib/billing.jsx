@@ -27,6 +27,7 @@ const Ctx = createContext(null);
 /** The shape before the server has answered — free, and nothing spent. */
 const BLANK = {
   tier: 'free', status: 'inactive', mode: null, cancelAtPeriodEnd: false,
+  unlimited: false,
   currency: 'USD', periodStart: null, periodEnd: null, lifetime: true,
   area: { allowed: FREE.area, used: 0, left: FREE.area },
   passes: { allowed: FREE.renderPasses, used: 0, left: FREE.renderPasses },
@@ -39,6 +40,8 @@ async function authHeader() {
   if (!supabase) throw new Error('Supabase is not configured — see .env.example');
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token;
+  // EVERY ACTION NEEDS ONE, so failing here rather than letting the server answer
+  // 401 turns "Billing failed (401)" into a sentence somebody can act on.
   if (!token) throw new Error('Not signed in');
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
@@ -264,6 +267,13 @@ export function BillingProvider({ children }) {
     ready, err, state,
     tier: TIER[state.tier] ?? FREE,
     paid: state.tier !== 'free',
+    // ROLE 1, AS THE SERVER SEES IT. `useAuth().isAdmin` is the same fact read
+    // from a row the browser fetched, and it decides whether a link appears in
+    // the rail; this one has been through api/billing.js, which read
+    // `profiles.role` with the service key, and it is what decides whether
+    // anything is metered. Two sources for one fact, with the trustworthy one
+    // used for the decision that costs money.
+    unlimited: !!state.unlimited,
     refresh, claimLayout, claimPass, releasePass, checkout, cancel,
   }), [ready, err, state, refresh, claimLayout, claimPass, releasePass, checkout, cancel]);
 

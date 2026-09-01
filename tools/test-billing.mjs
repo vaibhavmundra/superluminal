@@ -28,9 +28,9 @@ process.env.RZP_SECRET = 'test_secret_do_not_use';
 process.env.RZP_KEY = 'rzp_test_key';
 process.env.RZP_CURRENCY = 'USD';
 
-const { TIER, TIERS, tierOf, windowStart, usageFrom, balanceFrom, balanceFromTotals,
+const { TIER, TIERS, ADMIN, tierOf, sellableTier, windowStart, usageFrom, balanceFrom, balanceFromTotals,
         canSpend, fingerprintOutline, fingerprintPass, hash64, fmtSqft, fmtAllowance,
-        MAX_CLAIM_SQFT, MIN_CLAIM_SQFT } = await import('../src/lib/plans.js');
+        normaliseEmail, MAX_CLAIM_SQFT, MIN_CLAIM_SQFT } = await import('../src/lib/plans.js');
 const { __test: bill } = await import('../api/billing.js');
 const { __test: hook } = await import('../api/razorpay-webhook.js');
 const { createHmac } = await import('node:crypto');
@@ -117,6 +117,21 @@ section('which tier a row means');
 
   ok('a tier this build has never heard of is free',
     tierOf(subAt({ tier: 'platinum-hyperscale' })).slug === 'free');
+
+  // THE ESCALATION, AS A TEST. `subscriptions.tier` is plain text with no CHECK,
+  // and adding the unmetered admin tier to `TIER` briefly made 'admin' a value
+  // the Razorpay webhook would accept out of a payment's notes — which the
+  // browser sets. Ten dollars for unlimited. Both stops are asserted: a row that
+  // says 'admin' pays out nothing, and 'admin' is not a sellable tier string.
+  ok('a subscription row claiming to be admin is free',
+    tierOf(subAt({ tier: 'admin' })).slug === 'free');
+  ok('...and unmetered with it', !tierOf(subAt({ tier: 'admin' })).unlimited);
+  ok('admin is not sellable', sellableTier('admin') === null);
+  ok('nor is anything invented', sellableTier('platinum') === null);
+  ok('but the real tiers are',
+    ['free', 'starter', 'pro'].every((t) => sellableTier(t)?.slug === t));
+  ok('a null or absent tier string is not sellable',
+    sellableTier(null) === null && sellableTier(undefined) === null);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +221,79 @@ section('may this be lit');
   ok('but not twenty-one', canSpend(pro, { passes: 21 }).ok === false);
 
   ok('asking for nothing is allowed', canSpend(b, {}).ok);
+}
+
+// ---------------------------------------------------------------------------
+section('role 1 is unmetered');
+{
+  // NOT ON THE PRICE LIST. `TIERS` is what the pricing page maps over and what
+  // the plan-creation script creates Razorpay plans for; an unsellable tier in
+  // there would become a fourth card and a fourth plan.
+  ok('admin is not in TIERS', !TIERS.some((t) => t.slug === 'admin'));
+  ok('but is reachable by slug', TIER.admin === ADMIN);
+  ok('and is flagged unlimited', ADMIN.unlimited === true);
+
+  const spent = { area: 480000, passes: 300 };
+  const b = balanceFromTotals(null, spent, { isAdmin: true });
+
+  ok('the tier is admin whatever the row says', b.tier.slug === 'admin');
+  ok('an admin with no subscription row at all is still unmetered',
+    balanceFromTotals(null, spent, { isAdmin: true }).unlimited === true);
+  ok('...and so is one whose subscription lapsed',
+    balanceFromTotals(subAt({ status: 'halted', current_period_end: iso(now - DAY) }),
+      spent, { isAdmin: true }).tier.slug === 'admin');
+
+  // THE ALLOWANCES TRAVEL AS NULL. Infinity does not survive JSON.stringify — it
+  // becomes null — so anything that relied on the number would arrive meaning the
+  // exact opposite. Null is the value, deliberately, on both sides.
+  ok('the allowance is null, not Infinity', b.area.allowed === null && b.passes.allowed === null);
+  ok('and so is what is left', b.area.left === null && b.passes.left === null);
+  ok('null survives a JSON round trip',
+    JSON.parse(JSON.stringify(b)).area.left === null);
+  ok('Infinity would not have',
+    JSON.parse(JSON.stringify({ x: Infinity })).x === null);
+
+  // USAGE IS STILL COUNTED. An unmetered account is not an unrecorded one — the
+  // ledger is how the cost of the models is read back.
+  ok('spend is still reported', b.used.area === 480000 && b.used.passes === 300);
+
+  ok('nothing is refused', canSpend(b, { area: 9e9 }).ok);
+  ok('not even a million render passes', canSpend(b, { passes: 1000000 }).ok);
+  ok('and the short-circuit is explicit, not an accident of null comparison',
+    canSpend(b, { area: 1 }).ok && b.area.left === null);
+
+  // AND A NON-ADMIN IS UNAFFECTED, which is the assertion that would catch the
+  // flag being defaulted the wrong way round.
+  const normal = balanceFromTotals(null, { area: 2900, passes: 0 });
+  ok('a normal user is still metered', normal.unlimited === false);
+  ok('and still refused', canSpend(normal, { area: 500 }).ok === false);
+  ok('the flag defaults to off', balanceFromTotals(null, spent).tier.slug === 'free');
+  ok('and off is off even when explicitly false',
+    balanceFromTotals(null, spent, { isAdmin: false }).unlimited === false);
+
+  ok('an unlimited allowance formats as a word', fmtAllowance(ADMIN) === 'Unlimited');
+  ok('and null square feet do too', fmtSqft(null) === 'Unlimited');
+  ok('only null, though — undefined is a missing number', fmtSqft(undefined) === '0 sq ft');
+  ok('...with the wording overridable', fmtSqft(null, 'No limit') === 'No limit');
+  // THE ONE THING THAT MUST NOT REGRESS: zero is still zero. fmtSqft used to
+  // return "0 sq ft" for null, and the fix must not have made a genuinely empty
+  // balance read as unlimited.
+  ok('but zero is still zero, not unlimited', fmtSqft(0) === '0 sq ft');
+}
+
+// ---------------------------------------------------------------------------
+section('one mailbox, one spelling');
+{
+  // The address on a Razorpay order is compared against the account's own in
+  // verifyAction, so a comparison that misses on case or a trailing space is a
+  // payment refused as belonging to somebody else.
+  ok('lower-cased', normaliseEmail('Savitri@Studio.com') === 'savitri@studio.com');
+  ok('trimmed', normaliseEmail('  a@b.co  ') === 'a@b.co');
+  ok('both at once', normaliseEmail('  SAVITRI@Studio.COM ') === 'savitri@studio.com');
+  ok('null is an empty string, not "null"', normaliseEmail(null) === '');
+  ok('undefined too', normaliseEmail(undefined) === '');
+  ok('and it is idempotent',
+    normaliseEmail(normaliseEmail(' X@Y.Z ')) === normaliseEmail(' X@Y.Z '));
 }
 
 // ---------------------------------------------------------------------------
@@ -366,7 +454,14 @@ section('bounds and formatting');
     bill.RELEASE_WINDOW_MS > 60000 && bill.RELEASE_WINDOW_MS < 24 * 3600 * 1000);
   ok('sqft is grouped', fmtSqft(10000).includes('10,000'));
   ok('and rounded', fmtSqft(1234.7) === fmtSqft(1235));
-  ok('nothing is 0, not NaN', fmtSqft(null) === '0 sq ft');
+  // NULL IS NOW "UNLIMITED" RATHER THAN ZERO — see the role-1 section. NaN and
+  // undefined must still read as zero, because those are a missing number rather
+  // than an absent limit, and the two must not be conflated.
+  ok('NaN is 0, not NaN', fmtSqft(NaN) === '0 sq ft');
+  // UNDEFINED IS ZERO, NOT UNLIMITED, and the asymmetry is deliberate: a missing
+  // field must never be read as "no limit", because that is a promise the server
+  // will refuse to keep on the very next claim.
+  ok('undefined is 0, not unlimited', fmtSqft(undefined) === '0 sq ft');
   ok('an allowance names both meters',
     fmtAllowance(TIER.pro).includes('50,000') && fmtAllowance(TIER.pro).includes('20 render'));
   ok('free mentions no passes it does not have',

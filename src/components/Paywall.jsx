@@ -54,7 +54,7 @@ export default function Paywall({ refusal, onClose }) {
     return (
       <CheckoutDialog
         tier={TIER[picked]}
-        defaults={{ email: user?.email || '' }}
+        defaults={{ email: user?.email || '', signedIn: !!user }}
         busy={busy}
         error={err}
         onCancel={() => { if (!busy) { setPicked(null); setErr(''); } }}

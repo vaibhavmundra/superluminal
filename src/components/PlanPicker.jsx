@@ -20,11 +20,11 @@ import { TIERS, fmtSqft } from '../lib/plans.js';
 // ---------------------------------------------------------------------------
 
 export default function PlanPicker({ current = 'free', busyTier = null, compact = false,
-                                     onChoose, need = null }) {
+                                     onChoose, need = null, unlimited = false }) {
   return (
     <div className={'plan-grid' + (compact ? ' compact' : '')}>
       {TIERS.map((t) => {
-        const isCurrent = t.slug === current;
+        const isCurrent = !unlimited && t.slug === current;
         // THE TIER THAT ACTUALLY SOLVES THE PROBLEM IN FRONT OF THEM. When the
         // paywall opens because a 12,000 sq ft floor would not fit, the useful
         // recommendation is Pro and not "the popular one" — so the highlight is
@@ -37,8 +37,14 @@ export default function PlanPicker({ current = 'free', busyTier = null, compact 
         return (
           <article key={t.slug}
             className={'plan-card' + (featured ? ' featured' : '') + (isCurrent ? ' current' : '')}>
-            {featured && <span className="plan-flag">{need != null ? 'Fits this plan' : 'Most chosen'}</span>}
-            {isCurrent && <span className="plan-flag now">Your plan</span>}
+            {/* AN UNMETERED ACCOUNT IS NOT "ON" ANY OF THESE, so none of them is
+                flagged as current and none of them is offered — a role-1 login
+                staring at a "Choose Pro" button would be being sold something it
+                already has more of. The cards stay visible because this is also
+                the page an operator opens to check what customers see. */}
+            {!unlimited && featured
+              && <span className="plan-flag">{need != null ? 'Fits this plan' : 'Most chosen'}</span>}
+            {!unlimited && isCurrent && <span className="plan-flag now">Your plan</span>}
 
             <h3>{t.name}</h3>
             <div className="plan-price">
@@ -55,17 +61,17 @@ export default function PlanPicker({ current = 'free', busyTier = null, compact 
               {t.lines.map((l) => <li key={l}>{l}</li>)}
             </ul>
 
-            {t.usd === 0 ? (
-              <button className="btn" disabled>
-                {isCurrent ? 'Included' : 'Included'}
-              </button>
+            {unlimited ? (
+              <button className="btn" disabled>Unmetered on your account</button>
+            ) : t.usd === 0 ? (
+              <button className="btn" disabled>Included</button>
             ) : (
               <button className={'btn' + (featured ? ' primary' : '')}
                 disabled={isCurrent || busyTier === t.slug}
                 onClick={() => onChoose?.(t.slug)}>
                 {isCurrent ? 'Current plan'
                   : busyTier === t.slug ? 'Opening…'
-                  : need != null && !covers ? `Not enough for this plan`
+                  : need != null && !covers ? 'Not enough for this plan'
                   : `Choose ${t.name}`}
               </button>
             )}

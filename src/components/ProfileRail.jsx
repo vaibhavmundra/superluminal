@@ -119,7 +119,9 @@ export default function ProfileRail() {
                   they work. Here it is one click away, next to the name it
                   belongs to, and only when somebody went looking. */}
               <span className="rail-meter">
-                {tier.name} · {fmtSqft(state.area.left)} left
+                {state.unlimited
+                  ? `${tier.name} · unmetered`
+                  : `${tier.name} · ${fmtSqft(state.area.left)} left`}
               </span>
             </div>
             <button role="menuitem" onClick={() => { setOpen(false); nav('/dashboard'); }}>

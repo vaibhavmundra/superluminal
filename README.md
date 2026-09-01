@@ -6189,3 +6189,54 @@ shape a serious mistake eventually takes.
 2. `node tools/razorpay-plans.mjs` — or paste plan ids created in the dashboard;
    both `RZP_PLAN_<TIER>` and `RZP_<TIER>_PLAN` are read.
 3. Add the webhook and `RZP_WEBHOOK_SECRET`. **Nothing renews without it.**
+
+## Role 1 is unmetered
+
+Role 1 is an owner of this app rather than a customer of it (see `auth.jsx`), and
+metering the people tuning the models is metering ourselves: every plan an admin
+opens is a test, every render pass is a prompt being adjusted, and a 3,000 sq ft
+ceiling on that work means whoever is debugging the accent pass runs out of
+allowance on a Tuesday.
+
+`ADMIN` in `plans.js` carries `unlimited: true` and is **deliberately absent from
+`TIERS`** — that list is the price list, so an unsellable tier in it would appear
+as a fourth card and have a Razorpay plan created for it.
+
+**The role is read from the database with the service key**, in `resolveUser`,
+exactly the way `api/admin.js` does it and for the reasons documented there. Never
+from a JWT claim, which is as old as the session, and never from
+`useAuth().isAdmin`, which is a UI convenience anybody can set in a console.
+Unmetered is a *spending* decision, so it is established in the only place it can
+be trusted. Role `1` and nothing else — a column that grows a third value later
+must not silently hand it an unmetered account.
+
+**The allowances travel as `null`, not `Infinity`.** Infinity does not survive
+`JSON.stringify` — it becomes null — so anything relying on the number would
+arrive meaning the exact opposite. `canSpend` short-circuits on the flag before
+either value is read, stated as a rule rather than left to work by accident on
+`null < 500`. And `fmtSqft` treats **only** `null` as unlimited: `undefined` is a
+missing number and reads as zero, because the failure directions are not
+symmetrical — an unlimited account shown a number is cosmetic, a metered account
+shown "Unlimited" is a promise the server will refuse to keep.
+
+**Usage is still recorded.** An unmetered account is not an unrecorded one; the
+ledger is how the cost of the models is read back.
+
+## The home page lost its prices, and its headline grew
+
+There was a band of tiers under the drop target. It was one thing too many on a
+page with one job. The argument for it was that people ask "what does this cost"
+on the way out; the argument against is stronger — the answer is *free for the
+first three thousand square feet*, and a row of dollar amounts under the upload
+button invites a visitor to price the tool before they have watched it light a
+room. The first 3,000 sq ft are the sales pitch. The prices are one word away in
+the header.
+
+And the headline was 34px on every phone in existence. `clamp(34px, 4.4vw, 58px)`
+sounds responsive and is not: 4.4vw of a 390px screen is 17px, so the viewport
+term never won and every phone sat on the floor — a headline reading as body copy
+at the top of a page whose whole job is that one sentence. The mobile query sets
+its own scale (`clamp(40px, 11.5vw, 52px)` — about 45px on a typical phone, 40px
+on a 320px SE, which is the widest "lighting" can be set before the longest word
+stops fitting on one line) rather than widening the desktop clamp, because a
+single clamp that is bold on a phone is absurd on a 27-inch display.

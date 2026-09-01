@@ -100,8 +100,68 @@ export const TIERS = [
   },
 ];
 
-/** By slug, because every caller has a slug and nobody wants to write `.find`. */
-export const TIER = Object.fromEntries(TIERS.map((t) => [t.slug, t]));
+/**
+ * THE OPERATOR'S OWN TIER, AND IT IS NOT IN `TIERS`.
+ *
+ * Role 1 is an owner of this app rather than a customer of it (see the note in
+ * src/lib/auth.jsx), and metering the people tuning the models is metering
+ * ourselves: every plan an admin opens is a test, every render pass is a prompt
+ * being adjusted, and a 3,000 sq ft ceiling on that work means the person
+ * debugging the accent pass runs out of allowance on a Tuesday.
+ *
+ * DELIBERATELY ABSENT FROM `TIERS`, because `TIERS` is the price list — it is
+ * what the pricing page maps over and what the plan-creation script creates
+ * plans for. An unsellable tier in there would appear as a fourth card with no
+ * price and would have a Razorpay plan created for it.
+ *
+ * `unlimited: true` IS THE FLAG THAT MATTERS and `area: Infinity` is only there
+ * so that any arithmetic which reaches for it gets the right answer. Infinity
+ * does not survive JSON — it serialises as null — so nothing on the wire ever
+ * carries it: `publicState` sends `unlimited` and a null allowance, and the UI
+ * prints a word instead of a number. See canSpend, which short-circuits before
+ * either is read.
+ */
+export const ADMIN = {
+  slug: 'admin',
+  name: 'Admin',
+  blurb: 'Unmetered. Role 1 is an owner of this app, not a customer of it.',
+  usd: 0,
+  lifetime: false,
+  unlimited: true,
+  area: Infinity,
+  renderPasses: Infinity,
+  lines: ['Every feature', 'No area limit', 'No render-pass limit'],
+};
+
+/**
+ * TWO LOOKUPS, AND CONFUSING THEM WAS A PRIVILEGE ESCALATION.
+ *
+ * `TIER` includes the admin tier because the UI has to be able to name it — the
+ * profile menu prints "Admin · unmetered". `SELLABLE` does not, and it is the one
+ * every writer must validate against.
+ *
+ * ADDING ADMIN TO `TIER` MADE 'admin' A LIVE KEY, and the webhook was validating
+ * an incoming tier string with `TIER[x] ? x : null` — out of the PAYMENT entity's
+ * `notes`, which is set by the browser at Razorpay's checkout (this app sets one
+ * itself, in billing.jsx). So the sequence was: patch the client to send
+ * `notes: { tier: 'admin' }`, pay ten dollars for Starter, and the webhook wrote
+ * `admin` into `subscriptions.tier` — a text column with no CHECK — where `tierOf`
+ * read it back as unmetered. Ten dollars for unlimited, with `profiles.role` never
+ * consulted.
+ *
+ * So: `SELLABLE` for anything arriving from outside, and `tierOf` below reads it
+ * too, so that even a row already carrying 'admin' degrades to free. Two
+ * independent stops, because the first one is one forgotten call site away from
+ * being no stop at all.
+ */
+export const TIER = Object.fromEntries([...TIERS, ADMIN].map((t) => [t.slug, t]));
+export const SELLABLE = Object.fromEntries(TIERS.map((t) => [t.slug, t]));
+
+/**
+ * A TIER STRING FROM OUTSIDE, OR NULL. The only way a webhook payload, a
+ * gateway note or a stored row should ever become a tier.
+ */
+export const sellableTier = (slug) => SELLABLE[String(slug ?? '')] ?? null;
 
 export const FREE = TIER.free;
 export const PAID = TIERS.filter((t) => t.usd > 0);
@@ -152,7 +212,12 @@ export function tierOf(sub) {
   // half-written record as a receipt.
   if (!sub.current_period_end) return FREE;
   if (Date.parse(sub.current_period_end) < Date.now()) return FREE;
-  return TIER[sub.tier] ?? FREE;
+  // SELLABLE, NOT TIER. `admin` is unmetered and is NOT something a subscription
+  // row may claim to be — it comes from `profiles.role`, read server-side, and
+  // from nowhere else. A row that says 'admin' is a row somebody got in through a
+  // writer that forgot to validate, and it degrades to free here rather than
+  // paying out. Same for any tier this build has never heard of.
+  return sellableTier(sub.tier) ?? FREE;
 }
 
 /**
@@ -201,8 +266,8 @@ export function usageFrom(sub, events = []) {
   return { area: Math.max(0, area), passes: Math.max(0, passes) };
 }
 
-export function balanceFrom(sub, events = []) {
-  return balanceFromTotals(sub, usageFrom(sub, events));
+export function balanceFrom(sub, events = [], opts = {}) {
+  return balanceFromTotals(sub, usageFrom(sub, events), opts);
 }
 
 /**
@@ -221,13 +286,41 @@ export function balanceFrom(sub, events = []) {
  * `balanceFrom` with that total handed in, so the two cannot disagree about what
  * a total MEANS.
  */
-export function balanceFromTotals(sub, totals = { area: 0, passes: 0 }) {
-  const tier = tierOf(sub);
+export function balanceFromTotals(sub, totals = { area: 0, passes: 0 }, opts = {}) {
+  // ADMIN OVERRIDES THE ROW, AND IT IS PASSED IN RATHER THAN READ FROM THE SUB.
+  //
+  // `isAdmin` comes from `profiles.role`, which lives on a different table from
+  // `subscriptions` and — this is the part that matters — is read SERVER-SIDE
+  // WITH THE SERVICE KEY in api/billing.js, exactly as api/admin.js reads it.
+  // Never from a JWT claim, never from `useAuth().isAdmin`, which is a UI
+  // convenience anybody can set in a console. This function is pure and simply
+  // takes the answer; the one place that answer is established is the one place
+  // it can be trusted.
+  const tier = opts.isAdmin ? ADMIN : tierOf(sub);
   const used = { area: Math.max(0, Number(totals.area) || 0),
                  passes: Math.max(0, Number(totals.passes) || 0) };
+
+  // NULL, NOT Infinity, AND NOT A BIG NUMBER. Null survives JSON, reads as "no
+  // limit" to anything that formats it, and cannot be accidentally compared as
+  // though it were a quantity — where a sentinel like MAX_SAFE_INTEGER would
+  // quietly render as "9,007,199,254,740,991 sq ft left" the first time somebody
+  // forgot to check the flag.
+  if (tier.unlimited) {
+    return {
+      tier,
+      used,
+      unlimited: true,
+      area: { allowed: null, used: used.area, left: null },
+      passes: { allowed: null, used: used.passes, left: null },
+      periodEnd: null,
+      lifetime: false,
+    };
+  }
+
   return {
     tier,
     used,
+    unlimited: false,
     area: { allowed: tier.area, used: used.area, left: Math.max(0, tier.area - used.area) },
     passes: { allowed: tier.renderPasses, used: used.passes,
               left: Math.max(0, tier.renderPasses - used.passes) },
@@ -245,6 +338,10 @@ export function balanceFromTotals(sub, totals = { area: 0, passes: 0 }) {
  * worse than a clear "you need 1,600 more".
  */
 export function canSpend(balance, { area = 0, passes = 0 } = {}) {
+  // BEFORE ANYTHING IS COMPARED. An unlimited balance carries null allowances, and
+  // `null < 500` is false in JavaScript — so this would happen to work by
+  // accident, which is the worst reason for it to work. Stated, it is a rule.
+  if (balance.unlimited) return { ok: true };
   if (area > 0 && balance.area.left < area) {
     return { ok: false, reason: 'area', need: Math.ceil(area - balance.area.left),
              want: Math.ceil(area), left: Math.floor(balance.area.left) };
@@ -316,12 +413,26 @@ export function fingerprintPass({ planId, roomId, runId }) {
 // number is how a page ends up saying 9,999 in one place and 10k in another.
 // ---------------------------------------------------------------------------
 
-export const fmtSqft = (n) => `${Math.round(Number(n) || 0).toLocaleString('en-IN')} sq ft`;
+/**
+ * NULL IS "UNLIMITED", NOT ZERO — and the distinction is the whole reason this
+ * takes a second argument. An admin's remaining balance is null, and a screen
+ * that printed "0 sq ft left" for the one account that can never run out would be
+ * the most confusing possible reading of it.
+ *
+ * STRICTLY `=== null`, AND NOT `== null`. Undefined is a MISSING number — a field
+ * that was not sent, a shape that changed — and it must read as zero, because the
+ * failure directions are not symmetrical: an unlimited account shown a number is
+ * a cosmetic bug, and a metered account shown "Unlimited" is a promise the server
+ * will refuse to keep on the next claim.
+ */
+export const fmtSqft = (n, unlimited = 'Unlimited') => (n === null ? unlimited
+  : `${Math.round(Number(n) || 0).toLocaleString('en-IN')} sq ft`);
 
 export const fmtUsd = (n) => (Number(n) === 0 ? 'Free' : `$${Number(n)}`);
 
 /** "10,000 sq ft · 5 render passes" — the one-line shape of an allowance. */
 export function fmtAllowance(tier) {
+  if (tier.unlimited) return 'Unlimited';
   const bits = [fmtSqft(tier.area)];
   if (tier.renderPasses) bits.push(`${tier.renderPasses} render pass${tier.renderPasses === 1 ? '' : 'es'}`);
   return bits.join(' · ');
@@ -343,3 +454,16 @@ export const MAX_CLAIM_SQFT = 500000;
  * rejects was ever going to be lit.
  */
 export const MIN_CLAIM_SQFT = 1;
+
+/**
+ * ONE MAILBOX, ONE SPELLING.
+ *
+ * The address recorded on a Razorpay order — and compared against the account's
+ * own in verifyAction — goes through here first. "Savitri@Studio.com " and
+ * "savitri@studio.com" are one mailbox, and a comparison that misses on case or a
+ * trailing space is a payment refused as belonging to somebody else.
+ *
+ * It lives here, in the module the browser and the API already share, so that
+ * both sides normalise identically rather than nearly identically.
+ */
+export const normaliseEmail = (e) => String(e ?? '').trim().toLowerCase();

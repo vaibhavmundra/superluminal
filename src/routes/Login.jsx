@@ -22,7 +22,11 @@ export default function Login() {
   const loc = useLocation();
   const { user, ready, sendCode, verifyCode, configured } = useAuth();
 
-  const [email, setEmail] = useState('');
+  // PREFILLED WHERE THE CALLER ALREADY KNOWS THE ADDRESS. Nothing sends one today;
+  // it costs one line, and it means a link that does — an invite, a "sign in as"
+  // from somewhere else — will not make somebody retype what was already on
+  // screen.
+  const [email, setEmail] = useState(() => String(loc.state?.email || ''));
   const [code, setCode] = useState('');
   const [stage, setStage] = useState('email');   // email | code
   const [busy, setBusy] = useState(false);
@@ -45,12 +49,15 @@ export default function Login() {
     (async () => {
       const file = takeUpload();
       if (!file) {
-        // A TIER CHOSEN BEFORE SIGNING IN TRAVELS BACK WITH THE REDIRECT. Somebody
-        // who clicked "Choose Starter" on the pricing page while signed out has
-        // already made the decision; making them find the button again after the
-        // OTP is asking twice. The slug rides in the route's state — not in
-        // storage, which would still be there next week and would reopen a payment
-        // dialog nobody asked for.
+        // WHERE THEY WERE HEADING, AND ANY TIER THAT CAME WITH IT.
+        //
+        // Buying no longer requires signing in at all (see routes/Pricing.jsx), so
+        // the common path through here carries no tier — the purchase is already
+        // paid for and waiting, and /api/billing hands it over on the next state
+        // call. The slug is still forwarded because a link can carry one, and
+        // because it costs one line to not lose it. Route state and not storage:
+        // storage would still be there next week and would reopen a payment dialog
+        // nobody asked for.
         const to = from === '/' ? '/dashboard' : from;
         const tier = loc.state?.tier ?? null;
         nav(to, { replace: true, state: tier ? { tier } : null });

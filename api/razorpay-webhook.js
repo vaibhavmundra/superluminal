@@ -35,7 +35,7 @@
 //           payment.captured
 // ---------------------------------------------------------------------------
 import { createHmac } from 'node:crypto';
-import { TIER } from '../src/lib/plans.js';
+import { sellableTier } from '../src/lib/plans.js';
 
 /**
  * PREPAID MODE IS NOT A SECOND-CLASS PATH HERE, AND IT USED TO BE.
@@ -48,6 +48,27 @@ import { TIER } from '../src/lib/plans.js';
  * nothing. `payment.captured` is now handled for exactly that case.
  */
 const ORDER_EVENTS = ['payment.captured', 'order.paid'];
+
+/**
+ * THE EVENTS THAT MEAN MONEY ARRIVED, AND ONLY THESE MAY GRANT A PERIOD.
+ *
+ * The first version of the park branch checked none of this. It sat before the
+ * switch and fired for ANY signed event carrying a tier and an email, which for
+ * an unclaimed anonymous subscription is every event Razorpay sends — so
+ * `subscription.pending` (the renewal charge FAILED), `subscription.halted`,
+ * `subscription.cancelled` and `payment.failed` each parked a fully paid month.
+ * Buy Pro, let the card decline, sign in: a month nobody paid for, and
+ * `cancelled` silently un-cancelled itself because the claim writes `status:
+ * 'active'`.
+ *
+ * A period is now granted only where the gateway is telling us it took money.
+ */
+const PAID_EVENTS = ['subscription.charged', 'subscription.activated',
+                     'payment.captured', 'order.paid'];
+
+/** Did any money actually move? A payment entity, if present, must say so. */
+const moneyMoved = (event, payEntity) => PAID_EVENTS.includes(event)
+  && (!payEntity || ['captured', 'authorized'].includes(String(payEntity.status)));
 
 const PROJECT_URL = process.env.SUPABASE_URL
   || (process.env.SUPABASE_PROJECT_ID ? `https://${process.env.SUPABASE_PROJECT_ID}.supabase.co` : '')
@@ -171,17 +192,21 @@ export default async function handler(req, res) {
   const entity = subEntity ?? payEntity;
   const owner = await ownerOf(subEntity ?? payEntity ?? {});
 
+  // SELLABLE ONLY. `entity.notes` on a PAYMENT entity is set by the browser at
+  // Razorpay's checkout, so validating against the full TIER map — which now
+  // contains the unmetered admin tier — let a ten-dollar Starter payment park a
+  // row whose tier was `admin`, to be copied into `subscriptions.tier` on the
+  // first sign-in. See the note on SELLABLE in src/lib/plans.js.
+  const tierSlug = sellableTier(entity?.notes?.tier)?.slug ?? null;
+
   // ACKNOWLEDGED EVEN WHEN IT IS NOT OURS. A 200 with `ignored` stops Razorpay
-  // retrying an event about an account we cannot place — a subscription made in
-  // the dashboard, a test fired at the wrong environment — which would otherwise
-  // arrive every few minutes for a day.
+  // retrying an event about an account we cannot place — a subscription made by
+  // hand in the dashboard, a test fired at the wrong environment — which would
+  // otherwise arrive every few minutes for a day.
   if (!owner) {
     console.warn('[webhook] no owner for', event);
     return send(200, { ok: true, ignored: 'no owner' });
   }
-
-  const tierSlug = TIER[String(entity?.notes?.tier || '')]
-    ? String(entity.notes.tier) : null;
 
   try {
     // THE AUDIT ROW FIRST, before any interpretation of the event. If the logic
@@ -194,7 +219,8 @@ export default async function handler(req, res) {
     // definitive "this is the first time we have seen this event", decided by
     // the database. That matters for the prepaid branch, which EXTENDS a period:
     // an extension applied twice is a free month.
-    const inserted = await rest('payments', {
+    const inserted = await rest(
+      'payments?on_conflict=provider,provider_payment_id,event', {
       method: 'POST', prefer: 'resolution=ignore-duplicates,return=representation',
       body: [{
         owner, provider: 'razorpay',
@@ -276,7 +302,7 @@ export default async function handler(req, res) {
         // them. A lapsed period extends from today.
         const isOrderPayment = ORDER_EVENTS.includes(event)
           && !payEntity?.subscription_id && tierSlug
-          && ['captured', 'authorized'].includes(String(payEntity?.status));
+          && moneyMoved(event, payEntity);
 
         if (!isOrderPayment || !fresh) {
           return send(200, { ok: true, recorded: event, granted: false });

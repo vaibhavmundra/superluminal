@@ -29,6 +29,12 @@ import { TIER, fmtSqft } from '../lib/plans.js';
 // and reopens the checkout on the way back. The tier travels in the route's
 // state — not in localStorage, which would still be there next week and would
 // reopen a payment dialog nobody asked for.
+//
+// A SUBSCRIPTION BELONGS TO AN ACCOUNT, so there has to be an account before
+// there is a subscription. That is one screen of friction in front of the card,
+// and it is bought back by everything downstream having exactly one owner to
+// reason about: no purchase in limbo, no claim-by-email, no window in which money
+// has moved and nobody holds what it bought.
 // ---------------------------------------------------------------------------
 
 export default function Pricing() {
@@ -104,22 +110,32 @@ export default function Pricing() {
             <section className="usage-strip">
               <div className="usage-num">
                 <b>{fmtSqft(state.area.left)}</b>
-                <span>left of {fmtSqft(state.area.allowed)}</span>
+                <span>{state.unlimited ? 'no limit' : `left of ${fmtSqft(state.area.allowed)}`}</span>
               </div>
-              <div className="usage-bar">
-                <i style={{ width: `${Math.min(100,
-                  (state.area.used / Math.max(1, state.area.allowed)) * 100)}%` }} />
+              {/* AN UNLIMITED METER HAS NO BAR. A full-width blue bar would read
+                  as "you have used everything" and an empty one as "you have used
+                  nothing"; there is no honest position for a needle on a dial with
+                  no end, so the dial goes. */}
+              <div className={'usage-bar' + (state.unlimited ? ' none' : '')}>
+                {!state.unlimited && (
+                  <i style={{ width: `${Math.min(100,
+                    (state.area.used / Math.max(1, state.area.allowed)) * 100)}%` }} />
+                )}
               </div>
               <div className="usage-side">
                 <span>
                   <b>{TIER[state.tier]?.name ?? 'Free'}</b>
-                  {state.lifetime
-                    ? ' · the free allowance does not refresh'
+                  {state.unlimited ? ' · unmetered'
+                    : state.lifetime ? ' · the free allowance does not refresh'
                     : endsOn ? ` · renews ${endsOn}` : ''}
                 </span>
-                {state.passes.allowed > 0 && (
-                  <span>{state.passes.left} of {state.passes.allowed} render passes left</span>
-                )}
+                {state.unlimited
+                  ? <span>{Math.round(state.area.used).toLocaleString('en-IN')} sq ft
+                      {' '}and {state.passes.used} render pass
+                      {state.passes.used === 1 ? '' : 'es'} used</span>
+                  : state.passes.allowed > 0 && (
+                    <span>{state.passes.left} of {state.passes.allowed} render passes left</span>
+                  )}
                 {state.cancelAtPeriodEnd && (
                   <span className="warnish">Cancelled — runs until {endsOn}</span>
                 )}
@@ -131,7 +147,7 @@ export default function Pricing() {
           {err && <p className="note err">{err}</p>}
 
           <PlanPicker current={user ? state.tier : 'free'} busyTier={busy ? picked : null}
-            onChoose={choose} />
+            unlimited={state.unlimited} onChoose={choose} />
 
           {/* --- HOW THE METER WORKS ---------------------------------------- */}
           <section className="page-sec pricing-faq">
@@ -195,7 +211,7 @@ export default function Pricing() {
             </div>
           </section>
 
-          {user && state.tier !== 'free' && !state.cancelAtPeriodEnd && (
+          {user && state.tier !== 'free' && !state.unlimited && !state.cancelAtPeriodEnd && (
             <section className="page-sec">
               <p className="note">
                 <button className="linkish danger" onClick={async () => {
@@ -215,7 +231,7 @@ export default function Pricing() {
       {picked && (
         <CheckoutDialog
           tier={TIER[picked]}
-          defaults={{ email: user?.email || '' }}
+          defaults={{ email: user?.email || '', signedIn: !!user }}
           busy={busy}
           error={err}
           onCancel={() => { if (!busy) { setPicked(null); setErr(''); } }}

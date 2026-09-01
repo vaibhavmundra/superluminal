@@ -1,12 +1,9 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
-import { useBilling } from '../lib/billing.jsx';
 import { stashUpload } from '../lib/pendingUpload.js';
 import { startPlanUpload } from '../lib/uploads.js';
 import Wordmark from '../components/Wordmark.jsx';
-import CheckoutDialog from '../components/CheckoutDialog.jsx';
-import { PAID, TIER, FREE, fmtSqft } from '../lib/plans.js';
 
 // ---------------------------------------------------------------------------
 // THE HOME PAGE, which is the upload screen with a promise over it.
@@ -22,56 +19,23 @@ import { PAID, TIER, FREE, fmtSqft } from '../lib/plans.js';
 // answer is obviously worth it. The file is held in memory across the login step
 // (pendingUpload.js) and turned into a plan the instant there is a session.
 //
-// AND THE PRICE IS ON IT, IN ONE LINE, UNDER THE UPLOAD.
+// AND THERE IS NO PRICE ON IT. There was, briefly — a band of tiers under the
+// drop target — and it was one thing too many on a page with one job.
 //
-// A band and not a section, and it sits BELOW the drop target rather than beside
-// it. The order is the argument: this page has one job, which is to get a drawing
-// into the app, and a pricing block competing with the upload button would make
-// the first decision on the page "how much" instead of "let me see it work".
-// Underneath, it answers the question somebody asks on the way out — is this
-// free, and what does it cost if it is not — without ever having been in the way.
-//
-// THE SUBSCRIBE BUTTONS GO STRAIGHT TO CHECKOUT. Not to /pricing, which would be
-// a page in front of a decision already made: somebody who reads "$30 for 50,000
-// sq ft" and clicks it has chosen. The details dialog opens on the spot, and the
-// full comparison is a quieter link for anybody who has not.
+// The argument for putting it there was that somebody asks "what does this cost"
+// on the way out. The argument against is stronger: this page exists to get a
+// drawing into the app, the answer to "what does it cost" is FREE for the first
+// three thousand square feet, and a row of dollar amounts under the upload button
+// invites the visitor to price the tool before they have watched it light a single
+// room. The first three thousand square feet are the sales pitch; the prices are
+// one word away in the header for anybody who wants them sooner.
 // ---------------------------------------------------------------------------
 export default function Home() {
   const nav = useNavigate();
   const { user, ready } = useAuth();
-  const { checkout } = useBilling();
   const [over, setOver] = useState(false);
   const [err, setErr] = useState('');
-  const [picked, setPicked] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [payErr, setPayErr] = useState('');
-  const [msg, setMsg] = useState('');
   const inputRef = useRef(null);
-
-  /**
-   * SIGNED OUT, THE CHOICE IS REMEMBERED AND THE USER IS SENT TO SIGN IN — and
-   * they come back to /pricing rather than here, because that is the screen that
-   * knows how to reopen a checkout. Landing them back on the home page would
-   * mean finding the button again, which is the same "asking twice" this whole
-   * flow is built to avoid.
-   */
-  const subscribe = useCallback((slug) => {
-    setPayErr(''); setMsg('');
-    if (!user) { nav('/login', { state: { from: '/pricing', tier: slug } }); return; }
-    setPicked(slug);
-  }, [user, nav]);
-
-  const pay = useCallback(async (details) => {
-    setBusy(true); setPayErr('');
-    try {
-      const out = await checkout({ tier: picked, details });
-      if (out.ok) {
-        setMsg(`You are on ${TIER[picked]?.name}. ${fmtSqft(out.state.area.left)} available.`);
-        setPicked(null);
-      } else setPicked(null);
-    } catch (e) { setPayErr(String(e.message || e)); }
-    finally { setBusy(false); }
-  }, [checkout, picked]);
 
   const accept = useCallback(async (file) => {
     if (!file) return;
@@ -130,35 +94,7 @@ export default function Home() {
         </div>
 
         {err && <p className="note err home-err">{err}</p>}
-        {msg && <p className="note ok-note home-err">{msg}</p>}
-        {payErr && <p className="note err home-err">{payErr}</p>}
-
-        <div className="price-band">
-          <span className="price-band-lead">
-            Free for your first {fmtSqft(FREE.area)}. Then:
-          </span>
-          {PAID.map((t) => (
-            <button key={t.slug} className="price-chip" onClick={() => subscribe(t.slug)}>
-              <b>${t.usd}<i>/mo</i></b>
-              <span>{fmtSqft(t.area)} a month</span>
-              <em>Subscribe</em>
-            </button>
-          ))}
-          <button className="linkish" onClick={() => nav('/pricing')}>
-            How the meter works
-          </button>
-        </div>
       </main>
-
-      {picked && (
-        <CheckoutDialog
-          tier={TIER[picked]}
-          defaults={{ email: user?.email || '' }}
-          busy={busy}
-          error={payErr}
-          onCancel={() => { if (!busy) { setPicked(null); setPayErr(''); } }}
-          onPay={pay} />
-      )}
 
       <footer className="home-foot">
         <span></span>
