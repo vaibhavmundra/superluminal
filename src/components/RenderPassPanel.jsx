@@ -1,6 +1,5 @@
 import React, { useRef, useState } from 'react';
 import { RENDER_ACCEPT, RENDER_DEFAULTS } from '../lib/renderImage.js';
-import PromptTranscript from './PromptTranscript.jsx';
 
 // ---------------------------------------------------------------------------
 // RenderPassPanel — upload a couple of views of a space, get the wall features
@@ -55,7 +54,6 @@ export default function RenderPassPanel({
   onRun, onClear, onResetLengths,
 }) {
   const fileRef = useRef(null);
-  const [showTx, setShowTx] = useState(false);
   const [over, setOver] = useState(false);
   const running = state.status === 'running';
   const elements = result?.elements ?? [];
@@ -63,7 +61,6 @@ export default function RenderPassPanel({
   // too, on purpose: the first call lands a good half-minute before the second,
   // and being able to read what it said while the second one thinks is the
   // whole difference between a wait and a hang.
-  const hasTx = !!(transcript?.first || transcript?.second);
 
   // THE GAP BETWEEN "THIS SPACE HAS VIEWS" AND "THE VIEWS ARE HERE".
   // The paths come back with the plan; the JPEGs are fetched from the bucket
@@ -177,23 +174,6 @@ export default function RenderPassPanel({
         {running ? (PHASE_SAY[state.phase] || 'Working…')
           : elements.length ? 'Analyse again' : 'Analyse renders'}
       </button>
-      {/* WHAT WAS ACTUALLY ASKED, one click under the button that asks it.
-          Both prompts are written to be tuned — see wallPrompt.js — and half of
-          the second one is filled in at runtime from this room's grid, this
-          room's anchors and the first call's answer, so the file on disk is not
-          the question that got asked. Directly under Analyse because that is
-          where somebody is standing when they want it: they have just read an
-          answer they do not believe. */}
-      {hasTx && (
-        <button className="btn" style={{ marginTop: 6, width: '100%' }}
-          onClick={() => setShowTx(true)}>
-          Show the prompts &amp; replies
-        </button>
-      )}
-      {showTx && (
-        <PromptTranscript transcript={transcript} roomName={room?.outline?.name || null}
-          onClose={() => setShowTx(false)} />
-      )}
       {blocked && !running && <p className="note" style={{ marginTop: 6 }}>{blocked}</p>}
       {!blocked && !running && renders.length >= RENDER_DEFAULTS.maxRenders && (
         <p className="note" style={{ marginTop: 6 }}>
@@ -214,7 +194,7 @@ export default function RenderPassPanel({
             <p className="note warn" style={{ marginTop: 6 }}>
               Nothing on the walls in these views — no shelves, art, panelling or
               wallpaper. If there plainly is, check the thumbnails above are the
-              right space; the prompts and replies are one click up.
+              right space.
             </p>
           )}
 
