@@ -2,9 +2,11 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, RequireAuth } from './lib/auth.jsx';
+import { BillingProvider } from './lib/billing.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Home from './routes/Home.jsx';
 import Login from './routes/Login.jsx';
+import Pricing from './routes/Pricing.jsx';
 import Dashboard from './routes/Dashboard.jsx';
 import ProjectDetail from './routes/ProjectDetail.jsx';
 import Planner from './routes/Planner.jsx';
@@ -19,6 +21,7 @@ import './styles.css';
 //
 //   /                 the promise, and the upload that starts everything
 //   /login            an email and a six-digit code
+//   /pricing          the three tiers, and instant checkout
 //   /dashboard        every project
 //   /projects/:id     every plan in one project
 //   /plans/:id        the editor — what used to be the whole app
@@ -53,9 +56,21 @@ createRoot(document.getElementById('root')).render(
     <ErrorBoundary>
     <BrowserRouter>
       <AuthProvider>
+        {/* INSIDE AuthProvider, BECAUSE THE BALANCE IS READ WITH THE SESSION'S
+            TOKEN AND IS EMPTY WITHOUT ONE. Outside the Routes so the profile
+            menu, the pricing page and the editor's paywall all read one copy of
+            it: three fetches of the same balance is three answers that can
+            disagree by a click. */}
+        <BillingProvider>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
+          {/* PUBLIC, AND NOT AN OVERSIGHT. A price a visitor cannot read without
+              making an account is a price they assume is bad, and this page is
+              also what gets forwarded to whoever signs the cheque — who has no
+              login. Choosing a tier while signed out defers to /login and comes
+              back with the choice intact. */}
+          <Route path="/pricing" element={<Pricing />} />
           <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
           <Route path="/projects/:projectId" element={<RequireAuth><ProjectDetail /></RequireAuth>} />
           <Route path="/plans/:planId" element={<RequireAuth><Planner /></RequireAuth>} />
@@ -67,6 +82,7 @@ createRoot(document.getElementById('root')).render(
           <Route path="/admin/plans/:planId" element={<RequireAuth><AdminPlanViewer /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </BillingProvider>
       </AuthProvider>
     </BrowserRouter>
     </ErrorBoundary>

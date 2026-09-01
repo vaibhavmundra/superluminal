@@ -10,8 +10,15 @@ function apiRoutes(env) {
   // than a third branch of the first — see the header of api/accents.js — so it
   // needs mounting here too, and mounting it by hand a second time is how the
   // dev server and production quietly end up with different route lists.
+  // THE WEBHOOK IS ITS OWN ROUTE AND NOT A BRANCH OF /api/billing, for the
+  // reason its own header gives: billing.js proves there is a signed-in user
+  // before it does anything, and Razorpay's servers have no session. Two doors,
+  // two credentials. In dev it is reachable at /api/razorpay-webhook the same as
+  // in production, which is what makes `stripe`-style local replay possible with
+  // a tunnel.
   const ROUTES = [['/api/detect', '/api/detect.js'], ['/api/accents', '/api/accents.js'],
-                  ['/api/admin', '/api/admin.js']];
+                  ['/api/admin', '/api/admin.js'], ['/api/billing', '/api/billing.js'],
+                  ['/api/razorpay-webhook', '/api/razorpay-webhook.js']];
   return {
     name: 'api-routes',
     configureServer(server) {
@@ -30,7 +37,17 @@ function apiRoutes(env) {
                        'ROBOFLOW_ROOMS_WORKFLOW_URL',
                        'OPENAI_API_KEY', 'OPENAI_VISION_MODEL', 'OPENAI_WALL_MODEL',
                        'SUPABASE_URL', 'SUPABASE_PROJECT_ID', 'SUPABASE_SECRET_KEY',
-                       'SUPABASE_ANON_KEY', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY']) {
+                       'SUPABASE_ANON_KEY', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY',
+                       // RAZORPAY, AND NONE OF THEM IS VITE_ PREFIXED — including
+                       // RZP_KEY, which is not secret and appears on every checkout
+                       // in the world. It stays server-side anyway because it is not
+                       // a CONSTANT: test and live keys differ per environment, and a
+                       // bundled copy is how a production build ends up opening a
+                       // test-mode checkout. /api/billing hands it over per checkout.
+                       'RZP_KEY', 'RZP_SECRET', 'RZP_MODE', 'RZP_CURRENCY',
+                       'RZP_PLAN_STUDIO', 'RZP_PLAN_PRO',
+                       'RZP_AMOUNT_STUDIO', 'RZP_AMOUNT_PRO',
+                       'RZP_WEBHOOK_SECRET']) {
         if (env[k] && !process.env[k]) process.env[k] = env[k];
       }
       for (const [route, file] of ROUTES) {

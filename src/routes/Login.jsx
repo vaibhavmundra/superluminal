@@ -44,7 +44,18 @@ export default function Login() {
     handled.current = true;
     (async () => {
       const file = takeUpload();
-      if (!file) { nav(from === '/' ? '/dashboard' : from, { replace: true }); return; }
+      if (!file) {
+        // A TIER CHOSEN BEFORE SIGNING IN TRAVELS BACK WITH THE REDIRECT. Somebody
+        // who clicked "Choose Starter" on the pricing page while signed out has
+        // already made the decision; making them find the button again after the
+        // OTP is asking twice. The slug rides in the route's state — not in
+        // storage, which would still be there next week and would reopen a payment
+        // dialog nobody asked for.
+        const to = from === '/' ? '/dashboard' : from;
+        const tier = loc.state?.tier ?? null;
+        nav(to, { replace: true, state: tier ? { tier } : null });
+        return;
+      }
       // The drop resumes as a background job, exactly as it would have from the
       // dashboard — the sign-in was a step in the middle of an upload, and the
       // user should land in the editor rather than watching a progress bar for
@@ -52,7 +63,7 @@ export default function Login() {
       const job = startPlanUpload(file);
       nav(`/plans/${job.planId}`, { replace: true });
     })();
-  }, [ready, user, from, nav]);
+  }, [ready, user, from, nav, loc.state]);
 
   useEffect(() => {
     if (!resendIn) return;

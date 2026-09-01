@@ -152,6 +152,32 @@ export default function App({
   // views just do not come back next time.
   renderStore = null,
   // ---------------------------------------------------------------------
+  // THE TILL, AND IT IS THREE FUNCTIONS RATHER THAN A CLIENT.
+  //
+  // Same contract as `renderStore` above and for the same reason: this component
+  // is a pure editor over a File and it does not learn what a subscription is.
+  // It knows only that lighting a space has to be CLAIMED first, that a claim
+  // can come back refused, and that a refused claim means do nothing. Who
+  // decides, where the balance lives, and what the user is shown instead are all
+  // routes/Planner.jsx's business.
+  //
+  //   onClaimLayout({ spaces }) -> { ok }   spaces = [{id, points, pxPerFt, sqft}]
+  //   onClaimPass({ roomId, runId }) -> { ok, fingerprint }
+  //   onReleasePass(fingerprint)            a pass that was charged and failed
+  //
+  // NULL IN THE STANDALONE EDITOR, IN READ-ONLY MODE AND IN EVERY TEST, and
+  // everything below degrades to exactly what it did before there was a meter:
+  // `claimSpaces` returns true and the pipeline runs. That is deliberate — the
+  // twenty-five scripts in tools/ light plans in Node with no server anywhere,
+  // and a gate that failed closed would break all of them.
+  //
+  // A CLAIM MUST NEVER THROW. Planner's implementations catch their own network
+  // failures and report them; a rejected promise here would land in the middle
+  // of a click handler that has already set four pieces of state.
+  onClaimLayout = null,
+  onClaimPass = null,
+  onReleasePass = null,
+  // ---------------------------------------------------------------------
   // READ-ONLY MODE — the viewer an admin gets on somebody else's plan.
   //
   // ONE PROP, AND IT WAS THE RIGHT UNIT OF CHANGE. The alternative was a
@@ -901,38 +927,6 @@ export default function App({
     editPoints(id, (px) => (px.length > 3 ? px.filter((_, i) => i !== index) : px));
   }, [editPoints]);
 
-  /** Light everything traced or proposed. The primary act on the tracer screen. */
-  const lightWholePlan = useCallback(() => {
-    setOutlines((os) => os.map((o) => ({ ...o, reviewed: true })));
-    setLitIds(outlines.map((o) => o.id));
-    // NOTHING IS SELECTED TO BEGIN WITH. `focusId` used to be seeded with the
-    // first outline, which was harmless while it only decided which room the
-    // panel described — it now also draws a blue outline on the canvas, and a
-    // space highlighted because it happens to be first is a selection nobody
-    // made. `focus` still falls back to rooms[0] for the panel's own purposes,
-    // so the details pane is unaffected.
-    setFocusId(null);
-    setPickingId(null);
-  }, [outlines]);
-
-  const lightOneRoom = useCallback((id) => {
-    setOutlines((os) => os.map((o) => (o.id === id ? { ...o, reviewed: true } : o)));
-    setSelectedOutlineId(id);
-    setLitIds([id]);
-    setFocusId(id);
-    setPickingId(null);
-    // CONFIRMING THE SPACES IS ITS OWN DATAPOINT — "here is what the segmenter
-    // proposed and here is what a person accepted" — and it is worth recording
-    // whether or not the pipeline is ever run on it.
-    //
-    // THE BEAT IS THE POINT. `milestone` is reassigned on every render and reads
-    // the state of the render it was assigned in, so calling it synchronously
-    // here would record the state as it was BEFORE the four setters above. A
-    // quarter of a second is far longer than a commit needs and short enough
-    // that nothing else can have happened.
-    setTimeout(() => milestone.current?.('outlines'), 250);
-  }, []);
-
   // THE RED-CIRCLE FAN DETECTOR IS GONE.
   //
   // It scanned the raster for round red blobs, called each one a ceiling fan,
@@ -1017,6 +1011,91 @@ export default function App({
     for (const o of outlinesPx) a += outlineStats(o, pxPerFt)?.areaSqft ?? 0;
     return a || null;
   }, [outlinesPx, pxPerFt]);
+
+  // ---------------------------------------------------------------------------
+  // LIGHTING A SPACE COSTS SOMETHING, AND THESE THREE ARE WHERE IT IS ASKED FOR.
+  //
+  // THEY SIT HERE, BELOW `pxPerFt`, AND THE POSITION IS LOAD-BEARING. A hook's
+  // dependency array is evaluated DURING RENDER, so `[..., pxPerFt]` a hundred
+  // lines above the `const pxPerFt` it names is a temporal-dead-zone
+  // ReferenceError on the first paint — which in React means the whole tree
+  // unmounts and the app is a white page. The same trap as the `outlinesPx`
+  // note above, arrived at from the other direction: there the value was wrong,
+  // here it does not exist yet.
+  // ---------------------------------------------------------------------------
+  /**
+   * CLAIM THE SPACES ABOUT TO BE LIT, AND SAY WHETHER TO GO ON.
+   *
+   * Every route into a layout goes through here — the tracer's Light button, the
+   * panel's "Light all N outlines", a single room confirmed by double-click, and
+   * the pipeline itself. Four call sites and one gate, because a fifth route
+   * added later that forgot to ask would be a free tier with no ceiling.
+   *
+   * SAFE TO CALL FROM ALL FOUR, because the claim is keyed on the geometry of
+   * each space (see fingerprintOutline in lib/plans.js). Lighting one room and
+   * then the whole plan charges the room once, not twice; a double click charges
+   * once; a re-light of untouched outlines charges nothing at all.
+   *
+   * NO SCALE, NO CHARGE. `outlineStats` needs px/ft to produce an area, and
+   * without one nothing is laid out either — there is no cost to meter and no
+   * layout to refuse. Letting it through is not a hole; it is the only reading
+   * that is not an error message in front of a drawing that was never going to
+   * light.
+   */
+  const claimSpaces = useCallback(async (ids) => {
+    if (!onClaimLayout || readOnly) return true;
+    const wanted = new Set(ids);
+    const spaces = [];
+    for (const o of outlinesPx) {
+      if (!wanted.has(o.id)) continue;
+      const sqft = outlineStats(o, pxPerFt)?.areaSqft ?? 0;
+      if (!(sqft > 0)) continue;
+      // THE RESOLVED PIXEL POINTS, not the stored drawing units, and the two are
+      // interchangeable here for one reason: `pointsPx` is a deterministic
+      // function of `pointsDu` and the source, so it is just as stable across a
+      // reload — and it is the list that is guaranteed to exist. A
+      // detector-proposed outline has no `pointsPx` until the memo above builds
+      // them, which is the same trap documented at `planAreaSqft`.
+      spaces.push({ id: o.id, points: o.pointsPx ?? [], pxPerFt, sqft });
+    }
+    if (!spaces.length) return true;
+    const verdict = await onClaimLayout({ spaces });
+    return !!verdict?.ok;
+  }, [onClaimLayout, readOnly, outlinesPx, pxPerFt]);
+
+  /** Light everything traced or proposed. The primary act on the tracer screen. */
+  const lightWholePlan = useCallback(async () => {
+    if (!await claimSpaces(outlines.map((o) => o.id))) return;
+    setOutlines((os) => os.map((o) => ({ ...o, reviewed: true })));
+    setLitIds(outlines.map((o) => o.id));
+    // NOTHING IS SELECTED TO BEGIN WITH. `focusId` used to be seeded with the
+    // first outline, which was harmless while it only decided which room the
+    // panel described — it now also draws a blue outline on the canvas, and a
+    // space highlighted because it happens to be first is a selection nobody
+    // made. `focus` still falls back to rooms[0] for the panel's own purposes,
+    // so the details pane is unaffected.
+    setFocusId(null);
+    setPickingId(null);
+  }, [outlines, claimSpaces]);
+
+  const lightOneRoom = useCallback(async (id) => {
+    if (!await claimSpaces([id])) return;
+    setOutlines((os) => os.map((o) => (o.id === id ? { ...o, reviewed: true } : o)));
+    setSelectedOutlineId(id);
+    setLitIds([id]);
+    setFocusId(id);
+    setPickingId(null);
+    // CONFIRMING THE SPACES IS ITS OWN DATAPOINT — "here is what the segmenter
+    // proposed and here is what a person accepted" — and it is worth recording
+    // whether or not the pipeline is ever run on it.
+    //
+    // THE BEAT IS THE POINT. `milestone` is reassigned on every render and reads
+    // the state of the render it was assigned in, so calling it synchronously
+    // here would record the state as it was BEFORE the four setters above. A
+    // quarter of a second is far longer than a commit needs and short enough
+    // that nothing else can have happened.
+    setTimeout(() => milestone.current?.('outlines'), 250);
+  }, [claimSpaces]);
 
   /* NO PLAN-SIZE BRANCHING IN THE BED PASSES, and this is the shape the whole
      thing settled into: the WHOLE SHEET goes to both detectors on every plan,
@@ -2042,6 +2121,28 @@ export default function App({
     const r = focus;
     const views = renders[r?.id] ?? [];
     if (!r?.plan?.ok || !views.length) return;
+
+    // CHARGED BEFORE THE CALLS, AND GIVEN BACK IF THEY FAIL.
+    //
+    // Before, because this is the moment the money is committed — two vision
+    // calls go out and a user who closes the tab has still spent them, so
+    // charging on success would make an abandoned pass free.
+    //
+    // Given back, because a pass that comes back as a 500 has cost nobody
+    // anything, and quietly keeping one of five is the sort of small theft that
+    // produces a support email. The reversal is a second ledger row rather than
+    // a deletion — see releaseAction in api/billing.js.
+    //
+    // A FRESH runId PER CLICK, so a retry after a failure is a new charge and
+    // not a silently deduplicated no-op. The idempotency this key buys is only
+    // against the same click arriving twice.
+    let claim = null;
+    if (onClaimPass && !readOnly) {
+      const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      claim = await onClaimPass({ roomId: r.id, runId });
+      if (!claim?.ok) return;
+    }
+
     setWallState({ status: 'running', roomId: r.id, phase: 'reading' });
     // A FRESH TRANSCRIPT FOR THIS RUN, cleared up front rather than merged into.
     // Leaving the last run's second call sitting there while this run's first
@@ -2080,10 +2181,14 @@ export default function App({
         out.meta);
     } catch (err) {
       console.warn('[render pass] failed', err);
+      // The pass is the thing that was bought and it did not happen. Fire and
+      // forget: a failed release must not turn one error into two, and the
+      // ledger is auditable either way.
+      if (claim?.fingerprint) onReleasePass?.(claim.fingerprint);
       setWallState({ status: 'error', roomId: r.id, error: String(err.message || err),
                      ms: Date.now() - t0 });
     }
-  }, [focus, renders, computeWallItems]);
+  }, [focus, renders, computeWallItems, onClaimPass, onReleasePass, readOnly]);
 
   /** Files in -> downscaled renders on the selected space. See renderImage.js
    *  for why nothing that arrives here is ever sent at the size it arrived. */
@@ -3043,6 +3148,22 @@ export default function App({
     const { classify = true, accents = true, surfaces = true, relight = true,
             beds = true } = opts;
     if (!source || !outlines.length) return;
+
+    // THE GATE, AT THE VERY TOP, BEFORE THE LOADING SCREEN.
+    //
+    // Everything below this line spends something: three detectors, a room
+    // classifier and an accent pass, two model calls at a time, across every
+    // space on the sheet. So the claim comes first — before `cancelPrep` is
+    // reset, before a single step is painted — and a refusal leaves the tracer
+    // exactly as it was rather than showing a progress dialog that dies on its
+    // first step.
+    //
+    // ONLY WHEN THE LAYOUT IS ACTUALLY BEING (RE)BUILT. `runPipeline({ relight:
+    // false })` is how the accent and surface passes are re-run over a layout
+    // that already exists — the spaces were paid for when they were lit and
+    // asking again would charge a second time for one dismissed accent.
+    if (relight && !await claimSpaces(outlines.map((o) => o.id))) return;
+
     cancelPrep.current = false;
 
     const wanted = PREP_STEPS.filter((st) =>
@@ -3423,7 +3544,7 @@ export default function App({
     milestone.current?.('design');
   }, [source, outlines, projectId, roomTypes, PREP_STEPS, pxPerFt, useBoundingRect,
       bedSets, detections, computeBedFit, computeRoomType, computeAccents, computeSurfaces,
-      refindBeds, absorbBedRows, planAreaSqft]);
+      refindBeds, absorbBedRows, planAreaSqft, claimSpaces]);
 
   /** Stop the run where it is and land on whatever finished. */
   const stopPipeline = useCallback(() => {

@@ -6,6 +6,8 @@ import { getPlan, updatePlan, fetchPlanFile, uploadSnapshot, uploadRender, recor
 import { getJob, subscribeJob, whenRowReady, retryUpload, releaseJob, provisionalPlan }
   from '../lib/uploads.js';
 import { useAuth } from '../lib/auth.jsx';
+import { useBilling } from '../lib/billing.jsx';
+import Paywall from '../components/Paywall.jsx';
 import { readDraft, saveDraft, clearDraft, pickRestore } from '../lib/draft.js';
 
 // ---------------------------------------------------------------------------
@@ -40,6 +42,14 @@ import { readDraft, saveDraft, clearDraft, pickRestore } from '../lib/draft.js';
 // unmount, which is what catches "Back to Projects" clicked half a second after
 // the last nudge.
 //
+// AND IT IS ALSO WHERE THE MONEY IS. App.jsx does not know what a subscription
+// is any more than it knows what Supabase is; it knows that lighting a space has
+// to be CLAIMED and that a refused claim means do nothing. This route supplies
+// the three functions that make a claim mean something, and it owns what the user
+// sees when one is refused — the paywall opens OVER the editor, so ten traced
+// rooms are still on screen behind it and closing it puts the user back exactly
+// where they were. Sending them to /pricing would unmount the drawing.
+//
 // AND MIRRORED LOCALLY THE INSTANT IT ARRIVES. The debounce plus the round trip
 // is a window — a second or two wide — in which the newest edit lives only in
 // React state, and a reload inside it used to lose that edit. The unload flush
@@ -64,6 +74,10 @@ export default function Planner() {
   const nav = useNavigate();
   const loc = useLocation();
   const { isAdmin } = useAuth();
+  const { claimLayout, claimPass, releasePass } = useBilling();
+  // The server's refusal, held so the paywall can say what was short by how
+  // much. Null the rest of the time, which is nearly always.
+  const [refusal, setRefusal] = useState(null);
 
   // Read once, synchronously, before the first paint: if this is a drop, the
   // file and a row-shaped placeholder are available immediately and the editor
@@ -287,6 +301,61 @@ export default function Planner() {
     url: (path) => publicUrl(path),
   }), [planId]);
 
+  /**
+   * THE THREE CLAIM FUNCTIONS HANDED TO THE EDITOR.
+   *
+   * ALL THREE SWALLOW THEIR OWN FAILURES AND RETURN `{ ok: false }`, because the
+   * editor calls them from inside click handlers that have already begun. A
+   * rejected promise there is an unhandled rejection halfway through a state
+   * transition; a `false` is a click that did nothing, which is what the user
+   * should see when the till cannot be reached.
+   *
+   * A NETWORK FAILURE IS NOT A REFUSAL AND IS NOT SHOWN AS ONE. The paywall says
+   * "buy more"; a timeout is not a reason to ask anybody for money, so it goes to
+   * the error banner instead.
+   */
+  const onClaimLayout = useCallback(async ({ spaces }) => {
+    try {
+      // AWAIT THE ROW, FOR THE SAME REASON EVERY WRITE IN THIS FILE DOES.
+      //
+      // On a drop the plan id is minted in the browser (uploads.js) and the
+      // editor opens on a provisional row while the INSERT is still in flight.
+      // The claim checks ownership with `plans?id=eq.…&owner=eq.…`, which finds
+      // nothing until that insert lands — so a DXF whose rooms were detected
+      // instantly, lit by somebody quick, would be refused with "No such plan"
+      // and would look for all the world like a billing bug. Same window, same
+      // guard, same one line as `flush()`.
+      await whenRowReady(planId);
+      const row = planRef.current;
+      // `planId` FROM THE ROUTE, NEVER FROM THE EDITOR. The plan id is what the
+      // server checks ownership against, and it is not App.jsx's to know or to
+      // send.
+      const out = await claimLayout({ planId: row?.id ?? planId, spaces });
+      if (out.ok) return { ok: true };
+      setRefusal(out);
+      return { ok: false };
+    } catch (e) {
+      console.error('[planner] the layout claim failed', e);
+      setErr(String(e.message || e));
+      return { ok: false };
+    }
+  }, [claimLayout, planId]);
+
+  const onClaimPass = useCallback(async ({ roomId, runId }) => {
+    try {
+      await whenRowReady(planId);
+      const row = planRef.current;
+      const out = await claimPass({ planId: row?.id ?? planId, roomId, runId });
+      if (out.ok) return { ok: true, fingerprint: out.fingerprint };
+      setRefusal(out);
+      return { ok: false };
+    } catch (e) {
+      console.error('[planner] the render-pass claim failed', e);
+      setErr(String(e.message || e));
+      return { ok: false };
+    }
+  }, [claimPass, planId]);
+
   const rename = useCallback(async (name) => {
     const row = planRef.current;
     if (!row || !name.trim() || name === row.name) return;
@@ -330,6 +399,8 @@ export default function Planner() {
   }
 
   return (
+    <>
+    {refusal && <Paywall refusal={refusal} onClose={() => setRefusal(null)} />}
     <App
       key={plan.id}
       planName={plan.name}
@@ -343,9 +414,13 @@ export default function Planner() {
       onRetryUpload={() => retryUpload(planId)}
       onRename={rename}
       renderStore={renderStore}
+      onClaimLayout={onClaimLayout}
+      onClaimPass={onClaimPass}
+      onReleasePass={releasePass}
       onPersist={onPersist}
       onMilestone={onMilestone}
       onBack={() => nav(plan.project_id ? `/projects/${plan.project_id}` : '/dashboard')}
     />
+    </>
   );
 }

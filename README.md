@@ -5986,3 +5986,206 @@ has a length and an orientation, and both are the reason it is on a track at all
 — the length decides how many fit between the corners, the rotation of a
 directional head is a thing an installer sets. A circle throws both away and the
 person who opens the file can no longer check either.
+
+## The meter: square feet, and the four places one is spent
+
+A lighting layout is now something you buy. Not per seat, not per drawing —
+**per square foot of the spaces you light**, because that is the one number that
+tracks both what a plan costs us and what it is worth to the person drawing it.
+A 400 sq ft shop and a 40,000 sq ft hotel floor are the same number of clicks
+and two entirely different jobs, so clicks are the wrong meter; seats are worse,
+since a studio of three shares one login and a showroom has six salesmen who
+each open the app twice a month.
+
+| | area | render passes | refreshes |
+|---|---|---|---|
+| **Free** | 3,000 sq ft | — | **never** |
+| **Starter** — $10/mo | 10,000 sq ft | 5 | monthly |
+| **Pro** — $30/mo | 50,000 sq ft | 20 | monthly |
+
+And the number was already there. `planAreaSqft` in App.jsx has been summing
+the outlines since the tracer existed — the sum of the *spaces*, not the sheet,
+so a title block and a site plan parked off to one side cost nothing and the
+same building drawn on A1 and A0 meters identically.
+
+### Charged per outline, and that is not the obvious reading
+
+The obvious rule is per plan: light it, pay for its area, and pay again if it is
+re-lit. It is also the rule that punishes exactly the behaviour this app is
+built to invite. The segmenter proposes ten rooms, one of them is wrong, you
+drag two corners and re-light — and you are billed for the whole floor a second
+time because one wall moved a foot.
+
+So the ledger charges **per space**, keyed on the fingerprint of that space's
+geometry: `fingerprintOutline({ planId, points, pxPerFt, sqft })` in
+`src/lib/plans.js`. Nine rooms nobody touched are already paid for; the tenth
+is charged once. A plan taken back to the outlines and genuinely re-traced still
+costs its area again, because every fingerprint changed — which is the intent —
+and a plan re-lit unchanged costs nothing, this month or next year, because none
+did.
+
+**Rounded to a tenth of a unit before hashing**, because a drag is a stream of
+sub-pixel values and an outline brushed by a pointermove is not a new space.
+`pxPerFt` is in the hash too: same polygon, different scale, different building.
+
+It is also the only version that is safe to call from four places, and there
+are four — the tracer's Light button, the panel's *Light all N outlines*, a
+single room confirmed by double-click, and `runPipeline` itself. They all go
+through one `claimSpaces` in App.jsx and the repeats are free by construction: a
+double click, a re-run of the accent pass, a reload mid-pipeline all re-present
+fingerprints already in the ledger, and the unique index on
+`(owner, kind, fingerprint)` turns each into a no-op.
+
+**`runPipeline({ relight: false })` is not charged at all.** That is how the
+accent and surface passes are re-run over a layout that already exists; the
+spaces were paid for when they were lit.
+
+### The render pass is counted, not measured
+
+Two vision calls cost the same whether the wall is nine feet or ninety, so a
+pass is one unit per run. It is charged **before** the calls go out, because that
+is when the money is committed and a user who closes the tab has still spent it —
+and **given back** if the pass throws, because a 500 has cost nobody anything and
+quietly keeping one of five is the sort of small theft that produces a support
+email.
+
+The refund is a second ledger row with `units: -1`, never a delete. A ledger you
+can subtract from is a ledger nobody can reconcile.
+
+### The editor still does not know what a subscription is
+
+`App.jsx` is a pure editor over a `File` and it stays one. It gets three
+functions from `routes/Planner.jsx` — the same shape as `renderStore` and for
+the same reason:
+
+```
+onClaimLayout({ spaces }) -> { ok }
+onClaimPass({ roomId, runId }) -> { ok, fingerprint }
+onReleasePass(fingerprint)
+```
+
+All three are null in the standalone editor, in read-only mode and in every one
+of the twenty-five scripts in `tools/`, and everything degrades to what it did
+before there was a meter. A gate that failed *closed* would break all of them.
+
+The paywall opens **over** the editor, from Planner, so ten traced rooms are
+still on screen behind it and closing it puts the user back exactly where they
+were. Routing to `/pricing` would unmount the drawing.
+
+### There is no stored total anywhere
+
+`usage_events` is append-only and nothing caches a running total. The sum is one
+Postgres aggregate — `usage_totals(owner, from)` in migration 0004 — and the
+window is the tier's own rule: since the period began on a paid tier, since the
+beginning of time on free, because the free allowance does not refresh.
+
+This repo has been bitten once already by a value stored beside the thing it was
+computed from (`runFt` on an accent zone — see the BOQ section) and the fix was
+to delete the cached number. Same lesson, applied before it could bite.
+
+### The entitlement is the paid period, not the gateway's status word
+
+The first version of `tierOf` allowed only `active`, `authenticated` and
+`trialing`, which meant every other word Razorpay uses took the tier away the
+instant it arrived. Two of those words are routine and neither means unpaid:
+
+- **`pending`** — the *renewal* failed and is being retried. A bank timeout put a
+  user who had lit 40,000 sq ft back on a 3,000 sq ft lifetime allowance with
+  40,000 already spent, so every space on every drawing was refused, mid-job,
+  over a charge Razorpay had not given up on.
+- **`cancelled`** — somebody asked not to be charged again. `cancelAction`
+  promises in those words that *"the month you have paid for runs to its end"*,
+  and then the gateway's own cancellation event took it away the same afternoon.
+  The app was contradicting its own copy.
+
+So `current_period_end` decides, and a status disqualifies only where the money
+never arrived at all (`created`, `inactive`). That reading cannot fail dangerously:
+a period we forgot to roll forward expires on its own.
+
+### What is trusted, said plainly
+
+The area of a space is computed in the browser, from geometry only the browser
+has — resolving an outline needs the parsed DXF, which is a megabyte of line work
+`/api/billing` has no business loading. So `sqft` is **trusted for its magnitude,
+within bounds**. What is checked on every claim, server-side, with the service
+key:
+
+- the caller is who they say they are — the bearer token, validated against
+  `/auth/v1/user`, exactly as `api/admin.js` does it
+- the plan being charged is theirs — `plans?id=eq.…&owner=eq.…`
+- the figure is between `MIN_CLAIM_SQFT` and `MAX_CLAIM_SQFT`
+- the fingerprint has not already been charged
+- the balance covers it, all or nothing
+
+A determined user with devtools can under-report an area. What they cannot do is
+spend somebody else's allowance, replay a charge, charge a plan they do not own,
+or grant themselves a tier — and every claim is written to `usage_events` with
+`claimed_sqft` beside it, in a table the browser has no write policy on. Moving
+that boundary further means shipping a DXF parser into the billing endpoint.
+
+### Three tables, and the browser may never write any of them
+
+Every other table in this schema is written by the client under RLS. Billing
+cannot work that way, so `subscriptions`, `usage_events` and `payments` have a
+`select` policy and **no insert, update or delete policy at all** — and their
+absence *is* the enforcement, because Postgres denies what no policy permits.
+The service key is the only writer.
+
+### Razorpay: two ways to sell a month
+
+`RZP_MODE=subscription` (the default) holds a mandate and charges again by
+itself; `RZP_MODE=order` sells a single prepaid month and works on any account
+with no activation and no plan ids. Both converge on the same three columns —
+`tier`, `current_period_start`, `current_period_end` — so nothing downstream
+knows which one paid. PayPal will slot in as another `provider` on the order
+path.
+
+**The two signatures are built from their operands in opposite orders**, and
+getting it backwards produces a mismatch indistinguishable from a forgery:
+
+```
+order flow         HMAC(order_id + '|' + payment_id)
+subscription flow  HMAC(payment_id + '|' + subscription_id)
+```
+
+**And a valid signature is not enough**, which the first version of
+`verifyAction` got wrong three ways at once. The signature proves a payment
+happened; it says nothing about *what* was bought, *by whom*, or *whether it has
+already been used*. All three came out of the request body, so: `tier: 'pro'`
+posted back with a Starter payment's own signature bought Pro; nothing checked
+the order belonged to the caller; and in order mode one payment, re-posted
+monthly, renewed forever.
+
+Now the body is used only to build the signature payload. The tier and the owner
+are read back **from Razorpay**, out of `notes` written server-side at checkout
+and unreachable from the browser; the amount is checked against the tier's price
+(or the plan id against the tier); and the payment id is burned in `payments`
+before a single entitlement column moves — the unique index plus
+`return=representation` makes an empty array a definitive *"already used"*,
+decided by the database rather than by a read-then-write that could lose a race.
+
+`api/razorpay-webhook.js` is a **separate file** because its credential is the
+signature on the body and it has no user at all. Folding an unauthenticated
+branch into a handler whose whole contract is "verify the caller first" is the
+shape a serious mistake eventually takes.
+
+### Where the money is asked for
+
+- `/pricing` — public, deliberately. A price a visitor cannot read without making
+  an account is a price they assume is bad, and this page is what gets forwarded
+  to whoever signs the cheque. Choosing a tier while signed out defers to
+  `/login` and comes back with the choice intact, the same way the upload does.
+- The home page — a band **below** the drop target, never beside it. This page has
+  one job and a pricing block competing with the upload button would make the
+  first decision on it "how much" instead of "let me see it work".
+- `CheckoutDialog` — the last surface that is ours before Razorpay's window opens.
+  It leads with the mark and says **a product of Designopolis** under it, because
+  that is the name that appears on the statement, and somebody about to type a
+  card number wants to know what, from whom, and how much on one surface.
+
+### The setup, in order
+
+1. Run `supabase/migrations/0004_billing.sql`.
+2. `node tools/razorpay-plans.mjs` — or paste plan ids created in the dashboard;
+   both `RZP_PLAN_<TIER>` and `RZP_<TIER>_PLAN` are read.
+3. Add the webhook and `RZP_WEBHOOK_SECRET`. **Nothing renews without it.**

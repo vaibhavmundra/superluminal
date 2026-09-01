@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
+import { useBilling } from '../lib/billing.jsx';
+import { fmtSqft } from '../lib/plans.js';
 
 // ---------------------------------------------------------------------------
 // THE RAIL. Fifty-six pixels wide, and it holds two things: the mark at the top
@@ -26,6 +28,7 @@ import { useAuth } from '../lib/auth.jsx';
 // ---------------------------------------------------------------------------
 export default function ProfileRail() {
   const { initial, displayName, user, signOut, isAdmin } = useAuth();
+  const { state, tier } = useBilling();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   const nav = useNavigate();
@@ -109,12 +112,24 @@ export default function ProfileRail() {
             <div className="rail-who">
               <b>{displayName || 'Signed in'}</b>
               {user?.email && displayName !== user.email && <span>{user.email}</span>}
+              {/* THE BALANCE, WHERE THE ACCOUNT ALREADY IS. It belongs in this
+                  menu rather than in the editor's chrome: a number that ticks
+                  down beside a drawing is a meter running, and a meter running is
+                  the wrong thing to have in somebody's peripheral vision while
+                  they work. Here it is one click away, next to the name it
+                  belongs to, and only when somebody went looking. */}
+              <span className="rail-meter">
+                {tier.name} · {fmtSqft(state.area.left)} left
+              </span>
             </div>
             <button role="menuitem" onClick={() => { setOpen(false); nav('/dashboard'); }}>
               All projects
             </button>
             <button role="menuitem" onClick={() => { setOpen(false); nav('/'); }}>
               New plan
+            </button>
+            <button role="menuitem" onClick={() => { setOpen(false); nav('/pricing'); }}>
+              Plan &amp; usage
             </button>
             {isAdmin && (
               <button role="menuitem" onClick={() => { setOpen(false); nav('/admin/users'); }}>
