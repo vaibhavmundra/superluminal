@@ -277,6 +277,39 @@ h1,h2,h3,h4,h5,h6,b,strong,th,optgroup{font-weight:400}
    having to opt in. */
 svg.plan{display:block;max-width:100%;height:auto;cursor:crosshair}
 input[type=range]{flex:1.1;max-width:130px;accent-color:var(--accent);height:18px}
+
+/* --- THE CHECKBOX, DRAWN RATHER THAN TINTED -------------------------------
+   `accent-color` was doing this and it cannot be trusted to. That property sets
+   the BOX and leaves the TICK to the browser, which computes it for contrast —
+   and what it computes is not the same everywhere: on `accent-color:#fff` this
+   Chromium draws a dark grey check, and other engines and OS appearance
+   settings draw a white one, which on a white box is no check at all. A control
+   whose checked state is invisible on somebody's machine is not a styling
+   preference, it is a broken switch.
+
+   So `appearance:none` and both halves stated: a white box always, a BLACK tick
+   when checked. Nothing is left to the UA except the focus ring, which the
+   `input:focus` rule above already owns.
+
+   THE TICK IS A DATA-URI SVG rather than a glyph or a border trick. A `✓` in
+   text depends on the font having one at a weight that reads at 10px, and the
+   two-borders-rotated-45deg trick cannot be given round caps. `%23` is `#`,
+   which has to be escaped inside a url().
+
+   `.lp-check` AND NOT A BARE `input[type=checkbox]`, because the tracer has its
+   own checkboxes on a light panel that are none of this rule's business. The
+   class is on the three lists that share the dark panel: the editor's View
+   section, the admin toggle beside it, and the read-only viewer's Layers. */
+input[type=checkbox].lp-check{
+  appearance:none;-webkit-appearance:none;
+  width:14px;height:14px;margin:0;flex:none;
+  border:1px solid var(--border-strong);border-radius:3px;
+  background:#fff no-repeat center/10px 10px;
+  cursor:pointer
+}
+input[type=checkbox].lp-check:checked{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.6 7.4L5.5 10.3L11.4 3.7' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+}
 /* EVERY TEXT-ENTRY TYPE, AND THE LIST IS THE BUG THAT WAS HERE.
    
    It read `number, text, password` — written when the app had no forms in it,

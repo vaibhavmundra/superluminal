@@ -98,8 +98,8 @@ const BTN_FULL = `${BTN} w-full`;
 const BTN_PRIMARY = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_CTA}`;
 const BTN_ACCENT = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} bg-accent text-white `
   + 'border-accent hover:bg-accent-hover hover:border-accent-hover';
-const BTN_SECOND = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} bg-surface text-ink `
-  + 'border-border-strong hover:bg-surface-2 hover:border-ink active:bg-surface-3';
+const BTN_SECOND = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} bg-surface text-white `
+  + 'border-border-strong hover:bg-surface-2 hover:border-ink active:bg-surface-3 hover:text-black';
 /* The wider one, which is the loading panel's; and the two small ones. */
 const BTN_MID = `text-[12px] px-3.5 py-[7px] ${BTN_SHAPE} ${BTN_QUIET}`;
 const BTN_TINY = `text-[11px] px-[5px] py-0 ${BTN_SHAPE} ${BTN_QUIET}`;
@@ -153,11 +153,36 @@ const H3_SHAPE = 'mt-0 mx-0 text-[10px] tracking-[0.11em] uppercase';
 const H3 = `${H3_SHAPE} mb-2.5 text-subtle`;
 const H3_FLUSH = `${H3_SHAPE} mb-0 text-subtle`;
 const H3_ADMIN = `${H3_SHAPE} mb-2.5 text-[#C026D3]`;
-const CHECK = 'flex items-center gap-2 mb-[7px] text-muted cursor-pointer '
-  + '[&>input]:accent-accent [&>input]:w-3.5 [&>input]:h-3.5 [&>input]:m-0';
+/* `accent-white` AND NOT `accent-accent`. `accent-color` is the one property a
+   native checkbox exposes, and it sets the BOX — the tick is then drawn by the
+   browser in whatever contrasts with it. So a white box gets a near-black tick
+   for free, which is the whole ask, and it needs no `appearance-none` and no
+   hand-drawn SVG check. Verified in the browser rather than assumed: at 4x zoom
+   #fff renders a white box with a dark tick, where the amber it replaces
+   rendered an amber box with the same dark tick.
+   THE UNCHECKED BOX IS THE UA'S OWN, and stays that way deliberately. Nothing
+   here declares `color-scheme`, so it is the light-mode control — a white box
+   with a grey border — which is already the right thing beside a checked white
+   one on this panel's dark ground. */
+/* THE LABEL'S LAYOUT ONLY. The box itself is `.lp-check` in styles.css, which
+   owns its size, its border and its tick — `accent-color` could not be made to
+   say what colour the tick is, so the control is drawn there instead. The
+   `[&>input]:*` utilities that used to live here are gone with it: two places
+   setting one control's size is one place too many. */
+const CHECK = 'flex items-center gap-2 mb-[7px] text-muted cursor-pointer';
 
-/* --- the tab strips: the Design/BOQ pair, and the undo/redo pair beside it. */
-const TABS = 'inline-flex gap-0.5 p-0.5 border border-border rounded bg-surface-3';
+/* --- THE UNDO/REDO SHELL, and it is the only thing left using this.
+   The name is historical: it dressed the Design/BOQ tab pair too, and that pair
+   is now the right panel's own three-tab strip.
+   GLASS, LIKE EVERY OTHER PIECE OF CHROME ON THIS SCREEN. It was `bg-surface-3`
+   — #F2F2F2, an opaque near-white pill — which is a light-panel token sitting on
+   a dark bar: it read as a bright slab with two invisible icons in it. The
+   panel's own glass is what the top bar, the appearance switch and the name
+   field all wear, and this is the last of the four to get it.
+   `border-border/10` rather than `border-border` for the same reason: #EAEAEA at
+   full strength is a bright outline round a translucent thing. */
+const TABS = 'inline-flex gap-0.5 p-0.5 rounded border border-border/10 '
+  + 'bg-surface backdrop-blur-md';
 const TAB_SHAPE = 'appearance-none border-0 cursor-pointer text-[11.5px] leading-[1.5] '
   + 'tracking-[0.01em] py-1 rounded transition-[background-color,color] duration-[120ms]';
 /* `TAB` AND `TAB_ON` WERE HERE. They dressed the Design/BOQ pill pair in the top
@@ -165,12 +190,22 @@ const TAB_SHAPE = 'appearance-none border-0 cursor-pointer text-[11.5px] leading
    stays: the undo/redo and plan-appearance switches are built on it, which is
    why the shape outlived the pair that used it as a pill. */
 const ICON_SHAPE_TAB = 'px-2 inline-flex items-center justify-center leading-[0] [&>svg]:block';
-const STEP = `${TAB_SHAPE} ${ICON_SHAPE_TAB} bg-transparent text-subtle hover:text-text `
-  + 'disabled:opacity-35 disabled:cursor-default disabled:hover:text-subtle';
-/* The same shell, latched on — an icon button that is a state rather than an
-   action, so it takes the tab strip's picked look instead of a fill. */
-const STEP_ON = `${TAB_SHAPE} ${ICON_SHAPE_TAB} bg-surface text-ink `
-  + 'shadow-[0_1px_2px_rgba(10,10,10,.06)]';
+/* WHITE WHEN THERE IS SOMETHING TO DO, GREY WHEN THERE IS NOT — and for these
+   two "active" is exactly `enabled`. The pair is the only thing on screen that
+   says this plan HAS a history, and its disabled state says how much of one, so
+   the difference between the two has to be legible at 15px.
+   A COLOUR RATHER THAN `opacity-35`, which is what this was. Opacity dims the
+   whole button — its hover ground included — and on a translucent shell that
+   compounds into a smudge; `text-subtle` greys the one thing that should grey.
+   THE HOVER IS A GROUND, NOT A COLOUR SHIFT, since the icon is already white.
+   Gated on `enabled:` so a dead button does not light up under the pointer. */
+const STEP = `${TAB_SHAPE} ${ICON_SHAPE_TAB} bg-transparent text-white `
+  + 'enabled:hover:bg-white/10 disabled:text-subtle disabled:cursor-default';
+/* `STEP_ON` WAS HERE — the same shell latched on, for an icon button that is a
+   state rather than an action. The sun/moon switch was its only user, and that
+   switch now says its state with the accent RAMP on the live icon instead of
+   with a pill behind it (see the block over the canvas). `STEP` stays: undo and
+   redo are actions, and they never had an on state to draw. */
 
 /* --- a row in a list of spaces or objects. */
 /* `border-transparent` IS ON THE OFF-STATE, not on the shape: `ROW_ON` sets
@@ -270,7 +305,16 @@ const ICON_ON = `${ICON_SHAPE} lp-chunk-btn lp-chunk-btn-on hover:bg-surface`;
    meaning. The page's ground is black, so white is the strongest thing a panel
    can say with, and it says only this: you are here. */
 const PTAB_SHAPE = 'appearance-none border-0 bg-transparent cursor-pointer '
-  + 'text-[11px] px-0 py-[5px] mr-4 last:mr-0 border-b-2 -mb-px whitespace-nowrap '
+  /* BIGGER THAN THE EDIT TABS BELOW, and that is the hierarchy being said out
+     loud rather than a size preference. This strip names the STEP you are in —
+     the three things this app does — and the strip under it names a category of
+     tool within one of them. They were both 11px, so the panel opened with two
+     tab rows of equal weight and no clue which was the outer one. */
+  + 'text-[13px] px-0 py-[6px] mr-[18px] last:mr-0 border-b-2 whitespace-nowrap '
+  /* NO `-mb-px`. It pulled the tab's own underline down by a pixel so it would
+     sit ON the container's hairline and cover it. The hairline is gone (see the
+     strip itself), so the nudge has nothing to align to and would just lift the
+     underline off its baseline. */
   + 'transition-[color,border-color] duration-[120ms] '
   + 'focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 '
   + 'focus-visible:rounded-[3px]';
@@ -5719,18 +5763,44 @@ export default function App({
               <span aria-hidden="true">←</span> Back to Projects
             </button>
             <span className="w-px h-[15px] bg-border flex-none rotate-[15deg]" aria-hidden="true" />
+            {/* WHITE, NOT `text-ink`. This bar is frosted glass over a black
+                page and ink is #000000 — the name of the plan, which is the one
+                thing this bar exists to say, was reading as a dark smudge on a
+                dark ground. Both the viewer's span and the editor's button take
+                it, because they are the same words in the same place. */}
             {readOnly ? (
               /* A SPAN, NOT A DISABLED BUTTON. The name is not a control here and
                  dressing it as a dead one invites the click that does nothing. */
-              <span className="text-[13px] text-ink py-1 overflow-hidden text-ellipsis whitespace-nowrap max-w-[38ch]">{planName || 'Untitled plan'}</span>
+              <span className="text-[13px] text-white py-1 overflow-hidden text-ellipsis whitespace-nowrap max-w-[38ch]">{planName || 'Untitled plan'}</span>
             ) : nameDraft == null ? (
+              /* HOVER HINTS AT THE FIELD IT BECOMES. It was `hover:bg-surface-3`
+                 — #F2F2F2, a near-white flash on this dark bar — and it now
+                 warms to the same glass the input below wears, so the hover is a
+                 preview of the edit rather than a different effect. */
               <button title="Rename this plan"
-                className="border-0 bg-none text-[13.5px] text-ink cursor-text px-1.5 py-[3px] rounded max-w-[34ch] overflow-hidden text-ellipsis whitespace-nowrap hover:bg-surface-3 hover:shadow-[inset_0_-1px_0_var(--color-border-strong)]"
+                className="border-0 bg-none text-[13.5px] text-white cursor-text px-1.5 py-[3px] rounded max-w-[34ch] overflow-hidden text-ellipsis whitespace-nowrap transition-colors duration-[120ms] hover:bg-surface hover:backdrop-blur-md"
                 onClick={() => setNameDraft(planName || '')}>
                 {planName || 'Untitled plan'}
               </button>
             ) : (
-              <input className="text-[13.5px] w-[26ch] px-1.5 py-[3px]" autoFocus value={nameDraft}
+              /* --- EDITING: A GLASS FIELD THAT ASKS TO BE TYPED IN -----------
+                  IT WAS RAW OS CHROME, and that is a real bug rather than a
+                  plain omission. styles.css styles text entry through
+                  `input[type=text], input[type=email], …` — an ATTRIBUTE
+                  selector, and this input has no `type` at all, so it matched
+                  none of them. The file's own comment warns about exactly this
+                  trap (it is how the login field ended up unstyled). Rather than
+                  add `type="text"` and inherit a field built for a white panel —
+                  `--input-bg` is #FFFFFF and `--text` is #e1dccd, which is
+                  off-white text on a white box — it states what it is.
+                  `bg-surface` + `backdrop-blur-md` is the panel's own glass, so
+                  the field reads as part of this bar rather than punched through
+                  it, and the border gives the edge a text field needs to invite
+                  the caret. Utilities beat the element rules either way, being
+                  in `@layer utilities`. */
+              <input className="text-[13.5px] w-[26ch] px-2 py-[3px] rounded
+                bg-surface backdrop-blur-md text-white border border-border/20
+                focus:outline-none" autoFocus value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)}
                 onBlur={() => { onRename?.(nameDraft); setNameDraft(null); }}
                 onKeyDown={(e) => {
@@ -5834,31 +5904,12 @@ export default function App({
             own ink rather than the plan. So the switch is absent on a vector
             plan rather than present and inert — the rule the View section
             follows about a checkbox that turns on nothing. */}
-        {source && !isVector && (
-          <div className={TABS} role="group" aria-label="Plan appearance">
-            {[[false, 'Show the plan as scanned',
-               /* Heroicons `sun`, outline. */
-               'M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591'
-               + 'M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636'
-               + 'M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z'],
-              [true, 'Invert the plan — black plan, white lines',
-               /* Heroicons `moon`, outline. */
-               'M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75'
-               + ' 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21'
-               + ' 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z']].map(([on, label, d]) => (
-              <button key={String(on)} type="button"
-                className={layers.invert === on ? STEP_ON : STEP}
-                aria-pressed={layers.invert === on} title={label}
-                onClick={() => setLayers((l) => ({ ...l, invert: on }))}>
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-                  stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
-                  strokeLinejoin="round" aria-hidden="true">
-                  <path d={d} />
-                </svg>
-              </button>
-            ))}
-          </div>
-        )}
+        {/* THE SUN/MOON SWITCH WAS HERE, and it is now over the CANVAS, lower
+            right — see the block after this bar. It is a control over the
+            drawing's own appearance, and the drawing is what you are looking at
+            while you use it; up here it was in the row that names the plan and
+            says whether it is busy, four hundred pixels from the thing it
+            changes. */}
         {/* THE DESIGN/BOQ PAIR WAS HERE, and it is now the right panel's own
             three-tab strip — Outlines, Design, BOQ. It left the top bar because
             two of the three steps it names had their controls in the panel and
@@ -5866,6 +5917,101 @@ export default function App({
             pieces of chrome, in two different idioms, so "where am I" had two
             answers and neither was complete. See the strip in the panel. */}
       </div>
+
+      {/* --- THE PLAN'S APPEARANCE, OVER THE DRAWING IT CHANGES ------------
+          A TWO-SIDED SWITCH, NOT A BUTTON. Sun is the scan as it arrived, moon
+          inverts it — a white plan with black lines becomes a black plan with
+          white ones. Both sides are always drawn and one is always latched,
+          which is what makes it a switch: you can see which of the two you are
+          in without having to remember what pressing it did.
+
+          LOWER RIGHT, OVER THE CANVAS, because that is where the thing it
+          changes is. In the top bar it sat in the row that names the plan and
+          says whether it is busy — a control over the drawing's ink, filed with
+          the drawing's metadata.
+
+          A WHITE PILL, NOT GLASS, AND GLASS WAS TRIED FIRST. The panel's own
+          five-percent white works there because the panel is a large surface
+          against a black page with its own grid showing through — the glass IS
+          the read. A 70px control floating on the drawing has no area to build
+          that up: it came out as a barely-there smudge over whatever it happened
+          to be sitting on, which is the opposite of what a switch has to be.
+          Solid white, a hairline and a lift instead.
+
+          THE SHADOW IS DOING REAL WORK, not decoration. This thing floats over
+          two different grounds — the black page around the sheet, and the white
+          paper of a day-mode plan when the drawing is large enough to reach the
+          corner. White-on-black needs nothing; white-on-white needs an edge and
+          a shadow or it disappears. The hairline handles the first case and the
+          shadow the second.
+
+          POSITIONED LIKE THE TOP BAR, which is deliberate rather than copied:
+          `right-[364px]` clears the 340px panel with the same 24px the stage
+          pads by, and the 960px query is where the panel stops being a column
+          and goes underneath. Anchored to whatever the top bar is anchored to,
+          so the two cannot drift apart.
+
+          OUTSIDE THE STAGE ON PURPOSE. The stage is the scroll container; an
+          absolutely-positioned child of it would scroll away with the plan, and
+          a switch you have to scroll back to find is not pinned chrome.
+
+          OFFERED ONLY WHERE IT DOES SOMETHING. A scan is pixels, so inverting it
+          is meaningful. A DXF is not: its geometry is drawn by us, in colours
+          from `C` in PlanCanvas, and a filter over it would invert our own ink
+          rather than the plan. So the switch is absent on a vector plan rather
+          than present and inert — the rule the View section follows about a
+          checkbox that turns on nothing. */}
+      {source && !isVector && !boqOpen && !showTrace && (
+        <div className="absolute bottom-6 right-[364px] [@media(max-width:960px)]:right-6
+          z-[5] flex gap-0.5 p-1 rounded-lg bg-white border border-border
+          shadow-[0_2px_10px_rgba(0,0,0,0.35)]"
+          role="group" aria-label="Plan appearance">
+          {[[false, 'Show the plan as scanned',
+             /* Heroicons `sun`, outline. */
+             'M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591'
+             + 'M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636'
+             + 'M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z'],
+            [true, 'Invert the plan — black plan, white lines',
+             /* Heroicons `moon`, outline. */
+             'M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75'
+             + ' 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21'
+             + ' 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z']].map(([on, label, d]) => {
+            const live = layers.invert === on;
+            /* INK ON THE LIVE SIDE, GREY ON THE OTHER — because the pill is
+               white now, and that decides this. The accent RAMP was tried and
+               read as washed out at 17px: its tones are #c2a987 through #fef1dd,
+               which carry as a fill over a large shape and resolve to a pale
+               smudge in 1.7px strokes. There is nothing wrong with the gradient;
+               there is not enough of it in an icon for a gradient to be
+               anything. Then white icons, which were right while the pill was
+               dark glass and became invisible the moment it went white.
+               SO NO PAINT SERVER, AND `currentColor` DOES IT ALL. Both states
+               are a text colour on the button, which is why there is no
+               `<defs>` in here. */
+            return (
+              <button key={String(on)} type="button"
+                className={'appearance-none border-0 bg-transparent cursor-pointer '
+                  + 'px-2 py-1.5 rounded inline-flex items-center justify-center leading-[0] '
+                  + 'transition-colors duration-[120ms] '
+                  + 'focus-visible:outline-2 focus-visible:outline-accent '
+                  + 'focus-visible:outline-offset-1 '
+                  /* GREYED, NOT HIDDEN. The side you are not in still has to be
+                     findable — it is half the switch. #7A7A7A on white is quiet
+                     without being absent, and it goes to ink on hover so the
+                     button reads as live before you press it. */
+                  + (live ? 'text-ink' : 'text-subtle hover:text-ink')}
+                aria-pressed={live} title={label}
+                onClick={() => setLayers((l) => ({ ...l, invert: on }))}>
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
+                  stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+                  strokeLinejoin="round" aria-hidden="true">
+                  <path d={d} />
+                </svg>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div ref={stageRef}
         className={'relative overflow-auto '
@@ -6070,7 +6216,7 @@ export default function App({
           grid lines, not the plan. Same three declarations as the top bar, for
           the obvious reason: two pieces of chrome on one screen made of
           different glass read as a mistake. */}
-      <div className="bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[2px]
+      <div className="bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px]
         border-l border-border/10 overflow-y-auto pt-4 px-4 pb-10 flex flex-col gap-1.5">
         {/* --- WHERE YOU ARE, AND IT IS THE FIRST THING IN THE PANEL --------
             THREE STEPS, AS THREE TABS. Tracing the outlines, laying out the
@@ -6097,8 +6243,32 @@ export default function App({
             and no layout is the same blank page, and this strip only exists past
             `step !== 'trace'`, which is exactly "there is a layout". */}
         {source && step !== 'trace' && !readOnly && !prep && (
-          <div className="flex border-b border-border/10 mb-3" role="tablist"
-            aria-label="Plan step">
+          /* NO RULE UNDER THE STRIP. It carried `border-b border-border/10` — a
+             full-width hairline, the convention for a tab strip on a light
+             ground where the tabs are cards sitting on a sheet. These are not
+             cards: they are three words on glass, and the current one is picked
+             out by a white underline of its own. The hairline ran on past that
+             underline to the panel's edge, so the mark that means "you are here"
+             was a two-pixel-thicker segment of a line that was already there —
+             which is exactly as hard to read as it sounds. Without it the white
+             underline is the only horizontal rule in the strip and needs no
+             help being seen.
+
+             AND IT IS A `<nav>`, NOT A `<div>`, WHICH IS THE OTHER HALF OF
+             REMOVING THAT RULE. `SEC` cancels its own top border with
+             `first-of-type:border-t-0` — the first section in the panel has
+             nothing above it to be separated from. `first-of-type` counts
+             siblings of the SAME TAG, so putting a `<div>` here quietly took
+             that slot: the Spaces section stopped being the first div, its
+             `border-t` started painting, and a hairline appeared a dozen pixels
+             below the tabs that looked exactly like the one I had just removed
+             from the strip. A `<nav>` is a different tag, so the first `<div>`
+             child is the first section again and the rule cancels as it always
+             did — in this branch and in the BOQ and viewer branches alike.
+             It is also the honest element: this is navigation between the three
+             things the app does. `role="tablist"` overrides nav's implicit
+             `navigation` role, which is what we want it announced as. */
+          <nav className="flex mb-3" role="tablist" aria-label="Plan step">
             {/* THE OUTLINES TAB CAN REFUSE TO SWITCH. Going back discards the
                 layout, so `backToOutlines` asks first and returns false on a
                 "no" — which leaves you where you were rather than
@@ -6111,7 +6281,7 @@ export default function App({
             <button role="tab" aria-selected={view === 'boq'}
               className={view === 'boq' ? PTAB_ON : PTAB}
               onClick={() => setView('boq')}>BOQ</button>
-          </div>
+          </nav>
         )}
         {/* THE BOQ PANEL HAS ONE JOB. Every other section here is a control over
             the drawing — arm a fan, recompute the accents, toggle a layer — and
@@ -6926,7 +7096,9 @@ export default function App({
               ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
               ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
               ['accents', 'Accent lighting'], ['spots', 'Directional spots']].map(([k, l]) => (
-              <label className={CHECK} key={k}><input type="checkbox" checked={layers[k]} onChange={toggle(k)} />{l}</label>
+              <label className={CHECK} key={k}>
+                <input className="lp-check" type="checkbox"
+                  checked={layers[k]} onChange={toggle(k)} />{l}</label>
             ))}
           </details>
 
@@ -6979,7 +7151,7 @@ export default function App({
               <div className={SEC_ADMIN}>
                 <h3 className={H3_ADMIN}>Admin · model readings</h3>
                 <label className={CHECK}>
-                  <input type="checkbox" checked={audit}
+                  <input className="lp-check" type="checkbox" checked={audit}
                     onChange={(e) => setAudit(e.target.checked)} />
                   Show what was identified
                 </label>

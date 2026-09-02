@@ -95,22 +95,22 @@ const poolFtFor = (fx) =>
   THROW_STYLE.diameterFtByWatt[FIXTURE_BY_ID[fx]?.watts] ?? null;
 
 /**
- * THE ACCENT RAMP'S RIM TONE — its last stop, read out rather than re-typed.
+ * THE ACCENT RAMP'S RIM TONE — the one flat colour on this canvas, and why.
  *
  * A gradient is the right paint for a FILL and useless on the line work around
  * it: the ring on a spot and its arrow are a couple of line-weights thick, and a
  * ramp across two pixels resolves to one colour whichever end you look at. The
  * arrow is worse than that — it is a LINE, so it has the degenerate bounding box
  * that already forced the strips into user space, and there is nothing to ramp
- * across in the first place.
+ * across in the first place. So a mark too thin to hold a gradient takes one
+ * tone, and every such mark takes the SAME tone, so the symbol still reads as
+ * one object cut from one ramp.
  *
- * So a mark too thin to hold a gradient takes the ramp's OUTERMOST colour, which
- * is the tone the filled body has already settled to by the time it reaches its
- * own edge. The ring continues the body's rim outwards and the arrow continues
- * the ring; the symbol reads as one object cut from one ramp, which is the point.
- * Derived from `coreStops` so there is still exactly one place the accent lives.
+ * IT IS NO LONGER A MODULE CONSTANT, because there are two palettes now. The
+ * value is picked per render from the ground the plan is on — see `RAMP` and
+ * `rim` inside the component — and it is `THROW_STYLE.rim` or
+ * `THROW_STYLE.day.rim`. Nothing outside this file needs it.
  */
-const CORE_RIM = THROW_STYLE.coreStops[THROW_STYLE.coreStops.length - 1].color;
 
 const PlanCanvas = forwardRef(function PlanCanvas(
   { src, srcAsScanned = null, vector = null, wallLayers = null,
@@ -161,6 +161,32 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     },
     style: { cursor: 'pointer' },
   });
+
+  /**
+   * WHICH PALETTE THIS DRAWING IS IN, and it is the ground that decides.
+   *
+   * `layers.invert` means the scan has been turned into a negative, so the plan
+   * is BLACK — and the cream ramp (#fef1dd through #c2a987) is what reads on it.
+   * Un-inverted, the plan is white paper, and cream is four percent off white:
+   * the fittings were there and could not be seen. The light-ground palette is
+   * the same three ramps in amber. See THROW_STYLE.day in settings.js for the
+   * tones and for why their depths run the opposite way round.
+   *
+   * THE GRADIENT IDS DO NOT CHANGE — only their stops do. That is what keeps
+   * this to one decision: `url(#lp-core)`, `url(#lp-throw)`, `url(#lp-lit)`,
+   * every per-run strip and rail ramp and the pill all go on referring to the
+   * same paint servers, and not one of the fifty places that paints with them
+   * has to know which mode it is in. Swapping a gradient for a flat colour per
+   * mode would have meant touching every one of them.
+   *
+   * A VECTOR PLAN IS THE KNOWN INEXACTNESS. It has no bitmap to invert and
+   * draws on the page's own black, so it is a dark ground while reporting
+   * `invert: false` — it therefore gets the amber set. Amber reads on both
+   * grounds, cream reads on one, so this is the safe direction to be wrong in;
+   * the same note is on the ceiling objects' ink.
+   */
+  const RAMP = layers.invert ? THROW_STYLE : THROW_STYLE.day;
+  const rim = RAMP.rim;
 
   const s = pxPerFt || 1;
   /**
@@ -350,7 +376,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             reads as a soft ring. Reverse the list in settings.js for a
             centre-bright pool instead; it is one edit in one place. */}
         <radialGradient id="lp-throw" cx="50%" cy="50%" r="50%">
-          {THROW_STYLE.stops.map((st) => (
+          {RAMP.stops.map((st) => (
             <stop key={st.at} offset={st.at} stopColor={st.color} />
           ))}
         </radialGradient>
@@ -374,7 +400,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             extent in both axes — the detector cannot mark a table with no
             depth. So one gradient serves every surface on the sheet. */}
         <linearGradient id="lp-lit" x1="0" y1="0" x2="1" y2="0">
-          {THROW_STYLE.stops.map((st) => (
+          {RAMP.stops.map((st) => (
             <stop key={st.at} offset={st.at} stopColor={st.color} />
           ))}
         </linearGradient>
@@ -398,7 +424,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             profile rather than as a disc floating in a rectangle. That is the
             right answer here; it was the wrong one on a task surface. */}
         <radialGradient id="lp-core" cx="50%" cy="50%" r="50%">
-          {THROW_STYLE.coreStops.map((st) => (
+          {RAMP.coreStops.map((st) => (
             <stop key={st.at} offset={st.at} stopColor={st.color} />
           ))}
         </radialGradient>
@@ -414,7 +440,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             still a gradient, still seamless where a closed outline joins itself,
             and never lighter than #efd5b2. See settings.js. */}
         <linearGradient id="lp-sel-ramp" x1="0" y1="0" x2="1" y2="0">
-          {THROW_STYLE.inkStops.map((st) => (
+          {RAMP.inkStops.map((st) => (
             <stop key={st.at} offset={st.at} stopColor={st.color} />
           ))}
         </linearGradient>
@@ -504,7 +530,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     work it CAN hold a gradient: opposite sides of the room sample
                     opposite ends of the ramp and the outline grades round itself.
                     That is why this one takes a ramp at all where a two-pixel
-                    fitting ring takes the single CORE_RIM tone — and why the ramp
+                    fitting ring takes the single rim tone — and why the ramp
                     is `lp-sel-ramp` rather than `lp-lit`, which went invisible
                     here. See the note in the defs. */}
                 <polygon points={pts} className="lp-sel" fill="none"
@@ -689,7 +715,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  not its stroke — so thinning the line to dots does not shrink
                  the target. (`pointer-events: stroke` would have: it follows the
                  dashes, and on a dotted line that leaves you clicking dots.) */
-              fill="none" stroke={layers.invert ? C.object : CORE_RIM}
+              fill="none" stroke={layers.invert ? C.object : rim}
               strokeWidth={lw}
               strokeDasharray={`${lw} ${lw * 3}`} strokeLinecap="round"
               strokeLinejoin="round" opacity="0.85" />
@@ -792,7 +818,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <g key={'trk' + t.key}>
                   <defs>
                     <linearGradient id={rgid} gradientUnits="userSpaceOnUse" {...rgrad}>
-                      {THROW_STYLE.stops.map((st) => (
+                      {RAMP.stops.map((st) => (
                         <stop key={st.at} offset={st.at} stopColor={st.color} />
                       ))}
                     </linearGradient>
@@ -810,7 +836,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               <g key={'trk' + t.key}>
                 <defs>
                   <linearGradient id={rgid} gradientUnits="userSpaceOnUse" {...rgrad}>
-                    {THROW_STYLE.stops.map((st) => (
+                    {RAMP.stops.map((st) => (
                       <stop key={st.at} offset={st.at} stopColor={st.color} />
                     ))}
                   </linearGradient>
@@ -985,7 +1011,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // rosette. White on the accent ring in day mode — which is what they
         // always were and why they worked — and the ramp's rim tone on the white
         // ring at night, since white on white is nothing at all.
-        const lamp = layers.invert ? CORE_RIM : '#fff';
+        const lamp = layers.invert ? rim : '#fff';
         const R = f.r || 0;
         // The BODY's radius, which is NOT the clearance radius: on a rectangle
         // the clearance circle is circumscribed and larger. The selection frame
@@ -1298,7 +1324,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             // it is gone because nothing in this block wants a hue any more.
             // Every mark on a light — recessed or seated in a track, ambient or
             // aimed — is now cut from the accent ramp: the body takes `lp-core`
-            // and the line work takes CORE_RIM. `C.large` and `C.small` were the
+            // and the line work takes rim. `C.large` and `C.small` were the
             // same value as each other anyway, which is a good sign the fill was
             // never carrying the distinction it looked like it was carrying.
             const warm = hot === l.id;
@@ -1348,21 +1374,21 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       ? (e) => { e.stopPropagation(); onPickChunk(r.id, l.design); }
                       : undefined} />
                   <rect x={l.x - rw / 2} y={l.y - rh / 2} width={rw} height={rh}
-                    fill="url(#lp-core)" stroke={CORE_RIM} strokeWidth={lw * (warm ? 2.6 : 1.5)}
+                    fill="url(#lp-core)" stroke={rim} strokeWidth={lw * (warm ? 2.6 : 1.5)}
                     pointerEvents="none" />
                   {layers.labels && l.gridPx && (
                     <g opacity="0.45" pointerEvents="none">
                       <line x1={l.gridPx.x} y1={l.gridPx.y} x2={l.x} y2={l.y}
-                        stroke={CORE_RIM} strokeWidth={lw}
+                        stroke={rim} strokeWidth={lw}
                         strokeDasharray={`${lw * 2} ${lw * 2}`} />
                       <circle cx={l.gridPx.x} cy={l.gridPx.y} r={lw * 1.4}
-                        fill="none" stroke={CORE_RIM} strokeWidth={lw} />
+                        fill="none" stroke={rim} strokeWidth={lw} />
                     </g>
                   )}
                   {layers.labels && (
                     <text x={l.x + rw / 2 + lw * 2.5} y={l.y - rh / 2 - lw * 2}
                       fontSize={s * 0.5} fontFamily="The Neue Montreal, sans-serif"
-                      fill={CORE_RIM} opacity="0.75">
+                      fill={rim} opacity="0.75">
                       {laid.length > 1 && r.name ? `${r.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 4)}-` : ''}{l.id}
                     </text>
                   )}
@@ -1383,7 +1409,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   className="lp-pulse" pointerEvents="none"
                   style={{ animationDelay: `${((li * 137) % 1000) / 1000 * -2.8}s` }} />
                 {l.kind === 'large' && (
-                  <circle cx={l.x} cy={l.y} r={R * 1.9} fill={CORE_RIM} opacity="0.07" />
+                  <circle cx={l.x} cy={l.y} r={R * 1.9} fill={rim} opacity="0.07" />
                 )}
                 {/* `.hit` ON THE CIRCLE, NOT ON THE GROUP. Everything inside
                     `.plan` is inert by default — see the note in styles.css,
@@ -1412,7 +1438,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                      AND THE RING IS THE RAMP'S RIM TONE, so no amber survives on
                      a recessed fitting — the body, the ring, the bar, the
                      coverage fans, both label tethers and the tag all sample the
-                     one accent ramp. See CORE_RIM at the head of this file for
+                     one accent ramp. See rim at the head of this file for
                      why a two-pixel stroke takes a colour rather than a
                      gradient.
                      THE TRACK HEADS ABOVE ARE DELIBERATELY UNTOUCHED. A head
@@ -1421,7 +1447,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                      the schedule, and it is drawn as a rect for exactly that
                      reason. It keeps `col`. */
                   fill="url(#lp-core)"
-                  stroke={CORE_RIM} strokeWidth={lw * (warm ? 3.1 : 1.7)} />
+                  stroke={rim} strokeWidth={lw * (warm ? 3.1 : 1.7)} />
                 {/* THE CENTRE DOT IS GONE, same as on the spot and for the same
                     reason: a solid disc of the accent COLOUR at 0.42R sat right
                     where the ramp is brightest, so it covered the lit core with
@@ -1435,12 +1461,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   <line
                     x1={l.axis === 'v' ? l.x : l.x - R * 1.7} y1={l.axis === 'v' ? l.y - R * 1.7 : l.y}
                     x2={l.axis === 'v' ? l.x : l.x + R * 1.7} y2={l.axis === 'v' ? l.y + R * 1.7 : l.y}
-                    stroke={CORE_RIM} strokeWidth={lw * 1.1} opacity="0.5" />
+                    stroke={rim} strokeWidth={lw * 1.1} opacity="0.5" />
                 )}
                 {layers.labels && l.kind === 'large' && l.coverPx && l.coverPx.length > 1 && (
                   <g opacity="0.3">
                     {l.coverPx.map((q, k) => (
-                      <line key={k} x1={l.x} y1={l.y} x2={q.x} y2={q.y} stroke={CORE_RIM} strokeWidth={lw} />
+                      <line key={k} x1={l.x} y1={l.y} x2={q.x} y2={q.y} stroke={rim} strokeWidth={lw} />
                     ))}
                   </g>
                 )}
@@ -1454,23 +1480,23 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 {layers.labels && l.gridPx && (
                   <g opacity="0.45" pointerEvents="none">
                     <line x1={l.gridPx.x} y1={l.gridPx.y} x2={l.x} y2={l.y}
-                      stroke={CORE_RIM} strokeWidth={lw}
+                      stroke={rim} strokeWidth={lw}
                       strokeDasharray={`${lw * 2} ${lw * 2}`} />
                     <circle cx={l.gridPx.x} cy={l.gridPx.y} r={lw * 1.4}
-                      fill="none" stroke={CORE_RIM} strokeWidth={lw} />
+                      fill="none" stroke={rim} strokeWidth={lw} />
                   </g>
                 )}
                 {layers.labels && l.nudged && l.centrePx && (
                   <g opacity="0.5">
                     <line x1={l.centrePx.x} y1={l.centrePx.y} x2={l.x} y2={l.y}
-                      stroke={CORE_RIM} strokeWidth={lw} strokeDasharray={`${lw * 2} ${lw * 2}`} />
+                      stroke={rim} strokeWidth={lw} strokeDasharray={`${lw * 2} ${lw * 2}`} />
                     <circle cx={l.centrePx.x} cy={l.centrePx.y} r={lw * 1.5} fill="none"
-                      stroke={CORE_RIM} strokeWidth={lw} />
+                      stroke={rim} strokeWidth={lw} />
                   </g>
                 )}
                 {layers.labels && (
                   <text x={l.x + R * 1.6} y={l.y - R * 1.2} fontSize={s * 0.5}
-                    fontFamily="The Neue Montreal, sans-serif" fill={CORE_RIM} opacity="0.75">
+                    fontFamily="The Neue Montreal, sans-serif" fill={rim} opacity="0.75">
                     {laid.length > 1 && r.name ? `${r.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 4)}-` : ''}{l.id}
                   </text>
                 )}
@@ -1542,7 +1568,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           <g key={c.id} pointerEvents="none">
             <defs>
               <linearGradient id={gid} gradientUnits="userSpaceOnUse" {...g}>
-                {THROW_STYLE.stops.map((st) => (
+                {RAMP.stops.map((st) => (
                   <stop key={st.at} offset={st.at} stopColor={st.color} />
                 ))}
               </linearGradient>
@@ -1556,9 +1582,9 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             <rect x={c.rect.x0} y={c.rect.y0}
               width={c.rect.x1 - c.rect.x0} height={c.rect.y1 - c.rect.y0}
               fill={`url(#${gid})`} fillOpacity={B.fillOpacity}
-              stroke={CORE_RIM} strokeWidth={lw} strokeOpacity={B.edgeOpacity} />
+              stroke={rim} strokeWidth={lw} strokeOpacity={B.edgeOpacity} />
             <line x1={lip[0].x} y1={lip[0].y} x2={lip[1].x} y2={lip[1].y}
-              stroke={CORE_RIM} strokeWidth={lw * B.lipWeight}
+              stroke={rim} strokeWidth={lw * B.lipWeight}
               strokeOpacity={B.lipOpacity} />
           </g>
         );
@@ -1597,11 +1623,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // A linear run takes the accent GRADIENT along its length (see `tape`
         // below); a sconce cannot, because a crosshair is line work and there is
         // no length to grade across. So it takes the ramp's outermost colour,
-        // exactly as the spots' and the downlights' rings do — see CORE_RIM at
+        // exactly as the spots' and the downlights' rings do — see rim at
         // the head of this file. Its own body already carries the full ramp, so
         // the fitting reads as one object cut from one gradient, and there is no
         // amber left anywhere on a sconce.
-        const acol = CORE_RIM;
+        const acol = rim;
         // Constant on screen, like every other control. See the ceiling-object
         // handles for the argument.
         const AH = (Math.max(width, height) / 155) / (zoom || 1);
@@ -1681,7 +1707,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {gline && (
               <defs>
                 <linearGradient id={gid} gradientUnits="userSpaceOnUse" {...gline}>
-                  {THROW_STYLE.stops.map((st) => (
+                  {RAMP.stops.map((st) => (
                     <stop key={st.at} offset={st.at} stopColor={st.color} />
                   ))}
                 </linearGradient>
@@ -2212,10 +2238,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {layers.labels && sp.gridPx && (
               <g opacity="0.45" pointerEvents="none">
                 <line x1={sp.gridPx.x} y1={sp.gridPx.y} x2={sp.x} y2={sp.y}
-                  stroke={CORE_RIM} strokeWidth={lw}
+                  stroke={rim} strokeWidth={lw}
                   strokeDasharray={`${lw * 2} ${lw * 2}`} />
                 <circle cx={sp.gridPx.x} cy={sp.gridPx.y} r={lw * 1.4}
-                  fill="none" stroke={CORE_RIM} strokeWidth={lw} />
+                  fill="none" stroke={rim} strokeWidth={lw} />
               </g>
             )}
             <ellipse cx={sp.x} cy={sp.y}
@@ -2248,7 +2274,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <rect x={sp.x - bodyLen / 2} y={sp.y - bodyWide / 2}
                   width={bodyLen} height={bodyWide}
                   rx={bodyWide / 2} ry={bodyWide / 2}
-                  fill="url(#lp-core)" stroke={CORE_RIM}
+                  fill="url(#lp-core)" stroke={rim}
                   strokeWidth={lw * (hot === sp.id ? 2.4 : 0.7)} pointerEvents="none" />
                 {/* THE LENS, IN THE NOSE. Centred on the capsule's own end
                     radius, so it reads as the round end of the cylinder being
@@ -2260,7 +2286,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     switched off. */}
                 <ellipse cx={sp.x + bodyLen / 2 - bodyWide / 2} cy={sp.y}
                   rx={bodyWide * 0.31} ry={bodyWide * 0.47}
-                  fill="url(#lp-core)" stroke={CORE_RIM}
+                  fill="url(#lp-core)" stroke={rim}
                   strokeWidth={lw * (hot === sp.id ? 2.2 : 1.1)} pointerEvents="none" />
               </g>
             ) : (
@@ -2278,14 +2304,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     still separates a spot from a downlight is what always
                     separated them — the arrow. */}
                 <circle className="hit" cx={sp.x} cy={sp.y} r={R} fill="url(#lp-core)"
-                  stroke={CORE_RIM} strokeWidth={lw * (hot === sp.id ? 3.4 : 2)} />
+                  stroke={rim} strokeWidth={lw * (hot === sp.id ? 3.4 : 2)} />
               </>
             )}
             <line x1={x0} y1={y0} x2={x1} y2={y1}
-              stroke={CORE_RIM} strokeWidth={lw * 1.9} strokeLinecap="round" />
+              stroke={rim} strokeWidth={lw * 1.9} strokeLinecap="round" />
             <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * 0.55},${y1 - uy * head + ny * head * 0.55}`
                    + ` L${x1 - ux * head - nx * head * 0.55},${y1 - uy * head - ny * head * 0.55} Z`}
-              fill={CORE_RIM} />
+              fill={rim} />
           </g>
         );
       })}
@@ -2472,14 +2498,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {/* AND THE GHOST'S LINE WORK MATCHES THE PLACED FITTING'S, for the
                 same reason its ground does: a preview drawn in a colour the
                 click will not produce is a small lie about the gesture. */}
-            <g stroke={CORE_RIM} strokeWidth={lw * 1.8} strokeLinecap="round">
+            <g stroke={rim} strokeWidth={lw * 1.8} strokeLinecap="round">
               <line x1={sconceGhost.point.x} y1={sconceGhost.point.y}
                 x2={cx + ix * arm} y2={cy + iy * arm} />
               <line x1={cx - ux * arm} y1={cy - uy * arm}
                 x2={cx + ux * arm} y2={cy + uy * arm} />
             </g>
             <circle cx={cx} cy={cy} r={R} fill="none"
-              stroke={CORE_RIM} strokeWidth={lw * 2.1} />
+              stroke={rim} strokeWidth={lw * 2.1} />
           </g>
         );
       })()}

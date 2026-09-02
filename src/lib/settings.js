@@ -340,6 +340,68 @@ export const THROW_STYLE = {
     { at: '50%',  color: '#efd5b2' },
     { at: '100%', color: '#c2a987' },
   ],
+
+  /**
+   * THE RIM TONE FOR LINE WORK, stated rather than derived.
+   *
+   * It used to be read off the last entry of `coreStops`, on the reasoning that
+   * a ring should continue the body's own edge outwards. That held while there
+   * was one palette. With two it stops holding: on a white plan the body wants
+   * to END at the brand amber and the ring round it has to be DARKER than that
+   * to be an outline at all, so the two figures are no longer the same number
+   * and pretending they are would flatten every fitting on a day-mode sheet.
+   */
+  rim: '#c2a987',
+
+  /**
+   * ---------------------------------------------------------------------
+   * THE LIGHT-GROUND PALETTE — the same three ramps in amber.
+   * ---------------------------------------------------------------------
+   *
+   * WHY THERE ARE TWO. Everything above is cream: #fef1dd through #c2a987, which
+   * is right over the black page and over an inverted scan, and which is four
+   * percent off white when the plan is a WHITE SCAN. In day mode the fittings
+   * were pale marks on pale paper — legible in the sense that the pixels differ,
+   * unreadable in the sense that matters.
+   *
+   * AMBER ONLY, AND THAT WAS THE INSTRUCTION'S OWN SUGGESTION: a ramp built from
+   * one hue at three depths rather than a swap between a gradient and a flat
+   * colour. It is also the easier thing to be right about — every id in the
+   * canvas stays a gradient, so nothing that PAINTS with these has to know which
+   * palette is in force. See the `RAMP` pick in PlanCanvas: the stops move, the
+   * ids do not.
+   *
+   * THE DEPTHS RUN THE OTHER WAY ROUND FROM THE CREAM SET, and that is the whole
+   * point rather than an inconsistency. On black, "bright" means light, so the
+   * body's core is the palest tone. On white, light IS the ground — so the core
+   * is the saturated brand amber and the rim goes deeper still, which is the
+   * ordinary way a filled symbol is drawn on paper.
+   *
+   *   #ffe4a3   the lightest — a body's core, still clearly amber on white
+   *   #ffc94d   the middle
+   *   #ffb900   the brand accent, and where a body ENDS
+   *   #cc8f00   deeper than any of them: line work, rings, arrows
+   */
+  day: {
+    stops: [
+      { at: '0%',   color: '#cc8f00' },
+      { at: '25%',  color: '#ffb900' },
+      { at: '50%',  color: '#ffe4a3' },
+      { at: '75%',  color: '#ffb900' },
+      { at: '100%', color: '#cc8f00' },
+    ],
+    coreStops: [
+      { at: '0%',   color: '#ffe4a3' },
+      { at: '55%',  color: '#ffc94d' },
+      { at: '100%', color: '#ffb900' },
+    ],
+    inkStops: [
+      { at: '0%',   color: '#cc8f00' },
+      { at: '50%',  color: '#ffb900' },
+      { at: '100%', color: '#cc8f00' },
+    ],
+    rim: '#cc8f00',
+  },
 };
 
 /**

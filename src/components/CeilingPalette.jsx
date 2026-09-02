@@ -83,7 +83,19 @@ export default function CeilingPalette({ armed, onArm, disabled = false }) {
                 picture for it at all. */}
             <img src={g.icon} alt="" width="40" height="40"
               className="w-10 h-10 object-contain select-none" draggable="false" />
-            <span className={'text-[9.5px] leading-[1.15] text-center tracking-[0.01em] ' + (on ? 'text-ink' : 'text-muted')}>{label}</span>
+            {/* SUBTLE AT REST, WHITE WHEN ARMED — and `text-ink` was the bug.
+                Ink is #000000, which is right on paper and all but invisible on
+                this panel's frosted glass over a black page: arming a fan made
+                its name DISAPPEAR, which is the opposite of what a latched
+                control should do. White is the strongest thing a dark panel can
+                say, and it is what the panel's tabs and its checked boxes
+                already say it with.
+                `text-subtle` rather than `text-muted` for the resting state —
+                #7A7A7A against #525252. The label is a caption under a picture
+                that already names the thing; muted was competing with the
+                artwork for the same job. */}
+            <span className={'text-[9.5px] leading-[1.15] text-center tracking-[0.01em] '
+              + (on ? 'text-white' : 'text-subtle')}>{label}</span>
           </button>
         );
       })}

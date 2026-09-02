@@ -119,16 +119,27 @@ export default function LightPalette({ tool, onPick, disabled = false }) {
       <div className="grid grid-cols-3 gap-[5px] mt-2">
         {LIGHT_TOOLS.map((t) => (
           <button key={t.id} type="button" disabled={disabled}
-            className={'flex flex-col items-center gap-[3px] pt-[7px] px-[2px] pb-[5px] rounded-[8px] border border-border/10 bg-surface text-accent cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-input-bg disabled:opacity-45 disabled:cursor-not-allowed' +
-              (tool === t.id ? ' bg-input-bg shadow-[inset_0_0_0_1px_currentColor]' : '')}
+            className={'flex flex-col items-center gap-[3px] pt-[7px] px-[2px] pb-[5px] '
+              + 'rounded-[8px] border cursor-pointer transition-colors duration-[120ms] '
+              + 'disabled:opacity-45 disabled:cursor-not-allowed '
+              /* ARMED TAKES THE ACCENT RAMP AS A 1px RING, exactly as the
+                 ceiling palette does — see the note there for the mechanism.
+                 It was `shadow-[inset_0_0_0_1px_currentColor]` over
+                 `text-accent`, which is the flat amber, and a flat amber ring
+                 beside a ceiling palette whose armed ring is the ramp made two
+                 rows of the same panel disagree about what "armed" looks like.
+                 `text-accent` GOES WITH IT. It used to colour the glyph through
+                 `currentColor`; the artwork carries its own colour now, and the
+                 ring is a paint server rather than a text colour, so nothing was
+                 left for it to feed.
+                 ONE `bg-*` PER BRANCH. The base string used to carry `bg-surface`
+                 and the armed suffix added `bg-input-bg` on top — two utilities
+                 on one property, which is the ordering trap this codebase warns
+                 about at the top of App.jsx. Each state now names its own. */
+              + (tool === t.id
+                ? 'border-transparent bg-input-bg gradient-ring'
+                : 'border-border/10 bg-surface enabled:hover:bg-input-bg')}
             title={`${t.label} — ${t.hint}`}
-            /* `text-accent` IS STILL LOAD-BEARING, but for less than it was.
-               It used to colour the glyph, which took `currentColor` — the
-               artwork carries its own colour now, so all it feeds is the armed
-               ring's `currentColor` in the inset shadow above. Same job the
-               ceiling palette's `text-accent` does, and the same reason all
-               three buttons share one hue: these all place the same KIND of
-               thing, where a ceiling object and a light are two kinds. */
             aria-pressed={tool === t.id}
             onClick={() => onPick(tool === t.id ? null : t.id)}>
             {/* alt="" ON PURPOSE, same as the ceiling palette: the label below
@@ -141,7 +152,12 @@ export default function LightPalette({ tool, onPick, disabled = false }) {
                 className="w-10 h-10 object-contain select-none" draggable="false" />
             )}
             <span className={'text-[9.5px] leading-[1.15] text-center tracking-[0.01em] ' +
-              (tool === t.id ? 'text-ink' : 'text-muted')}>{t.label}</span>
+              /* THE SAME FIX AS THE CEILING PALETTE, and the same reason: this
+                 row sits on the same dark panel, so `text-ink` made an armed
+                 tool's name vanish rather than stand out. Two palettes side by
+                 side that answer "which one is armed" differently would be worse
+                 than either answer. */
+              (tool === t.id ? 'text-white' : 'text-subtle')}>{t.label}</span>
           </button>
         ))}
       </div>

@@ -19,7 +19,7 @@ const FILL = ['#111111', '#8A8A8A', '#3D3D3D', '#B0B0B0', '#5C5C5C', '#9E9E9E', 
 // Shared `.btn` look: inherits the surrounding font (buttons don't by default),
 // black-on-white with a hairline border, and the hover/active/disabled states
 // every button in this dialog shares.
-const BTN = "[font:inherit] text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
+const BTN = "[font:inherit] text-[12px] py-[7px] px-3 rounded border border-border bg-surface backdrop-blur-lg text-white cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:text-black hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
 const BTN_PRIMARY = "[font:inherit] text-[12px] py-[7px] px-3 rounded border bg-cta border-cta text-white cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
 
 export default function ChunkPicker({
@@ -65,7 +65,7 @@ export default function ChunkPicker({
         ))}
       </div>
 
-      <div className="sticky bottom-0 mt-[18px] flex items-center gap-[14px] border-t border-border py-[14px] px-[2px] bg-[linear-gradient(rgba(250,250,250,0),rgba(250,250,250,.95)_34%)]">
+      <div className="sticky bottom-0 mt-[18px] flex items-center gap-[14px]   py-[14px] px-[2px] ">
         <div className="flex-1 text-muted text-[12px]">
           {chosen
             ? <><b>{chosen.label}</b> — {chosen.metrics.pieces} chunks, about {chosen.metrics.estCells} cells.</>
@@ -101,13 +101,13 @@ function ChunkCard({
 
   return (
     <button
-      className={`flex flex-col gap-2 text-left [font:inherit] text-[inherit] bg-surface border rounded-[12px] p-3 cursor-pointer transition-[border-color,box-shadow] duration-[120ms] ${selected ? 'border-accent shadow-[0_0_0_2px_var(--color-accent-soft),0_2px_12px_rgba(99,102,241,.14)]' : 'border-border hover:border-accent hover:shadow-[0_2px_10px_rgba(10,10,10,.06)]'}`}
+      className={`flex flex-col gap-2 text-left [font:inherit] text-[inherit] bg-surface backdrop-blur-lg border border-border/10 rounded-[12px] p-3 cursor-pointer transition-[border-color,box-shadow] duration-[120ms] ${selected ? 'gradient-ring' : 'border-border hover:border-border/50 hover:shadow-[0_2px_10px_rgba(10,10,10,.06)]'}`}
       onClick={onSelect} onDoubleClick={onConfirm}
       aria-pressed={selected} title={o.blurb}>
       <div className="flex items-center gap-[7px] flex-wrap">
         <span className="text-[13.5px] tracking-[-0.01em]">{o.label}</span>
-        {recommended && <span className="text-[10px] py-[2px] px-[7px] rounded-full whitespace-nowrap bg-accent-soft text-accent border border-accent-line">recommended</span>}
-        {selected && <span className="text-[10px] py-[2px] px-[7px] rounded-full whitespace-nowrap bg-accent text-white">selected</span>}
+        {recommended && <span className="text-[10px] py-[2px] px-[7px] rounded-full whitespace-nowrap bg-white text-black">recommended</span>}
+        {selected && <span className="text-[10px] py-[2px] px-[7px] rounded-full whitespace-nowrap bg-accent-gradient text-black">selected</span>}
       </div>
 
       <svg className="block w-full h-[210px] bg-bg border border-border rounded-[8px] max-[960px]:h-[170px]" viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}>
@@ -180,22 +180,22 @@ function ChunkCard({
       </svg>
 
       <div className="flex gap-[5px] flex-wrap">
-        <span className="font-sans text-[10px] py-[2px] px-[7px] rounded bg-input-bg text-muted whitespace-nowrap"><b className="text-ink">{o.metrics.pieces}</b> chunks</span>
-        <span className="font-sans text-[10px] py-[2px] px-[7px] rounded bg-input-bg text-muted whitespace-nowrap">≈<b className="text-ink">{o.metrics.estCells}</b> cells</span>
-        <span className={`font-sans text-[10px] py-[2px] px-[7px] rounded whitespace-nowrap ${lost > 0.05 ? 'bg-danger-soft text-danger-ink' : 'bg-input-bg text-muted'}`}>
+        <span className="font-sans text-[10px] py-[2px] px-[7px] rounded border border-border/10 text-subtle whitespace-nowrap"><b className="text-subtle">{o.metrics.pieces}</b> chunks</span>
+        <span className="font-sans text-[10px] py-[2px] px-[7px] rounded border border-border/10 text-subtle whitespace-nowrap">≈<b className="text-subtle">{o.metrics.estCells}</b> cells</span>
+        <span className={`font-sans text-[10px] py-[2px] px-[7px] rounded whitespace-nowrap ${lost > 0.05 ? 'bg-danger-soft text-danger-ink' : ' border border-border/10 text-subtle'}`}>
           {lost > 0.05 ? <><b className="text-danger-ink">{lost.toFixed(0)}</b> sq ft lost</> : 'nothing lost'}
         </span>
-        <span className="font-sans text-[10px] py-[2px] px-[7px] rounded bg-input-bg text-muted whitespace-nowrap">squareness <b className="text-ink">{o.metrics.avgSquareness.toFixed(2)}</b></span>
+        <span className="font-sans text-[10px] py-[2px] px-[7px] rounded border border-border/10 text-subtle whitespace-nowrap">squareness <b className="text-subtle">{o.metrics.avgSquareness.toFixed(2)}</b></span>
         {o.metrics.fansTotal > 0 && (
-          <span className={`font-sans text-[10px] py-[2px] px-[7px] rounded whitespace-nowrap ${o.metrics.fansOnAnEdge ? 'bg-danger-soft text-danger-ink' : 'bg-input-bg text-muted'}`}>
-            <b className={o.metrics.fansOnAnEdge ? 'text-danger-ink' : 'text-ink'}>{o.metrics.fansHeldClear}</b>/{o.metrics.fansTotal} fans clear
+          <span className={`font-sans text-[10px] py-[2px] px-[7px] rounded whitespace-nowrap ${o.metrics.fansOnAnEdge ? 'bg-danger-soft text-danger-ink' : 'border border-border/10 text-subtle'}`}>
+            <b className={o.metrics.fansOnAnEdge ? 'text-danger-ink' : 'text-subtle'}>{o.metrics.fansHeldClear}</b>/{o.metrics.fansTotal} fans clear
           </span>
         )}
       </div>
 
       {o.highlights?.length > 0 && (
         <div className="flex gap-[5px] flex-wrap">
-          {o.highlights.map((h) => <span key={h} className="text-[10px] py-[2px] px-[7px] rounded-full whitespace-nowrap bg-accent-soft text-accent border border-accent-line">{h}</span>)}
+          {o.highlights.map((h) => <span key={h} className="text-[10px] py-[2px] px-[7px] rounded-full whitespace-nowrap text-white border border-border/10 text-subtle">{h}</span>)}
         </div>
       )}
 

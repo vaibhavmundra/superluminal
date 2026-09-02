@@ -119,7 +119,11 @@ export default function ViewerPanel({
         <div className="grid grid-cols-2 gap-x-2.5 gap-y-0.5 mt-2">
           {LAYER_ROWS.map(([k, label]) => (
             <label className="flex items-center gap-2 mb-[7px] text-muted cursor-pointer" key={k}>
-              <input type="checkbox" className="accent-accent w-3.5 h-3.5 m-0" checked={!!layers[k]} onChange={onToggleLayer(k)} />
+              {/* `accent-white`, MATCHING THE EDITOR'S `CHECK` in App.jsx. This
+                  is the same Layers list a viewer sees, and the same control
+                  looking different depending on who opened the plan is the one
+                  thing a read-only mirror of a panel must not do. */}
+              <input type="checkbox" className="lp-check" checked={!!layers[k]} onChange={onToggleLayer(k)} />
               {label}
             </label>
           ))}
