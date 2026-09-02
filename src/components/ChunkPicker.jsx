@@ -16,6 +16,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 // The same value ramp the tracer uses — see the note there.
 const FILL = ['#111111', '#8A8A8A', '#3D3D3D', '#B0B0B0', '#5C5C5C', '#9E9E9E', '#262626', '#767676'];
 
+// Shared `.btn` look: inherits the surrounding font (buttons don't by default),
+// black-on-white with a hairline border, and the hover/active/disabled states
+// every button in this dialog shares.
+const BTN = "[font:inherit] text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
+const BTN_PRIMARY = "[font:inherit] text-[12px] py-[7px] px-3 rounded border bg-cta border-cta text-white cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
+
 export default function ChunkPicker({
   options, recommendedId, initialId, onConfirm, onCancel = null,
   src, vector = null, wallLayers = null,
@@ -40,13 +46,13 @@ export default function ChunkPicker({
   const chosen = options.find((o) => o.id === draft) || null;
 
   return (
-    <div className="picker">
-      <div className="picker-head">
-        <h2>How should this space be cut up?</h2>
-        <p><b>{options.length} ways</b> to read it. Each chunk gets its own grid.</p>
+    <div className="max-w-[1180px] mx-auto">
+      <div className="mb-4">
+        <h2 className="m-0 mb-1.5 text-[19px] tracking-[-0.025em]">How should this space be cut up?</h2>
+        <p className="m-0 text-muted max-w-[78ch]"><b>{options.length} ways</b> to read it. Each chunk gets its own grid.</p>
       </div>
 
-      <div className="picker-grid">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(290px,1fr))] gap-[14px]">
         {options.map((o, i) => (
           <ChunkCard key={o.id} option={o} index={i}
             recommended={o.id === recommendedId}
@@ -59,8 +65,8 @@ export default function ChunkPicker({
         ))}
       </div>
 
-      <div className="picker-foot">
-        <div className="picker-foot-txt">
+      <div className="sticky bottom-0 mt-[18px] flex items-center gap-[14px] border-t border-border py-[14px] px-[2px] bg-[linear-gradient(rgba(250,250,250,0),rgba(250,250,250,.95)_34%)]">
+        <div className="flex-1 text-muted text-[12px]">
           {chosen
             ? <><b>{chosen.label}</b> — {chosen.metrics.pieces} chunks, about {chosen.metrics.estCells} cells.</>
             : <>Click a configuration to select it. Double-click to go straight through.</>}
@@ -70,9 +76,9 @@ export default function ChunkPicker({
             whole plan is lit off the recommended chunkings and this is somewhere
             you came to on purpose, which means there has to be a way back out
             without having to make a choice you did not want to make. */}
-        <div className="btnrow">
-          {onCancel && <button className="btn" onClick={onCancel}>Leave it as it is</button>}
-          <button className="btn primary" disabled={!chosen} onClick={() => chosen && onConfirm(chosen.id)}>
+        <div className="flex gap-1.5 flex-wrap">
+          {onCancel && <button className={BTN} onClick={onCancel}>Leave it as it is</button>}
+          <button className={BTN_PRIMARY} disabled={!chosen} onClick={() => chosen && onConfirm(chosen.id)}>
             {chosen ? 'Place the lights →' : 'Select a configuration'}
           </button>
         </div>
@@ -94,16 +100,17 @@ function ChunkCard({
   const lost = o.metrics.lostArea;
 
   return (
-    <button className={'chunk-card' + (selected ? ' on' : '')}
+    <button
+      className={`flex flex-col gap-2 text-left [font:inherit] text-[inherit] bg-surface border rounded-[12px] p-3 cursor-pointer transition-[border-color,box-shadow] duration-[120ms] ${selected ? 'border-accent shadow-[0_0_0_2px_var(--color-accent-soft),0_2px_12px_rgba(99,102,241,.14)]' : 'border-border hover:border-accent hover:shadow-[0_2px_10px_rgba(10,10,10,.06)]'}`}
       onClick={onSelect} onDoubleClick={onConfirm}
       aria-pressed={selected} title={o.blurb}>
-      <div className="chunk-card-top">
-        <span className="chunk-card-name">{o.label}</span>
-        {recommended && <span className="tag rec">recommended</span>}
-        {selected && <span className="tag sel">selected</span>}
+      <div className="flex items-center gap-[7px] flex-wrap">
+        <span className="text-[13.5px] tracking-[-0.01em]">{o.label}</span>
+        {recommended && <span className="text-[10px] py-[2px] px-[7px] rounded-full whitespace-nowrap bg-accent-soft text-accent border border-accent-line">recommended</span>}
+        {selected && <span className="text-[10px] py-[2px] px-[7px] rounded-full whitespace-nowrap bg-accent text-white">selected</span>}
       </div>
 
-      <svg className="chunk-thumb" viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}>
+      <svg className="block w-full h-[210px] bg-bg border border-border rounded-[8px] max-[960px]:h-[170px]" viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}>
         <defs>
           <pattern id={`pk-nlz-${o.id}`} width={lw * 8} height={lw * 8}
             patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -172,29 +179,29 @@ function ChunkCard({
         })}
       </svg>
 
-      <div className="chip-row">
-        <span className="chip"><b>{o.metrics.pieces}</b> chunks</span>
-        <span className="chip">≈<b>{o.metrics.estCells}</b> cells</span>
-        <span className={'chip' + (lost > 0.05 ? ' bad' : '')}>
-          {lost > 0.05 ? <><b>{lost.toFixed(0)}</b> sq ft lost</> : 'nothing lost'}
+      <div className="flex gap-[5px] flex-wrap">
+        <span className="font-sans text-[10px] py-[2px] px-[7px] rounded bg-input-bg text-muted whitespace-nowrap"><b className="text-ink">{o.metrics.pieces}</b> chunks</span>
+        <span className="font-sans text-[10px] py-[2px] px-[7px] rounded bg-input-bg text-muted whitespace-nowrap">≈<b className="text-ink">{o.metrics.estCells}</b> cells</span>
+        <span className={`font-sans text-[10px] py-[2px] px-[7px] rounded whitespace-nowrap ${lost > 0.05 ? 'bg-danger-soft text-danger-ink' : 'bg-input-bg text-muted'}`}>
+          {lost > 0.05 ? <><b className="text-danger-ink">{lost.toFixed(0)}</b> sq ft lost</> : 'nothing lost'}
         </span>
-        <span className="chip">squareness <b>{o.metrics.avgSquareness.toFixed(2)}</b></span>
+        <span className="font-sans text-[10px] py-[2px] px-[7px] rounded bg-input-bg text-muted whitespace-nowrap">squareness <b className="text-ink">{o.metrics.avgSquareness.toFixed(2)}</b></span>
         {o.metrics.fansTotal > 0 && (
-          <span className={'chip' + (o.metrics.fansOnAnEdge ? ' bad' : '')}>
-            <b>{o.metrics.fansHeldClear}</b>/{o.metrics.fansTotal} fans clear
+          <span className={`font-sans text-[10px] py-[2px] px-[7px] rounded whitespace-nowrap ${o.metrics.fansOnAnEdge ? 'bg-danger-soft text-danger-ink' : 'bg-input-bg text-muted'}`}>
+            <b className={o.metrics.fansOnAnEdge ? 'text-danger-ink' : 'text-ink'}>{o.metrics.fansHeldClear}</b>/{o.metrics.fansTotal} fans clear
           </span>
         )}
       </div>
 
       {o.highlights?.length > 0 && (
-        <div className="chip-row">
-          {o.highlights.map((h) => <span key={h} className="tag good">{h}</span>)}
+        <div className="flex gap-[5px] flex-wrap">
+          {o.highlights.map((h) => <span key={h} className="text-[10px] py-[2px] px-[7px] rounded-full whitespace-nowrap bg-accent-soft text-accent border border-accent-line">{h}</span>)}
         </div>
       )}
 
-      <p className="chunk-card-blurb">{o.blurb}</p>
+      <p className="mt-auto text-[11.5px] leading-[1.45] text-subtle">{o.blurb}</p>
       {o.aliasLabels?.length > 0 && (
-        <p className="chunk-card-alias">Same answer as: {o.aliasLabels.join(', ')}</p>
+        <p className="m-0 font-sans text-[10px] text-subtle opacity-75">Same answer as: {o.aliasLabels.join(', ')}</p>
       )}
     </button>
   );

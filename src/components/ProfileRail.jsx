@@ -46,7 +46,7 @@ export default function ProfileRail() {
   }, [open]);
 
   return (
-    <aside className="rail">
+    <aside className="flex flex-col items-center gap-2.5 border-r border-border bg-surface pt-[18px] pb-3.5">
       {/* HOME, AT THE TOP, AND IT IS A HOUSE RATHER THAN THE WORDMARK.
           The stacked logotype used to live here and was commented out, which
           left the rail's top empty and the admin door — a thing most people
@@ -60,8 +60,9 @@ export default function ProfileRail() {
           IT IS GREY UNTIL IT IS TOUCHED, like the admin door under it. Blue in
           this rail is spoken for by the account bubble — the one genuinely
           interactive object in the chrome — and two blues would say neither. */}
-      <Link to="/dashboard" className="rail-home" title="Dashboard"
-        aria-label="Dashboard">
+      <Link to="/dashboard"
+        className="flex h-8 w-8 flex-none items-center justify-center rounded-[8px] text-subtle transition-colors duration-[120ms] hover:bg-surface-3 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        title="Dashboard" aria-label="Dashboard">
         {/* Drawn rather than loaded, for the reason the mark is: it takes the
             ink colour with it and stays sharp at any density. */}
         <svg viewBox="0 0 24 24" width="19" height="19" fill="none"
@@ -88,8 +89,9 @@ export default function ProfileRail() {
           already use magenta for exactly this idea — working, not product — so
           the operator's surfaces read as one thing across the app. */}
       {isAdmin && (
-        <Link to="/admin/users" className="rail-admin" title="Users (admin)"
-          aria-label="Users (admin)">
+        <Link to="/admin/users"
+          className="flex h-8 w-8 items-center justify-center rounded-[8px] mt-2 text-subtle transition-colors duration-[120ms] hover:bg-[#FDF2FE] hover:text-[#C026D3]"
+          title="Users (admin)" aria-label="Users (admin)">
           {/* Three figures. Drawn rather than loaded for the same reason the
               lit-aperture mark is: it takes the ink colour with it and stays
               sharp at any density. */}
@@ -104,48 +106,62 @@ export default function ProfileRail() {
         </Link>
       )}
 
-      <div className="rail-spacer" />
+      <div className="flex-1" />
 
-      <div className="rail-account" ref={wrapRef}>
+      <div className="relative" ref={wrapRef}>
         {open && (
-          <div className="rail-menu" role="menu">
-            <div className="rail-who">
-              <b>{displayName || 'Signed in'}</b>
-              {user?.email && displayName !== user.email && <span>{user.email}</span>}
+          <div className="absolute bottom-0 left-11 z-20 flex w-[210px] flex-col gap-0.5 rounded-lg border border-border bg-surface p-1.5 shadow-pop" role="menu">
+            <div className="flex flex-col gap-0.5 border-b border-border pt-2 px-[9px] pb-2.5 mb-1">
+              <b className="text-[12.5px]">{displayName || 'Signed in'}</b>
+              {user?.email && displayName !== user.email && (
+                <span className="text-[11px] text-subtle overflow-hidden text-ellipsis">{user.email}</span>
+              )}
               {/* THE BALANCE, WHERE THE ACCOUNT ALREADY IS. It belongs in this
                   menu rather than in the editor's chrome: a number that ticks
                   down beside a drawing is a meter running, and a meter running is
                   the wrong thing to have in somebody's peripheral vision while
                   they work. Here it is one click away, next to the name it
                   belongs to, and only when somebody went looking. */}
-              <span className="rail-meter">
+              <span className="text-[10.5px] text-subtle tracking-[0.02em] tabular-nums mt-[3px]">
                 {state.unlimited
                   ? `${tier.name} · unmetered`
                   : `${tier.name} · ${fmtSqft(state.area.left)} left`}
               </span>
             </div>
-            <button role="menuitem" onClick={() => { setOpen(false); nav('/dashboard'); }}>
+            <button role="menuitem"
+              className="text-left border-0 bg-transparent text-[12.5px] py-[7px] px-[9px] rounded cursor-pointer text-ink hover:bg-surface-3"
+              onClick={() => { setOpen(false); nav('/dashboard'); }}>
               All projects
             </button>
-            <button role="menuitem" onClick={() => { setOpen(false); nav('/'); }}>
+            <button role="menuitem"
+              className="text-left border-0 bg-transparent text-[12.5px] py-[7px] px-[9px] rounded cursor-pointer text-ink hover:bg-surface-3"
+              onClick={() => { setOpen(false); nav('/'); }}>
               New plan
             </button>
-            <button role="menuitem" onClick={() => { setOpen(false); nav('/pricing'); }}>
+            <button role="menuitem"
+              className="text-left border-0 bg-transparent text-[12.5px] py-[7px] px-[9px] rounded cursor-pointer text-ink hover:bg-surface-3"
+              onClick={() => { setOpen(false); nav('/pricing'); }}>
               Plan &amp; usage
             </button>
             {isAdmin && (
-              <button role="menuitem" onClick={() => { setOpen(false); nav('/admin/users'); }}>
+              <button role="menuitem"
+                className="text-left border-0 bg-transparent text-[12.5px] py-[7px] px-[9px] rounded cursor-pointer text-ink hover:bg-surface-3"
+                onClick={() => { setOpen(false); nav('/admin/users'); }}>
                 Users (admin)
               </button>
             )}
-            <div className="rail-sep" />
-            <button role="menuitem" className="danger"
+            <div className="h-px bg-border my-1" />
+            <button role="menuitem"
+              className="text-left border-0 bg-transparent text-[12.5px] py-[7px] px-[9px] rounded cursor-pointer text-danger-ink hover:bg-danger-soft"
               onClick={async () => { setOpen(false); await signOut(); nav('/', { replace: true }); }}>
               Log out
             </button>
           </div>
         )}
-        <button className={'bubble' + (open ? ' on' : '')} onClick={() => setOpen((o) => !o)}
+        <button
+          className={'w-8 h-8 rounded-full border text-[13px] cursor-pointer grid place-items-center transition-colors duration-[120ms] ' +
+            (open ? 'bg-ink border-ink text-white' : 'bg-accent border-accent text-white hover:bg-accent-hover hover:border-accent-hover')}
+          onClick={() => setOpen((o) => !o)}
           aria-haspopup="menu" aria-expanded={open}
           title={displayName || 'Account'}>
           {initial}

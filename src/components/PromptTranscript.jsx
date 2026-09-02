@@ -31,17 +31,24 @@ const CALLS = [
   ['second', 'PROMPT 02 · the gridded plan', 'Where that is, as grid cells. The reply is a worksheet, then the array.'],
 ];
 
+// Shared `.btn` look: inherits the surrounding font (buttons don't by default),
+// black-on-white with a hairline border, and the hover/active/disabled states
+// every button in this dialog shares.
+const BTN = "[font:inherit] text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
+
 /** Copy, with the button saying so for a beat. A copy that gives no feedback is
  *  one people press three times. */
 function CopyButton({ text, label = 'Copy' }) {
   const [said, setSaid] = useState(false);
   if (!text) return null;
   return (
-    <button className="btn tiny" onClick={() => {
-      navigator.clipboard?.writeText(text)
-        .then(() => { setSaid(true); setTimeout(() => setSaid(false), 1400); })
-        .catch(() => {});
-    }}>{said ? 'Copied' : label}</button>
+    <button
+      className={`${BTN} text-[11px] leading-[1.5] py-0 px-[5px] ml-auto`}
+      onClick={() => {
+        navigator.clipboard?.writeText(text)
+          .then(() => { setSaid(true); setTimeout(() => setSaid(false), 1400); })
+          .catch(() => {});
+      }}>{said ? 'Copied' : label}</button>
   );
 }
 
@@ -54,23 +61,23 @@ export default function PromptTranscript({ transcript = null, roomName = null, o
   const call = transcript?.[tab] ?? null;
 
   return (
-    <div className="modal-wrap" onClick={onClose}>
-      <div className="modal wide tall" onClick={(e) => e.stopPropagation()}>
-        <div className="tx-head">
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]" onClick={onClose}>
+      <div className="w-[min(620px,94vw)] max-h-[88vh] flex flex-col overflow-hidden bg-surface border border-border rounded-[14px] p-[20px_20px_18px] shadow-[0_18px_50px_rgba(20,20,40,.18)]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start gap-[14px] flex-none">
           <div>
-            <h2>What was sent{roomName ? ` · ${roomName}` : ''}</h2>
-            <p className="note" style={{ margin: '2px 0 0' }}>
+            <h2 className="m-0 mb-1.5 text-[17px] tracking-[-0.01em]">What was sent{roomName ? ` · ${roomName}` : ''}</h2>
+            <p className="text-[11.5px] text-muted leading-[1.5] mt-2" style={{ margin: '2px 0 0' }}>
               The two prompts as they actually went, and the model&apos;s replies
-              in full. Both prompts live in <code>src/lib/wallPrompt.js</code>.
+              in full. Both prompts live in <code className="font-sans text-[10px] bg-input-bg px-[3px] rounded-[3px] text-ink">src/lib/wallPrompt.js</code>.
             </p>
           </div>
-          <button className="btn" onClick={onClose}>Close</button>
+          <button className={`${BTN} ml-auto flex-none`} onClick={onClose}>Close</button>
         </div>
 
-        <div className="tx-tabs" role="tablist">
+        <div className="flex gap-1.5 mt-[14px] flex-none" role="tablist">
           {CALLS.map(([k, label]) => (
             <button key={k} role="tab" aria-selected={tab === k}
-              className={tab === k ? 'on' : ''}
+              className={`flex-1 px-[10px] py-[7px] rounded-lg [font:inherit] text-[11.5px] text-left cursor-pointer border disabled:opacity-40 disabled:cursor-default ${tab === k ? 'border-accent bg-accent-soft text-ink' : 'border-border bg-surface text-muted'}`}
               disabled={!transcript?.[k]}
               title={transcript?.[k] ? '' : 'This call was not made on the last run.'}
               onClick={() => setTab(k)}>{label}</button>
@@ -78,17 +85,17 @@ export default function PromptTranscript({ transcript = null, roomName = null, o
         </div>
 
         {!call ? (
-          <p className="note warn" style={{ marginTop: 14 }}>
+          <p className="text-[11.5px] text-muted leading-[1.5] mt-2 mr-0 mb-0 ml-0 border-l-2 border-border-strong pl-[9px]" style={{ marginTop: 14 }}>
             {tab === 'second'
               ? 'The second call was never made — the first one found nothing on'
                 + ' the walls, so there was nothing to place.'
               : 'Nothing has been sent for this space yet.'}
           </p>
         ) : (<>
-          <p className="note" style={{ margin: '10px 0 0' }}>
+          <p className="text-[11.5px] text-muted leading-[1.5] mt-2" style={{ margin: '10px 0 0' }}>
             {CALLS.find(([k]) => k === tab)[2]}
           </p>
-          <div className="tx-meta">
+          <div className="flex gap-[10px] flex-wrap mt-2 flex-none font-sans text-[10px] text-subtle">
             <span>{call.model}</span>
             {call.sentImages > 0 && (
               <span>{call.sentImages} image{call.sentImages > 1 ? 's' : ''}</span>
@@ -98,30 +105,30 @@ export default function PromptTranscript({ transcript = null, roomName = null, o
             {call.bytes != null && <span>{Math.round(call.bytes / 1024)}KB sent</span>}
           </div>
 
-          <div className="tx-block">
-            <div className="tx-block-head">
-              <b>The prompt</b>
-              <span className="note">{(call.prompt || '').length.toLocaleString()} chars</span>
+          <div className="flex-[1_1_auto] min-h-0 flex flex-col mt-3">
+            <div className="flex items-center gap-2 flex-none mb-[5px]">
+              <b className="text-[11.5px]">The prompt</b>
+              <span className="text-muted leading-[1.5] m-0 font-sans text-[10px]">{(call.prompt || '').length.toLocaleString()} chars</span>
               <CopyButton text={call.prompt} />
             </div>
             {/* A <pre> AND NOT A <div>. Both of these are whitespace-significant:
                 the prompt's indentation is load-bearing in PROMPT 02's rule list,
                 and the reply's worksheet is a table drawn in spaces. Reflowed,
                 both become unreadable in exactly the place they matter. */}
-            <pre className="tx-text">{call.prompt || '(no text part — this call sent images only)'}</pre>
+            <pre className="flex-[1_1_auto] min-h-[90px] overflow-auto m-0 py-[10px] px-3 border border-border rounded-[8px] bg-input-bg font-[ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation_Mono',monospace] text-[10.5px] leading-[1.55] text-ink whitespace-pre-wrap [word-break:break-word]">{call.prompt || '(no text part — this call sent images only)'}</pre>
           </div>
 
-          <div className="tx-block">
-            <div className="tx-block-head">
-              <b>The reply</b>
-              <span className="note">{(call.reply || '').length.toLocaleString()} chars</span>
+          <div className="flex-[1_1_auto] min-h-0 flex flex-col mt-3">
+            <div className="flex items-center gap-2 flex-none mb-[5px]">
+              <b className="text-[11.5px]">The reply</b>
+              <span className="text-muted leading-[1.5] m-0 font-sans text-[10px]">{(call.reply || '').length.toLocaleString()} chars</span>
               <CopyButton text={call.reply} />
             </div>
-            <pre className="tx-text">{call.reply
+            <pre className="flex-[1_1_auto] min-h-[90px] overflow-auto m-0 py-[10px] px-3 border border-border rounded-[8px] bg-input-bg font-[ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation_Mono',monospace] text-[10.5px] leading-[1.55] text-ink whitespace-pre-wrap [word-break:break-word]">{call.reply
               || '(the model returned nothing — see the note on output caps in wallPrompt.js)'}</pre>
           </div>
 
-          {call.error && <p className="note err" style={{ marginTop: 10 }}>{call.error}</p>}
+          {call.error && <p className="text-[11.5px] text-danger-ink leading-[1.5] mt-2 mr-0 mb-0 ml-0 border-l-2 border-danger pl-[9px]" style={{ marginTop: 10 }}>{call.error}</p>}
         </>)}
       </div>
     </div>

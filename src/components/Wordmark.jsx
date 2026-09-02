@@ -36,21 +36,28 @@ const LOGO = '/superluminal_logo.png';
 /** The mark on its own, croppable, at whatever width the caller wants. */
 export function Logo({ width = 132, className = '' }) {
   return (
-    <span className={'logo ' + className} style={{ ['--logo-w']: `${width}px` }}>
-      <img src={LOGO} alt="Super Luminal" />
+    <span
+      className={'relative overflow-hidden flex-none block w-[var(--logo-w)] h-[calc(var(--logo-w)*0.349432)] ' + className}
+      style={{ ['--logo-w']: `${width}px` }}
+    >
+      <img
+        src={LOGO}
+        alt="Super Luminal"
+        className="absolute block w-[calc(var(--logo-w)*1.420455)] h-auto left-[calc(var(--logo-w)*-0.116477)] top-[calc(var(--logo-w)*-0.542614)]"
+      />
     </span>
   );
 }
 
 export default function Wordmark({ where = null, to = '/', width = 104 }) {
   return (
-    <div className="brand">
-      <Link to={to} className="brand-link" aria-label="Super Luminal">
+    <div className="flex items-center gap-2.5 min-w-0 tracking-[-0.025em]">
+      <Link to={to} className="flex items-center gap-2.5 no-underline" aria-label="Super Luminal">
         <Logo width={width} />
       </Link>
       {where && <>
-        <span className="sep" aria-hidden="true" />
-        <span className="where">{where}</span>
+        <span className="w-px h-[15px] bg-border flex-none rotate-[15deg]" aria-hidden="true" />
+        <span className="text-xs text-muted truncate">{where}</span>
       </>}
     </div>
   );

@@ -42,19 +42,19 @@ export default function AdminUserProject() {
   const plans = data?.plans ?? null;
 
   return (
-    <div className="shell">
+    <div className="grid grid-cols-[56px_1fr] h-full">
       <ProfileRail />
-      <div className="shell-body">
-        <div className="shell-inner">
+      <div className="overflow-y-auto pt-[26px] px-[30px] pb-[60px] w-full">
+        <div className="w-full max-w-[1180px] mx-auto">
           <ViewingAs user={null} userId={userId} project={projectId} />
 
-          <header className="page-head">
+          <header className="flex items-end justify-between gap-5 mt-[6px] mb-[26px]">
             <div>
-              <button className="back small" onClick={() => nav(`/admin/users/${userId}`)}>
-                <span aria-hidden="true">←</span> Their projects
+              <button className="border-0 bg-transparent text-[12px] text-muted cursor-pointer py-1 px-0 inline-flex items-center gap-[7px] m-0 whitespace-nowrap hover:text-ink" onClick={() => nav(`/admin/users/${userId}`)}>
+                <span aria-hidden="true" className="text-[13px]">←</span> Their projects
               </button>
-              <h1>{data?.project?.name ?? (data == null ? 'Loading…' : 'Project')}</h1>
-              <p className="page-sub">
+              <h1 className="m-0 text-[26px] tracking-[-0.03em]">{data?.project?.name ?? (data == null ? 'Loading…' : 'Project')}</h1>
+              <p className="mt-[6px] mb-0 text-muted text-[12.5px]">
                 {err ? 'Could not load'
                   : data == null ? 'Loading…'
                   : `${data.total ?? plans.length} plan${data.total === 1 ? '' : 's'}`
@@ -63,15 +63,16 @@ export default function AdminUserProject() {
             </div>
           </header>
 
-          {err && <p className="note err">{err}</p>}
+          {err && <p className="text-[11.5px] leading-[1.5] mt-2 text-danger-ink border-l-2 border-danger pl-[9px]">{err}</p>}
 
-          <section className="page-sec">
+          <section className="mb-[34px]">
             {plans == null ? (
-              <div className="skeleton-grid">{[0, 1, 2].map((i) => <div key={i} className="skel-card" />)}</div>
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3.5">{[0, 1, 2].map((i) => <div key={i} className="h-[150px] rounded-lg bg-surface-3 animate-[sl-breathe_1.6s_ease-in-out_infinite]" />)}</div>
             ) : plans.length === 0 ? (
-              <p className="note">No plans in this project.</p>
+              <p className="text-[11.5px] text-muted leading-[1.5] mt-2">No plans in this project.</p>
             ) : (
-              <div className="card-grid plans">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3.5">
+
                 {plans.map((p) => (
                   <PlanCard key={p.id} plan={p} onOpen={() => nav(`/admin/plans/${p.id}`)} />
                 ))}

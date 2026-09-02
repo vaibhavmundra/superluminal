@@ -1,6 +1,14 @@
 import React from 'react';
 import { TIERS, fmtSqft } from '../lib/plans.js';
 
+// The old `.btn` / `.btn.primary` classes, as Tailwind utilities. Split into
+// two mutually-exclusive strings (rather than one merged string with both
+// hover variants present) so Tailwind's generated CSS order can't decide
+// which hover colour wins when both would otherwise apply.
+const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] w-full justify-center disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_DEFAULT = 'border-border bg-surface text-ink hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border';
+const BTN_PRIMARY = 'border-cta bg-cta text-white hover:bg-cta-hover hover:border-cta-hover disabled:hover:bg-surface disabled:hover:border-border';
+
 // ---------------------------------------------------------------------------
 // THE THREE CARDS, in one component because they appear on two screens and a
 // second copy would drift within a week.
@@ -22,7 +30,10 @@ import { TIERS, fmtSqft } from '../lib/plans.js';
 export default function PlanPicker({ current = 'free', busyTier = null, compact = false,
                                      onChoose, need = null, unlimited = false }) {
   return (
-    <div className={'plan-grid' + (compact ? ' compact' : '')}>
+    <div className={
+      'grid grid-cols-[repeat(auto-fit,minmax(230px,1fr))] items-start max-[760px]:grid-cols-1 '
+      + (compact ? 'gap-2.5 mt-[18px] mb-1.5' : 'gap-3.5 mb-[38px]')
+    }>
       {TIERS.map((t) => {
         const isCurrent = !unlimited && t.slug === current;
         // THE TIER THAT ACTUALLY SOLVES THE PROBLEM IN FRONT OF THEM. When the
@@ -36,37 +47,49 @@ export default function PlanPicker({ current = 'free', busyTier = null, compact 
 
         return (
           <article key={t.slug}
-            className={'plan-card' + (featured ? ' featured' : '') + (isCurrent ? ' current' : '')}>
+            className={
+              'relative flex flex-col bg-surface border rounded-lg '
+              + (compact ? 'pt-[15px] px-[14px] pb-[14px] ' : 'pt-5 px-[18px] pb-[18px] ')
+              + (featured ? 'border-accent shadow-[0_0_0_1px_var(--color-accent)] ' : 'border-border ')
+              + (isCurrent ? 'bg-surface-2' : '')
+            }>
             {/* AN UNMETERED ACCOUNT IS NOT "ON" ANY OF THESE, so none of them is
                 flagged as current and none of them is offered — a role-1 login
                 staring at a "Choose Pro" button would be being sold something it
                 already has more of. The cards stay visible because this is also
                 the page an operator opens to check what customers see. */}
             {!unlimited && featured
-              && <span className="plan-flag">{need != null ? 'Fits this plan' : 'Most chosen'}</span>}
-            {!unlimited && isCurrent && <span className="plan-flag now">Your plan</span>}
+              && <span className="absolute -top-[9px] left-4 bg-accent text-white rounded-full text-[9.5px] tracking-[0.07em] uppercase px-[9px] py-[3px]">{need != null ? 'Fits this plan' : 'Most chosen'}</span>}
+            {!unlimited && isCurrent
+              && <span className="absolute -top-[9px] left-auto right-4 bg-ink text-white rounded-full text-[9.5px] tracking-[0.07em] uppercase px-[9px] py-[3px]">Your plan</span>}
 
-            <h3>{t.name}</h3>
-            <div className="plan-price">
-              {t.usd === 0 ? <b>Free</b> : <><b>${t.usd}</b><span>/month</span></>}
+            <h3 className="m-0 mb-2 text-[13px] tracking-[0.06em] uppercase text-subtle">{t.name}</h3>
+            <div className="flex items-baseline gap-1 mb-2.5">
+              {t.usd === 0 ? <b className="text-[30px] tracking-[-0.04em] tabular-nums">Free</b>
+                : <><b className="text-[30px] tracking-[-0.04em] tabular-nums">${t.usd}</b><span className="text-[12px] text-subtle">/month</span></>}
             </div>
-            <p className="plan-blurb">{t.blurb}</p>
+            <p className={'m-0 mb-3.5 text-[12px] text-muted leading-[1.55] min-h-[2.6em] ' + (compact ? 'hidden' : '')}>{t.blurb}</p>
 
-            <div className="plan-meter">
-              <b>{fmtSqft(t.area)}</b>
-              <span>{t.lifetime ? 'does not renew' : 'every month'}</span>
+            <div className="bg-surface-3 rounded py-[9px] px-[11px] mb-3.5">
+              <b className="block text-[15px] tracking-[-0.02em] tabular-nums">{fmtSqft(t.area)}</b>
+              <span className="text-[10.5px] text-subtle">{t.lifetime ? 'does not renew' : 'every month'}</span>
             </div>
 
-            <ul className="plan-lines">
-              {t.lines.map((l) => <li key={l}>{l}</li>)}
+            <ul className={'list-none m-0 mb-[18px] p-0 flex-1 flex flex-col gap-[7px] ' + (compact ? 'hidden' : '')}>
+              {t.lines.map((l) => (
+                <li key={l}
+                  className="text-[12px] text-muted leading-[1.45] pl-[15px] relative before:content-[''] before:absolute before:left-[2px] before:top-[6px] before:w-[5px] before:h-[5px] before:rounded-full before:bg-border-strong">
+                  {l}
+                </li>
+              ))}
             </ul>
 
             {unlimited ? (
-              <button className="btn" disabled>Unmetered on your account</button>
+              <button className={BTN_BASE + ' ' + BTN_DEFAULT} disabled>Unmetered on your account</button>
             ) : t.usd === 0 ? (
-              <button className="btn" disabled>Included</button>
+              <button className={BTN_BASE + ' ' + BTN_DEFAULT} disabled>Included</button>
             ) : (
-              <button className={'btn' + (featured ? ' primary' : '')}
+              <button className={BTN_BASE + ' ' + (featured ? BTN_PRIMARY : BTN_DEFAULT)}
                 disabled={isCurrent || busyTier === t.slug}
                 onClick={() => onChoose?.(t.slug)}>
                 {isCurrent ? 'Current plan'

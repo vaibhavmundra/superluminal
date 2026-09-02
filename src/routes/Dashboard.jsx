@@ -61,9 +61,9 @@ export default function Dashboard() {
   }, [nav]);
 
   return (
-    <div className="shell">
+    <div className="grid grid-cols-[56px_1fr] h-full">
       <ProfileRail />
-      <div className="shell-body"
+      <div className="overflow-y-auto pt-[26px] px-[30px] pb-[60px] w-full"
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files?.[0]); }}
@@ -75,31 +75,31 @@ export default function Dashboard() {
             silently refused a dropped drawing. The measure belongs to the
             content: 1180px, centred, so it sits under the eye instead of
             hugging the rail on a wide display. */}
-        <div className="shell-inner">
-          <header className="page-head">
+        <div className="w-full max-w-[1180px] mx-auto">
+          <header className="flex items-end justify-between gap-5 mt-[6px] mb-[26px]">
             <div>
-              <h1>Projects</h1>
-              <p className="page-sub">
+              <h1 className="m-0 text-[26px] tracking-[-0.03em]">Projects</h1>
+              <p className="mt-1.5 mb-0 text-muted text-[12.5px]">
                 {projects == null ? 'Loading…'
                   : projects.length ? `${projects.length} project${projects.length > 1 ? 's' : ''}`
                   : 'A project holds every plan for one building.'}
               </p>
             </div>
-            <div className="btnrow">
+            <div className="flex gap-1.5 flex-wrap">
               {/* SECONDARY, and the demotion is deliberate. On the empty screen the
                   act that matters is dropping a drawing — that is the black button,
                   in the middle, where the eye already is. Creating an empty project
                   first is the deliberate, tidier route, and a second black button
                   beside it would make the page ask which of two things you meant. */}
-              <button className="btn secondary" onClick={() => setNewProject(true)}>
-                <span className="plus" aria-hidden="true">+</span> New Project
+              <button className="text-[12px] px-3 py-[7px] rounded border border-border-strong bg-surface text-ink cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3" onClick={() => setNewProject(true)}>
+                <span className="text-[1.18em] leading-none relative top-[0.055em] mr-px" aria-hidden="true">+</span> New Project
               </button>
               <input ref={fileRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
                 onChange={(e) => upload(e.target.files?.[0])} />
             </div>
           </header>
 
-          {err && <p className="note err">{err}</p>}
+          {err && <p className="text-[11.5px] text-danger-ink leading-[1.5] mt-2 border-l-2 border-danger pl-[9px]">{err}</p>}
 
           {newProject && (
             <NewProjectDialog busy={creating}
@@ -114,9 +114,9 @@ export default function Dashboard() {
           )}
 
           {!!recent.length && (
-            <section className="page-sec">
-              <h3>Pick up where you left off</h3>
-              <div className="card-grid plans">
+            <section className="mb-[34px]">
+              <h3 className="m-0 mb-3 text-[10px] tracking-[0.11em] uppercase text-subtle">Pick up where you left off</h3>
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3.5">
                 {recent.map((p) => (
                   <PlanCard key={p.id} plan={p} project={p.projects} onOpen={() => nav(`/plans/${p.id}`)} />
                 ))}
@@ -129,44 +129,44 @@ export default function Dashboard() {
               what pinned the invitation to the left margin under a column head —
               an empty screen's one job is to say what to do next, in the middle,
               at a size that reads as an invitation rather than as a placeholder. */}
-          <section className={'page-sec' + (projects?.length === 0 ? ' empty' : '')}>
-            {projects?.length !== 0 && <h3>All projects</h3>}
+          <section className={'mb-[34px]' + (projects?.length === 0 ? ' min-h-[min(58vh,560px)] flex items-center justify-center' : '')}>
+            {projects?.length !== 0 && <h3 className="m-0 mb-3 text-[10px] tracking-[0.11em] uppercase text-subtle">All projects</h3>}
             {projects == null ? (
-              <div className="skeleton-grid">{[0, 1, 2].map((i) => <div key={i} className="skel-card" />)}</div>
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3.5">{[0, 1, 2].map((i) => <div key={i} className="h-[150px] rounded-lg bg-surface-3 animate-[sl-breathe_1.6s_ease-in-out_infinite]" />)}</div>
             ) : projects.length === 0 ? (
-              <div className={'dropzone hero' + (over ? ' over' : '')}>
-                <h2>Drop a floor plan</h2>
-                <p>
+              <div className={'w-full border-[1.5px] border-dashed border-border-strong rounded-[16px] text-center transition-[border-color,background] duration-150 py-[76px] px-14 max-[700px]:py-12 max-[700px]:px-6' + (over ? ' bg-accent-soft' : ' bg-surface')}>
+                <h2 className="m-0 mb-3 text-[32px] tracking-[-0.035em] max-[700px]:text-[24px]">Drop a floor plan</h2>
+                <p className="mx-auto mt-0 mb-[18px] text-muted max-w-[52ch] text-[14px] leading-[1.65]">
                   Super Luminal finds the rooms, works out the scale from a door, and lays
                   out the lighting. A project is created for the drawing automatically —
                   or make one yourself to set its name and category first.
                 </p>
-                <div className="btnrow centre">
-                  <button className="btn primary big"
+                <div className="flex gap-1.5 flex-wrap justify-center mt-[22px]">
+                  <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-cta bg-cta text-white inline-flex items-center justify-center cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3"
                     onClick={() => fileRef.current?.click()}>
                     Choose a DXF, PDF or image
                   </button>
-                  <button className="btn secondary big" onClick={() => setNewProject(true)}>
-                    <span className="plus" aria-hidden="true">+</span> New Project
+                  <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-border-strong bg-surface text-ink inline-flex items-center justify-center cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3" onClick={() => setNewProject(true)}>
+                    <span className="text-[1.18em] leading-none relative top-[0.055em] mr-px" aria-hidden="true">+</span> New Project
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="card-grid">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3.5">
                 {projects.map((p) => (
-                  <article key={p.id} className="card project-card"
+                  <article key={p.id} className="bg-surface border border-border rounded-lg overflow-hidden cursor-pointer flex flex-col transition-[border-color,box-shadow,transform] duration-[120ms] hover:border-border-strong hover:shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
                     onClick={() => nav(`/projects/${p.id}`)} role="button" tabIndex={0}
                     onKeyDown={(e) => { if (e.key === 'Enter') nav(`/projects/${p.id}`); }}>
-                    <div className="card-body">
-                      <h4>{p.name}</h4>
-                      <div className="card-meta">
+                    <div className="py-[13px] px-3.5 pt-[15px] flex-1">
+                      <h4 className="m-0 mb-1.5 text-[13.5px] tracking-[-0.01em]">{p.name}</h4>
+                      <div className="flex items-center gap-1.5 flex-wrap text-[11.5px] text-muted">
                         <span>{p.planCount} plan{p.planCount === 1 ? '' : 's'}</span>
-                        <span className="dotsep">·</span>
+                        <span className="text-faint">·</span>
                         <span>{when(p.updated_at)}</span>
                       </div>
                     </div>
-                    <div className="card-foot">
-                      <button className="linkish danger" onClick={async (e) => {
+                    <div className="py-2 px-3.5 border-t border-border flex justify-end">
+                      <button className="border-0 bg-transparent p-0 text-[11.5px] text-danger-ink cursor-pointer no-underline hover:underline" onClick={async (e) => {
                         e.stopPropagation();
                         if (!confirm(`Delete “${p.name}” and every plan in it? This cannot be undone.`)) return;
                         try { await deleteProject(p.id); load(); }

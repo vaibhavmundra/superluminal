@@ -144,6 +144,15 @@ export function toCSV(rooms, { pxPerFt } = {}) {
 
 export function svgString(svgEl) {
   const clone = svgEl.cloneNode(true);
+  // THE PLAN GOES OUT AS SCANNED, EVEN IN DARK MODE. The canvas may be showing a
+  // pixel-inverted copy of the drawing; that is a way of looking at it, not a
+  // change to it, and a negative is not what anybody wants on a sheet. The
+  // element carries the original alongside, and this puts it back.
+  for (const im of clone.querySelectorAll('[data-src-as-scanned]')) {
+    const original = im.getAttribute('data-src-as-scanned');
+    im.setAttribute('href', original);
+    im.removeAttribute('data-src-as-scanned');
+  }
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
   return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);

@@ -20,6 +20,12 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { Navigate, useLocation } from 'react-router-dom';
 import { supabase, supabaseReady, hasStoredSession } from './supabase.js';
 
+// The old `.btn` / `.btn.primary` / `.btn.secondary` classes, as Tailwind
+// utilities — same split as PlanPicker.jsx / RenderPassPanel.jsx.
+const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_PRIMARY = 'border-cta bg-cta text-white hover:bg-cta-hover hover:border-cta-hover disabled:hover:bg-surface disabled:hover:border-border';
+const BTN_SECONDARY = 'border-border-strong bg-surface text-ink hover:bg-surface-2 hover:border-ink active:bg-surface-3';
+
 const Ctx = createContext(null);
 
 // ---------------------------------------------------------------------------
@@ -317,16 +323,16 @@ export function RequireAuth({ children }) {
 
 function Reconnecting({ onRetry }) {
   return (
-    <div className="page-centre">
-      <div className="notice-card">
-        <h2>Reconnecting…</h2>
-        <p>
+    <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
+      <div className="w-[min(460px,92%)] bg-surface border border-border rounded-lg p-6 text-center">
+        <h2 className="m-0 mb-2.5 text-[18px] tracking-[-0.025em]">Reconnecting…</h2>
+        <p className="m-0 mb-3.5 text-[12.5px] text-muted leading-[1.6]">
           You are signed in, but we could not reach Supabase to confirm it. Your work
           is not lost — this is a connection problem, not a sign-out.
         </p>
-        <div className="btnrow centre">
-          <button className="btn primary" onClick={onRetry}>Try again</button>
-          <button className="btn secondary" onClick={() => window.location.reload()}>Reload</button>
+        <div className="flex gap-1.5 flex-wrap justify-center mt-[22px]">
+          <button className={BTN_BASE + ' ' + BTN_PRIMARY} onClick={onRetry}>Try again</button>
+          <button className={BTN_BASE + ' ' + BTN_SECONDARY} onClick={() => window.location.reload()}>Reload</button>
         </div>
       </div>
     </div>
@@ -335,21 +341,21 @@ function Reconnecting({ onRetry }) {
 
 function Waiting() {
   return (
-    <div className="page-centre">
-      <div className="spinner" aria-label="Loading" />
+    <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
+      <div className="w-[26px] h-[26px] rounded-full border-2 border-border border-t-accent [animation:sl-spin_0.8s_linear_infinite]" aria-label="Loading" />
     </div>
   );
 }
 
 function SetupNotice() {
   return (
-    <div className="page-centre">
-      <div className="notice-card">
-        <h2>Supabase is not configured</h2>
-        <p>
-          Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> to
-          <code> .env.local</code>, then restart the dev server. See
-          <code> .env.example</code> for the full list and why the VITE_ prefix
+    <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
+      <div className="w-[min(460px,92%)] bg-surface border border-border rounded-lg p-6 text-center">
+        <h2 className="m-0 mb-2.5 text-[18px] tracking-[-0.025em]">Supabase is not configured</h2>
+        <p className="m-0 mb-3.5 text-[12.5px] text-muted leading-[1.6]">
+          Add <code className="font-sans text-[11px] bg-surface-3 px-1 py-px rounded-[3px]">VITE_SUPABASE_URL</code> and <code className="font-sans text-[11px] bg-surface-3 px-1 py-px rounded-[3px]">VITE_SUPABASE_ANON_KEY</code> to
+          <code className="font-sans text-[11px] bg-surface-3 px-1 py-px rounded-[3px]"> .env.local</code>, then restart the dev server. See
+          <code className="font-sans text-[11px] bg-surface-3 px-1 py-px rounded-[3px]"> .env.example</code> for the full list and why the VITE_ prefix
           matters here but nowhere else in this repo.
         </p>
       </div>

@@ -24,6 +24,129 @@
    alone at text sizes.
    --------------------------------------------------------------------------- */
 
+/* TAILWIND, AND THIS BLOCK IS THE DESIGN LANGUAGE NOW. Every colour, radius and
+   face above is declared here as a Tailwind theme variable, which is what makes
+   `bg-surface`, `text-ink-2`, `rounded-lg` and `font-display` exist and resolve
+   to the exact values the hand-written stylesheet used. The components ask for
+   them by utility; nothing asks for them by `var()` except the handful of plain
+   rules that survive below, which keep their own short `:root`.
+
+   WHAT USED TO BE HERE WAS ~2,000 LINES OF COMPONENT CSS — about 350 class
+   selectors, the whole app's chrome. It is gone because it moved into the
+   components as utilities. What is left is the four things a utility cannot
+   express: the two faces, the keyframes, the browser's own defaults, and the
+   pointer-events rule that makes an SVG drawing clickable.
+
+   ONE KNOWN DISAGREEMENT, LEFT DELIBERATELY: `--color-cta` is black here, and
+   the `:root` this replaced had `--cta:#ffb900`. Every converted primary button
+   therefore renders black. If amber was the intent, this is the one line to
+   change. */
+@import "tailwindcss";
+
+@theme {
+  --color-ink:#000000;
+  --color-ink-2:#171717;
+  /* `--text` IS THE BODY COPY COLOUR AND IT IS NOT ON THE INK SCALE. It is what
+     `color:var(--text)` resolved to in every rule that asked for it, so it is
+     here under the name those rules used rather than folded into `ink`. */
+  --color-text:#e1dccd;
+  --color-muted:#525252;
+  --color-subtle:#7A7A7A;
+  --color-faint:#A8A8A8;
+
+  --color-bg:#FAFAFA;
+  --color-surface:rgba(255,255,255,0.05);
+  --color-surface-2:#FAFAFA;
+  --color-surface-3:#F2F2F2;
+  --color-grid:#EFEFEF;
+
+  --color-border:#EAEAEA;
+  --color-border-strong:#D4D4D4;
+
+  --color-accent:#ffb900;
+  --color-accent-hover:#0060D9;
+  --color-accent-soft:#E8F2FE;
+  --color-accent-line:#B8D9FC;
+
+  --accent-stops: #c2a987 0%, #efd5b2 25%, #fef1dd 50%, #efd5b2 75%, #c2a987 100%;
+
+  --gradient-accent: linear-gradient(
+    to right,
+    #c2a987 0%,
+    #efd5b2 25%,
+    #fef1dd 50%,
+    #efd5b2 75%,
+    #c2a987 100%
+  );
+
+
+  --color-cta:#000000;
+  --color-cta-hover:#333333;
+
+  --color-danger:#E5484D;
+  --color-danger-soft:#FEF1F1;
+  --color-danger-line:#F7CFD0;
+  --color-danger-ink:#C62A2F;
+
+  --color-ok:#16A34A;
+  --color-ok-soft:#EDFAF1;
+  --color-ok-line:#BBE8C9;
+
+  --color-input-bg:rgba(255,255,255,0.1);
+
+  /* THE OPERATOR SURFACE, AND IT IS ONE HUE. Magenta is the colour the audit
+     overlays already claimed. The rule this app runs on is that #0070F3 means
+     "the live thing, the thing you are touching" — so a second meaning could
+     not be hung on it, and grey would have made the most consequential screens
+     in the app look like the least. It appears nowhere in the product; seeing
+     it anywhere means you are looking at somebody else's work. */
+  --color-op:#C026D3;
+  --color-op-soft:#FDF2FE;
+  --color-op-line:#F0ABFC;
+
+  --font-sans:'The Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --font-display:'Lunar',sans-serif;
+
+  --radius:6px;
+  --radius-lg:10px;
+
+  --spacing-field-h:48px;
+
+  --shadow:0 1px 2px rgba(0,0,0,.04);
+  --shadow-pop:0 8px 30px rgba(0,0,0,.12);
+}
+
+@utility bg-accent-gradient {
+  background-image: var(--gradient-accent);
+}
+
+@utility gradient-ring {
+  position: relative;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    background: var(--gradient-accent);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    -webkit-mask-composite: xor;
+    pointer-events: none;
+  }
+}
+/* EVERYTHING BELOW, UNTIL THE MATCHING CLOSE AT THE END OF THE FILE, IS IN
+   `@layer base`, AND IT HAS TO STAY THAT WAY. Tailwind's own utilities live in
+   `@layer utilities`, which the cascade-layers spec always ranks ABOVE an
+   earlier-declared layer regardless of selector specificity or source order.
+   Without this wrapper a rule as generic as `input[type=text]{...}` — and there
+   is one, a few lines down — permanently wins over ANY utility a component
+   tries to put on that input. It is not hypothetical: it cost a real bug during
+   the conversion, an unlayered global input rule silently overriding a
+   component's width and padding. Inside `@layer base`, every utility class
+   anywhere wins over all of this automatically, and no `!important` is needed to
+   make an ordinary component style stick. */
+@layer base {
 /* THE TYPEFACES, AND WHY THEY ARE HERE RATHER THAN IN `public/`.
 
    They were in `public/fonts` and referenced as `url('/fonts/...')`, and they
@@ -70,93 +193,34 @@
 }
 
 :root{
-  /* --- the ink scale. Named by what it is FOR, not by how dark it is. */
+  /* WHAT IS LEFT HERE IS WHAT THE SURVIVING GLOBAL RULES BELOW STILL READ, and
+     nothing else. Every other token that used to live in this block is in the
+     `@theme` block above, which is now the single source: the components ask
+     for it as `bg-surface` / `text-ink-2` / `rounded-lg` rather than as a
+     `var()`, so a second copy down here would only be a second place to edit.
+     These twelve stay because `body`, the native inputs, the focus ring and
+     `.plan` are plain CSS and plain CSS needs a `var()` to read.
+     A handful are also read straight out of JSX — the tracer's SVG paints its
+     guides `fill="var(--accent)"` — which is the other reason to keep them
+     named rather than inlined. */
   --ink:#000000;            /* text that carries meaning, and the drawing itself */
-  --ink-2:#171717;          /* pressed states, the second level of a heading */
-  --text:#000000;
+  --text:#e1dccd;           /* body copy, on the page's own dark ground */
   --text-muted:#525252;     /* secondary text: notes, captions, units */
   --text-subtle:#7A7A7A;    /* tertiary: column heads, disabled, hints */
-  --text-faint:#A8A8A8;
 
-  --bg:#FAFAFA;             /* the page behind the sheet */
-  --surface:#FFFFFF;
-  --surface-2:#FAFAFA;      /* a panel inside a panel */
-  --surface-3:#F2F2F2;      /* inputs, wells */
-  --grid:#EFEFEF;           /* the page's own graph paper */
+  --bg:#000000;             /* the page behind the sheet */
+  --grid:#222;           /* the page's own graph paper */
 
   --border:#EAEAEA;         /* the hairline. One weight, everywhere. */
   --border-strong:#D4D4D4;  /* ...and the one that has to be seen */
 
-  /* --- the accent. Interactive, selected, focused, and nothing else. */
-  --accent:#0070F3;
-  --accent-hover:#0060D9;
-  --accent-soft:#E8F2FE;    /* a wash behind selected rows */
-  --accent-line:#B8D9FC;    /* a border on that wash */
-  --link:#0070F3;
-
-  --cta:#000000;            /* the primary button is black, as it should be */
-  --cta-hover:#333333;
-
-  /* --- failure, and only failure. */
-  --danger:#E5484D;
-  --danger-soft:#FEF1F1;
-  --danger-line:#F7CFD0;
-  --danger-ink:#C62A2F;
-  /* `warn` is the same red at lower volume: an amber third hue buys nothing a
-     dashed border and a sentence do not already say. */
-  --warn:#C62A2F;
-  --success:#0070F3;        /* "it worked" is the accent, not a green */
-  /* ...WITH ONE EXCEPTION, AND IT IS THE SAVE PILL. The rule above is about
-     RESULTS — a layout that computed, a scale that resolved — where blue is
-     already the "this is live" colour and a green would be a second word for it.
-     The save state is not a result, it is a promise about the user's work being
-     safe, and that is the one thing everybody's muscle memory reads as green.
-     It is also the only pill that appears without being asked for. */
-  --ok:#16A34A;
-  --ok-soft:#EDFAF1;
-  --ok-line:#BBE8C9;
-
+  --accent:#0070F3;         /* interactive, selected, focused, and nothing else */
   --input-bg:#FFFFFF;
 
   --font:'The Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
-  --display:'Lunar',sans-serif;
-  /* ONE TYPEFACE. There was a monospace here for numeric columns, and it was
-     buying alignment Neue Montreal already provides: its `tnum` figures are
-     real — 1111 and 0000 measure identically under tabular-nums, which was
-     checked in a browser rather than assumed. Its PROPORTIONAL figures are very
-     uneven by comparison (a `1` is half the width of a `0`), so tabular-nums is
-     not optional anywhere a column of numbers has to be read down; see the rule
-     below. `--mono` stays as a name so the twenty-odd rules that ask for it do
-     not all have to change, and it now resolves to the app face. */
-  --mono:'The Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
-
-  /* --- NO WEIGHT SCALE. There is one cut, Regular, so there is nothing to
-     choose between. The tokens and every `font-weight` rule that used them are
-     gone rather than left pointing at faces that do not exist: a declaration
-     asking for 600 does not fail, it gets SYNTHETIC bold, which on this TTF is
-     a smeared Regular at large sizes and the reason the app looked wrong.
-     Hierarchy is carried by size, tracking and colour instead — see the ink
-     scale above and the size-dependent tracking below. `body` states 400 once
-     and everything inherits it. */
-
-  --r:6px;                  /* the radius. One value, and a larger one for cards. */
-  --r-lg:10px;
-
-  /* THE FIELD HEIGHT, STATED ONCE — and it applies to the PAGES, not to the
-     editor. A form somebody meets once (an email, a six-digit code, a project
-     name) wants a generous target: it is the only thing on the screen, it is
-     often typed on a laptop trackpad in a hurry, and 48px is the size a control
-     has to be before it stops feeling like a footnote.
-     
-     THE EDITOR IS THE OPPOSITE CASE and keeps its own smaller fields. Its panel
-     is 340px holding thirty controls, and a dense instrument panel is a
-     deliberate choice there — see the design language at the top of this file.
-     Two different jobs, two different sizes, and the split is by CONTAINER so
-     neither can quietly drift into the other. */
-  --field-h:48px;
-  --shadow:0 1px 2px rgba(0,0,0,.04);
-  --shadow-pop:0 8px 30px rgba(0,0,0,.12)
+  --r:6px;                  /* the radius. One value; the larger one is `--radius-lg`. */
 }
+
 
 *{box-sizing:border-box}
 html,body,#root{height:100%}
@@ -181,10 +245,22 @@ body{
   background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
   background-size:40px 40px
 }
+
+/* body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.8' numOctaves='1' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23grain)' opacity='.9'/%3E%3C/svg%3E");
+
+  opacity: 0.9;
+  mix-blend-mode: overlay;
+} */
 /* TIGHTER AS IT GETS BIGGER. Neue Montreal is drawn on the tight side already,
    so display sizes need negative tracking and text sizes need none — the usual
-   optical rule, stated once here instead of per-rule. */
-h1,h2,.brand,.modal h2,.boq-sheet h1{letter-spacing:-0.025em}
+   optical rule, stated once here instead of per-rule. */ h1,h2{letter-spacing:-0.025em}
 /* THE UA STYLESHEET IS THE LAST PLACE WEIGHT COMES FROM, AND IT HAD TO GO TOO.
    Removing `font-weight` from the app's own rules did not leave these elements
    at 400 — it handed them back to the browser's defaults, where `h1`–`h6`,
@@ -193,101 +269,13 @@ h1,h2,.brand,.modal h2,.boq-sheet h1{letter-spacing:-0.025em}
    Stated once here, as elements rather than as classes, so a new heading or a
    `<b>` added later cannot reintroduce it. */
 h1,h2,h3,h4,h5,h6,b,strong,th,optgroup{font-weight:400}
-/* TABULAR FIGURES ANYWHERE A NUMBER IS READ DOWN A COLUMN — or against another
-   number in the row below. Not a nicety in this face: its proportional `1` is
-   half the width of its `0`, so a ragged column is genuinely hard to scan. */
-.kv b,.pill,.stat b,.row .val,.boq-r,.boq-n,.boq-u,.boq-i,.chip,
-.outline-meta,.accent-meta,.tracer-hud,.layer-name,.boq-tile b,.stats b,
-table.boq td,table.boq th{font-variant-numeric:tabular-nums}
-.app{display:grid;grid-template-columns:1fr 340px;height:100%;gap:0}
-@media (max-width:960px){.app{grid-template-columns:1fr;grid-template-rows:1fr auto;overflow:auto}}
 
-/* ---------- header ---------- */
-.topbar{
-  position:absolute;top:0;left:0;right:340px;height:56px;z-index:5;
-  display:flex;align-items:center;gap:14px;padding:0 20px;
-  background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(12px);
-  border-bottom:1px solid var(--border)
-}
-@media (max-width:960px){.topbar{right:0}}
-
-/* THE LOCKUP: the mark, then the wordmark, then what this screen is.
-   The mark is drawn rather than loaded — it is a lit aperture, which is a
-   radial gradient and a circle, and an SVG of that is smaller than the PNG and
-   takes the ink colour with it. */
-.brand{display:flex;align-items:center;gap:10px;min-width:0}
-/* `.mark` — THE CSS LIT APERTURE — IS GONE, ON PURPOSE.
-   
-   It was the favicon's artwork drawn a second time and used as the logo in four
-   places. That conflates two different jobs: a favicon is a 16px identifier that
-   has to survive being one of thirty in a tab strip, and a logo is the brand's
-   signature at whatever size the layout gives it. The favicon is declared in
-   index.html and appears nowhere else; the logo is superluminal_logo.png and is
-   the only thing that stands in for the brand inside the product. See `.logo`
-   below, and the header of components/Wordmark.jsx. */
-.wordmark{
-  font-family:var(--display);font-size:15px;line-height:1;letter-spacing:.02em;
-  text-transform:uppercase;color:var(--ink);white-space:nowrap
-}
-/* THE SEPARATOR, UNSCOPED. It was written as `.brand .sep`, so the identical
-   span in `.plan-head` — the editor's own top bar — rendered as an empty
-   element and drew nothing at all. Three bars use this mark now; it belongs to
-   the mark, not to one of them. */
-.sep{width:1px;height:15px;background:var(--border);flex:0 0 auto;transform:rotate(15deg)}
-.brand .where{
-  font-size:12px;color:var(--text-muted);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis
-}
-.pill{
-  font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:999px;
-  border:1px solid var(--border);background:var(--surface);color:var(--text-muted);
-  white-space:nowrap
-}
-.pill.ok{border-color:var(--ok-line);background:var(--ok-soft);color:var(--ok)}
-.pill.bad{border-color:var(--danger-line);background:var(--danger-soft);color:var(--danger-ink)}
-.pill.warn{border-color:var(--border-strong);background:var(--surface-3);color:var(--text-muted)}
-.spacer{flex:1}
-
-/* ---------- canvas ---------- */
-.stage{position:relative;overflow:auto;padding:68px 18px 24px;display:flex;justify-content:safe center;align-items:flex-start}
-.stage.empty{align-items:center;justify-content:center;padding:18px}
 /* MID-PAN. `grabbing` on the container wins over the crosshair the plan sets on
    itself, and `user-select:none` stops a drag that starts over a label from
    selecting text all the way across the sheet. The cursor is on the class and
    not on the element's style so it applies to every child without each of them
    having to opt in. */
-.stage.panning,.stage.panning *{cursor:grabbing!important;user-select:none}
-.dropzone{
-  width:min(560px,92%);border:1px dashed var(--border-strong);border-radius:var(--r-lg);
-  background:var(--surface);
-  padding:52px 32px;text-align:center;transition:border-color .15s,background .15s
-}
-.dropzone.over{border-color:var(--accent);border-style:solid;background:var(--accent-soft)}
-.dropzone h2{margin:0 0 8px;font-size:20px;letter-spacing:-.03em}
-.dropzone p{margin:0 auto 18px;color:var(--text-muted);max-width:42ch}
-.legend{display:flex;gap:18px;justify-content:center;margin-top:22px;flex-wrap:wrap}
-.legend div{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted)}
-.swatch{width:22px;height:14px;border-radius:3px}
-.swatch.g{border:2px solid var(--ink)}
-.swatch.r{border:2px dotted var(--text-muted);border-radius:999px;width:16px;height:16px}
-.canvas-wrap{flex:0 0 auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px;display:inline-block;box-shadow:var(--shadow)}
 svg.plan{display:block;max-width:100%;height:auto;cursor:crosshair}
-svg.plan.pan{cursor:default}
-
-/* ---------- sidebar ---------- */
-.side{
-  background:var(--surface);border-left:1px solid var(--border);
-  overflow-y:auto;padding:16px 16px 40px;display:flex;flex-direction:column;gap:6px
-}
-.sec{border-top:1px solid var(--border);padding-top:14px;margin-top:10px}
-.sec:first-of-type{border-top:0;margin-top:0;padding-top:0}
-.sec h3{
-  margin:0 0 10px;font-size:10px;letter-spacing:.11em;
-  text-transform:uppercase;color:var(--text-subtle)
-}
-.row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
-.row label{color:var(--text-muted);flex:1;min-width:0}
-.row .val{font-family:var(--mono);font-size:11px;color:var(--text);min-width:44px;text-align:right}
 input[type=range]{flex:1.1;max-width:130px;accent-color:var(--accent);height:18px}
 /* EVERY TEXT-ENTRY TYPE, AND THE LIST IS THE BUG THAT WAS HERE.
    
@@ -312,456 +300,7 @@ input:focus,select:focus,textarea:focus{
   outline:0;border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,112,243,.16)
 }
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.seg{display:flex;background:var(--surface-3);border:1px solid var(--border);border-radius:var(--r);padding:2px;gap:2px;margin-bottom:10px}
-.seg button{
-  flex:1;border:0;background:transparent;font:inherit;font-size:11.5px;padding:6px 4px;
-  border-radius:6px;cursor:pointer;color:var(--text-muted)
-}
-.seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.btn{
-  font:inherit;font-size:12px;padding:7px 12px;border-radius:var(--r);
-  border:1px solid var(--border);background:var(--surface);color:var(--ink);cursor:pointer;
-  transition:background .12s,border-color .12s,color .12s
-}
-.btn:hover{background:var(--surface-2);border-color:var(--border-strong)}
-.btn:active{background:var(--surface-3)}
-/* THE PRIMARY BUTTON IS BLACK. Not the accent — the accent means "this is the
-   live thing", and a page with three blue buttons on it has stopped saying that. */
-.btn.primary{background:var(--cta);color:#fff;border-color:var(--cta)}
-.btn.primary:hover{background:var(--cta-hover);border-color:var(--cta-hover)}
-.btn.accent{background:var(--accent);color:#fff;border-color:var(--accent)}
-.btn.accent:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
-/* ONE OF A SET, CHOSEN — which is a different thing from `.accent`, and the
-   Ceiling design pair is why. `.accent` is a filled blue button and it means
-   "press this, it is the live action"; a solid blue Standard sitting beside a
-   white Cove reads as a call to action rather than as an answer already given.
-   A white button with a blue edge says "this is the one" without asking to be
-   pressed again. Two rings rather than a thick border, so the button does not
-   change size between states and the row does not shift when you switch. */
-.btn.picked{
-  background:var(--surface);color:var(--ink);border-color:var(--accent);
-  box-shadow:inset 0 0 0 1px var(--accent)
-}
-.btn.picked:hover{background:var(--surface);border-color:var(--accent)}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.btn:disabled:hover{background:var(--surface);border-color:var(--border)}
-.btnrow{display:flex;gap:6px;flex-wrap:wrap}
-.check{display:flex;align-items:center;gap:8px;margin-bottom:7px;color:var(--text-muted);cursor:pointer}
-.check input{accent-color:var(--accent);width:14px;height:14px;margin:0}
-.note{font-size:11.5px;color:var(--text-muted);line-height:1.5;margin:8px 0 0}
-/* ATTENTION, NOT ALARM. Most of the twenty-odd `.note.warn`s in this app are
-   guidance — "set the scale first", "no doors found, measure instead" — and
-   rendering all of them in red spent the one loud colour on sentences that are
-   not alarms, and made the two that ARE alarms invisible among them. So the
-   default is quiet: ink, with a rule down the left saying "read this".
-   `.note.err` is the red one, and it is for something that actually failed. */
-.note.warn{
-  color:var(--text-muted);border-left:2px solid var(--border-strong);
-  padding-left:9px;margin-left:0
-}
-.note.err{
-  color:var(--danger-ink);border-left:2px solid var(--danger);
-  padding-left:9px
-}
-.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.stat{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:9px 11px}
-.stat b{display:block;font-size:17px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.stat span{font-size:9.5px;color:var(--text-subtle);text-transform:uppercase;letter-spacing:.08em}
-.kv{display:flex;justify-content:space-between;font-size:11.5px;padding:3px 0;color:var(--text-muted)}
-.kv b{color:var(--ink);font-variant-numeric:tabular-nums}
-.hint{background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:var(--r);padding:9px 11px;font-size:11.5px;color:var(--accent-hover);margin-bottom:10px}
 
-/* ---------- step one: choosing how to chunk the space ---------- */
-.stage.wide{display:block;padding:68px 22px 24px}
-.picker{max-width:1180px;margin:0 auto}
-.picker-head{margin-bottom:16px}
-.picker-head h2{margin:0 0 6px;font-size:19px;letter-spacing:-.025em}
-.picker-head p{margin:0;color:var(--text-muted);max-width:78ch}
-.picker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px}
-.chunk-card{
-  display:flex;flex-direction:column;gap:8px;text-align:left;font:inherit;color:inherit;
-  background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;
-  cursor:pointer;transition:border-color .12s,box-shadow .12s
-}
-.chunk-card:hover{border-color:var(--accent);box-shadow:0 2px 10px rgba(10,10,10,.06)}
-.chunk-card.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft),0 2px 12px rgba(99,102,241,.14)}
-.chunk-card-top{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-.chunk-card-name{letter-spacing:-.01em;font-size:13.5px}
-.chunk-thumb{
-  display:block;width:100%;height:210px;background:var(--bg);
-  border:1px solid var(--border);border-radius:8px
-}
-.chip-row{display:flex;gap:5px;flex-wrap:wrap}
-.chip{
-  font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:6px;
-  background:var(--input-bg);color:var(--text-muted);white-space:nowrap
-}
-.chip b{color:var(--text)}
-.chip.bad{background:var(--danger-soft);color:var(--danger-ink)}
-.chip.bad b{color:var(--danger-ink)}
-.tag{font-size:10px;padding:2px 7px;border-radius:999px;white-space:nowrap}
-.tag.rec{background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line)}
-.tag.sel{background:var(--accent);color:#fff}
-.tag.good{background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line)}
-.chunk-card-blurb{margin:auto 0 0;font-size:11.5px;line-height:1.45;color:var(--text-subtle)}
-.chunk-card-alias{margin:0;font-family:var(--mono);font-size:10px;color:var(--text-subtle);opacity:.75}
-.picker-foot{
-  position:sticky;bottom:0;margin-top:18px;display:flex;align-items:center;gap:14px;
-  border-top:1px solid var(--border);
-  padding:14px 2px;background:linear-gradient(rgba(250,250,250,0),rgba(250,250,250,.95) 34%)
-}
-.picker-foot-txt{flex:1;color:var(--text-muted);font-size:12px}
-@media (max-width:960px){.chunk-thumb{height:170px}}
-
-/* ---------- step zero: which room ---------- */
-.picker.rooms{max-width:1320px}
-.rooms-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;align-items:start}
-.rooms-plan{
-  background:var(--surface);border:1px solid var(--border);border-radius:12px;
-  padding:10px;box-shadow:0 1px 2px rgba(10,10,10,.04);min-width:0
-}
-.rooms-svg{display:block;width:100%;height:auto;max-height:calc(100vh - 260px)}
-.rooms-side{
-  background:var(--surface);border:1px solid var(--border);border-radius:12px;
-  padding:14px;box-shadow:0 1px 2px rgba(10,10,10,.04);
-  max-height:calc(100vh - 260px);overflow:auto
-}
-.layer-list{display:flex;flex-direction:column;gap:1px;margin-bottom:4px}
-.layer-row{
-  display:grid;grid-template-columns:14px minmax(0,1fr) auto auto;gap:7px;align-items:center;
-  padding:3px 5px;border-radius:6px;cursor:pointer;font-size:11.5px;color:var(--text-muted)
-}
-.layer-row:hover{background:var(--input-bg)}
-.layer-row.on{background:var(--accent-soft);color:var(--accent)}
-.layer-row input{accent-color:var(--accent);width:13px;height:13px;margin:0}
-.layer-name{font-family:var(--mono);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.layer-role{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-subtle)}
-.layer-count{font-family:var(--mono);font-size:10px;color:var(--text-subtle)}
-.room-tabs{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
-
-/* THE PANEL WHILE THE PLAN IS BEING WORKED OUT. One sentence, centred, with the
-   way out under it. It has to claim the panel's whole height to sit in the
-   middle of it, which means the sidebar's own column has to stretch — hence the
-   flex:1 rather than a height, since the sidebar is a scrolling flex column and
-   a fixed height there would fight it. */
-.loading-sec{flex:1;display:flex;flex-direction:column;min-height:0}
-.loading-mid{
-  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:16px;text-align:center;padding:24px 4px
-}
-.loading-say{
-  margin:0;font-size:17px;line-height:1.35;
-  letter-spacing:-.02em;color:var(--ink);max-width:18ch
-}
-.loading-mid .btn{padding:7px 14px}
-/* The list of spaces sits inside the section that counts them, so it needs a
-   rule of its own to read as a list rather than as more of the paragraph
-   above it. */
-.space-list{margin:10px 0 8px;display:flex;flex-direction:column;gap:2px}
-
-/* THE DOOR SCREEN'S PANEL IS AS TALL AS THE PLAN BESIDE IT, and that is the
-   whole reason this modifier exists. Everywhere else the side panel is a stack
-   of sections and should be exactly as tall as they need; here it holds one
-   instruction, and a 90px card floating at the top of a 700px column reads as
-   the leftovers of a panel rather than the point of the screen. Same height as
-   `.tracer-plan` so the two line up top and bottom. */
-.rooms-side.door-only{
-  height:calc(100vh - 262px);
-  display:flex;flex-direction:column
-}
-.rooms-side.door-only > .sec{display:flex;flex-direction:column;flex:1;min-height:0}
-
-/* The instruction takes the space the sections gave up and sits in the middle
-   of it, optically as well as literally: the heading is the thing being read,
-   so the supporting sentence hangs off it rather than balancing it. */
-.door-ask{
-  flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;
-  text-align:center;gap:10px;padding:16px 4px
-}
-.door-ask-h{
-  margin:0;font-size:17px;line-height:1.32;
-  letter-spacing:-.02em;color:var(--ink);max-width:20ch
-}
-.door-ask-p{
-  margin:0;font-size:12px;line-height:1.5;color:var(--text-muted);max-width:28ch
-}
-
-@media (max-width:1080px){
-  .rooms-layout{grid-template-columns:minmax(0,1fr)}
-  .rooms-side{max-height:none}
-  /* Stacked, the panel is under the plan and has nothing to match. */
-  .rooms-side.door-only{height:auto}
-  .door-ask{padding:22px 4px}
-}
-.room-row{border:0;background:none;width:100%;text-align:left;font:inherit;cursor:pointer}
-.room-dot{width:9px;height:9px;border-radius:3px;display:block}
-
-/* ---------- tracing an outline ---------- */
-.picker.tracer{max-width:1400px}
-.tracer-plan{position:relative;padding:0;overflow:hidden;height:calc(100vh - 262px);min-height:380px}
-.tracer-hud{
-  position:absolute;left:10px;bottom:10px;display:flex;gap:6px;flex-wrap:wrap;
-  pointer-events:none
-}
-.tracer-hud .chip{
-  font-family:var(--mono);font-size:10px;padding:3px 7px;border-radius:999px;
-  background:rgba(255,255,255,.92);border:1px solid var(--border);color:var(--text-muted)
-}
-.tracer-hud .chip.on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
-.tracer-hud .chip.snap{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
-.outline-row{padding:5px 6px;border-radius:7px;margin-bottom:3px;border:1px solid transparent}
-/* SELECTION IS GREY, NOT BLUE, and that is the palette rule finally applied
-   here. Blue on this canvas and in this panel means "ours, and it emits light"
-   — the fittings, the coves, the strips. A selected row emits nothing; it is a
-   thing you are looking at. It was wearing the accent because "selected" and
-   "live" felt like the same idea, and on a panel where the row now OPENS into
-   the space's own controls the wash reads as a state of the design rather than
-   of the pointer. Grey says the same thing and spends nothing. */
-.outline-row.on{background:var(--surface-3);border-color:var(--border-strong)}
-/* THE WHOLE ROW IS THE CONTROL. It was a button around the name with everything
-   else outside it, so half of something that plainly reads as one row did
-   nothing when clicked. `.row-pick` is on the row itself; the controls inside it
-   stop the click so each still means its own thing. */
-.row-pick{cursor:pointer}
-.row-pick:hover{background:var(--surface-3)}
-.row-pick.on:hover{background:var(--surface-3)}
-/* Keyboard only. A mouse user clicking a row does not want a focus ring left
-   behind on it, and a keyboard user cannot navigate without one. */
-.row-pick:focus{outline:none}
-.row-pick:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-/* The chunking mark, at the right-hand end of the row. Quiet until the row is
-   under the pointer — it is a property of the space, not a call to action, and
-   a list of eight rooms with eight dark glyphs down the edge reads as a column
-   of buttons. */
-/* THE TEXT AND THE ICON, SIDE BY SIDE AND VERTICALLY CENTRED. The two text
-   lines are one block so the icon centres on the item's full height rather than
-   on the name's line — which is where it sat when it lived inside the name row,
-   riding high against the top edge of a two-line item. `min-width:0` on the text
-   block so a long space name still ellipses instead of shoving the icon out. */
-/* ---------- a space, opened ----------
-   THE ROW IS A CONTAINER NOW, NOT A BUTTON. Its head is the control and its
-   body holds the decisions about that space, so the padding, the hover and the
-   focus ring all move down onto `.space-head` — left on the row they would
-   highlight the whole open panel every time the pointer crossed it. */
-.space-row{padding:0;overflow:hidden}
-.space-head{padding:5px 6px;border-radius:6px}
-.space-body{
-  padding:2px 7px 8px;border-top:1px solid var(--border-strong);margin-top:4px
-}
-.space-block{margin-top:12px}
-.space-block:first-child{margin-top:6px}
-.space-block h4{
-  margin:0 0 7px;font-size:10px;font-weight:400;letter-spacing:.08em;
-  text-transform:uppercase;color:var(--text-subtle)
-}
-
-/* The renders arrive by drag as often as by picker, so the box says so. */
-.drop-renders{
-  margin-top:8px;padding:10px;border-radius:9px;text-align:center;
-  border:1px dashed var(--border);background:var(--input-bg);
-  display:flex;flex-direction:column;align-items:center;gap:8px;
-  transition:border-color .12s,background .12s
-}
-.drop-renders>span{font-size:10.5px;color:var(--text-subtle)}
-.drop-renders.over{border-color:var(--accent);background:var(--accent-soft)}
-.drop-renders.busy{opacity:.55}
-
-/* ---------- the Edit toolbox's tabs ----------
-   A TAB STRIP, NOT THREE BUTTONS. The segmented control in the topbar
-   (`.tabs`) is right for two peers that switch a whole screen; this switches a
-   PANEL inside a section, and an underline is the quieter idiom for that — it
-   claims a view rather than an action, and it costs no fill on a panel that is
-   already several boxes deep. The row's own rule and the active tab's underline
-   sit on the same line, which is what makes them read as one control. */
-.tool-tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:12px}
-.tool-tabs button{
-  appearance:none;border:0;background:transparent;cursor:pointer;font:inherit;
-  font-size:11px;color:var(--text-subtle);padding:5px 0;margin-right:16px;
-  border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;
-  transition:color .12s ease,border-color .12s ease
-}
-.tool-tabs button:last-child{margin-right:0}
-.tool-tabs button:hover{color:var(--text)}
-.tool-tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
-.tool-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
-
-/* ---------- no-light zones ----------
-   The gesture, drawn. See the note at the call site for why a picture beats the
-   sentence it replaces. */
-/* THE GESTURE CARD. Named for what it is rather than for the tab it was born in
-   — it was `.zone-hint`, and then the directional spot needed the same card for
-   the same reason (see the picture-is-the-instruction note in App.jsx's zones
-   tab), at which point a class called "zone" describing two things that are not
-   zones was a name that had stopped being true. One rule, both callers. */
-.gesture-hint{
-  display:flex;flex-direction:column;align-items:center;gap:8px;
-  padding:14px 16px 12px;border:1px solid var(--border);border-radius:10px;
-  background:var(--input-bg);text-align:center
-}
-.gesture-hint svg{width:72px;height:46px;display:block;overflow:visible}
-.gesture-hint p{margin:0;font-size:11px;line-height:1.5;color:var(--text-muted);max-width:30ch}
-/* Under the palette it needs air; as the first thing in a tab it does not. The
-   sibling selector is what tells the two apart without a second class. */
-.palette+.gesture-hint{margin-top:8px}
-/* The way out, said quieter than the way in. */
-.gesture-hint .esc{color:var(--text-subtle)}
-.zone-list{margin-top:12px}
-.zone-list-head{color:var(--text-subtle)}
-.zone-add{width:100%;margin-top:12px}
-
-/* ---------- the View disclosure ----------
-   `<details>` owns the open/closed, the keyboard and the screen reader; all
-   this does is stop the marker from sitting in the h3's way. */
-.view-sec>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px}
-.view-sec>summary::-webkit-details-marker{display:none}
-.view-sec>summary h3{margin:0}
-.view-sec>summary::after{
-  content:'';margin-left:auto;width:6px;height:6px;border-right:1.5px solid var(--text-subtle);
-  border-bottom:1.5px solid var(--text-subtle);transform:rotate(45deg) translate(-2px,-2px);
-  transition:transform .12s
-}
-.view-sec[open]>summary::after{transform:rotate(225deg) translate(-1px,-1px)}
-.view-sec[open]>summary{margin-bottom:10px}
-
-.row-top{display:flex;align-items:center;gap:9px}
-.row-main{flex:1 1 auto;min-width:0}
-.row-icon{
-  display:inline-flex;align-items:center;justify-content:center;
-  flex:0 0 auto;width:26px;height:26px;
-  border:0;background:none;padding:0;cursor:pointer;
-  color:var(--text-faint);line-height:0;border-radius:6px
-}
-/* A hit area larger than the mark, which is the point of the fixed box above:
-   the glyph is 19px and the target is 26px, so it is comfortable to hit without
-   the icon itself growing loud enough to compete with the space's name. */
-.row-icon:hover{background:var(--surface)}
-.outline-row.on .row-icon:hover{background:rgba(255,255,255,0.6)}
-.outline-row:hover .row-icon{color:var(--text-muted)}
-.outline-row.on .row-icon{color:var(--accent)}
-.row-icon:hover{color:var(--accent)}
-.row-icon:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px}
-.outline-pick{
-  display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:7px;align-items:center;
-  width:100%;border:0;background:none;font:inherit;cursor:pointer;padding:0;text-align:left
-}
-.outline-name{font-family:var(--mono);font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* The same row without the colour dot. The tracer colours each outline and can
-   key a swatch to it; the plan canvas draws every room in one green, so a
-   swatch there would be a lie. Without this variant the name landed in the
-   10px dot column and every room read as "R.". */
-.outline-pick.plain{grid-template-columns:minmax(0,1fr) auto}
-/* `.outline-pick` is a div now, not a button — the row above it took that job.
-   It keeps the grid and loses the reset that only a button needed. */
-.outline-pick{cursor:inherit}
-.outline-meta{
-  display:flex;justify-content:space-between;align-items:center;gap:6px;
-  font-size:10px;color:var(--text-subtle);margin-top:3px
-}
-.outline-meta span{display:flex;align-items:center;gap:5px}
-.btn.tiny{padding:0 5px;font-size:11px;line-height:1.5}
-label.mini{display:flex;align-items:center;gap:3px;font-size:10px;color:var(--text-subtle);cursor:pointer}
-label.mini input{width:11px;height:11px;margin:0;accent-color:var(--accent)}
-
-/* ---------- accent lighting ---------- */
-/* The image sequence as the model sees it — the isolated room first, then the
-   renders, numbered to match the prompt. Numbering them is the point: the
-   answer refers to "image 2", and being able to look at image 2 is what makes
-   a wrong correspondence a five-second diagnosis instead of a mystery. */
-.render-strip{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-.render-thumb{
-  position:relative;width:62px;height:62px;border-radius:7px;overflow:hidden;
-  border:1px solid var(--border);background:var(--input-bg);flex:0 0 auto
-}
-.render-thumb.plan{border-color:var(--accent-line);background:var(--surface)}
-.render-thumb img{width:100%;height:100%;object-fit:cover;display:block}
-.render-thumb.plan img{object-fit:contain}
-.render-no{
-  position:absolute;left:3px;bottom:3px;font-family:var(--mono);font-size:9px;
-  padding:0 4px;border-radius:4px;background:rgba(0,0,0,.78);color:#fff;line-height:1.5
-}
-.render-x{
-  position:absolute;top:2px;right:2px;width:15px;height:15px;padding:0;line-height:13px;
-  border:0;border-radius:4px;background:rgba(0,0,0,.7);color:#fff;
-  font-size:12px;cursor:pointer
-}
-.render-x:hover{background:var(--danger)}
-
-.accent-row{
-  border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin-top:6px;
-  background:var(--surface)
-}
-.accent-row.off{opacity:.42}
-.accent-row.off .accent-what,.accent-row.off .accent-why{text-decoration:line-through}
-.accent-head{display:flex;align-items:center;gap:6px}
-.accent-head b{font-family:var(--mono);font-size:11px}
-.accent-head .btn.tiny{margin-left:auto}
-.accent-dot{width:8px;height:8px;border-radius:2px;flex:0 0 auto}
-.accent-role{
-  font-size:9px;color:var(--text-subtle);border:1px solid var(--border);
-  border-radius:999px;padding:0 5px;line-height:1.6;white-space:nowrap
-}
-.accent-what{font-size:11.5px;color:var(--text);margin-top:3px}
-.accent-why{font-size:10.5px;color:var(--text-muted);margin-top:2px;line-height:1.45}
-.accent-meta{
-  display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;
-  font-family:var(--mono);font-size:9.5px;color:var(--text-subtle)
-}
-
-/* The house rules, collapsed. Worth having on screen because a wrong
-   recommendation is nearly always a wrong identification of the furniture, and
-   knowing which rule fired is what tells the two apart. */
-.accent-rules{margin-top:8px;font-size:11px;color:var(--text-muted)}
-.accent-rules summary{cursor:pointer;color:var(--text-subtle);font-size:10.5px}
-.accent-rules ol{margin:6px 0 0;padding-left:18px}
-.accent-rules li{margin-bottom:3px;line-height:1.4}
-.accent-rules b{color:var(--text)}
-.accent-row.bad{border-style:dashed;border-color:var(--danger-line);background:var(--danger-soft)}
-.accent-why.warn{color:var(--danger-ink)}
-.furn-row{
-  display:grid;grid-template-columns:8px minmax(0,1fr) auto auto;gap:7px;align-items:center;
-  padding:3px 0;font-size:11px;border-bottom:1px solid var(--border)
-}
-.furn-row:last-of-type{border-bottom:0}
-.furn-name{font-family:var(--mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.furn-out{font-size:10px;color:var(--text-muted)}
-.furn-conf{font-family:var(--mono);font-size:9.5px;color:var(--text-subtle)}
-input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-align:right}
-
-/* ---------- the ceiling-object palette ---------- */
-/* Four symbols, one row. The mark on the button is the mark that lands on the
-   plan, so picking is recognition rather than reading a list of words. */
-.palette{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:8px}
-/* Three tools, three columns — a fourth empty cell reads as a missing button. */
-.palette.three{grid-template-columns:repeat(3,1fr)}
-/* THE GLYPH IS BLUE. It is the one place in this panel where blue is right for
-   something that is not a fitting: the mark on the button is the mark that
-   lands on the plan, so the button is a picture of an action, and blue is what
-   this app's actions are. The LABEL stays grey — the word is a caption, not the
-   control. `currentColor` carries it into the SVG's stroke and into the ring on
-   the armed button, so there is one colour here and not three. */
-.palette-btn{
-  display:flex;flex-direction:column;align-items:center;gap:3px;
-  padding:7px 2px 5px;border:1px solid var(--border);border-radius:8px;
-  background:var(--surface);color:var(--accent);cursor:pointer;font:inherit;
-  transition:background .12s,border-color .12s
-}
-.palette-btn span{
-  font-size:8.5px;line-height:1.15;text-align:center;color:var(--text-muted);
-  letter-spacing:.01em
-}
-.palette-btn:hover:not(:disabled){background:var(--input-bg)}
-.palette-btn.on{background:var(--input-bg);box-shadow:inset 0 0 0 1px currentColor}
-.palette-btn.on span{color:var(--text)}
-.palette-btn:disabled{opacity:.45;cursor:not-allowed}
-.sweep{display:flex;gap:4px;margin-top:7px}
-.sweep button{
-  flex:1;padding:3px 0;font-family:var(--mono);font-size:10px;
-  border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer
-}
-.sweep button.on{border-color:var(--text);background:var(--input-bg);color:var(--text)}
-.accent-row.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
-
-/* ---------- the plan is drawing; controls opt in ---------- */
 /* THE HIT-TEST RULE, in one place instead of thirty.
    SVG paints in document order and hit-tests the topmost painted thing under
    the pointer — and "painted" includes a fill of 9% opacity. So any annotation
@@ -777,193 +316,44 @@ input.mm{width:46px;padding:1px 3px;font-size:10px;font-family:var(--mono);text-
 .plan g,.plan rect,.plan circle,.plan line,.plan path,.plan polygon,
 .plan text,.plan image,.plan polyline{pointer-events:none}
 .plan .hit{pointer-events:all}
-.note code{font-family:var(--mono);font-size:10px;background:var(--input-bg);
-  padding:0 3px;border-radius:3px;color:var(--text)}
 
-/* ---------- the project-type question ---------- */
-.modal-wrap{
-  position:fixed;inset:0;z-index:60;display:grid;place-items:center;
-  background:rgba(20,20,28,.34);backdrop-filter:blur(3px)
-}
-.modal{
-  width:min(520px,calc(100vw - 40px));background:var(--surface);
-  border:1px solid var(--border);border-radius:14px;padding:22px 22px 20px;
-  box-shadow:0 18px 50px rgba(20,20,40,.18)
-}
-.modal h2{margin:0 0 6px;font-size:17px;letter-spacing:-.01em}
-.proj-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
-.proj-btn{
-  display:flex;flex-direction:column;gap:2px;align-items:flex-start;
-  padding:11px 12px;border:1px solid var(--border);border-radius:9px;
-  background:var(--surface);cursor:pointer;font:inherit;text-align:left;
-  transition:border-color .12s,background .12s,transform .08s
-}
-.proj-btn b{font-size:13px}
-.proj-btn span{font-size:10.5px;color:var(--text-subtle);line-height:1.3}
-.proj-btn:hover{border-color:var(--ink);background:var(--surface-2)}
-.proj-btn:active{transform:translateY(1px)}
-/* The dialog while it is looking for doors. Same box, same size — it is the
-   same moment, not a new screen — so the modal must not jump when the grid is
-   replaced by one line. */
-.modal-busy{display:flex;align-items:center;gap:14px;padding:10px 2px;min-height:74px}
-.modal-busy b{font-size:14px;display:block}
-.modal-spin{
-  width:22px;height:22px;flex:0 0 auto;border-radius:50%;
-  border:2px solid var(--border);border-top-color:var(--accent);
-  animation:sl-spin .7s linear infinite
-}
+/* ---------- the plan, inverted -------------------------------------------
+   A WHITE PLAN WITH BLACK LINES BECOMES A BLACK PLAN WITH WHITE LINES, and it
+   is a rule here rather than a utility because TWO DIFFERENT RENDERERS have to
+   share it: the layout screen draws the scan as an SVG `<image>` (PlanCanvas)
+   and the tracing screen draws it into a `<canvas>` through Konva
+   (OutlineTracer). One is reachable with a class from JSX, the other only by
+   putting the same class on the layer's native canvas element — so the recipe
+   is written once, here, and both ask for it by name.
+
+   WHY NOT `invert(1)` ON ITS OWN. Measured on a real scan it lands nowhere near
+   black and white: the paper is off-white with sensor noise in it, so inverting
+   gives a dark-grey ground around 19/255 speckling ±27, and the anti-aliased
+   lines come back grey around 197. Clipping the paper to pure white BEFORE the
+   inversion is what produces 0 and 255. `grayscale` first, because a colour
+   scan's JPEG chroma noise survives a contrast push and shows up as coloured
+   confetti on the black.
+
+   THE COST, STATED: everything lighter than ~177/255 clips to paper and is gone
+   while this is on — a faint dimension string, grey furniture hatching. It is a
+   viewing state, so the way to see that detail is to switch it off; the
+   drawing, the detectors and the exports are untouched either way.
+
+   AND IT DOES NOT REACH THE EXPORTS. `svgString` serialises the SVG node with
+   XMLSerializer and no stylesheet, so a class has nothing to resolve against in
+   the file that comes out. Written as an inline `style="filter:…"` it would
+   travel, and every export taken in this mode would be a negative. */
+.plan-invert{filter:invert(1)}
+
+/* THE KEYFRAMES IN THIS FILE HAVE NO CLASSES LEFT, and that is the point. Each
+   one is reached from a component as a Tailwind arbitrary animation
+   (`animate-[sl-spin_0.8s_linear_infinite]`), which is why they survived the
+   sweep that deleted the rules which used to own them: a `@keyframes` cannot be
+   written as a utility, so this is where they live.
+   A RING WITH ONE GAP, in the accent, because that is the same statement about
+   liveness the rest of the app makes with this colour. Every loading state uses
+   it — auth, the PDF picker, the project-type dialog, the planner. */
 @keyframes sl-spin{to{transform:rotate(360deg)}}
-/* The three door widths. A row of equal buttons, because they are one question
-   with three answers and a dropdown would hide two of them behind a click. */
-.door-widths{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-.door-widths .btn{width:100%;padding:7px 4px;text-align:center}
-
-/* THE FOURTH WAY IN, and it is deliberately not a fourth button in that grid.
-   The three presets are one choice between three equals; a typed width is the
-   exception you reach for when the drawing tells you something better. Full
-   width and quieter says "or, if you know" rather than adding a fourth equal. */
-.door-custom-open{width:100%;margin-top:6px;font-size:11.5px;color:var(--text-muted)}
-.door-custom{margin-top:6px;padding:8px;border-radius:var(--r);
-  background:var(--surface-3);border:1px solid var(--border)}
-.door-custom > label{display:block;font-size:11px;color:var(--text-subtle);
-  margin-bottom:4px}
-.door-custom-row{display:flex;align-items:center;gap:6px}
-.door-custom-row input{flex:1;min-width:0}
-/* The unit sits OUTSIDE the field rather than as placeholder text, so it is
-   still visible once something has been typed — which is exactly when the
-   question "was that millimetres?" arises. */
-.door-custom-unit{font-size:11.5px;color:var(--text-subtle)}
-.door-custom-row .btn{flex:0 0 auto}
-
-/* --- the Design / BOQ tab pair -------------------------------------------- */
-/* A segmented pair rather than two buttons: they are one choice with two
-   answers, and the sliding fill is what says only one can be true. */
-.tabs{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border);
-  border-radius:var(--r);background:var(--surface-3)}
-.tabs button{
-  appearance:none;border:0;background:transparent;cursor:pointer;
-  font:inherit;font-size:11.5px;letter-spacing:.01em;
-  color:var(--text-subtle);padding:4px 14px;border-radius:6px;
-  transition:background .12s ease,color .12s ease
-}
-.tabs button:hover{color:var(--text)}
-/* THE UNDO PAIR. The same shell as the tab pair — it sits beside it in the top
-   bar and two adjacent controls of the same size should look like two controls
-   of the same size — with a squarer button, because an arrow is a glyph and not
-   a word. `disabled` is the whole point of the pair being here rather than the
-   shortcut alone: greyed out, it says there is nothing to go back to, which is
-   the one question a person asks before pressing it. */
-/* FLEX, BECAUSE THE CHILD IS A DRAWING AND NOT A WORD. A tab button lays out
-   text and centres it on a baseline; an inline SVG on that baseline sits low and
-   leaves a descender's worth of space under it, which is what made the pair look
-   like it was falling out of the bar. Centred both ways, the icon is centred in
-   the button — and the button keeps the tab pair's own height so two adjacent
-   controls are two controls of the same size. */
-.tabs.steps button{display:inline-flex;align-items:center;justify-content:center;
-  padding:4px 8px;line-height:0}
-.tabs.steps button svg{display:block}
-.tabs.steps button:disabled{opacity:.35;cursor:default}
-.tabs.steps button:disabled:hover{color:var(--text-subtle)}
-.tabs button.on{background:var(--surface);color:var(--ink);
-  box-shadow:0 1px 2px rgba(10,10,10,.06)}
-
-/* --- the schedule --------------------------------------------------------- */
-/* A DOCUMENT, not a dashboard. This is read, priced and marked up, so it gets a
-   sheet with generous margins and a single accent — anything more decorative
-   gets in the way of the one thing it is for. */
-/* A4 PORTRAIT, and not as decoration: the PDF export is A4 portrait, so a sheet
-   with the same proportions on screen is a preview of the thing that prints
-   rather than a differently-shaped cousin of it. 794 x 1123 is A4 at 96dpi, and
-   the 56/60px padding is about 15mm of margin — the page reads as a page.
-
-   `min-height` and not `height`: a schedule longer than one page grows, and it
-   grows the way the PDF does, by carrying on. */
-.boq-wrap{width:100%;display:flex;justify-content:center;padding:0 18px 60px;
-  --a4-w:794px; --a4-h:1123px}
-.boq-sheet{width:var(--a4-w);max-width:100%;min-height:var(--a4-h);
-  background:var(--surface);border:1px solid var(--border);border-radius:6px;
-  padding:52px 58px 64px;box-shadow:0 1px 3px rgba(10,10,10,.07)}
-.boq-head{display:flex;gap:20px;align-items:flex-start;justify-content:space-between;
-  flex-wrap:wrap;padding-bottom:16px;margin-bottom:6px;border-bottom:1px solid var(--border)}
-.boq-sheet h1{margin:0 0 4px;font-size:18px;letter-spacing:-.02em}
-.boq-h2{margin:26px 0 2px;font-size:11.5px;letter-spacing:.06em;
-  text-transform:uppercase;color:var(--text-subtle)}
-.boq-sub{margin:0 0 9px;max-width:60ch}
-
-/* Below the page width the sheet stops pretending and the tables scroll, rather
-   than the eight columns crushing into three characters each. */
-@media (max-width:900px){
-  .boq-wrap{padding:0 10px 40px}
-  .boq-sheet{padding:28px 20px 40px;min-height:0}
-  .boq-scroll{overflow-x:auto}
-}
-
-.boq-tiles{display:flex;gap:7px}
-.boq-tile{min-width:82px;padding:8px 11px;border:1px solid var(--border);border-radius:8px;
-  background:var(--surface-2)}
-.boq-tile b{display:block;font-size:17px;letter-spacing:-.02em;
-  font-family:var(--mono);line-height:1.15}
-.boq-tile span{display:block;font-size:9.5px;color:var(--text-subtle);margin-top:2px}
-
-/* Sized for the page, not for the window. Eight columns inside 676mm-worth of
-   A4 text width is tight, so the type steps down and the padding comes in —
-   which is what a real schedule does too. */
-table.boq{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
-table.boq.boq-narrow{max-width:430px}
-table.boq th{
-  text-align:left;font-size:9.5px;letter-spacing:.04em;
-  text-transform:uppercase;color:var(--text-subtle);
-  padding:7px 6px 5px;border-bottom:1px solid var(--text);white-space:nowrap
-}
-table.boq td{padding:6px 6px;border-bottom:1px solid var(--border);vertical-align:baseline;
-  overflow-wrap:break-word}
-table.boq tbody tr:hover{background:var(--accent-soft)}
-/* Numbers right, in the mono face, so a column can be read down. The one
-   typographic rule a schedule cannot do without. */
-.boq-r{text-align:right;font-family:var(--mono);white-space:nowrap}
-th.boq-r{text-align:right}
-.boq-i{width:22px;color:var(--text-subtle);font-family:var(--mono);font-size:10px}
-.boq-u{font-size:10px;color:var(--text-muted);white-space:nowrap}
-.boq-note{color:var(--text-muted);font-size:10px;line-height:1.4}
-/* `table-layout: fixed` needs the widths stated. These mirror the PDF's column
-   shares, so the two read the same. */
-table.boq col.c-desc{width:25%}
-table.boq col.c-qty{width:9%}
-table.boq col.c-unit{width:7%}
-table.boq col.c-watt{width:10%}
-table.boq col.c-beam{width:7%}
-table.boq col.c-load{width:10%}
-table.boq col.c-note{width:29%}
-table.boq col.c-room{width:24%}
-table.boq col.c-num{width:12.6%}
-.boq-n{font-family:var(--mono)}
-table.boq tfoot td{border-top:1px solid var(--text);border-bottom:0;padding-top:9px}
-table.boq tfoot tr:hover{background:transparent}
-.boq-caveat td{padding-top:2px;border-top:0;font-size:10.5px;color:var(--text-subtle);
-  line-height:1.4}
-.boq-empty{margin:80px auto;text-align:center;max-width:40ch}
-.boq-empty h2{font-size:16px;margin:0 0 6px}
-
-/* The three formats. Each is a button with its own one-line reason, because
-   "Excel / CSV / PDF" alone makes the reader guess which of the three they
-   want. */
-.boq-export{display:flex;flex-direction:column;gap:6px}
-.boq-export .btn{width:100%;text-align:left;padding:8px 10px;display:block}
-.boq-export .btn b{display:block;font-size:12px}
-.boq-export .btn span{display:block;font-size:10px;opacity:.7;margin-top:1px;
-  white-space:normal}
-
-/* ---------- the pipeline loader ---------- */
-.loader-wrap{
-  position:absolute;inset:0;z-index:40;display:grid;place-items:center;
-  background:rgba(250,250,252,.93);backdrop-filter:blur(2px)
-}
-.loader-stage{
-  display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:26px;align-items:center;
-  width:min(1020px,calc(100% - 56px))
-}
-@media (max-width:900px){.loader-stage{grid-template-columns:minmax(0,1fr);gap:16px}}
-.loader-plan{width:100%;max-height:min(62vh,560px);display:block}
 
 /* One lap of the outline per cycle. --lap is the polygon's own perimeter, set
    per room, so a WC and a hall pulse at the same apparent speed rather than the
@@ -973,14 +363,6 @@ table.boq tfoot tr:hover{background:transparent}
 @media (prefers-reduced-motion:reduce){
   .sl-run{animation:none;opacity:.55}
 }
-
-.loader-phase{font-size:15px;letter-spacing:-.01em;color:var(--text)}
-.loader-detail{font-size:11.5px;color:var(--text-muted);margin-top:3px;min-height:15px}
-.loader-bar{
-  height:3px;border-radius:2px;background:var(--grid);margin:12px 0 14px;overflow:hidden
-}
-.loader-bar i{display:block;height:100%;background:var(--accent);border-radius:2px;
-  transition:width .35s cubic-bezier(.4,0,.2,1)}
 .loader-steps{list-style:none;margin:0;padding:0;display:grid;gap:7px}
 .loader-steps li{
   display:grid;grid-template-columns:14px minmax(0,1fr);gap:7px;align-items:baseline;
@@ -999,29 +381,6 @@ table.boq tfoot tr:hover{background:transparent}
   margin-top:1px}
 @keyframes sl-blink{0%,100%{opacity:1}50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.loader-steps li.busy .dot{animation:none}}
-/* THE CLASSIFICATION IS A LABEL, NOT A STATE. "Kitchen" is a fact about the
-   room that never changes while you look at it, and in the accent it read as
-   something switched on. Grey, with the row's own selection doing the work of
-   saying which room is open. */
-.rtype{
-  font-family:var(--mono);font-size:9px;letter-spacing:.02em;
-  background:var(--surface-3);color:var(--text-muted);border-radius:4px;
-  padding:1px 5px;margin-right:5px
-}
-
-/* ---------- the layout is lit ----------------------------------------------
-   THE DRAWING BREATHES, AND THAT IS A CLAIM WORTH DEFENDING. Motion on a
-   technical drawing is usually a mistake: it competes with the thing being
-   read. These two are the exception because they are not decoration on a
-   symbol, they are the symbol saying what kind of thing it is. A downlight
-   throws a pool of light and the pool is what the room actually gets; a strip
-   is a line of emitters on a tape with current running down it. A static
-   drawing states positions. This one states positions and says "these are on".
-
-   Both animations are transform/opacity/dash only — no layout, no paint of
-   anything but the element itself — so forty of them cost one compositor pass.
-   Neither touches geometry, so the SVG and PNG exports are unaffected: they
-   capture the element, not the keyframe. --------------------------------- */
 
 /* The pool of light under a fitting. `transform-box: fill-box` is load-bearing
    — without it an SVG transform scales about the USER-SPACE origin, so every
@@ -1036,7 +395,6 @@ table.boq tfoot tr:hover{background:transparent}
   0%,100%{transform:scale(0.92); opacity:.72}
   50%    {transform:scale(1.12); opacity:1}
 }
-
 /* A STRIP PULSATES THE WAY A SPOT DOES, and three travelling-pulse versions
    went in the bin to get here — the dots walking by seven pixels a second
    (invisible), a pale band underneath (invisible, then reading as the tape
@@ -1045,7 +403,6 @@ table.boq tfoot tr:hover{background:transparent}
    is a fitting quietly breathing). One idiom for "this is on" across the whole
    drawing beat a cleverer one for strips alone. */
 .lp-flow{ /* the dots: static. Named for what the pair of them is doing. */ }
-
 /* A STRIP BREATHES BY GETTING FATTER. The downlights' halo scales, and the
    obvious translation to a line — animate its opacity — does not work: a
    blurred band at 38% and the same band at 62% look like the same band, because
@@ -1065,991 +422,124 @@ table.boq tfoot tr:hover{background:transparent}
   0%,100%{stroke-width:var(--lp-w0); opacity:calc(var(--lp-glow-o,.5) * .78)}
   50%    {stroke-width:var(--lp-w1); opacity:calc(var(--lp-glow-o,.5) * 1.22)}
 }
+/* A GLINT ROUND THE SELECTED SPACE. Fires once, for a second, when a room is
+   picked — a short bright arc travelling the perimeter, the way a highlight runs
+   across something as it catches the light.
 
+   IT IS A DASH THAT MOVES, NOT A GRADIENT. Sweeping a real ramp round a shape
+   would mean animating SVG gradient geometry (`x1`, `gradientTransform`), and
+   none of that is reachable from CSS. What IS animatable is `stroke-dashoffset`,
+   so the outline is given one short dash and a gap as long as everything else,
+   and the offset is walked through a whole perimeter. The outline underneath is
+   already stroked with the accent ramp; this is the highlight moving over it.
+
+   BOTH LENGTHS COME FROM THE MARKUP, like the strips' widths and for the same
+   reason — they are measured off the room's own polygon in the drawing's units,
+   which a stylesheet cannot know. `--lp-per` is the perimeter, `--lp-arc` the
+   length of the travelling arc.
+
+   `both` MATTERS: the fill mode holds the final frame, so the glint ends
+   invisible instead of snapping back to a bright arc parked at the start.
+
+   ONCE, AND ON MOUNT. There is no `infinite` here on purpose — a selection
+   marker that pulses forever is a second thing competing with the fittings. It
+   runs when the element mounts, and the element exists only while its room is
+   selected, so selecting IS the trigger. See the note in PlanCanvas. */
+.lp-glint{
+  stroke-dasharray:var(--lp-arc) calc(var(--lp-per) - var(--lp-arc));
+  stroke-dashoffset:var(--lp-per);
+  /* NAME AND FILL MODE ONLY. The duration, the easing and the lap count arrive
+     as inline animation properties from GLINT_STYLE — see PlanCanvas — so this
+     rule does not have an opinion worth overriding. The values left here are
+     the fallback if the markup ever stops sending them, not the setting. */
+  animation-name:lp-glint;
+  animation-fill-mode:both;
+  animation-duration:2200ms;
+  animation-timing-function:cubic-bezier(.42,0,.58,1);
+  animation-iteration-count:1;
+  will-change:stroke-dashoffset,opacity
+}
+@keyframes lp-glint{
+  0%  {stroke-dashoffset:var(--lp-per); opacity:0}
+  14% {opacity:.95}
+  78% {opacity:.75}
+  100%{stroke-dashoffset:0; opacity:0}
+}
 /* Somebody who has asked their machine to stop moving things has asked this
    too. The fittings keep their glow — it is part of the symbol — they simply
-   stop breathing. */
+   stop breathing. THE GLINT IS SUPPRESSED OUTRIGHT rather than frozen: unlike
+   the glow it is not part of any symbol, it is a one-second flourish, and a
+   frozen flourish is a bright arc stuck on one wall of the room forever. The
+   outline it runs over is what actually says "this space is selected", and that
+   is a static mark either way. */
 @media (prefers-reduced-motion:reduce){
   .lp-pulse,.lp-breathe{animation:none}
+  .lp-glint{animation:none; opacity:0}
 }
+/* --- A CAPPED LIST THAT ADMITS IT SCROLLS ---------------------------------
+   The panel's space list gets this once a plan has more spaces than fit. A
+   scroll box with an invisible scrollbar is a list that looks truncated, so the
+   bar is deliberately VISIBLE — thin, low-contrast, and a little stronger while
+   the pointer is in the box.
 
-/* ---------- what a fitting is, under the cursor ----------------------------
-   FROSTED, AND OVER THE DRAWING. The card sits on top of the thing it
-   describes, so it has to be legible against black line work, blue fittings and
-   white paper at once. A solid panel would do that by hiding what is
-   underneath, which is the one thing the reader is looking at; the blur keeps
-   the drawing present as texture while flattening it enough to read type over.
-   `backdrop-filter` is the whole effect, and the rgba background is the
-   fallback for anywhere it is unsupported — hence a real alpha rather than a
-   token. -------------------------------------------------------------- */
-.fixture-tip{
-  position:fixed; z-index:40; pointer-events:none;
-  min-width:172px; max-width:260px;
-  padding:10px 12px 9px; border-radius:10px;
-  background:rgba(255,255,255,.72);
-  -webkit-backdrop-filter:saturate(180%) blur(18px);
-  backdrop-filter:saturate(180%) blur(18px);
-  border:1px solid rgba(0,0,0,.09);
-  box-shadow:0 8px 26px rgba(10,10,10,.14), 0 1px 2px rgba(10,10,10,.08);
-  animation:tip-in .11s ease-out
+   BOTH SYNTAXES, because they are not alternatives: `scrollbar-width` and
+   `scrollbar-color` are the standard properties Firefox implements, and the
+   `::-webkit-scrollbar` pseudo-elements are what WebKit and Chromium read.
+   Whichever engine is running ignores the other half.
+
+   The thumb is the page's own text colour at low alpha rather than `--border`:
+   this panel is frosted glass over a black ground, and #EAEAEA at full strength
+   reads as a bright bar rather than as a hint. */
+.lp-scroll{
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(225,220,205,.26) transparent
 }
+.lp-scroll::-webkit-scrollbar{width:7px}
+.lp-scroll::-webkit-scrollbar-track{background:transparent}
+.lp-scroll::-webkit-scrollbar-thumb{background:rgba(225,220,205,.26);border-radius:4px}
+.lp-scroll:hover::-webkit-scrollbar-thumb{background:rgba(225,220,205,.4)}
+
+/* --- THE CHUNKING ICON, LIT ON HOVER --------------------------------------
+   The icon strokes in `currentColor` so it inherits the row's state, and on
+   hover it takes the accent RAMP instead. A gradient is not a colour, so it
+   cannot come from `currentColor` and cannot be set by a text utility: it is a
+   paint server referenced by id, and every icon on screen is its own <svg> with
+   its own gradient.
+
+   SO THE REFERENCE ARRIVES AS A CUSTOM PROPERTY. `--lp-chunk-ramp` is set
+   inline on each icon by ChunkIcon (it holds that instance's `url(#…)`), and
+   this rule spends it on hover. One CSS rule serves every icon, and no id is
+   hard-coded anywhere — which is what keeps the ids unique per row instead of
+   twenty elements all called the same thing.
+
+   THE HOVER IS ON THE BUTTON, NOT THE SVG. The icon does not fill its button, so
+   keying off the svg would leave a ring of button where the pointer is over the
+   control and the icon has not lit.
+
+   AND `-on` IS THE SAME PAINT WITHOUT THE HOVER. The icon on an OPEN space was
+   the last flat `text-accent` left in the panel — a solid amber mark sitting
+   beside a drawing where nothing is solid amber any more. It is the same
+   gradient, held rather than revealed: a selected row is already lit, so its
+   icon does not need to wait to be pointed at. */
+.lp-chunk-btn:hover .lp-chunk g,
+.lp-chunk-btn-on .lp-chunk g{stroke:var(--lp-chunk-ramp)}
+
+/* The fixture tooltip's arrival. FixtureTip.jsx holds the rest of what that
+   card is and why it is frosted. */
 @keyframes tip-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
-@media (prefers-reduced-motion:reduce){.fixture-tip{animation:none}}
-.fixture-tip h4{
-  margin:0 0 7px; font-size:12px; 
-  color:var(--ink); letter-spacing:-.01em; line-height:1.25
-}
-.fixture-tip dl{margin:0; display:grid; grid-template-columns:auto 1fr; gap:3px 12px}
-.fixture-tip dt{font-size:11px; color:var(--text-muted); white-space:nowrap}
-.fixture-tip dd{
-  margin:0; font-family:var(--mono); font-size:11px; 
-  color:var(--ink); text-align:right; font-variant-numeric:tabular-nums
-}
-.fixture-tip p{
-  margin:8px 0 0; padding-top:7px; border-top:1px solid rgba(0,0,0,.08);
-  font-size:10.5px; line-height:1.4; color:var(--text-subtle)
-}
 
-/* ===========================================================================
-   THE SCREENS AROUND THE EDITOR.
-   
-   Home, login, dashboard, project detail. Written after the editor and against
-   its palette rather than beside it, which is the reason there is not one new
-   colour in here: every rule below resolves to a token defined at the top of
-   this file. A second design language for the pages that lead to the drawing
-   would be two products.
-   
-   ONE STRUCTURAL IDEA, USED THREE TIMES: a 56px rail on the left with the mark
-   at the top and the account at the bottom, and the page in the rest. It is the
-   same silhouette as the editor (chrome at one edge, subject filling the frame),
-   so moving between them does not feel like moving between apps.
-   =========================================================================== */
-
-/* ---------- home ---------- */
-.home{min-height:100%;display:flex;flex-direction:column}
-.home-top{
-  height:56px;flex:0 0 auto;display:flex;align-items:center;gap:14px;padding:0 22px;
-  border-bottom:1px solid var(--border);background:rgba(255,255,255,.72);
-  backdrop-filter:saturate(180%) blur(12px)
-}
-.brand-link{display:flex;align-items:center;gap:10px;text-decoration:none}
-/* THE WHOLE PAGE IS THE DROP TARGET, and the border only appears when something
-   is over it. A permanent dashed box around the viewport would be a diagram of
-   a feature nobody has used yet. */
-.home-main{
-  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  text-align:center;padding:64px 24px;gap:6px;
-  border:2px solid transparent;transition:border-color .15s,background .15s
-}
-.home-main.over{border-color:var(--accent);background:var(--accent-soft)}
-/* CLAMPED, NOT FIXED. This is the one string on the site that has to land at
-   any width, and 4.4vw between the two bounds means it breaks over two lines on
-   a laptop and stays two lines on a phone.
-   THE VIEWPORT TERM IS FOR WIDE SCREENS ONLY, AND ON A PHONE IT DOES NOTHING —
-   4.4vw of a 390px screen is 17px, so every phone in existence sat on the 34px
-   floor and the headline read as body copy at the top of a page whose whole job
-   is that one sentence. The mobile query below sets its own scale rather than
-   widening this clamp, because a single clamp that is bold on a phone is absurd
-   on a 27-inch display. */
-.home-h1{
-  margin:0 0 10px;font-size:clamp(34px,4.4vw,58px);line-height:1.04;
-  letter-spacing:-.035em;max-width:22ch
-}
-.home-sub{margin:0 0 26px;color:var(--text-muted);max-width:56ch;font-size:14px;line-height:1.6}
-.home-cta{display:flex;flex-direction:column;align-items:center;gap:12px}
-/* The upload button is the only large control in the app, and it is large
-   because it is the only thing on this screen anybody is meant to press. */
-.btn.big{font-size:14px;padding:12px 22px;border-radius:8px}
-.home-hint{font-size:11.5px;color:var(--text-subtle)}
-.home-err{max-width:48ch}
-.home-foot{
-  flex:0 0 auto;display:flex;justify-content:space-between;padding:16px 22px;
-  border-top:1px solid var(--border);font-size:11px;color:var(--text-subtle); background-color: #FFFFFF
-}
-
-/* ---------- login ---------- */
-.auth{min-height:100%;display:flex;flex-direction:column;align-items:center}
-.auth-top{width:100%;height:56px;display:flex;align-items:center;padding:0 22px;border-bottom:1px solid var(--border); background-color: #FFFFFF}
-.auth-card{
-  width:min(420px,92%);margin:auto;background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--r-lg);padding:30px 28px;box-shadow:var(--shadow)
-}
-.auth-card h1{margin:0 0 8px;font-size:22px;letter-spacing:-.03em}
-.auth-sub{margin:0 0 22px;color:var(--text-muted);font-size:12.5px;line-height:1.6}
-.auth-form{display:flex;flex-direction:column;gap:8px}
-.auth-label{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-subtle)}
-.auth-form .btn{margin-top:8px}
-/* THE CODE FIELD IS WIDE-TRACKED AND CENTRED because six digits typed into a
-   normal text input read as a word, and the thing being checked is a sequence of
-   characters one at a time. */
-input.otp{
-  font-size:24px;letter-spacing:.42em;text-align:center;padding:12px 8px;
-  font-variant-numeric:tabular-nums
-}
-.auth-alt{display:flex;justify-content:space-between;gap:12px;margin-top:12px}
-.linkish{
-  border:0;background:none;font:inherit;font-size:11.5px;color:var(--link);
-  cursor:pointer;padding:0;text-decoration:none
-}
-.linkish:hover{text-decoration:underline}
-.linkish:disabled{color:var(--text-faint);cursor:default;text-decoration:none}
-.linkish.danger{color:var(--danger-ink)}
-
-/* ---------- the shell: rail + page ---------- */
-.shell{display:grid;grid-template-columns:56px 1fr;height:100%}
-.rail{
-  border-right:1px solid var(--border);background:var(--surface);
-  display:flex;flex-direction:column;align-items:center;padding:18px 0 14px;gap:10px
-}
-.rail-mark{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px}
-.rail-mark:hover{background:var(--surface-3)}
-.rail-spacer{flex:1}
-.rail-account{position:relative}
-/* ONE LETTER, and the ring is what makes it a control rather than a label. */
-.bubble{
-  width:32px;height:32px;border-radius:50%;border:1px solid var(--border-strong);
-  background:var(--surface-3);color:var(--ink);font:inherit;font-size:13px;
-  cursor:pointer;display:grid;place-items:center;
-  transition:background .12s,border-color .12s,box-shadow .12s
-}
-.bubble:hover{background:var(--surface);border-color:var(--ink)}
-.bubble.on{background:var(--ink);border-color:var(--ink);color:#fff}
-/* Opens UPWARD and to the right, because the bubble is at the bottom of a
-   56px column and a menu that opens down is a menu off the screen. */
-.rail-menu{
-  position:absolute;bottom:0;left:44px;width:210px;z-index:20;
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
-  box-shadow:var(--shadow-pop);padding:6px;display:flex;flex-direction:column;gap:2px
-}
-.rail-who{padding:8px 9px 10px;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid var(--border);margin-bottom:4px}
-.rail-who b{font-size:12.5px}
-.rail-who span{font-size:11px;color:var(--text-subtle);overflow:hidden;text-overflow:ellipsis}
-.rail-menu button{
-  text-align:left;border:0;background:none;font:inherit;font-size:12.5px;
-  padding:7px 9px;border-radius:var(--r);cursor:pointer;color:var(--ink)
-}
-.rail-menu button:hover{background:var(--surface-3)}
-.rail-menu button.danger{color:var(--danger-ink)}
-.rail-menu button.danger:hover{background:var(--danger-soft)}
-.rail-sep{height:1px;background:var(--border);margin:4px 0}
-
-/* THE SHELL'S SECOND CELL, WHEN IT CARRIES A BAR. Two rows — bar, then the
-   scrolling body — and `min-height:0` is the line that matters: a grid item
-   defaults to `min-height:auto`, which means it refuses to be shorter than its
-   content, so the body would never overflow and the page would scroll as a
-   whole, taking the bar with it. */
-.shell-col{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0}
-
-/* THE SAME BAR AS THE EDITOR'S `.topbar`, in flow rather than overlaid. The
-   editor's is absolute because it floats over a canvas that scrolls beneath it;
-   this one is a row of its own grid, so it holds its place without a z-index or
-   a matching top padding on the body. Same height, same translucency, same
-   hairline — the two screens are one product. */
-.detail-bar{
-  height:56px;flex:0 0 auto;display:flex;align-items:center;padding:0 30px;
-  background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(12px);
-  border-bottom:1px solid var(--border)
-}
-/* Held to the same measure as `.shell-inner` below it, and to the same 30px
-   gutter, so the back arrow lines up with the first card's left edge and the
-   button with the last card's right. A bar running to the window edge over a
-   centred grid reads as a different page. */
-.detail-bar-inner{
-  width:100%;max-width:1180px;margin-inline:auto;
-  display:flex;align-items:center;gap:12px;min-width:0
-}
-.detail-bar .plan-name{max-width:40ch}
-/* The bar answers "where am I"; the body opens on what is in here. Without the
-   h1 the first line of the page is the count, so it gets a little air above it
-   and reads a step up from a caption. */
-.page-sub.lead{margin-top:0;font-size:13px}
-
-.shell-body{overflow-y:auto;padding:26px 30px 60px;width:100%}
-/* THE MEASURE, and it is on the content rather than on its container.
-   
-   `.shell-body` carried `max-width:1180px` with no auto margins, so on anything
-   wider than that the whole page was pinned to the left of the grid column with
-   a third of the screen empty — which is what it looked like, because that is
-   what it was. Two separate mistakes in one declaration: a block with a max-width
-   and no `margin-inline:auto` is left-aligned by definition, and putting the
-   limit on the SCROLL AND DROP surface meant the empty third would not accept a
-   dropped file either. So the body fills the column and this centres the
-   content. */
-.shell-inner{width:100%;max-width:1180px;margin-inline:auto}
-.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin:6px 0 26px}
-.page-head h1{margin:0;font-size:26px;letter-spacing:-.03em}
-.page-sub{margin:6px 0 0;color:var(--text-muted);font-size:12.5px}
-.page-sec{margin-bottom:34px}
-.page-sec h3{
-  margin:0 0 12px;font-size:10px;letter-spacing:.11em;
-  text-transform:uppercase;color:var(--text-subtle)
-}
-/* THE BACK BUTTON IS TEXT WITH AN ARROW, not a bordered button. It is a
-   direction, not an action, and every screen that has one has it in the same
-   place — top-left, above the title. */
-.back{
-  border:0;background:none;font:inherit;font-size:12px;color:var(--text-muted);
-  cursor:pointer;padding:4px 0;display:inline-flex;align-items:center;gap:7px;margin-bottom:14px
-}
-.back:hover{color:var(--ink)}
-.back span{font-size:13px}
-.back.small{margin:0;font-size:12px;white-space:nowrap}
-/* `h1.editable` AND `.title-input` ARE GONE, and they were dead twice over.
-   The project name moved into the top bar, where it is a `.plan-name` — the
-   same control the editor uses for a plan's name, which is the point of moving
-   it. Nothing rendered either class afterwards.
-   `.title-input` had also been declared TWICE, forty lines apart, with the
-   second setting a border and a height the first knew nothing about. Two rules
-   for one name is a coin toss decided by source order. */
-
-/* ---------- cards ---------- */
-.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
-.card-grid.plans{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
-.card{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
-  overflow:hidden;cursor:pointer;display:flex;flex-direction:column;
-  transition:border-color .12s,box-shadow .12s,transform .12s
-}
-.card:hover{border-color:var(--border-strong);box-shadow:var(--shadow)}
-.card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.card-body{padding:13px 14px;flex:1}
-.card-body h4{margin:0 0 6px;font-size:13.5px;letter-spacing:-.01em}
-.card-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:var(--text-muted)}
-.dotsep{color:var(--text-faint)}
-.card-stats{display:flex;gap:14px;margin-top:10px;font-size:11px;color:var(--text-muted)}
-.card-stats b{color:var(--ink);font-variant-numeric:tabular-nums}
-.card-foot{padding:8px 14px;border-top:1px solid var(--border);display:flex;justify-content:flex-end}
-.project-card .card-body{padding-top:15px}
-/* THE SNAPSHOT IS THE CARD. 4:3, cropped, on the page's own grey so a drawing
-   that does not fill it does not look broken. */
-.plan-shot{
-  aspect-ratio:4/3;background:var(--surface-2);border-bottom:1px solid var(--border);
-  display:grid;place-items:center;overflow:hidden
-}
-.plan-shot img{width:100%;height:100%;object-fit:cover;display:block}
-.plan-shot-empty{
-  font-size:10px;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--text-faint)
-}
-
-/* ---------- waiting ---------- */
-.skeleton-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
-.skel-card{height:150px;border-radius:var(--r-lg);background:var(--surface-3);animation:sl-breathe 1.6s ease-in-out infinite}
+/* The card skeletons, while a list is being fetched. */
 @keyframes sl-breathe{0%,100%{opacity:.55}50%{opacity:1}}
-.page-centre{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px}
-/* A RING WITH ONE GAP, in the accent, because that is the same statement about
-   liveness the rest of the app makes with this colour. */
-.spinner{
-  width:26px;height:26px;border-radius:50%;
-  border:2px solid var(--border);border-top-color:var(--accent);
-  animation:sl-spin .8s linear infinite
-}
-@keyframes sl-spin{to{transform:rotate(360deg)}}
-.notice-card{
-  width:min(460px,92%);background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--r-lg);padding:24px;text-align:center
-}
-.notice-card h2{margin:0 0 10px;font-size:18px;letter-spacing:-.025em}
-.notice-card p{margin:0 0 14px;color:var(--text-muted);font-size:12.5px;line-height:1.6}
-.notice-card code{font-family:var(--mono);font-size:11px;background:var(--surface-3);padding:1px 4px;border-radius:3px}
-
-/* ---------- the editor's new top-left ---------- */
-.plan-head{display:flex;align-items:center;gap:12px;min-width:0}
-/* The name is a button that looks like text until you point at it, which is the
-   same trick as the project heading and for the same reason. */
-.plan-name{
-  border:0;background:none;font:inherit;font-size:13.5px;
-  color:var(--ink);cursor:text;padding:3px 6px;border-radius:var(--r);
-  max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
-}
-.plan-name:hover{background:var(--surface-3);box-shadow:inset 0 -1px 0 var(--border-strong)}
-.plan-name-input{font:inherit;font-size:13.5px;width:26ch;padding:3px 6px}
 
 
-/* ===========================================================================
-   FIELDS ON THE PAGES OUTSIDE THE EDITOR.
-   
-   Scoped to `.auth-card` and `.shell-body` rather than written as a global
-   `input` rule, and that is the whole point: the editor's sidebar and its top
-   bar are untouched, so a 48px form cannot leak into the instrument panel. The
-   types are listed rather than using a bare `input`, because a bare selector
-   would also catch the hidden file inputs and the checkboxes, which have their
-   own sizes for their own reasons.
-   =========================================================================== */
-.auth-card input[type=text],
-.auth-card input[type=email],
-.auth-card input[type=password],
-.auth-card input[type=number],
-.auth-card select,
-.shell-body input[type=text],
-.shell-body input[type=email],
-.shell-body input[type=password],
-.shell-body input[type=number],
-.shell-body select{
-  height:var(--field-h);
-  /* PADDING GOES HORIZONTAL-ONLY once the height is fixed. Vertical padding on
-     top of an explicit height is how a field ends up 48px tall with its text
-     sitting off-centre, or clipped on Safari, which resolves the two in the
-     other order. */
-  padding:0 14px;
-  /* 12px type in a 48px box reads as a small label floating in a large box. 14px
-     is the size that makes the field look intended. */
-  font-size:14px
-}
-/* The chevron needs room, and a select with 14px of right padding puts the arrow
-   on top of the last character. */
-.auth-card select,.shell-body select{padding-right:34px}
 
-/* THE BUTTON MATCHES THE FIELD. A 48px input above a 45px button is a
-   misalignment of three pixels, which is exactly the amount that looks like a
-   mistake rather than a choice. */
-.btn.big{height:var(--field-h);padding:0 22px;display:inline-flex;align-items:center;justify-content:center}
-.auth-form .btn.big{width:100%}
-
-/* The code field keeps its own type size — it is six characters read as
-   characters — but takes the same height as the email field above it, because
-   the two are the same control in two steps of one sentence. */
-input.otp{height:var(--field-h);padding:0 8px;font-size:22px}
-
-/* The project heading, edited in place. It is a 26px display face, so it sets
-   its own type size and takes only the height. */
-
-
-/* ===========================================================================
-   THE LOGO, CROPPED IN CSS.
-   
-   superluminal_logo.png is a stacked two-line wordmark on a transparent 500×500
-   canvas, and the ink occupies x 41→392, y 191→313 — three quarters of the file
-   is empty space. That padding is invisible but not free: as a plain <img> the
-   asset is either a square box far taller than the bar it sits in, or, scaled to
-   fit that height, a logotype rendered at a quarter of the available width.
-   
-   So the WRAPPER is the size of the ink and the image is scaled and offset
-   inside it. Every number is derived from that one measurement and expressed
-   against `--logo-w`, so a usage sets one width and the crop follows:
-   
-     ink aspect     352 / 123          → height factor 0.349432
-     scale          500 / 352          → 1.420455
-     x offset      -41  / 352          → -0.116477
-     y offset      -191 / 352          → -0.542614
-   
-   All four are multiples of --logo-w rather than percentages, because a
-   percentage `top` resolves against the wrapper's HEIGHT — which is itself
-   derived from the width — and that indirection is exactly where this kind of
-   arithmetic goes wrong. Re-export the artwork with different padding and these
-   four numbers change; nothing else does.
-   =========================================================================== */
-.logo{
-  --logo-w:104px;
-  position:relative;overflow:hidden;flex:0 0 auto;display:block;
-  width:var(--logo-w);
-  height:calc(var(--logo-w) * 0.349432)
-}
-.logo img{
-  position:absolute;display:block;
-  width:calc(var(--logo-w) * 1.420455);height:auto;
-  left:calc(var(--logo-w) * -0.116477);
-  top:calc(var(--logo-w) * -0.542614);
-  /* The artwork is black ink. On a dark surface it would need inverting, and
-     when that day comes it is one filter here rather than a second asset. */
-}
-.rail-mark{width:auto;height:auto;padding:5px 3px;border-radius:8px}
-
-/* ===========================================================================
-   THE SECONDARY BUTTON, NAMED.
-   
-   White, one hairline, ink text. It already existed as the bare `.btn` — but a
-   style with no name is a style nobody can ask for, which is how a page ends up
-   with three primary buttons and no hierarchy. `.btn.secondary` is now the
-   explicit second tier: the deliberate route, the tidier option, Cancel. Black
-   stays for the one act a screen is actually for.
-   =========================================================================== */
-.btn.secondary{
-  background:var(--surface);color:var(--ink);border:1px solid var(--border-strong)
-}
-.btn.secondary:hover{background:var(--surface-2);border-color:var(--ink)}
-.btn.secondary:active{background:var(--surface-3)}
-/* The plus is set slightly larger and optically raised — a `+` sits high in its
-   own em box, so matching it to the label's size makes it read as small. */
-.btn .plus{font-size:1.18em;line-height:0;position:relative;top:.055em;margin-right:1px}
-.btnrow.centre{justify-content:center;margin-top:22px}
-
-/* ===========================================================================
-   THE EMPTY SCREEN.
-   
-   It was a 560px box pinned to the left margin under a column head reading ALL
-   PROJECTS — a placeholder in a layout built for a grid, rather than an
-   invitation. An empty state has one job: say what to do next, in the middle, at
-   a size that reads as intentional. So the section centres itself in whatever
-   height is left and the dropzone gets the room to be the subject of the page.
-   =========================================================================== */
-.page-sec.empty{
-  min-height:min(58vh,560px);
-  display:flex;align-items:center;justify-content:center
-}
-/* FULL MEASURE, NOT A CENTRED CARD. It was capped at 760px inside a 1180px
-   shell, which put a narrow box in the middle of a wide page and left two bands
-   of empty grid either side of it — and those bands are part of the drop target,
-   so the drawn box was telling the truth about where you may drop and lying
-   about how much of the page that is. The zone is the page's subject here;
-   spanning the same measure the plan cards will occupy also means the empty
-   state and the full one are the same shape. */
-.dropzone.hero{
-  width:100%;padding:76px 56px;border-radius:16px;
-  border:1.5px dashed var(--border-strong)
-}
-.dropzone.hero h2{font-size:32px;letter-spacing:-.035em;margin-bottom:12px}
-.dropzone.hero p{font-size:14px;line-height:1.65;max-width:52ch}
-@media (max-width:700px){
-  .dropzone.hero{padding:48px 24px}
-  .dropzone.hero h2{font-size:24px}
-}
-
-/* ---------- the account bubble, in the accent ---------- */
-/* #0070F3 means "the live thing" everywhere else in this app, and on a page whose
-   subject is a grid of drawings the account is the only genuinely interactive
-   object in the chrome. Grey-on-grey read as a label. */
-.bubble{
-  background:var(--accent);border-color:var(--accent);color:#fff
-}
-.bubble:hover{background:var(--accent-hover);border-color:var(--accent-hover);color:#fff}
-.bubble.on{background:var(--ink);border-color:var(--ink);color:#fff}
-
-/* ---------- the prompt transcript ----------
-   A READING DIALOG, WHICH IS A DIFFERENT SHAPE FROM EVERY OTHER MODAL HERE.
-   The others ask a question and are as small as the question — a project type,
-   three door widths. This one is several thousand characters of prompt and a
-   worksheet, so it is as tall as the window allows and the BODY scrolls rather
-   than the page behind it: a dialog that grows past the viewport puts its own
-   close button off screen. */
-.modal.tall{
-  width:min(860px,94vw);max-height:88vh;display:flex;flex-direction:column;
-  padding:20px 20px 18px;overflow:hidden
-}
-.tx-head{display:flex;align-items:flex-start;gap:14px;flex:0 0 auto}
-.tx-head h2{margin:0}
-.tx-head .btn{margin-left:auto;flex:0 0 auto}
-.tx-tabs{display:flex;gap:6px;margin-top:14px;flex:0 0 auto}
-.tx-tabs button{
-  flex:1 1 0;padding:7px 10px;border:1px solid var(--border);border-radius:8px;
-  background:var(--surface);cursor:pointer;font:inherit;font-size:11.5px;
-  color:var(--text-muted);text-align:left
-}
-.tx-tabs button.on{border-color:var(--accent);background:var(--accent-soft);color:var(--text)}
-.tx-tabs button:disabled{opacity:.4;cursor:default}
-.tx-meta{
-  display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;flex:0 0 auto;
-  font-family:var(--mono);font-size:10px;color:var(--text-subtle)
-}
-/* TWO PANES THAT SCROLL SEPARATELY, and the head, tabs and meta above them do
-   not scroll at all. The alternative — one scroller down the whole dialog — is
-   the obvious one and is worse for the thing this dialog is FOR: reading the
-   reply against the prompt that produced it. Scroll to the bottom of a single
-   pane and the prompt is off screen, so checking "it said W1 because the anchor
-   says top wall" means scrolling back up and losing your place in the reply.
-   Split, each half holds its position while you read the other, and the tabs
-   stay reachable however long either side runs. */
-.tx-block{
-  flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin-top:12px
-}
-.tx-block-head{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-bottom:5px}
-.tx-block-head b{font-size:11.5px}
-.tx-block-head .note{margin:0;font-family:var(--mono);font-size:10px}
-.tx-block-head .btn{margin-left:auto}
-.tx-text{
-  flex:1 1 auto;min-height:90px;overflow:auto;margin:0;
-  padding:10px 12px;border:1px solid var(--border);border-radius:8px;
-  background:var(--input-bg);
-  /* THE ONE PLACE IN THIS APP WITH A REAL MONOSPACE, and it is a deliberate
-     exception to the one-typeface rule above rather than an oversight. That rule
-     is about the DRAWING and the panels around it, where `--mono` resolves to
-     the app face because tabular figures already give a column of numbers its
-     alignment. This is neither: it is source text. PROMPT 02's reply is a
-     worksheet drawn as a table in spaces, and its JSON is indented; set in a
-     proportional face both collapse into prose. No webfont is loaded for it —
-     the stack is whatever the machine already has. */
-  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;
-  font-size:10.5px;line-height:1.55;color:var(--text);
-  /* pre-wrap, NOT pre. The prompt's own indentation carries meaning — PROMPT
-     02's rules are an indented list — so it must not be collapsed; but a
-     worksheet line that runs long must wrap rather than force the whole dialog
-     to scroll sideways. */
-  white-space:pre-wrap;word-break:break-word
-}
-
-/* ---------- the new-project dialog ---------- */
-.modal.wide{width:min(620px,94vw)}
-.modal-gap{height:18px}
-.modal-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}
-/* SELECTED, not merely hovered. The category grid is a radio group wearing
-   buttons, and without a held state the form cannot tell you what it is about to
-   do — which is the difference between a choice and a click. */
-.proj-btn.on{
-  border-color:var(--accent);background:var(--accent-soft);
-  box-shadow:0 0 0 1px var(--accent) inset
-}
-.proj-btn.on b{color:var(--accent)}
-.cat-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}
-
-
-/* ---------- the PDF page picker ---------- */
-/* A GRID OF SHEETS, sized so a six-page set is one glance and a forty-page set
-   scrolls rather than shrinking each page into illegibility. The tiles hold their
-   aspect ratio while empty, so the grid does not reflow under the cursor as
-   thumbnails land one by one. */
-.pdf-pages{
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(122px,1fr));gap:10px;
-  max-height:min(52vh,440px);overflow-y:auto;padding:2px
-}
-.pdf-page{
-  border:1px solid var(--border);background:var(--surface);border-radius:var(--r);
-  padding:7px;cursor:pointer;font:inherit;display:flex;flex-direction:column;gap:6px;
-  transition:border-color .12s,background .12s
-}
-.pdf-page:hover{border-color:var(--accent);background:var(--accent-soft)}
-.pdf-thumb{
-  aspect-ratio:1/1.35;background:var(--surface-3);border:1px solid var(--border);
-  border-radius:3px;display:grid;place-items:center;overflow:hidden
-}
-/* WHITE BEHIND THE THUMBNAIL, matching the white the full render paints under the
-   page. A transparent PDF background on a grey tile looks like a grey drawing,
-   which is exactly the bug the fill in pdfPlan.js exists to prevent — and this is
-   where it would first be visible. */
-.pdf-thumb img{width:100%;height:100%;object-fit:contain;display:block;background:#fff}
-.pdf-thumb-wait{
-  width:16px;height:16px;border-radius:50%;
-  border:2px solid var(--border-strong);border-top-color:var(--accent);
-  animation:sl-spin .8s linear infinite
-}
-.pdf-page-no{
-  font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--text-subtle);text-align:center
-}
-
-/* A pill that is also a control. Used for "the drawing did not upload · Retry",
-   which has to be as quiet as a status and as clickable as a button. */
-.pill.as-btn{font-family:var(--mono);cursor:pointer;border-width:1px;font-size:10.5px}
-.pill.as-btn:hover{background:var(--danger-line)}
-
-
-/* ---------- admin, at the foot of the panel ---------- */
-/* VISIBLY NOT PART OF THE WORKFLOW. A heavier top rule than the sections above
-   it and a tinted well, because this is the one block on the screen that belongs
-   to whoever is tuning the models rather than to whoever is lighting the flat —
-   and somebody with it switched on needs to notice that they have. */
-.sec.admin{
-  border-top:1px solid var(--border-strong);margin-top:20px;padding-top:14px
-}
-.sec.admin h3{color:#C026D3}
-.admin-counts{
-  margin-top:10px;padding:9px 10px;border-radius:var(--r);
-  background:var(--surface-3);border:1px solid var(--border);
-  display:flex;flex-direction:column;gap:5px
-}
-.admin-counts .kv{margin:0}
-
-/* THE REASONS, FOLDED AWAY. One line per space saying why the judge was or was
-   not called. Collapsed by default because on a good run it says the same
-   uninteresting thing three times, and open in one click on the run where the
-   counts look wrong — which is the only time anybody wants it. */
-.bed-why{margin-top:4px;border-top:1px solid var(--border);padding-top:6px}
-.bed-why > summary{
-  cursor:pointer;font-size:11.5px;color:var(--text-subtle);
-  list-style:none;user-select:none
-}
-.bed-why > summary::-webkit-details-marker{display:none}
-.bed-why > summary::before{content:'▸ ';font-size:9px}
-.bed-why[open] > summary::before{content:'▾ '}
-.bed-why > summary:hover{color:var(--text-muted)}
-.bed-why .note{margin:6px 0 0;font-size:11px;line-height:1.5}
-
-/* ---------- the crash card ---------- */
-.notice-card.crash{width:min(560px,94%);text-align:left}
-.notice-card.crash h2{text-align:center}
-.notice-card.crash > p{text-align:center}
-/* THE MESSAGE, VERBATIM AND SELECTABLE. A paraphrased error is a error nobody
-   can act on; this is the one string worth putting on screen unedited. */
-.crash-msg{
-  margin:14px 0;padding:10px 12px;border-radius:var(--r);
-  background:var(--danger-soft);border:1px solid var(--danger-line);
-  color:var(--danger-ink);font-family:var(--mono);font-size:11.5px;line-height:1.5;
-  white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto
-}
-
-/* ===========================================================================
-   THE ADMIN CONSOLE
-   
-   ONE HUE FOR THE WHOLE OPERATOR SURFACE, and it is the magenta the audit
-   overlays already claimed (#C026D3, see `.sec.admin` above). The rule this app
-   runs on is that #0070F3 means "the live thing, the thing you are touching" —
-   so a second meaning could not be hung on it, and grey would have made the
-   most consequential screens in the app look like the least. Magenta appears
-   nowhere in the product; seeing it anywhere means you are looking at somebody
-   else's work.
-   =========================================================================== */
-
-:root{
-  --op:#C026D3;
-  --op-soft:#FDF2FE;
-  --op-line:#F0ABFC;
-}
-
-/* ---------- home, at the top of the rail ----------
-   The same 32px target as the admin door under it, so the rail reads as one
-   column of equals rather than as a stack of differently-sized things. */
-.rail-home{
-  display:flex;align-items:center;justify-content:center;
-  width:32px;height:32px;border-radius:8px;flex:0 0 auto;
-  color:var(--text-subtle);transition:background .12s,color .12s
-}
-.rail-home:hover{background:var(--surface-3);color:var(--ink)}
-.rail-home:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-
-/* ---------- the door in the rail ---------- */
-.rail-admin{
-  display:flex;align-items:center;justify-content:center;
-  width:32px;height:32px;border-radius:8px;margin-top:8px;
-  color:var(--text-subtle);transition:background .12s,color .12s
-}
-.rail-admin:hover{background:var(--op-soft);color:var(--op)}
-
-/* ---------- "you are looking at somebody else's account" ---------- */
-.viewing-as{
-  display:flex;align-items:center;gap:11px;
-  padding:10px 14px;margin-bottom:22px;
-  border:1px solid var(--op-line);border-radius:var(--r);
-  background:var(--op-soft)
-}
-.viewing-dot{
-  width:8px;height:8px;border-radius:50%;background:var(--op);flex:none;
-  /* IT PULSES, AND ONLY THIS. Nothing else in the app moves on its own, which
-     is exactly why eight pixels of it in the corner of the eye is enough to
-     stop somebody forgetting which account they are in. */
-  animation:viewing-pulse 2.4s ease-in-out infinite
-}
+/* EIGHT PIXELS THAT MOVE, in the banner saying whose account this is. Nothing
+   else in the app moves on its own, which is exactly why this is enough to stop
+   somebody forgetting which account they are in. */
 @keyframes viewing-pulse{0%,100%{opacity:1}50%{opacity:.35}}
-@media (prefers-reduced-motion:reduce){.viewing-dot{animation:none}}
-.viewing-text{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
-.viewing-text b{font-size:12.5px;color:var(--ink)}
-.viewing-text span{font-size:11.5px;color:var(--text-muted)}
-.viewing-links{display:flex;gap:14px;flex:none}
-.viewing-links .linkish{color:var(--op)}
 
-/* The pill in the editor's own top bar, where there is no room for a banner. */
-.pill.viewing{
-  border-color:var(--op-line);background:var(--op-soft);color:var(--op)
-}
-
-/* ---------- the user table ---------- */
-.admin-search{display:flex;align-items:center;gap:10px}
-.admin-search input{
-  width:230px;padding:7px 11px;border-radius:var(--r);
-  border:1px solid var(--border-strong);background:var(--surface-3);
-  font:inherit;font-size:12.5px;color:var(--ink)
-}
-.admin-search input:focus{outline:none;border-color:var(--ink);background:var(--surface)}
-
-.admin-sorts{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px}
-.admin-sorts button{
-  border:1px solid transparent;background:none;font:inherit;font-size:12px;
-  color:var(--text-muted);padding:5px 10px;border-radius:999px;cursor:pointer
-}
-.admin-sorts button:hover{background:var(--surface-3);color:var(--ink)}
-.admin-sorts button.on{background:var(--ink);color:#fff}
-
-.admin-table-wrap{
-  border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;
-  background:var(--surface);transition:opacity .15s
-}
-/* A REFETCH FADES, IT DOES NOT BLANK. Replacing the table with skeletons on
-   every sort change makes the page flash and loses your place; 60% opacity says
-   "this is the old answer, a new one is coming" without moving anything. */
-.admin-table-wrap.busy{opacity:.6}
-.admin-table{width:100%;border-collapse:collapse;font-size:12.5px}
-.admin-table th{
-  text-align:left;font-weight:500;font-size:10.5px;letter-spacing:.06em;
-  text-transform:uppercase;color:var(--text-subtle);
-  padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2,transparent)
-}
-.admin-table th.num,.admin-table td.num{text-align:right;width:92px}
-.admin-table td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
-.admin-table tbody tr:last-child td{border-bottom:none}
-.admin-table tbody tr[role=button]{cursor:pointer}
-.admin-table tbody tr[role=button]:hover{background:var(--op-soft)}
-.admin-table tbody tr[role=button]:focus-visible{outline:2px solid var(--op);outline-offset:-2px}
-.admin-table td.muted{color:var(--text-subtle);font-family:var(--mono)}
-.admin-table td.strong{color:var(--ink);font-family:var(--mono);font-weight:500}
-.admin-table .dash{color:var(--text-subtle)}
-.admin-empty{text-align:center;color:var(--text-subtle);padding:36px 14px}
-
-.admin-who{display:flex;align-items:center;gap:10px}
-.admin-who > div{display:flex;flex-direction:column;gap:1px;min-width:0}
-.admin-who b{font-size:12.5px;font-weight:500}
-.admin-who span{font-size:11px;color:var(--text-subtle);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:34ch}
-/* The rail's bubble at list size. Not a button here — it is an initial, and
-   giving it the hover states of a control would promise a menu that is not
-   there. */
-.bubble.sm{
-  width:26px;height:26px;font-size:11.5px;flex:none;cursor:inherit;
-  background:var(--surface-3);border-color:var(--border-strong);color:var(--text-muted)
-}
-.admin-table tbody tr:hover .bubble.sm{border-color:var(--op);color:var(--op)}
-.tag.admin{
-  font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
-  padding:2px 6px;border-radius:999px;
-  border:1px solid var(--op-line);background:var(--op-soft);color:var(--op)
-}
-
-.skel-row td{padding:0}
-.skel-row span{
-  display:block;height:47px;
-  background:linear-gradient(90deg,var(--surface-3) 25%,var(--surface) 50%,var(--surface-3) 75%);
-  background-size:400% 100%;animation:skel 1.3s ease-in-out infinite
-}
+/* The shimmer on a table skeleton — a refetch fades rather than blanking. */
 @keyframes skel{0%{background-position:100% 0}100%{background-position:0 0}}
-
-/* ---------- pagination ---------- */
-.pager{display:flex;align-items:center;justify-content:center;gap:16px;margin:24px 0 8px}
-.pager-at{font-size:12px;color:var(--text-subtle);font-family:var(--mono);min-width:16ch;text-align:center}
-
-/* ---------- the read-only viewer ---------- */
-/* A COLUMN: the banner takes what it needs, the editor takes the rest. The
-   editor's own layout assumes it owns the viewport height, so the stage below
-   needs `min-height:0` for the same reason `.shell-col` does — without it the
-   grid row grows to the content and the canvas pushes the banner off screen. */
-.viewer-shell{display:grid;grid-template-rows:auto minmax(0,1fr);height:100%}
-.viewer-shell .viewing-as{margin:0;border-radius:0;border-width:0 0 1px 0}
-.viewer-stage{min-height:0;position:relative}
-.viewer-stage > .app{height:100%}
-
-.plan-name.is-static{
-  font:inherit;font-size:13px;color:var(--ink);padding:4px 0;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38ch
-}
-
-.viewer-tiles{display:flex;gap:8px;margin-top:10px}
-.viewer-tile{
-  flex:1;padding:9px 10px;border-radius:var(--r);
-  background:var(--surface-3);border:1px solid var(--border);
-  display:flex;flex-direction:column;gap:1px
-}
-.viewer-tile b{font-family:var(--mono);font-size:16px;line-height:1.1}
-.viewer-tile span{font-size:10.5px;color:var(--text-subtle)}
-
-.viewer-rooms{display:flex;flex-direction:column;gap:3px;margin-top:8px}
-.viewer-room{
-  display:flex;flex-direction:column;gap:1px;text-align:left;
-  padding:7px 9px;border-radius:var(--r);border:1px solid transparent;
-  background:none;font:inherit;cursor:pointer;transition:background .12s,border-color .12s
-}
-.viewer-room:hover{background:var(--surface-3)}
-.viewer-room.on{background:var(--surface-3);border-color:var(--accent)}
-.viewer-room-name{font-size:12.5px;color:var(--ink)}
-.viewer-room-n{font-size:11px;color:var(--text-subtle);font-family:var(--mono)}
-
-.viewer-layers{display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;margin-top:8px}
-
-/* ===========================================================================
-   THE TILL — the pricing page, the three cards, the checkout and the paywall.
-   
-   ONE ACCENT AND NO SECOND ONE, which is worth restating here because a pricing
-   page is where the temptation to invent a colour is strongest: a green tick per
-   feature, an amber "popular" ribbon, a red "you have run out". None of them is
-   here. The featured card is marked by the accent border it already gets for
-   being the live thing; a full meter is the same red the app uses for failure and
-   nothing else; and a tick is ink, because a list of ticks in green is a list
-   where the colour says the same thing twenty times over.
-   
-   THE CARDS ARE ONE GRID USED TWICE — full width on /pricing, `.compact` inside
-   the paywall modal — rather than two components. See PlanPicker.jsx.
-   =========================================================================== */
-
-/* The home page's price band used to live here. It was removed with the band
-   itself — see the header of routes/Home.jsx for why a page with one job should
-   not also be a price list. */
-
-/* --- the three cards ----------------------------------------------------- */
-.plan-grid{
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;
-  margin-bottom:38px;align-items:start
-}
-.plan-grid.compact{gap:10px;margin:18px 0 6px}
-
-.plan-card{
-  position:relative;display:flex;flex-direction:column;
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
-  padding:20px 18px 18px
-}
-/* THE BORDER IS THE WHOLE HIGHLIGHT. A featured card that grows, lifts and
-   changes background is three signals for one fact, and on a three-card row it
-   makes the other two look broken. */
-.plan-card.featured{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
-.plan-card.current{background:var(--surface-2)}
-.plan-grid.compact .plan-card{padding:15px 14px 14px}
-
-.plan-flag{
-  position:absolute;top:-9px;left:16px;
-  background:var(--accent);color:#fff;border-radius:999px;
-  font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;padding:3px 9px
-}
-.plan-flag.now{left:auto;right:16px;background:var(--ink)}
-
-.plan-card h3{margin:0 0 8px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--text-subtle)}
-.plan-price{display:flex;align-items:baseline;gap:4px;margin-bottom:10px}
-.plan-price b{font-size:30px;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
-.plan-price span{font-size:12px;color:var(--text-subtle)}
-.plan-blurb{margin:0 0 14px;font-size:12px;color:var(--text-muted);line-height:1.55;min-height:2.6em}
-.plan-grid.compact .plan-blurb{display:none}
-
-/* THE NUMBER SOMEBODY IS ACTUALLY BUYING, in a well of its own. On a metered
-   plan the allowance is the product, and burying it in a bullet list next to
-   "unlimited projects" makes it look like a feature rather than the price's
-   other half. */
-.plan-meter{
-  background:var(--surface-3);border-radius:var(--r);padding:9px 11px;margin-bottom:14px
-}
-.plan-meter b{display:block;font-size:15px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.plan-meter span{font-size:10.5px;color:var(--text-subtle)}
-
-.plan-lines{list-style:none;margin:0 0 18px;padding:0;flex:1;display:flex;
-  flex-direction:column;gap:7px}
-.plan-lines li{font-size:12px;color:var(--text-muted);line-height:1.45;
-  padding-left:15px;position:relative}
-.plan-lines li::before{
-  content:'';position:absolute;left:2px;top:6px;width:5px;height:5px;
-  border-radius:50%;background:var(--border-strong)
-}
-.plan-grid.compact .plan-lines{display:none}
-.plan-card .btn{width:100%;justify-content:center}
-
-/* --- the pricing page --------------------------------------------------- */
-.pricing-main{flex:1;overflow-y:auto;padding:20px 30px 70px}
-.pricing-head{margin-bottom:30px;max-width:66ch}
-.pricing-head .page-sub{font-size:13.5px;line-height:1.65;color:var(--text-muted);margin:10px 0 0}
-
-/* WHERE YOU STAND, ABOVE THE PRICES. The order is the argument: somebody signed
-   in who opens this page is nearly always asking "how much have I got left",
-   not "what are the tiers" — so the answer to the question they came with goes
-   first and the shop goes underneath it. */
-.usage-strip{
-  display:grid;grid-template-columns:auto 1fr auto;gap:18px;align-items:center;
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
-  padding:16px 18px;margin-bottom:26px
-}
-.usage-num b{display:block;font-size:20px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.usage-num span{font-size:11px;color:var(--text-subtle)}
-.usage-bar{height:6px;background:var(--surface-3);border-radius:999px;overflow:hidden}
-.usage-bar i{display:block;height:100%;background:var(--accent);border-radius:999px;
-  transition:width .3s}
-/* A FULL METER IS THE FAILURE RED, and it is the only place on this page a
-   second colour appears. It is not decoration: a bar at 100% means the next
-   layout will be refused, which is exactly the class of thing --danger is for. */
-.usage-bar i[style*="width: 100%"]{background:var(--danger)}
-.usage-side{display:flex;flex-direction:column;gap:3px;text-align:right}
-.usage-side span{font-size:11.5px;color:var(--text-muted)}
-.usage-side b{color:var(--ink)}
-.usage-side .warnish{color:var(--warn)}
-/* NO NEEDLE ON A DIAL WITH NO END. An unmetered account gets a hairline where the
-   bar was, so the strip keeps its three-column rhythm without drawing a gauge
-   that could only ever be read wrongly — full reads as "spent", empty as
-   "unused", and neither is true. */
-.usage-bar.none{background:var(--border);height:1px;align-self:center}
-
-
-.pricing-faq h3{margin-bottom:18px}
-.faq-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:22px 30px}
-.faq-grid h4{margin:0 0 6px;font-size:12.5px;letter-spacing:-.01em}
-.faq-grid p{margin:0;font-size:12px;line-height:1.65;color:var(--text-muted)}
-
-.ok-note{color:var(--ok);background:var(--ok-soft);border:1px solid var(--ok-line);
-  border-radius:var(--r);padding:9px 11px}
-
-/* --- the checkout dialog ------------------------------------------------ */
-.modal.checkout{width:min(420px,94vw)}
-
-/* THE MASTHEAD, AND IT IS CENTRED FOR ONE REASON. This is the last surface that
-   is ours before Razorpay's window opens over it, and it is the surface on which
-   somebody decides whether to type a card number. Left-aligned above a form it
-   reads as a header; centred, with the company line under it, it reads as a
-   receipt — which is the register somebody about to pay is already in. */
-.checkout-brand{
-  display:flex;flex-direction:column;align-items:center;gap:7px;
-  padding:2px 0 18px;margin-bottom:18px;border-bottom:1px solid var(--border)
-}
-.checkout-by{
-  display:flex;align-items:center;gap:8px
-}
-.checkout-by i{
-  font-style:normal;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--text-faint)
-}
-/* 84px WIDE, WHICH IS ABOUT 22px TALL AT THE ARTWORK'S 3.77:1. Small enough to
-   read as a byline beside the Super Luminal mark above it, large enough that the
-   knockout letterforms in a black slab do not turn to mud. `height:auto` keeps
-   the aspect honest if the artwork is ever re-exported at another size. */
-.checkout-by img{width:84px;height:auto;display:block}
-
-.checkout-line{
-  display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
-  background:var(--surface-3);border-radius:var(--r);padding:12px 14px;margin-bottom:20px
-}
-.checkout-line b{display:block;font-size:13px;line-height:1.35}
-.checkout-line span{font-size:11px;color:var(--text-muted);line-height:1.4}
-/* LEADING STATED ON BOTH HALVES, because they are read as a pair of two-line
-   blocks and the body's own line-height scales with the font size: a 19px price
-   and a 13px tier name inherit 30px and 21px, which drops "per month" a third of
-   a line below "5 render passes" and makes a tidy row look accidental. */
-.checkout-price{text-align:right;flex:0 0 auto}
-.checkout-price b{font-size:19px;letter-spacing:-.03em;font-variant-numeric:tabular-nums;
-  display:block;line-height:1.25}
-.checkout-gap{height:14px}
-.auth-label .opt{text-transform:none;letter-spacing:0;color:var(--text-faint);font-size:10px}
-.checkout-hint{margin:6px 0 0;font-size:10.5px;line-height:1.5;color:var(--text-faint)}
-.checkout-foot{
-  margin:16px 0 0;font-size:10.5px;line-height:1.55;color:var(--text-faint);text-align:center
-}
-
-/* --- the paywall -------------------------------------------------------- */
-.modal.paywall{width:min(760px,94vw)}
-.modal-foot.spread{justify-content:space-between}
-
-/* --- the balance in the profile menu ------------------------------------ */
-.rail-meter{
-  font-size:10.5px;color:var(--text-subtle);letter-spacing:.02em;
-  font-variant-numeric:tabular-nums;margin-top:3px
-}
-
-@media (max-width:760px){
-  .usage-strip{grid-template-columns:1fr;gap:12px}
-  .usage-side{text-align:left}
-  .usage-bar.none{align-self:stretch}
-  .pricing-main{padding:16px 18px 60px}
-  .plan-grid{grid-template-columns:1fr}
-}
-
-/* ---------- the home page on a phone ----------
-   THE HEADLINE IS THE PAGE. On a laptop it shares the screen with a subhead, a
-   button and a hint; on a 390px phone those stack into a column and the h1 is the
-   only thing above the fold, so it can afford — and needs — to be much larger
-   than the 34px floor the desktop clamp left it at.
-   11.5vw PUTS IT AT ~45px ON A TYPICAL PHONE and ~40px on a 320px iPhone SE,
-   which is the widest "lighting" can be set before the longest word in the
-   sentence stops fitting on one line. The upper bound catches the 640px tablet
-   edge before this query hands over to the desktop clamp.
-   AND max-width GOES, because 22ch at 45px is wider than the screen anyway — the
-   line breaks are the <br> in the markup plus the viewport, which is what you
-   want when the measure is the device. */
-@media (max-width:640px){
-  .home-h1{
-    font-size:clamp(40px,11.5vw,52px);letter-spacing:-.042em;line-height:1.02;
-    max-width:none;margin-bottom:14px
-  }
-  .home-sub{font-size:14.5px;line-height:1.55;max-width:40ch;margin-bottom:24px}
-  .home-main{padding:44px 20px}
-  /* The header has three controls on it now and 22px of padding either side is
-     more than a 320px screen can spare. */
-  .home-top{padding:0 14px;gap:8px}
-  .btn.big{font-size:15px}
-}
+} /* end @layer base */

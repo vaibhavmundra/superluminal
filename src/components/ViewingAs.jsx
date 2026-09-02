@@ -20,23 +20,38 @@ import { Link } from 'react-router-dom';
 // somebody else's account needs one obvious exit, and the browser's Back button
 // is not it after six clicks.
 // ---------------------------------------------------------------------------
-export default function ViewingAs({ user, userId, plan = null, project = null }) {
+/**
+ * `flush` IS THE ADMIN VIEWER'S VARIANT, and it exists because that banner is
+ * not a card on a page — it is the top edge of a full-height editor shell. So
+ * it drops the margin and the radius and keeps one border, on the bottom, which
+ * is the rule between it and the drawing below. Everywhere else the banner sits
+ * inside a padded page and the boxed version is right.
+ */
+export default function ViewingAs({ user, userId, plan = null, project = null, flush = false }) {
   const name = user?.full_name || user?.email || 'this user';
+  const linkish = 'border-0 bg-transparent p-0 cursor-pointer text-[11.5px] text-[#C026D3] no-underline hover:underline';
   return (
-    <div className="viewing-as" role="status">
-      <span className="viewing-dot" aria-hidden="true" />
-      <div className="viewing-text">
-        <b>Viewing {name}’s account</b>
-        <span>
+    <div
+      className={'flex items-center gap-[11px] px-3.5 py-2.5 border-[#F0ABFC] bg-[#FDF2FE] '
+        + (flush ? 'border-0 border-b border-solid' : 'mb-[22px] rounded border')}
+      role="status"
+    >
+      <span
+        className="w-2 h-2 rounded-full bg-[#C026D3] flex-none animate-[viewing-pulse_2.4s_ease-in-out_infinite] motion-reduce:animate-none"
+        aria-hidden="true"
+      />
+      <div className="flex flex-col gap-px min-w-0 flex-1">
+        <b className="text-[12.5px] text-ink">Viewing {name}’s account</b>
+        <span className="text-[11.5px] text-muted">
           {user?.email && user.email !== name ? <>{user.email} · </> : null}
           Read only — nothing on this screen can change their work.
         </span>
       </div>
-      <div className="viewing-links">
+      <div className="flex gap-3.5 flex-none">
         {(plan || project) && (
-          <Link className="linkish" to={`/admin/users/${userId}`}>Their projects</Link>
+          <Link className={linkish} to={`/admin/users/${userId}`}>Their projects</Link>
         )}
-        <Link className="linkish" to="/admin/users">All users</Link>
+        <Link className={linkish} to="/admin/users">All users</Link>
       </div>
     </div>
   );

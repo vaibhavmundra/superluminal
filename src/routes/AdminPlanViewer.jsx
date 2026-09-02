@@ -70,11 +70,11 @@ export default function AdminPlanViewer() {
 
   if (err) {
     return (
-      <div className="page-centre">
-        <div className="notice-card">
-          <h2>This plan could not be opened</h2>
-          <p>{err}</p>
-          <button className="btn" onClick={() => nav('/admin/users')}>Back to users</button>
+      <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
+        <div className="w-[min(460px,92%)] bg-surface border border-border rounded-lg p-6 text-center">
+          <h2 className="mt-0 mb-[10px] text-[18px] tracking-[-0.025em]">This plan could not be opened</h2>
+          <p className="mt-0 mb-[14px] text-muted text-[12.5px] leading-[1.6]">{err}</p>
+          <button className="text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3" onClick={() => nav('/admin/users')}>Back to users</button>
         </div>
       </div>
     );
@@ -82,9 +82,9 @@ export default function AdminPlanViewer() {
 
   if (!row || !file) {
     return (
-      <div className="page-centre">
-        <div className="spinner" aria-label="Loading the drawing" />
-        <p className="note">{row ? 'Reading their drawing…' : 'Opening…'}</p>
+      <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
+        <div className="w-[26px] h-[26px] rounded-full border-2 border-border border-t-accent animate-[sl-spin_0.8s_linear_infinite]" aria-label="Loading the drawing" />
+        <p className="text-[11.5px] text-muted leading-[1.5] mt-2">{row ? 'Reading their drawing…' : 'Opening…'}</p>
       </div>
     );
   }
@@ -96,9 +96,12 @@ export default function AdminPlanViewer() {
     // owns its own top bar; wrapping rather than threading a banner prop through
     // 4,500 lines keeps the editor unaware that this mode exists beyond the one
     // flag it actually needs.
-    <div className="viewer-shell">
-      <ViewingAs user={owner} userId={plan.owner} plan={plan.id} project={project?.id} />
-      <div className="viewer-stage">
+    <div className="grid grid-rows-[auto_minmax(0,1fr)] h-full">
+      <ViewingAs flush user={owner} userId={plan.owner} plan={plan.id} project={project?.id} />
+      {/* `[&>*]:h-full` rather than a class on App's own root: App.jsx is still
+          on the old stylesheet (it converts last), so the stage stretches its
+          child from out here and stops caring what that child is called. */}
+      <div className="min-h-0 relative [&>*]:h-full">
         <App
           key={plan.id}
           readOnly

@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // The API endpoints are Vercel functions in production. In dev there is no
 // Vercel, so we mount THE SAME MODULES as middleware rather than writing a
@@ -74,7 +75,7 @@ export default defineConfig(({ mode }) => {
   // used only inside configureServer, so they stay out of the bundle.
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), apiRoutes(env)],
+    plugins: [react(), tailwindcss(), apiRoutes(env)],
     // '/' AND NOT './', AND THE ROUTER IS WHY.
     //
     // A relative base emits `./assets/index-abc.js` in index.html, which

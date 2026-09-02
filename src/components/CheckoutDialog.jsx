@@ -64,9 +64,9 @@ export default function CheckoutDialog({ tier, defaults = {}, busy = false, erro
   };
 
   return (
-    <div className="modal-wrap"
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel?.(); }}>
-      <form className="modal checkout" onSubmit={submit}>
+      <form className="w-[min(420px,94vw)] bg-surface border border-border rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]" onSubmit={submit}>
 
         {/* THE MASTHEAD. Centred, above everything, and the two lines are a
             hierarchy rather than a stack: the mark is what the user came for,
@@ -84,56 +84,56 @@ export default function CheckoutDialog({ tier, defaults = {}, busy = false, erro
             THE ALT TEXT CARRIES THE WHOLE SENTENCE, because "A product of" and
             the image are one phrase; a screen reader that reads "A product of"
             and then "Designopolis logo" has read a caption and a filename. */}
-        <div className="checkout-brand">
+        <div className="flex flex-col items-center gap-[7px] pt-0.5 pb-[18px] mb-[18px] border-b border-border">
           <Logo width={126} />
-          <span className="checkout-by">
-            <i>A product of</i>
-            <img src={HOUSE} alt="Designopolis" />
+          <span className="flex items-center gap-2">
+            <i className="not-italic text-[9.5px] tracking-[0.1em] uppercase text-faint">A product of</i>
+            <img src={HOUSE} alt="Designopolis" className="w-[84px] h-auto block" />
           </span>
         </div>
 
-        <div className="checkout-line">
+        <div className="flex items-start justify-between gap-4 bg-surface-3 rounded px-[14px] py-3 mb-5">
           <div>
-            <b>{tier.name}</b>
-            <span>{fmtAllowance(tier)}</span>
+            <b className="block text-[13px] leading-[1.35]">{tier.name}</b>
+            <span className="text-[11px] text-muted leading-[1.4]">{fmtAllowance(tier)}</span>
           </div>
-          <div className="checkout-price">
-            <b>{price}</b>
-            <span>per month</span>
+          <div className="text-right flex-none">
+            <b className="text-[19px] tracking-[-0.03em] tabular-nums block leading-[1.25]">{price}</b>
+            <span className="text-[11px] text-muted leading-[1.4]">per month</span>
           </div>
         </div>
 
-        <label className="auth-label" htmlFor="co-name">Full name</label>
+        <label className="text-[10px] tracking-[0.11em] uppercase text-subtle" htmlFor="co-name">Full name</label>
         <input id="co-name" type="text" autoFocus autoComplete="name" value={name}
           placeholder="As it should appear on the invoice"
           onChange={(e) => { setTouched(true); setName(e.target.value); }} />
 
-        <div className="checkout-gap" />
-        <label className="auth-label" htmlFor="co-email">Email</label>
+        <div className="h-[14px]" />
+        <label className="text-[10px] tracking-[0.11em] uppercase text-subtle" htmlFor="co-email">Email</label>
         <input id="co-email" type="email" autoComplete="email" value={email}
           placeholder="you@studio.com"
           onChange={(e) => { setTouched(true); setEmail(e.target.value); }} />
 
-        <div className="checkout-gap" />
-        <label className="auth-label" htmlFor="co-phone">
-          Phone <span className="opt">optional</span>
+        <div className="h-[14px]" />
+        <label className="text-[10px] tracking-[0.11em] uppercase text-subtle" htmlFor="co-phone">
+          Phone <span className="normal-case tracking-normal text-faint text-[10px]">optional</span>
         </label>
         <input id="co-phone" type="tel" autoComplete="tel" value={contact}
           placeholder="For the payment receipt"
           onChange={(e) => { setTouched(true); setContact(e.target.value); }} />
 
-        {error && <p className="note err" style={{ marginTop: 14 }}>{error}</p>}
+        {error && <p className="text-[11.5px] leading-[1.5] text-danger-ink border-l-2 border-danger pl-[9px] mt-[14px]">{error}</p>}
 
-        <div className="modal-foot">
-          <button type="button" className="btn secondary" onClick={onCancel} disabled={busy}>
+        <div className="flex justify-end gap-2 mt-6">
+          <button type="button" className="text-xs px-3 py-[7px] rounded border border-border-strong bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="btn primary" disabled={!ready}>
+          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-40 disabled:cursor-not-allowed" disabled={!ready}>
             {busy ? 'Opening…' : `Pay ${price} and continue`}
           </button>
         </div>
 
-        <p className="checkout-foot">
+        <p className="mt-4 text-[10.5px] leading-[1.55] text-faint text-center">
           Payment is handled by Razorpay. Cancel any time — the month you have
           paid for runs to its end.
         </p>

@@ -62,41 +62,41 @@ export default function Home() {
   }, [user, nav]);
 
   return (
-    <div className="home">
-      <header className="home-top">
+    <div className="min-h-full flex flex-col">
+      <header className="h-14 flex-none flex items-center gap-3.5 px-[22px] border-b border-border bg-[rgba(255,255,255,.72)] backdrop-blur-[12px] backdrop-saturate-[180%]">
         <Wordmark />
-        <div className="spacer" />
-        <button className="btn" onClick={() => nav('/pricing')}>Pricing</button>
+        <div className="flex-1" />
+        <button className="text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3" onClick={() => nav('/pricing')}>Pricing</button>
         {ready && (user
-          ? <button className="btn" onClick={() => nav('/dashboard')}>Your projects</button>
-          : <button className="btn" onClick={() => nav('/login')}>Sign in</button>)}
+          ? <button className="text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3" onClick={() => nav('/dashboard')}>Your projects</button>
+          : <button className="text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3" onClick={() => nav('/login')}>Sign in</button>)}
       </header>
 
       <main
-        className={'home-main' + (over ? ' over' : '')}
+        className={'flex-1 flex flex-col items-center justify-center text-center px-6 py-16 gap-1.5 border-2 transition-colors duration-150' + (over ? ' border-accent bg-accent-soft' : ' border-transparent')}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); accept(e.dataTransfer.files?.[0]); }}
       >
-        <h1 className="home-h1">Create lighting layouts<br />in minutes</h1>
-        <p className="home-sub">
+        <h1 className="mb-[10px] text-[clamp(34px,4.4vw,58px)] leading-[1.04] tracking-[-0.035em] max-w-[22ch]">Create lighting layouts<br />in minutes</h1>
+        <p className="mb-[26px] text-muted max-w-[56ch] text-[14px] leading-[1.6]">
           Lighting layouts used to take hours. Our trained AI models understand your space, the use case and create fully functional layouts in a matter of minutes.
         </p>
 
-        <div className="home-cta">
-          <button className="btn primary big"
+        <div className="flex flex-col items-center gap-3">
+          <button className="text-[14px] py-0 px-12 rounded-[8px] h-field-h inline-flex items-center justify-center bg-[linear-gradient(to_right,#ffb900_0%,#ff7800_50%,#ff5500_100%)] text-black border cursor-pointer transition-colors duration-[120ms] hover:bg-[linear-gradient(to_right,#ffb900_0%,#ff7800_90%,#ff5500_100%)] "
             onClick={() => inputRef.current?.click()}>
             + Upload a floor plan
           </button>
           <input ref={inputRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
             onChange={(e) => accept(e.target.files?.[0])} />
-          <span className="home-hint">or drop it anywhere on this page · DXF, PDF or image</span>
+          <span className="text-[11.5px] text-subtle">or drop it anywhere on this page · DXF, PDF or image</span>
         </div>
 
-        {err && <p className="note err home-err">{err}</p>}
+        {err && <p className="text-[11.5px] leading-[1.5] mt-2 text-danger-ink border-l-2 border-danger pl-[9px] max-w-[48ch]">{err}</p>}
       </main>
 
-      <footer className="home-foot">
+      <footer className="flex-none flex justify-between px-[22px] py-4 border-t border-border text-[11px] text-subtle bg-surface">
         <span></span>
         <span></span>
       </footer>

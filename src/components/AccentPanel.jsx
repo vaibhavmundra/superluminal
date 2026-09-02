@@ -21,6 +21,17 @@ import { PLACEMENT_RULES } from '../lib/accentPlace.js';
 
 const pct = (v) => `${Math.round((v ?? 0) * 100)}%`;
 
+const SEC = 'border-t border-border pt-3.5 mt-2.5 first-of-type:border-t-0 first-of-type:mt-0 first-of-type:pt-0';
+const SEC_H3 = 'm-0 mb-2.5 text-[10px] tracking-[0.11em] uppercase text-subtle';
+const NOTE = 'text-[11.5px] text-muted leading-[1.5] mt-2';
+const NOTE_WARN = 'text-[11.5px] leading-[1.5] text-muted border-l-2 border-border-strong pl-[9px]';
+const NOTE_ERR = 'text-[11.5px] leading-[1.5] text-danger-ink border-l-2 border-danger pl-[9px]';
+const KV = 'flex justify-between text-[11.5px] py-[3px] text-muted';
+const KV_B = 'text-ink tabular-nums';
+const BTN = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
+const BTN_PRIMARY = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_TINY = 'border border-border rounded bg-surface text-ink cursor-pointer px-[5px] py-0 text-[11px] leading-[1.5] transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
+
 export default function AccentPanel({
   rooms = [], roomId, onRoomChange, sent = null,
   state = { status: 'idle' }, result = null,
@@ -38,11 +49,11 @@ export default function AccentPanel({
   const unplaceable = zones.filter((z) => z.rejected);
 
   return (
-    <div className="sec">
-      <h3>Accent lighting</h3>
+    <div className={SEC}>
+      <h3 className={SEC_H3}>Accent lighting</h3>
 
       {!rooms.length ? (
-        <p className="note">Light the plan first — accent zones are marked out on a space
+        <p className={NOTE}>Light the plan first — accent zones are marked out on a space
           that already has its ambient layout.</p>
       ) : <>
         <select value={roomId ?? ''} onChange={(e) => onRoomChange(e.target.value)}>
@@ -55,12 +66,12 @@ export default function AccentPanel({
         </select>
 
         {/* Not on the plan, and every mounting height depends on it. */}
-        <div className="kv" style={{ marginTop: 8 }}>
+        <div className={KV + ' mt-2'}>
           <span>Ceiling height</span>
-          <b>
+          <b className={KV_B}>
             <input type="number" min="7" max="20" step="0.5" value={ceilingFt}
               onChange={(e) => onCeilingChange(Number(e.target.value))}
-              style={{ width: 54, padding: '2px 4px', fontSize: 11, textAlign: 'right' }} /> ft
+              className="w-[54px]! px-1! py-0.5! text-[11px]! text-right!" /> ft
           </b>
         </div>
 
@@ -69,102 +80,109 @@ export default function AccentPanel({
             produces a confident answer about somewhere else, and there is
             nothing in a list of zones that could tell you so. */}
         {sent && (
-          <div className="render-strip">
-            <div className="render-thumb plan" title={`What gets sent — ${sent.w}x${sent.h}`}>
-              <img src={sent.dataUrl} alt="the space as sent" />
+          <div className="flex gap-[6px] flex-wrap mt-2">
+            <div className="relative w-[62px] h-[62px] rounded-[7px] overflow-hidden border border-accent-line bg-surface flex-none" title={`What gets sent — ${sent.w}x${sent.h}`}>
+              <img src={sent.dataUrl} alt="the space as sent" className="w-full h-full object-contain block" />
             </div>
-            <p className="note" style={{ margin: 0, flex: 1, minWidth: 120 }}>
+            <p className="text-[11.5px] text-muted leading-[1.5] m-0 flex-1 min-w-[120px]">
               This is what gets sent — everything but this space erased.
             </p>
           </div>
         )}
 
-        <button className="btn primary" style={{ marginTop: 10, width: '100%' }}
+        <button className={BTN_PRIMARY + ' mt-2.5 w-full'}
           disabled={!room || !room.plan?.ok || running}
           onClick={onRun}>
           {running ? 'Reading the space…' : zones.length ? 'Ask again' : 'Find accent zones'}
         </button>
 
-        <details className="accent-rules">
-          <summary>The rules the code applies</summary>
-          <ol>{PLACEMENT_RULES.map((r) => (
-            <li key={r.id}><b>{r.label}</b> — {r.does}.</li>
+        <details className="mt-2 text-[11px] text-muted">
+          <summary className="cursor-pointer text-subtle text-[10.5px]">The rules the code applies</summary>
+          <ol className="mt-1.5 pl-[18px]">{PLACEMENT_RULES.map((r) => (
+            <li className="mb-[3px] leading-[1.4]" key={r.id}><b className="text-ink">{r.label}</b> — {r.does}.</li>
           ))}</ol>
-          <p style={{ margin: '6px 0 0', fontSize: 10 }}>
+          <p className="mt-1.5 text-[10px]">
             The model is only asked what furniture is in the room. These are
             applied here, the same way every time.
           </p>
         </details>
 
         {state.status === 'error' && (
-          <p className="note err" style={{ marginTop: 8 }}>{state.error}</p>
+          <p className={NOTE_ERR + ' mt-2'}>{state.error}</p>
         )}
 
         {result && (
-          <div style={{ marginTop: 10 }}>
-            {result.notes && <p className="note">{result.notes}</p>}
+          <div className="mt-2.5">
+            {result.notes && <p className={NOTE}>{result.notes}</p>}
 
             {/* WHAT IT SAW. First, and before the fittings, because when the
                 answer is thin this is the line that explains it. */}
-            <div className="kv"><span>Furniture found</span>
-              <b>{result.furniture?.length ?? 0}</b></div>
+            <div className={KV}><span>Furniture found</span>
+              <b className={KV_B}>{result.furniture?.length ?? 0}</b></div>
             {(result.handled ?? []).map((f, i) => {
               const t = FURNITURE_BY_ID[f.type];
               return (
-                <div className="furn-row" key={i}>
-                  <span className="accent-dot" style={{ background: t?.colour || '#666' }} />
-                  <span className="furn-name">{t?.label || f.type}</span>
-                  <span className="furn-out">
+                <div className="grid grid-cols-[8px_minmax(0,1fr)_auto_auto] gap-[7px] items-center py-[3px] text-[11px] border-b border-border last-of-type:border-b-0" key={i}>
+                  <span className="w-2 h-2 rounded-[2px] flex-none" style={{ background: t?.colour || '#666' }} />
+                  <span className="font-sans text-ink overflow-hidden text-ellipsis whitespace-nowrap">{t?.label || f.type}</span>
+                  <span className="text-[10px] text-muted">
                     {f.rule
                       ? (f.emitted ? `${f.emitted} fitting${f.emitted > 1 ? 's' : ''}` : 'rule 2 — left alone')
                       : 'no rule'}
                   </span>
-                  <span className="furn-conf">{pct(f.confidence)}</span>
+                  <span className="font-sans text-[9.5px] text-subtle">{pct(f.confidence)}</span>
                 </div>
               );
             })}
 
             {!result.furniture?.length && state.status === 'done' && (
-              <p className="note warn" style={{ marginTop: 6 }}>
+              <p className={NOTE_WARN + ' mt-1.5'}>
                 It found no bed, wardrobe, TV unit, basin or sofa in this space. If
                 there is one on the plan, check the crop above is the right space —
                 the console carries the model's own words.
               </p>
             )}
             {result.furniture?.length > 0 && !zones.length && (
-              <p className="note" style={{ marginTop: 6 }}>
+              <p className="text-[11.5px] text-muted leading-[1.5] mt-1.5">
                 Furniture found, but no rule fires on it. That is a correct answer
                 as often as not.
               </p>
             )}
 
             {zones.length > 0 && (
-              <div className="kv" style={{ marginTop: 8 }}><span>Fittings</span>
-                <b>{live.length} of {zones.length}{unplaceable.length ? ` · ${unplaceable.length} off-wall` : ''}</b></div>
+              <div className={KV + ' mt-2'}><span>Fittings</span>
+                <b className={KV_B}>{live.length} of {zones.length}{unplaceable.length ? ` · ${unplaceable.length} off-wall` : ''}</b></div>
             )}
 
             {zones.map((z) => {
               const t = TYPE_BY_ID[z.type];
               const off = dismissed.includes(z.id);
+              const bad = !!z.rejected;
+              const on = z.id === selId;
               return (
-                <div className={'accent-row' + (off ? ' off' : '') + (z.rejected ? ' bad' : '')
-                                + (z.id === selId ? ' on' : '')} key={z.id}
+                <div className={
+                    'border rounded-[8px] py-[6px] px-2 mt-1.5 '
+                    + (bad ? 'border-dashed ' : '')
+                    + (on ? 'border-accent shadow-[inset_0_0_0_1px_var(--color-accent)] ' : (bad ? 'border-danger-line ' : 'border-border '))
+                    + (bad ? 'bg-danger-soft' : 'bg-surface')
+                    + (off ? ' opacity-[.42]' : '')
+                  } key={z.id}
                   onClick={() => !z.rejected && onSelect?.(z.id === selId ? null : z.id)}
                   style={{ cursor: z.rejected ? 'default' : 'pointer' }}>
-                  <div className="accent-head">
-                    <span className="accent-dot" style={{ background: t?.colour || '#666' }} />
-                    <b>{t?.label || z.type}</b>
-                    <span className="accent-role">
+                  <div className="flex items-center gap-[6px]">
+                    <span className="w-2 h-2 rounded-[2px] flex-none" style={{ background: t?.colour || '#666' }} />
+                    <b className="font-sans text-[11px]">{t?.label || z.type}</b>
+                    <span className="text-[9px] text-subtle border border-border rounded-full px-[5px] leading-[1.6] whitespace-nowrap">
                       {z.rejected ? 'not placed' : z.type === 'strip' ? 'run' : 'on the wall'}
                     </span>
-                    <button className="btn tiny" title={off ? 'Put it back' : 'Not this one'}
+                    <button className={BTN_TINY + ' ml-auto'} title={off ? 'Put it back' : 'Not this one'}
                       onClick={() => onToggleZone(z.id)}>{off ? '↩' : '×'}</button>
                   </div>
-                  {z.what && <div className="accent-what">{z.what}</div>}
+                  {z.what && <div className={'text-[11.5px] text-ink mt-[3px]' + (off ? ' line-through' : '')}>{z.what}</div>}
                   {z.rejected
-                    ? <div className="accent-why warn">{z.rejected}</div>
-                    : z.why && <div className="accent-why">{z.why}</div>}
-                  <div className="accent-meta">
+                    ? <div className={'text-[10.5px] mt-0.5 leading-[1.45] text-danger-ink' + (off ? ' line-through' : '')}>{z.rejected}</div>
+                    : z.why && <div className={'text-[10.5px] text-muted mt-0.5 leading-[1.45]' + (off ? ' line-through' : '')}>{z.why}</div>}
+                  <div className="flex gap-2 flex-wrap mt-1 font-sans text-[9.5px] text-subtle tabular-nums">
                     {z.runLength != null && pxPerFt > 0 && (
                       <span>{(z.runLength / pxPerFt).toFixed(1)} ft run</span>
                     )}
@@ -178,14 +196,14 @@ export default function AccentPanel({
             })}
 
             {result.skipped?.length > 0 && (
-              <p className="note warn" style={{ marginTop: 6 }}>
+              <p className={NOTE_WARN + ' mt-1.5'}>
                 {result.skipped.length} entr{result.skipped.length > 1 ? 'ies were' : 'y was'} dropped:
                 {' '}{[...new Set(result.skipped.map((s) => s.reason))].join('; ')}.
               </p>
             )}
 
-            {state.ms && <div className="kv"><span>Took</span><b>{(state.ms / 1000).toFixed(1)}s</b></div>}
-            <button className="btn" style={{ marginTop: 6, width: '100%' }} onClick={onClear}>
+            {state.ms && <div className={KV}><span>Took</span><b className={KV_B}>{(state.ms / 1000).toFixed(1)}s</b></div>}
+            <button className={BTN + ' mt-1.5 w-full'} onClick={onClear}>
               Clear these zones
             </button>
           </div>

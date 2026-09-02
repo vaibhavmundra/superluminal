@@ -11,10 +11,23 @@ import React from 'react';
 // the line under the row is for. A palette whose buttons all look alike and
 // behave differently is a palette that gets clicked once and abandoned.
 //
-// The glyphs are the plan's own marks flattened into a 24-unit box: a run with
-// end ticks, a crosshair standing off its wall, a circle with an arrow. If
-// PlanCanvas ever draws one of them differently, this has to follow — a palette
-// that lies about what it places is worse than a dropdown.
+// THE MARKS ARE ARTWORK NOW, shipped in /public/icons, exactly as CeilingPalette
+// carries its three. They were the plan's own line symbols flattened into a
+// 24-unit box — a run with end ticks, a crosshair standing off its wall, a
+// circle with an arrow — which kept the palette and the drawing in lockstep but
+// asked three hairlines to survive at button size. Beside a row of ceiling
+// objects rendered as pictures they also read as the unfinished half of one
+// palette, which is the thing that actually decided it.
+//
+// THE DIVERGENCE IS REAL AND WORTH NAMING: the plan keeps its line symbols, so
+// a button and the mark it places are no longer the same drawing. What has to
+// hold is weaker but still binding — the button has to stay recognisably the
+// thing that lands on the sheet. Change a fitting's symbol on the canvas and
+// look at this row before deciding you are done.
+//
+// THE GESTURE PICTURE BELOW IS STILL DRAWN, and stays drawn. It is not an icon:
+// it is a diagram of a drag and its consequence, it has to match the marquee the
+// zones tab draws, and it is rendered at 72x46 where hairlines are fine.
 // ---------------------------------------------------------------------------
 
 export const LIGHT_TOOLS = [
@@ -37,33 +50,15 @@ export const LIGHT_TOOLS = [
     consequence: 'The spot lands nearby, aimed at it.' },
 ];
 
-const GLYPH = {
-  strip: (
-    <g fill="none" strokeLinecap="round">
-      <line x1="4" y1="12" x2="20" y2="12" strokeWidth="3"
-        strokeDasharray="2.6 2.8" />
-      <line x1="4" y1="8.4" x2="4" y2="15.6" strokeWidth="1.4" />
-      <line x1="20" y1="8.4" x2="20" y2="15.6" strokeWidth="1.4" />
-    </g>
-  ),
-  sconce: (
-    <g fill="none" strokeLinecap="round">
-      {/* the wall it hangs off */}
-      <line x1="3.6" y1="3" x2="3.6" y2="21" strokeWidth="1.6" opacity="0.45" />
-      <circle cx="13" cy="12" r="5" fill="#fff" />
-      <line x1="3.6" y1="12" x2="19.4" y2="12" strokeWidth="1.6" />
-      <line x1="13" y1="6.4" x2="13" y2="17.6" strokeWidth="1.6" />
-      <circle cx="13" cy="12" r="5" strokeWidth="1.8" />
-    </g>
-  ),
-  spot: (
-    <g fill="none" strokeLinecap="round">
-      <circle cx="9.5" cy="12" r="4.6" fill="#fff" strokeWidth="1.8" />
-      <circle cx="9.5" cy="12" r="1.8" fill="currentColor" stroke="none" />
-      <line x1="15" y1="12" x2="20" y2="12" strokeWidth="1.7" />
-      <path d="M20,12 L16.8,10.2 L16.8,13.8 Z" fill="currentColor" stroke="none" />
-    </g>
-  ),
+/**
+ * The picture on each button. Keyed by tool id, so the row and LIGHT_TOOLS
+ * cannot fall out of step: a tool added without artwork renders no image rather
+ * than a broken one — see the guard at the call site.
+ */
+const ICON = {
+  strip:  '/icons/led_strip.png',
+  sconce: '/icons/sconce.png',
+  spot:   '/icons/directional.png',
 };
 
 /**
@@ -90,7 +85,7 @@ const GLYPH = {
  */
 const GESTURE = {
   spot: (
-    <svg viewBox="0 0 72 46" aria-hidden="true">
+    <svg viewBox="0 0 72 46" className="w-[72px] h-[46px] block overflow-visible" aria-hidden="true">
       {/* What is being lit: the box, and the corner the drag started from. */}
       <rect x="24" y="10" width="37" height="24" rx="2"
         fill="var(--accent)" fillOpacity="0.07"
@@ -121,21 +116,32 @@ export default function LightPalette({ tool, onPick, disabled = false }) {
   const live = LIGHT_TOOLS.find((t) => t.id === tool);
   return (
     <>
-      <div className="palette three">
+      <div className="grid grid-cols-3 gap-[5px] mt-2">
         {LIGHT_TOOLS.map((t) => (
           <button key={t.id} type="button" disabled={disabled}
-            className={'palette-btn' + (tool === t.id ? ' on' : '')}
+            className={'flex flex-col items-center gap-[3px] pt-[7px] px-[2px] pb-[5px] rounded-[8px] border border-border/10 bg-surface text-accent cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-input-bg disabled:opacity-45 disabled:cursor-not-allowed' +
+              (tool === t.id ? ' bg-input-bg shadow-[inset_0_0_0_1px_currentColor]' : '')}
             title={`${t.label} — ${t.hint}`}
-            /* THESE ARE LIGHTS, so they wear the colour lights wear on the
-               canvas. The ceiling palette colours each button by the object it
-               places for the same reason; here all three place the same kind of
-               thing, so all three are the accent. */
-            style={{ color: 'var(--accent)' }}
+            /* `text-accent` IS STILL LOAD-BEARING, but for less than it was.
+               It used to colour the glyph, which took `currentColor` — the
+               artwork carries its own colour now, so all it feeds is the armed
+               ring's `currentColor` in the inset shadow above. Same job the
+               ceiling palette's `text-accent` does, and the same reason all
+               three buttons share one hue: these all place the same KIND of
+               thing, where a ceiling object and a light are two kinds. */
             aria-pressed={tool === t.id}
             onClick={() => onPick(tool === t.id ? null : t.id)}>
-            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"
-              stroke="currentColor" strokeWidth="1.5">{GLYPH[t.id]}</svg>
-            <span>{t.label}</span>
+            {/* alt="" ON PURPOSE, same as the ceiling palette: the label below
+                is the accessible name, and a screen reader saying "sconce"
+                twice is worse than not describing the picture at all.
+                GUARDED, so a tool listed in LIGHT_TOOLS without artwork degrades
+                to its label instead of rendering a broken image. */}
+            {ICON[t.id] && (
+              <img src={ICON[t.id]} alt="" width="40" height="40"
+                className="w-10 h-10 object-contain select-none" draggable="false" />
+            )}
+            <span className={'text-[9.5px] leading-[1.15] text-center tracking-[0.01em] ' +
+              (tool === t.id ? 'text-ink' : 'text-muted')}>{t.label}</span>
           </button>
         ))}
       </div>
@@ -151,15 +157,15 @@ export default function LightPalette({ tool, onPick, disabled = false }) {
           button directly above it is visibly pressed, and its own label is
           two lines up. */}
       {live && (GESTURE[live.id] ? (
-        <div className="gesture-hint">
+        <div className="flex flex-col items-center gap-2 pt-3.5 px-4 pb-3 rounded-lg border border-border bg-input-bg text-center mt-2">
           {GESTURE[live.id]}
-          <p>
+          <p className="m-0 text-[11px] leading-[1.5] text-muted max-w-[30ch]">
             {live.hint}{live.consequence ? ` ${live.consequence}` : ''}
-            <br /><span className="esc"><b>Esc</b> to put it away.</span>
+            <br /><span className="text-subtle"><b>Esc</b> to put it away.</span>
           </p>
         </div>
       ) : (
-        <p className="note" style={{ marginTop: 8 }}>
+        <p className="text-[11.5px] text-muted leading-[1.5] mt-2">
           <b>{live.label}.</b> {live.hint} <b>Esc</b> to put it away.
         </p>
       ))}

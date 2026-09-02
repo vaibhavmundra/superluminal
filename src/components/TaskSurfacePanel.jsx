@@ -25,11 +25,11 @@ export default function TaskSurfacePanel({
   const live = found.filter((s) => !dismissed.includes(s.id));
 
   return (
-    <div className="sec">
-      <h3>Task surfaces</h3>
+    <div className="border-t border-border pt-3.5 mt-2.5 first-of-type:border-t-0 first-of-type:mt-0 first-of-type:pt-0">
+      <h3 className="m-0 mb-2.5 text-[10px] tracking-[0.11em] uppercase text-subtle">Task surfaces</h3>
 
       {!rooms.length ? (
-        <p className="note">Light the plan first — surfaces are found on a space that
+        <p className="text-[11.5px] text-muted leading-[1.5] mt-2">Light the plan first — surfaces are found on a space that
           already has its ambient layout.</p>
       ) : <>
         <select value={roomId ?? ''} onChange={(e) => onRoomChange(e.target.value)}>
@@ -39,36 +39,37 @@ export default function TaskSurfacePanel({
         </select>
 
         {/* One action, and it runs the whole plan — see AccentPanel. */}
-        <button className="btn primary" style={{ marginTop: 8, width: '100%' }}
+        <button
+          className="text-[12px] py-[7px] px-3 rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border mt-2 w-full"
           disabled={running} onClick={onRun}>
           {running ? 'Working…' : 'Recompute task surfaces for the plan'}
         </button>
 
-        <details className="accent-rules">
-          <summary>What counts as one</summary>
-          <ul style={{ margin: '6px 0 0', paddingLeft: 16 }}>
+        <details className="mt-2 text-[11px] text-muted">
+          <summary className="cursor-pointer text-subtle text-[10.5px]">What counts as one</summary>
+          <ul className="mt-[6px] pl-4">
             {SURFACE_TYPES.map((t) => (
-              <li key={t.id} style={{ marginBottom: 3, lineHeight: 1.4 }}>
+              <li key={t.id} className="mb-[3px] leading-[1.4]">
                 <b>{t.label}</b> — {t.context}.
               </li>
             ))}
           </ul>
-          <p style={{ margin: '6px 0 0', fontSize: 10 }}>
+          <p className="mt-[6px] text-[10px]">
             The qualifier is half the definition: a rectangle is only a coffee table
             because there is a sofa beside it.
           </p>
         </details>
 
         {state.status === 'error' && (
-          <p className="note err" style={{ marginTop: 8 }}>{state.error}</p>
+          <p className="text-[11.5px] leading-[1.5] mt-2 text-danger-ink border-l-2 border-danger pl-[9px]">{state.error}</p>
         )}
 
         {result && (
-          <div style={{ marginTop: 10 }}>
-            {result.notes && <p className="note">{result.notes}</p>}
+          <div className="mt-2.5">
+            {result.notes && <p className="text-[11.5px] text-muted leading-[1.5] mt-2">{result.notes}</p>}
 
             {!found.length && state.status === 'done' && (
-              <p className="note" style={{ marginTop: 6 }}>
+              <p className="text-[11.5px] text-muted leading-[1.5] mt-1.5">
                 No task surface in this room. For a bedroom, a bathroom or a corridor
                 that is the right answer.
               </p>
@@ -78,14 +79,16 @@ export default function TaskSurfacePanel({
               const t = SURFACE_BY_ID[s.type];
               const off = dismissed.includes(s.id);
               return (
-                <div className={'accent-row' + (off ? ' off' : '')} key={s.id}>
-                  <div className="accent-head">
-                    <span className="accent-dot" style={{ background: t?.colour || '#666' }} />
-                    <b>{t?.label || s.type}</b>
-                    <button className="btn tiny" title={off ? 'Put it back' : 'Not one'}
+                <div className={'rounded-[8px] border border-border bg-surface py-1.5 px-2 mt-1.5' + (off ? ' opacity-[0.42]' : '')} key={s.id}>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-[2px] flex-none" style={{ background: t?.colour || '#666' }} />
+                    <b className="text-[11px]">{t?.label || s.type}</b>
+                    <button
+                      className="rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 py-0 px-[5px] text-[11px] leading-[1.5] ml-auto"
+                      title={off ? 'Put it back' : 'Not one'}
                       onClick={() => onToggle(s.id)}>{off ? '↩' : '×'}</button>
                   </div>
-                  {s.note && <div className="accent-why">{s.note}</div>}
+                  {s.note && <div className={'text-[10.5px] text-muted mt-0.5 leading-[1.45]' + (off ? ' line-through' : '')}>{s.note}</div>}
                   {(() => {
                     // The spot is derived from the surface, so its outcome
                     // belongs on the surface's own row. A refusal is a sentence:
@@ -95,15 +98,17 @@ export default function TaskSurfacePanel({
                     // Three outcomes, and they are not the same thing. A SKIP
                     // is a decision already taken by the chandelier being
                     // there; a REJECTION is a problem to solve.
-                    if (sp.skipped) return <div className="accent-why">{sp.skipped}</div>;
-                    if (sp.rejected) return <div className="accent-why warn">{sp.rejected}</div>;
+                    const why = 'text-[10.5px] mt-0.5 leading-[1.45] text-muted';
+                    const whyWarn = 'text-[10.5px] mt-0.5 leading-[1.45] text-danger-ink';
+                    if (sp.skipped) return <div className={why}>{sp.skipped}</div>;
+                    if (sp.rejected) return <div className={whyWarn}>{sp.rejected}</div>;
                     // A SPOT IN A RUN STANDS WHERE IT DOES BECAUSE OF ITS
                     // NEIGHBOURS, not because of its own surface, and the panel
                     // has to say so — otherwise the one explanation on offer
                     // ("the middle of its own segment") is the one thing that
                     // is not true of it.
                     if (sp.run) {
-                      return <div className="accent-why">Spot {sp.run.index + 1} of
+                      return <div className={why}>Spot {sp.run.index + 1} of
                         {' '}{sp.run.of} in a run, all on one ceiling line
                         {sp.run.standoff < 0.05
                           ? ' through the group'
@@ -116,18 +121,18 @@ export default function TaskSurfacePanel({
                     // either accept or fix by dragging it, not a detail to bury
                     // under the same sentence as an ordinary placement.
                     if (sp.far) {
-                      return <div className="accent-why warn">Nothing on the grid
+                      return <div className={whyWarn}>Nothing on the grid
                         within reach of this surface — the nearest position that
                         works is {sp.aimFt?.toFixed(1)} ft away, so the beam
                         grazes rather than lights. Drag the spot if the ceiling
                         has somewhere better.</div>;
                     }
-                    return <div className="accent-why">Spot on the secondary grid,
+                    return <div className={why}>Spot on the secondary grid,
                       {sp.via === 'light-light'
                         ? ' between two lights' : ' between a light and the chunk edge'}
                       {sp.track ? ', clipped into the track' : ''}.</div>;
                   })()}
-                  <div className="accent-meta">
+                  <div className="flex gap-2 flex-wrap mt-1 text-[9.5px] text-subtle">
                     {s.widthFt != null && (
                       <span>{s.widthFt.toFixed(1)} × {s.heightFt.toFixed(1)} ft</span>
                     )}
@@ -138,29 +143,35 @@ export default function TaskSurfacePanel({
             })}
 
             {result.skipped?.length > 0 && (
-              <p className="note warn" style={{ marginTop: 6 }}>
+              <p className="text-[11.5px] leading-[1.5] mt-1.5 text-muted border-l-2 border-border-strong pl-[9px]">
                 {result.skipped.length} dropped:
                 {' '}{[...new Set(result.skipped.map((x) => x.reason))].join('; ')}.
               </p>
             )}
 
             {found.length > 0 && (
-              <div className="kv" style={{ marginTop: 8 }}>
-                <span>Kept</span><b>{live.length} of {found.length}</b></div>
+              <div className="flex justify-between text-[11.5px] py-[3px] text-muted mt-2">
+                <span>Kept</span><b className="text-ink tabular-nums">{live.length} of {found.length}</b></div>
             )}
-            {state.ms && <div className="kv"><span>Took</span><b>{(state.ms / 1000).toFixed(1)}s</b></div>}
-            <button className="btn" style={{ marginTop: 6, width: '100%' }} onClick={onClear}>
+            {state.ms && (
+              <div className="flex justify-between text-[11.5px] py-[3px] text-muted">
+                <span>Took</span><b className="text-ink tabular-nums">{(state.ms / 1000).toFixed(1)}s</b>
+              </div>
+            )}
+            <button
+              className="text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed mt-1.5 w-full"
+              onClick={onClear}>
               Clear
             </button>
 
             {found.length > 0 && (
               <>
-                <div className="kv" style={{ marginTop: 6 }}>
+                <div className="flex justify-between text-[11.5px] py-[3px] text-muted mt-1.5">
                   <span>Spots placed</span>
-                  <b>{spots.filter((q) => q.x != null).length} of {live.length}
+                  <b className="text-ink tabular-nums">{spots.filter((q) => q.x != null).length} of {live.length}
                     {spots.some((q) => q.skipped)
                       ? ` · ${spots.filter((q) => q.skipped).length} left to a chandelier` : ''}</b></div>
-                <p className="note" style={{ marginTop: 6 }}>
+                <p className="text-[11.5px] text-muted leading-[1.5] mt-1.5">
                   One spot per surface, each at the middle of its own
                   secondary-grid segment. Surfaces of the same kind sitting side
                   by side are lit as a <b>run</b> instead — one ceiling line for

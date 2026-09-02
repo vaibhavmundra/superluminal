@@ -1,8 +1,9 @@
 import React, { forwardRef, useState } from 'react';
 import { guideLine } from '../lib/snapGuides.js';
 import { CEILING_BY_ID, isRect } from '../lib/ceilingObjects.js';
-import { specsFor, runMetres } from '../lib/boq.js';
-import { STRIP_STYLE } from '../lib/settings.js';
+import { specsFor, runMetres, FIXTURE_BY_ID } from '../lib/boq.js';
+import { STRIP_STYLE, THROW_STYLE, GLINT_STYLE, PILL_STYLE,
+         COVE_BAND_STYLE } from '../lib/settings.js';
 import { TRACK_DIMS_IN } from '../lib/track.js';
 
 // ---------------------------------------------------------------------------
@@ -48,15 +49,19 @@ const C = {
   // furniture. Blue on this canvas now means "this is ours and it emits light";
   // selection and guides are still blue too, and they are told apart by
   // behaviour — a grip is a handle you can grab, a fitting is a symbol.
-  lit: '#0070F3',
+  lit: '#ffb900',
   // The travelling pulse. LIGHTER, not brighter: the band sits under the dots,
   // so it has to read as the tape glowing rather than as a second line crossing
   // the first.
   pulse: '#7FB9FF',
-  large: '#0070F3',
-  small: '#0070F3',
+  large: '#ffb900',
+  small: '#ffb900',
   grid: '#C8C8C8',        // the grid is scaffolding, not drawing
   cell: '#D8D8D8',
+  /* THE TWO ROUND CEILING OBJECTS. White, because it is the one thing the
+     accent ramp is not — see the long note by `col` in the fansPx block for why
+     they stopped being drawn in the accent at all. */
+  object: '#FFFFFF',
   fan: '#404040',         // an obstacle is somebody else's object
   zone: '#737373',        // ...and so is a no-light zone
   measure: '#000000',
@@ -70,8 +75,45 @@ const C = {
   sel: '#0070F3',
 };
 
+/**
+ * HOW WIDE A POOL THIS CATALOGUE LINE THROWS, IN FEET — or null for none.
+ *
+ * Asked of the fitting's STATED WATTAGE and not of its id, which is the whole
+ * point: `small` and `track-ambient` are two products bought from two pages, and
+ * they are the same 7 W lamp throwing the same pool. Likewise `spot`,
+ * `small-narrow` and `track-spot` are one 5 W lamp in three mountings. See
+ * THROW_STYLE, which is also where the trigonometry behind the three diameters
+ * is written down.
+ *
+ * A fitting the catalogue does not carry, or one whose wattage is deliberately
+ * left null — a sconce, a strip, the track profile — answers null, because
+ * neither `undefined` nor `null` is a key in the table. That is the honest
+ * answer rather than an accident: a mark claiming a coverage the schedule
+ * refuses to state a wattage for is a mark nobody can check.
+ */
+const poolFtFor = (fx) =>
+  THROW_STYLE.diameterFtByWatt[FIXTURE_BY_ID[fx]?.watts] ?? null;
+
+/**
+ * THE ACCENT RAMP'S RIM TONE — its last stop, read out rather than re-typed.
+ *
+ * A gradient is the right paint for a FILL and useless on the line work around
+ * it: the ring on a spot and its arrow are a couple of line-weights thick, and a
+ * ramp across two pixels resolves to one colour whichever end you look at. The
+ * arrow is worse than that — it is a LINE, so it has the degenerate bounding box
+ * that already forced the strips into user space, and there is nothing to ramp
+ * across in the first place.
+ *
+ * So a mark too thin to hold a gradient takes the ramp's OUTERMOST colour, which
+ * is the tone the filled body has already settled to by the time it reaches its
+ * own edge. The ring continues the body's rim outwards and the arrow continues
+ * the ring; the symbol reads as one object cut from one ramp, which is the point.
+ * Derived from `coreStops` so there is still exactly one place the accent lives.
+ */
+const CORE_RIM = THROW_STYLE.coreStops[THROW_STYLE.coreStops.length - 1].color;
+
 const PlanCanvas = forwardRef(function PlanCanvas(
-  { src, vector = null, wallLayers = null,
+  { src, srcAsScanned = null, vector = null, wallLayers = null,
     width, height, plans = [], focusId = null, selectedId = null,
     fansPx = [], pxPerFt, layers, zoom, measure, onCanvasClick, toPx,
     zones = [], draftZone = null, zoneMode = false, onZoneDown, onZoneMove, onZoneUp,
@@ -89,7 +131,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     // THE AUDIT LAYER — off for everybody except an owner of this app. See the
     // block near the bottom of this file for what it draws and why the marks it
     // restores were removed from the drawing proper.
-    audit = false, auditZones = [],
+    audit = false,
     onFixture = null, draftRun = null,
     // WHICH PIECE OF CEILING IS BEING DECIDED, and the two things that can be
     // done about it. `optionPick` is { roomId, key }; `plans[i].design` carries
@@ -287,6 +329,95 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           <stop offset="45%" stopColor={C.lit} stopOpacity="0.20" />
           <stop offset="100%" stopColor={C.lit} stopOpacity="0" />
         </radialGradient>
+
+        {/* THE FLOOR POOL'S FILL — RADIAL, FROM THE LAMP OUTWARDS.
+            A light does not fall across the floor left to right; it falls from
+            the fitting outwards, so the ramp runs from the centre out. `offset`
+            is therefore a RADIUS and not a distance across the sheet: 0% is
+            directly under the lamp and 100% is the rim of the six-foot circle.
+            CENTRED ON THE FITTING FOR FREE, and that is worth stating because it
+            is the one thing this could get wrong. There is no `gradientUnits`
+            here, so it defaults to objectBoundingBox — the box of the circle
+            being filled — and cx/cy of 50% is that box's middle, which is the
+            light's own position. Nothing has to be recomputed per fitting, and
+            the pool cannot drift off its lamp when the plan is panned or the
+            fitting is nudged. `userSpaceOnUse` would have needed cx/cy in plan
+            pixels, i.e. a gradient per light, which is forty gradients in the
+            defs and forty chances to be out of step with the mark they fill.
+            THE STOPS ARE THE BRAND ACCENT, UNCHANGED — see THROW_STYLE. That
+            list mirrors about its middle (dark, light, dark), which sweeping
+            across a shape reads as a sheen and reading outwards from a centre
+            reads as a soft ring. Reverse the list in settings.js for a
+            centre-bright pool instead; it is one edit in one place. */}
+        <radialGradient id="lp-throw" cx="50%" cy="50%" r="50%">
+          {THROW_STYLE.stops.map((st) => (
+            <stop key={st.at} offset={st.at} stopColor={st.color} />
+          ))}
+        </radialGradient>
+
+        {/* THE SAME STOPS, LAID FLAT — for filling an AREA rather than a pool.
+            `lp-throw` above is the right shape for a circle under a lamp and the
+            WRONG one for a rectangle, which is a mistake worth recording because
+            it looked correct in the markup and only failed on screen. Read
+            outwards from a centre, the accent ramp is dark-light-dark, and
+            objectBoundingBox stretches that mirror into an ellipse fitted to the
+            rect's aspect — so a lit dining table came out with a visible dark
+            DONUT floating in it. It read as a stain on the drawing, not as a
+            surface with light on it.
+            Laid across instead, the same mirror reads as an even sheen: bright
+            through the middle, settling to the accent's deeper tone at both
+            edges. Which is also what a wash off a ceiling spot actually looks
+            like on a worktop.
+            objectBoundingBox IS SAFE HERE, unlike on the strips. The degenerate
+            -bbox trap that forces those into user space needs a shape with zero
+            width or zero height, and a task surface is a rectangle with real
+            extent in both axes — the detector cannot mark a table with no
+            depth. So one gradient serves every surface on the sheet. */}
+        <linearGradient id="lp-lit" x1="0" y1="0" x2="1" y2="0">
+          {THROW_STYLE.stops.map((st) => (
+            <stop key={st.at} offset={st.at} stopColor={st.color} />
+          ))}
+        </linearGradient>
+
+        {/* A FITTING'S OWN BODY. Every symbol on this sheet that stands for
+            something with a lamp in it used to be filled FLAT WHITE, and the
+            white was doing a real job: it is an opaque ground, so the symbol
+            stays legible sitting on top of somebody else's line work instead of
+            having a wall or a door jamb showing through the middle of it.
+            This keeps that job and stops being white. The ramp is opaque at
+            every stop — see `coreStops` in settings.js — so the ground is as
+            solid as it ever was, and it now says the one thing a white disc
+            could not: that the thing you are looking at is emitting. Brightest
+            at the centre, falling to the accent's deepest tone at the rim, which
+            is what a lit aperture looks like from below.
+            objectBoundingBox again, and safe for the same reason `lp-lit` is:
+            every shape this fills — a circle, a track head's rect, a spot's
+            ellipse — has real extent in both axes. The one thing to know is that
+            a NON-SQUARE bbox stretches the ramp into an ellipse fitted to the
+            shape, which is why the track head reads as a lamp lying along its
+            profile rather than as a disc floating in a rectangle. That is the
+            right answer here; it was the wrong one on a task surface. */}
+        <radialGradient id="lp-core" cx="50%" cy="50%" r="50%">
+          {THROW_STYLE.coreStops.map((st) => (
+            <stop key={st.at} offset={st.at} stopColor={st.color} />
+          ))}
+        </radialGradient>
+
+        {/* THE SELECTION OUTLINE'S RAMP. `lp-lit` was the obvious thing to
+            stroke it with and it was WRONG on the sheet: that ramp's middle stop
+            is #fef1dd, so the outline faded out along the middle of the top and
+            bottom edges and the selected room stopped being marked at all over
+            half its perimeter. Caught by cropping the render onto the palest
+            part of the edge, which is worth doing to anything stroked with a
+            gradient — a fill hides this and a line cannot.
+            `inkStops` is the same mirror between the ramp's two deeper tones:
+            still a gradient, still seamless where a closed outline joins itself,
+            and never lighter than #efd5b2. See settings.js. */}
+        <linearGradient id="lp-sel-ramp" x1="0" y1="0" x2="1" y2="0">
+          {THROW_STYLE.inkStops.map((st) => (
+            <stop key={st.at} offset={st.at} stopColor={st.color} />
+          ))}
+        </linearGradient>
       </defs>
 
       {/* The plan underneath. A raster plan is an image; a DXF is its own line
@@ -308,7 +439,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 fill="none" stroke="#9E9E9E" strokeWidth={lw} opacity="0.5" />
             )))}
           </g>
-        : <image href={src} x="0" y="0" width={width} height={height} opacity={layers.dim ? 0.42 : 1} />
+        /* NO FILTER ON THIS ELEMENT. The bitmap handed down as `src` is
+           ALREADY inverted when dark mode is on — App.jsx subtracts every
+           channel from 255 once, because a CSS filter only reaches whichever
+           element happens to be painting the plan and this app paints it two
+           ways. A filter here as well would invert it straight back.
+           `data-src-as-scanned` CARRIES THE ORIGINAL so the exports do not go
+           out as negatives: `svgString` puts it back on the way out (see
+           exporters.js). The fade is handled upstream too — an inverted plan is
+           passed `dim: false`. */
+        : <image href={src} x="0" y="0" width={width} height={height}
+            data-src-as-scanned={srcAsScanned || undefined}
+            opacity={layers.dim ? 0.42 : 1} />
       )}
 
       {/* Cells, grid and outline, room by room. All three under the lights, so
@@ -341,22 +483,162 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               with no way at all to say which space the panel was describing.
               `strokeSelected` and not a fill: a wash over the space would sit
               between the plan and the fittings and dull both. */}
-          {r.id === selectedId && (
-            <polygon points={points(r.plan.polygonPx)}
-              className="lp-sel" fill="none" stroke={C.lit}
-              strokeWidth={lw * 1.6} strokeLinejoin="round" pointerEvents="none" />
-          )}
+          {r.id === selectedId && (() => {
+            // THE PERIMETER, IN THE DRAWING'S OWN PIXELS. The glint below is a
+            // dash travelling once round the outline, and both the length of the
+            // dash and the distance it has to cover are measured off the polygon
+            // rather than guessed — an outline is L-shaped as often as not, and
+            // a bounding box would send the glint round a rectangle the room
+            // does not have.
+            const poly = r.plan.polygonPx;
+            let per = 0;
+            for (let k = 0; k < poly.length; k++) {
+              const a = poly[k], b = poly[(k + 1) % poly.length];
+              per += Math.hypot(b.x - a.x, b.y - a.y);
+            }
+            const pts = points(poly);
+            return (
+              <g pointerEvents="none">
+                {/* THE SELECTED SPACE, ON THE ACCENT RAMP.
+                    A room outline is a big shape, so unlike the fittings' line
+                    work it CAN hold a gradient: opposite sides of the room sample
+                    opposite ends of the ramp and the outline grades round itself.
+                    That is why this one takes a ramp at all where a two-pixel
+                    fitting ring takes the single CORE_RIM tone — and why the ramp
+                    is `lp-sel-ramp` rather than `lp-lit`, which went invisible
+                    here. See the note in the defs. */}
+                <polygon points={pts} className="lp-sel" fill="none"
+                  stroke="url(#lp-sel-ramp)" strokeWidth={lw * 1.6}
+                  strokeLinejoin="round" />
+                {/* --- THE GLINT ---------------------------------------------
+                    A short bright arc that runs once round the outline in a
+                    second and goes, the way a highlight travels across
+                    something as it catches the light.
+
+                    IT IS A TRAVELLING DASH, NOT A MOVING GRADIENT, and that is
+                    a real constraint rather than a shortcut. SVG gradient
+                    geometry — `x1`, `gradientTransform` — is not animatable
+                    from CSS, so a ramp cannot be swept round a shape that way;
+                    the portable trick is a dasharray of one short dash and a
+                    gap the length of everything else, with `stroke-dashoffset`
+                    animated through a full perimeter. What travels is the dash,
+                    and it is painted in the ramp's brightest stop, so what you
+                    see is the highlight moving over an outline that is already
+                    the gradient.
+
+                    KEYED ON THE ROOM, WHICH IS WHAT MAKES IT FIRE ON SELECT. A
+                    CSS animation runs when its element MOUNTS, and this element
+                    exists only while this room is the selected one — so picking
+                    a room mounts it and it glints once. Picking a different room
+                    unmounts this and mounts that one, which glints in turn. No
+                    state, no timer, no effect: the thing the animation is about
+                    is the thing that creates it. The key makes that explicit and
+                    survives React reusing the node between two selected rooms.
+
+                    The two lengths go in as custom properties for the same
+                    reason the strips' widths do — they are measured in the
+                    drawing's units, which a stylesheet cannot know. */}
+                <polygon key={`glint-${r.id}`} points={pts} className="lp-glint"
+                  fill="none" stroke={GLINT_STYLE.color}
+                  strokeWidth={lw * GLINT_STYLE.weight}
+                  strokeLinejoin="round" strokeLinecap="round"
+                  /* THE TIMING IS HANDED TO CSS, NOT DUPLICATED IN IT. Same
+                     idiom as the strips' breath a few hundred lines up: the
+                     stylesheet owns the keyframes because that is the only place
+                     that can own them, and every NUMBER comes from GLINT_STYLE
+                     so there is one file to tune this from. The two lengths are
+                     custom properties because they are measured in the drawing's
+                     units, which a stylesheet cannot know. */
+                  style={{
+                    '--lp-per': `${per}px`,
+                    '--lp-arc': `${per * GLINT_STYLE.arc}px`,
+                    animationDuration: `${GLINT_STYLE.ms}ms`,
+                    animationTimingFunction: GLINT_STYLE.ease,
+                    animationIterationCount: GLINT_STYLE.laps,
+                  }} />
+              </g>
+            );
+          })()}
+
+          {/* --- A CEILING THE COVE CARRIES ON ITS OWN --------------------
+              WHY THIS MARK HAS TO EXIST. Every other lit ceiling on this sheet
+              says so with throw pools — a circle of accent under each fitting.
+              A chunk on rung 1 of the cove ladder has NO fittings: the strip in
+              the pocket meets the brief by itself (see the ladder in cove.js),
+              so the piece of ceiling that is most completely solved was the one
+              piece drawn as though nothing had been decided about it. This fills
+              that silence.
+
+              THE SAME PAINT AND THE SAME OPACITY AS A THROW POOL, deliberately,
+              because it is the same claim: this floor is lit. `THROW_STYLE`
+              owns the number so the two cannot drift — change the pools' opacity
+              and this follows.
+
+              `lp-lit` AND NOT `lp-throw`. The pools are radial because a pool
+              radiates from a lamp; this is a rectangle, and the radial ramp
+              stretched into a rectangle puts a visible dark donut in the middle
+              of it. That is recorded in the defs and it is the same reason the
+              task surfaces use the flat ramp.
+
+              THE WHOLE HOST CHUNK, NOT THE INNER RECTANGLE. The cove is what
+              lights this piece of ceiling — all of it, the dropped band
+              included — so the wash covers the piece, the way a room lit by a
+              grid is covered by its pools. Filling only inside the cove line
+              would draw a hole round the edge of a ceiling that has no hole in
+              it.
+
+              WHICH CHUNKS, AND IT IS NOT A `dark` FILTER. `dark` is stamped per
+              PIECE (see ceilingDesign.js), and the ladder's middle rung sets it
+              true on the band while the inner grid is lit — so filtering on
+              `cove && dark` would wash the band of a half-lit cove and say
+              something false. The question is about the RUNG, and the honest
+              reading of it is: is the INNER piece dark? That is `stage ===
+              'cove'`, which is rung 1, which is "the strip did it alone". Having
+              found those design keys, every piece carrying one gets included.
+
+              ONE RECT PER CHUNK, FROM THE UNION OF ITS PIECES — and that is the
+              whole reason this is not a two-line filter. A cove chunk reaches
+              here as five rectangles: the inner one and up to four band pieces
+              that tile the ring round it. Filling them individually looks
+              correct and is not: `lp-lit` is an objectBoundingBox ramp, so each
+              piece would restart the gradient across its own width and the
+              chunk would come out with four visible seams in it. One rect over
+              the union carries one ramp. The pieces tile the host exactly, so
+              the union of their bounds IS the host. */}
+          {(() => {
+            const chunks = r.plan.chunksPx ?? [];
+            const lit = new Set(chunks
+              .filter((ch) => ch.cove === 'inner' && ch.dark)
+              .map((ch) => ch.design));
+            if (!lit.size) return null;
+            return [...lit].map((key) => {
+              const parts = chunks.filter((ch) => ch.design === key);
+              if (!parts.length) return null;
+              const x0 = Math.min(...parts.map((c) => c.x0));
+              const y0 = Math.min(...parts.map((c) => c.y0));
+              const x1 = Math.max(...parts.map((c) => c.x1));
+              const y1 = Math.max(...parts.map((c) => c.y1));
+              return (
+                <rect key={'cvfill' + key} x={x0} y={y0}
+                  width={x1 - x0} height={y1 - y0}
+                  fill="url(#lp-lit)" fillOpacity={THROW_STYLE.opacity}
+                  pointerEvents="none" />
+              );
+            });
+          })()}
 
           {/* THE COVE'S SETTING-OUT LINE.
               The visible edge of the dropped band: where the plaster stops and
               the higher ceiling begins. It is not the tape — that runs three
               inches behind it, in the pocket, and is drawn with the strip
               fittings further down — so it is drawn as what it is, a line
-              somebody sets out to. Dotted, thin, and in the fittings' blue
-              rather than in the grid's grey, because a cove IS the lighting
-              design for the space it is in: on a room where the cove carries
-              the whole ambient load this rectangle is the only mark on the
-              drawing, and drawing it as scaffolding would say the opposite.
+              somebody sets out to: the finest dotted line on the sheet, and
+              NOT in the grid's grey, because a cove IS the lighting design for
+              the space it is in — on a room where the cove carries the whole
+              ambient load this rectangle and the wash inside it are the only
+              marks the design left, and drawing either as scaffolding would say
+              the opposite. What it is not any more is the fittings' own accent;
+              see the note on the stroke below.
               Under the lights and over the grid, like every other room layer,
               and pointer-transparent because there is nothing here to grab —
               the cove follows the ceiling, and the ceiling is set in the panel. */}
@@ -384,8 +666,32 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               onClick={pickable
                 ? (e) => { e.stopPropagation(); onPickChunk(r.id, cv.key); }
                 : undefined}
-              fill="none" stroke={C.lit} strokeWidth={lw * 1.6}
-              strokeDasharray={`${lw * 5} ${lw * 4}`}
+              /* DOTTED, WHITE AND FINER — a setting-out line, drawn like one.
+                 It was a 1.6-weight DASHED line in the fittings' accent, which
+                 said the wrong thing twice over. A dash at that weight reads as
+                 drawing; this is a mark somebody measures to, and the convention
+                 for that everywhere is the finest dotted line on the sheet.
+                 In the accent it also competed with the wash now filling the
+                 ceiling it encloses — two warm marks, one inside the other,
+                 neither winning.
+                 DOTS AND NOT DASHES: `1 3` at round caps gives round dots with
+                 air between them, where `5 4` gives ticks. `lw * 1` is the
+                 sheet's own line weight, the thinnest thing drawn on it.
+                 WHITE ONLY WHERE WHITE READS, and this follows the ceiling
+                 objects rather than inventing a second answer — see the note by
+                 `col` in the fansPx block. On the inverted plan the ground is
+                 black and white is the mark that carries; on the plan as
+                 scanned, white on white paper is nothing at all, so it takes the
+                 ramp's rim tone instead. Ask for white in both and it disappears
+                 in day mode.
+                 THE HIT AREA IS UNAFFECTED. `.hit` is `pointer-events: all`,
+                 which on a `fill="none"` closed path means its whole INTERIOR —
+                 not its stroke — so thinning the line to dots does not shrink
+                 the target. (`pointer-events: stroke` would have: it follows the
+                 dashes, and on a dotted line that leaves you clicking dots.) */
+              fill="none" stroke={layers.invert ? C.object : CORE_RIM}
+              strokeWidth={lw}
+              strokeDasharray={`${lw} ${lw * 3}`} strokeLinecap="round"
               strokeLinejoin="round" opacity="0.85" />
           ))}
 
@@ -413,10 +719,46 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               that chunk's options open. Its own fittings are clickable too, but
               they sit ON it, so the profile is the larger and more obvious
               target for "what else could this ceiling be". */}
-          {(r.plan.tracksPx ?? []).map((t) => {
+          {(r.plan.tracksPx ?? []).map((t, ti) => {
             const click = pickable && onPickChunk
               ? (e) => { e.stopPropagation(); onPickChunk(r.id, t.key); }
               : undefined;
+            // --- THE RAIL IS OUTLINED NOW, NOT FILLED ------------------------
+            //
+            // It was a solid one-inch band of accent, which read as a filled
+            // bar. A magnetic track is a black extrusion with a lit slot in it,
+            // so it is drawn the way it looks: BLACK THROUGH THE MIDDLE, with
+            // the accent as an edge round it.
+            //
+            // TWO STROKES ON THE SAME PATH, NOT A FILLED OUTLINE. The profile is
+            // a centreline plus a width — there is no closed shape here to give
+            // a fill and a stroke to, and offsetting a mitred polyline by half
+            // an inch to build one is a geometry problem nobody needs to solve
+            // on every render. A wide stroke with a narrower stroke painted on
+            // top of it produces exactly the same picture: the wide one survives
+            // only as a rim, which IS the outline.
+            //
+            // The core is `w - trackEdge * 2` so the rim is `trackEdge` on each
+            // side and the OUTSIDE dimension stays a true inch — the drawing can
+            // still be scaled off it, which was the whole reason this one element
+            // is drawn to size (see `inch`).
+            //
+            // THE EDGE IS A GRADIENT ALONG THE RUN, like the strips, because a
+            // rail is the same kind of object: a length of product with the
+            // light graduating down it. Same userSpaceOnUse reasoning as the
+            // strips too — see the note by `gline` — and here the endpoints come
+            // from the extent of every run in the arrangement, so a closed track
+            // grades across its whole rectangle instead of each side restarting.
+            const railPts = t.closed
+              ? t.runs.map((rn) => rn.a)
+              : t.runs.flatMap((rn) => [rn.a, rn.b]);
+            const rgid = `lp-rail-${i}-${ti}`;
+            const rgrad = {
+              x1: Math.min(...railPts.map((q) => q.x)),
+              y1: Math.min(...railPts.map((q) => q.y)),
+              x2: Math.max(...railPts.map((q) => q.x)),
+              y2: Math.max(...railPts.map((q) => q.y)),
+            };
             // ONE INCH, WHICH IS THE PROFILE ITSELF AND NOT A LINE STANDING FOR
             // IT. See `inch` at the top of this file for why this one element is
             // drawn to size. What it buys is the whole drawing: the heads are an
@@ -424,6 +766,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             // dark carrier — which is what a track looks like on a ceiling, and
             // what no pair of hairlines could say.
             const w = inch(TRACK_DIMS_IN.profile);
+            // The black core, inset by one edge weight on each side. Clamped so
+            // a very small plan cannot invert it into a negative stroke width —
+            // at which point the rail would vanish and take the drawing's only
+            // mark for that chunk with it.
+            const core = Math.max(w - lw * 1.5 * 2, w * 0.25);
             // A CLICK TARGET WIDER THAN THE THING. An inch is an inch, and on a
             // large plan that is a few pixels of pointer — too fine to hit,
             // where the pill it opens is the main way anybody changes a ceiling.
@@ -443,7 +790,16 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               const d = `M${t.runs.map((rn) => `${rn.a.x},${rn.a.y}`).join(' L')} Z`;
               return (
                 <g key={'trk' + t.key}>
-                  <path d={d} fill="none" stroke={C.lit} strokeWidth={w}
+                  <defs>
+                    <linearGradient id={rgid} gradientUnits="userSpaceOnUse" {...rgrad}>
+                      {THROW_STYLE.stops.map((st) => (
+                        <stop key={st.at} offset={st.at} stopColor={st.color} />
+                      ))}
+                    </linearGradient>
+                  </defs>
+                  <path d={d} fill="none" stroke={`url(#${rgid})`} strokeWidth={w}
+                    strokeLinejoin="miter" pointerEvents="none" />
+                  <path d={d} fill="none" stroke={C.ink} strokeWidth={core}
                     strokeLinejoin="miter" pointerEvents="none" />
                   <path className={hit} style={cur} onClick={click} d={d}
                     fill="none" stroke="transparent" strokeWidth={grab} />
@@ -452,6 +808,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             }
             return (
               <g key={'trk' + t.key}>
+                <defs>
+                  <linearGradient id={rgid} gradientUnits="userSpaceOnUse" {...rgrad}>
+                    {THROW_STYLE.stops.map((st) => (
+                      <stop key={st.at} offset={st.at} stopColor={st.color} />
+                    ))}
+                  </linearGradient>
+                </defs>
                 {t.runs.map((rn, k) => (
                   <g key={k}>
                     {/* BUTT ENDS, AND NO END-CAP TICK. A hairline needed a tick
@@ -460,7 +823,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                         its own, and a tick on top of it would be drawing an end
                         cap that is not a separate item. */}
                     <line x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
-                      stroke={C.lit} strokeWidth={w} strokeLinecap="butt"
+                      stroke={`url(#${rgid})`} strokeWidth={w} strokeLinecap="butt"
+                      pointerEvents="none" />
+                    <line x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
+                      stroke={C.ink} strokeWidth={core} strokeLinecap="butt"
                       pointerEvents="none" />
                     <line className={hit} style={cur} onClick={click}
                       x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
@@ -569,7 +935,57 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // group's own opacity does it rather than a lighter colour, because a
         // washed-out blue on a white plan and a washed-out blue over the fan's
         // dashed clearance circle are two different colours if you fake it.
-        const col = C.lit;
+        // WHITE FOR A FAN AND A CHANDELIER, AND WHY THEY WERE INVISIBLE.
+        //
+        // Everything above chose the accent, on the reasoning quoted in the note
+        // over this line: a fan and a cassette are objects on the ceiling plane
+        // like the fittings, so they took the fittings' hue and were then pulled
+        // back with opacity so a downlight still read as the brighter mark.
+        //
+        // THAT ARGUMENT DIED WHEN THE FITTINGS MOVED ONTO THE ACCENT RAMP. The
+        // sheet is now covered in warm cream — six-foot throw pools at a tenth
+        // opacity, lit fitting bodies, graded strips — and an amber fan at 55%
+        // over a cream pool is not a quiet mark, it is a missing one. The
+        // multiplication is the other half: unselected and in object mode it was
+        // 0.75 x 0.55 = 0.41.
+        //
+        // So the two ROUND objects go white, which is the one thing the ramp
+        // never is, and they read against the pools and against the plan's own
+        // grey line work at the same time. The rectangles keep the accent: a
+        // cassette and a hatch are drawn as filled shapes with hatching inside
+        // them, and white-on-white would erase the marks that tell those two
+        // apart.
+        //
+        // WHITE ASSUMES A DARK GROUND, WHICH IS ONLY HALF THE TIME — so the ink
+        // follows the ground rather than being fixed. That is not a preference;
+        // white on the as-scanned plan is a white mark on white paper, which is
+        // the same bug as the amber one it replaced, pointing the other way.
+        //
+        //   night mode (`layers.invert`)  the scan is a negative, so the ground
+        //                                 is black and WHITE is the mark that
+        //                                 carries furthest from the accent ramp
+        //   day mode                      the ground is the paper, so the object
+        //                                 takes the accent, which is what it
+        //                                 always was and what reads on white
+        //
+        // A vector plan has no bitmap to invert and draws on the page's own
+        // black, so it is a dark ground whatever this flag says — see the
+        // `vector` branch. It reports `invert: false`, which means an object on
+        // a DXF takes the accent rather than white. That is the one case this
+        // gets slightly wrong, and it is the safe direction to be wrong in: the
+        // accent is visible on both grounds, white is visible on one.
+        //
+        // THE RECTANGLES KEEP THE ACCENT IN BOTH MODES. A cassette and a hatch
+        // are filled shapes with hatching inside them, and white-on-white would
+        // erase the marks that tell those two apart.
+        const round = f.kind === 'fan' || f.kind === 'chandelier';
+        const col = round && layers.invert ? C.object : C.lit;
+        // THE CHANDELIER'S SIX LAMPS SIT ON ITS RING, so they have to be the
+        // opposite of it or they stop being lamps and become part of the
+        // rosette. White on the accent ring in day mode — which is what they
+        // always were and why they worked — and the ramp's rim tone on the white
+        // ring at night, since white on white is nothing at all.
+        const lamp = layers.invert ? CORE_RIM : '#fff';
         const R = f.r || 0;
         // The BODY's radius, which is NOT the clearance radius: on a rectangle
         // the clearance circle is circumscribed and larger. The selection frame
@@ -581,7 +997,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const R0 = rect ? 0 : R;
         return (
           <g key={f.id ?? 'fan' + i}
-            opacity={(objMode && !sel && f.source === 'placed' ? 0.75 : 1) * (sel ? 1 : 0.55)}>
+            /* 0.82 RESTING, NOT 0.55. The old figure was set when these were
+               the only warm marks on a white sheet and it made them polite;
+               against the accent pools it made them vanish. They are still
+               pulled back — a placed object is somebody else's item and should
+               not out-shout a fitting — just not to the point of disappearing.
+               The objMode factor stays: while you are dragging one, the ones you
+               are NOT dragging step back, which is what makes the gesture
+               readable. */
+            opacity={(objMode && !sel && f.source === 'placed' ? 0.8 : 1) * (sel ? 1 : 0.82)}>
             {/* WHAT IS ACTUALLY RESERVED, and it is not always a circle.
                 Clearance is measured to the object's own FACE, so the set of
                 points exactly `fanClearance` away from a rectangle is that
@@ -602,14 +1026,23 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             )}
 
             {f.kind === 'chandelier' ? (
+              /* THE LAMPS TAKE `lamp`, NOT THE GROUP'S STROKE. They were
+                 `fill="#fff"` with the group's own stroke round them, which read
+                 as six lamps while that stroke was amber and became six
+                 invisible dots the moment the ring could be white too. See
+                 `lamp` above: it is whichever of the two contrasts with the ring
+                 this mode is drawing. The stroke is set explicitly for the same
+                 reason — inheriting `col` would put a white rim on a white dot
+                 in day mode's inverse case. */
               <g stroke={col} strokeWidth={lw * 1.8} fill="none">
                 <circle cx={f.x} cy={f.y} r={R0 * 0.68} fill={col} fillOpacity="0.1" />
                 {[0, 1, 2, 3, 4, 5].map((k) => {
                   const a = (k * Math.PI) / 3;
                   return <circle key={k} cx={f.x + Math.cos(a) * R0 * 0.68}
-                    cy={f.y + Math.sin(a) * R0 * 0.68} r={lw * 2.4} fill="#fff" />;
+                    cy={f.y + Math.sin(a) * R0 * 0.68} r={lw * 2.4}
+                    fill={lamp} stroke={lamp} />;
                 })}
-                <circle cx={f.x} cy={f.y} r={lw * 2.2} fill={col} stroke="none" />
+                <circle cx={f.x} cy={f.y} r={lw * 2.2} fill={lamp} stroke="none" />
               </g>
             ) : (f.kind === 'ac' || f.kind === 'trapdoor') ? (
               <g transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}>
@@ -669,8 +1102,37 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               const stem = -hh - HS * 3.2;
               return (
                 <g transform={`rotate(${deg} ${f.x} ${f.y})`}>
+                  {/* THE FRAME IS THE ACCENT RAMP, AND THE GRIPS ARE NOT.
+                      The border that appears on select now grades like
+                      everything else this app owns — `lp-sel-ramp`, the same
+                      paint the selected room's outline takes, and for the same
+                      reason it is that ramp rather than `lp-lit`: a frame is a
+                      LINE, and the fill ramp's near-white middle would drop out
+                      of the middle of each side. See the note in the defs.
+                      objectBoundingBox is safe on a frame — it is a rectangle
+                      with real extent both ways.
+
+                      THE FOUR CORNER GRIPS AND THE ROTATE STEM STAY BLUE, which
+                      is a deliberate split and the one thing to look at on
+                      screen. #0070F3 means "you can grab this" everywhere on
+                      this canvas, and a resize handle is the most literal case
+                      of it there is. The frame says WHICH object is selected;
+                      the squares say what you can do to it. If the mix reads as
+                      a mistake rather than as two statements, the grips are one
+                      edit away.
+
+                      AND IT IS AS SLIM AS THIS SHEET DRAWS. `FW` is the
+                      drawing's own line weight divided by the zoom, so it is one
+                      pixel on screen at every magnification — there is nothing
+                      thinner here to make it. Where it READS thick is on a
+                      rectangular object, because the frame sits exactly on the
+                      body's edge (`hw = f.w / 2`) and the body carries its own
+                      `lw * 2` outline underneath: two strokes on one line. That
+                      coincidence is on purpose — the frame has to show what a
+                      resize will change — so the fix, if it wants one, is to
+                      thin the BODY rather than the frame. */}
                   <rect x={f.x - hw} y={f.y - hh} width={hw * 2} height={hh * 2}
-                    fill="none" stroke={C.grip} strokeWidth={FW} />
+                    fill="none" stroke="url(#lp-sel-ramp)" strokeWidth={FW} />
 
                   {/* Rotate: a stem above the frame. Figma's invisible
                       just-outside-the-corner region is undiscoverable without a
@@ -720,6 +1182,101 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         );
       })}
 
+      {/* --- WHAT EACH FITTING COVERS ---------------------------------------
+          A circle of accent at a tenth opacity under every lamp the catalogue
+          gives a wattage this app has a pool for: 5 ft at 5 W, 6 ft at 7 W,
+          10 ft at 12 W. See THROW_STYLE in settings.js for those diameters, the
+          beam-angle trigonometry they come from and the 9 ft ceiling they
+          assume; `poolFtFor` at the head of this file for how a fitting is
+          matched to one, and why it is matched on WATTAGE rather than on a list
+          of ids.
+
+          THE THREE SIZES ARE NOT DECORATION. A 12 W 60-degree downlight covers
+          nearly three times the floor of a 7 W 36-degree one, and drawing them
+          the same size was the layer saying every lamp does the same work. The
+          reason to have this on the sheet at all is to see where the coverage
+          doubles up and where it runs out, and it could not say either while
+          one circle stood for every fitting.
+
+          A SEPARATE PASS, AHEAD OF THE FITTINGS, and not a shape inside each
+          fitting's own group. Two reasons, and they are the same reason twice:
+            - EVERY POOL IS UNDER EVERY SYMBOL. Drawn inside the loop, light
+              L7's pool would be painted over L6's mark, because SVG has no
+              z-index and paints in document order. Forty fittings would each
+              have their neighbour's wash sitting on top of them.
+            - ONE CLIP FOR THE WHOLE ROOM. The clip belongs to the room, so it
+              is set once on one group here rather than restated on forty
+              circles.
+
+          THE WALLS CUT IT — `roomclip-<i>` is this room's traced outline, the
+          same path the cells and the grid are clipped to, and it is the walls.
+          A pool spilling through a partition into the next room is not a
+          drawing error to be tidied later, it is a false statement: it says a
+          lamp lights floor it cannot reach. Every one of these diameters is
+          wider than the setback of a fitting near a wall — a 12 W pool is ten
+          feet across — so this happens on most plans rather than rarely. `laid` is indexed here because the clip ids are — see the note
+          at the top of this file about what a reused clip id does.
+
+          INERT. `pointerEvents="none"` on the group, for the same reason the
+          glow inside each fitting carries it: six feet of live surface would
+          have one downlight swallowing every click meant for its neighbours,
+          and this mark is not something you can grab. */}
+      {(layers.lights || layers.spots) && laid.map((r, ri) => {
+        const pools = [];
+        // THE GRID AND THE TRACK HEADS — 7 W ambient, 12 W over a pair of
+        // cells, 5 W narrow in a wet room. A ceiling light points straight
+        // down, so its pool is centred on the fitting.
+        if (layers.lights) {
+          for (const l of r.plan.lightsPx) {
+            const ft = poolFtFor(l.fixture || l.kind);
+            if (ft) pools.push({ k: l.id, x: l.x, y: l.y, ft });
+          }
+        }
+        // THE AIMED SPOTS, AND THEIR POOL IS NOT UNDER THE FITTING.
+        //
+        // This is the one place the two kinds of light genuinely differ and it
+        // would have been easy to get wrong. A downlight lights the floor
+        // beneath it; a directional spot stands off and lights something ELSE —
+        // that is the whole reason it has an arrow. Drawing its pool under its
+        // own body would put the light two or three feet from where the arrow
+        // says it lands, and would contradict the only annotation the fitting
+        // has. So the pool goes on `target`, which is the aim point the placer
+        // already worked out and the same point the arrow is drawn towards.
+        //
+        // `sp.x == null` GUARDS A REAL SHAPE, not a hypothetical: a surface the
+        // placer refused still produces an entry — carrying `rejected` or
+        // `skipped` and no geometry at all — so that the panel can say why.
+        // Those have no position to draw a pool at.
+        //
+        // BEHIND `layers.spots`, not `layers.lights`, because the fitting it
+        // belongs to is. A pool with no fitting over it is a stain.
+        if (layers.spots) {
+          for (const sp of taskSpots) {
+            if (sp.rejected || sp.roomId !== r.id || sp.x == null) continue;
+            const ft = poolFtFor(sp.fixture || 'spot');
+            if (!ft) continue;
+            const c = sp.target ?? { x: sp.x, y: sp.y };
+            pools.push({ k: sp.id, x: c.x, y: c.y, ft });
+          }
+        }
+        if (!pools.length) return null;
+        return (
+          <g key={'throw' + r.id} clipPath={`url(#roomclip-${ri})`}
+            pointerEvents="none">
+            {/* OPACITY PER CIRCLE, NOT ON THE GROUP, and they are not the same
+                picture. Group opacity composites the whole layer ONCE, so two
+                overlapping pools look exactly like one — which throws away the
+                most useful thing this layer says, that these two lamps double
+                up here and that corner has nothing. Per circle, an overlap
+                reads darker. */}
+            {pools.map((p) => (
+              <circle key={p.k} cx={p.x} cy={p.y} r={(p.ft / 2) * s}
+                fill="url(#lp-throw)" opacity={THROW_STYLE.opacity} />
+            ))}
+          </g>
+        );
+      })}
+
       {/* The lights. Tags are prefixed with the room once there is more than
           one, because L1 in the kitchen and L1 in the hall are two fittings and
           a schedule that calls them both L1 is a schedule nobody can order
@@ -737,7 +1294,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             const fx = l.fixture || l.kind;
             const R = (l.kind === 'large' ? 0.52 : 0.3)
               * (fx === 'small-narrow' ? 0.8 : 1) * s;
-            const col = l.kind === 'large' ? C.large : C.small;
+            // `const col = l.kind === 'large' ? C.large : C.small` WAS HERE, and
+            // it is gone because nothing in this block wants a hue any more.
+            // Every mark on a light — recessed or seated in a track, ambient or
+            // aimed — is now cut from the accent ramp: the body takes `lp-core`
+            // and the line work takes CORE_RIM. `C.large` and `C.small` were the
+            // same value as each other anyway, which is a good sign the fill was
+            // never carrying the distinction it looked like it was carrying.
             const warm = hot === l.id;
 
             // --- A HEAD SEATED IN A TRACK -------------------------------------
@@ -785,21 +1348,21 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       ? (e) => { e.stopPropagation(); onPickChunk(r.id, l.design); }
                       : undefined} />
                   <rect x={l.x - rw / 2} y={l.y - rh / 2} width={rw} height={rh}
-                    fill="#fff" stroke={col} strokeWidth={lw * (warm ? 2.6 : 1.5)}
+                    fill="url(#lp-core)" stroke={CORE_RIM} strokeWidth={lw * (warm ? 2.6 : 1.5)}
                     pointerEvents="none" />
                   {layers.labels && l.gridPx && (
                     <g opacity="0.45" pointerEvents="none">
                       <line x1={l.gridPx.x} y1={l.gridPx.y} x2={l.x} y2={l.y}
-                        stroke={col} strokeWidth={lw}
+                        stroke={CORE_RIM} strokeWidth={lw}
                         strokeDasharray={`${lw * 2} ${lw * 2}`} />
                       <circle cx={l.gridPx.x} cy={l.gridPx.y} r={lw * 1.4}
-                        fill="none" stroke={col} strokeWidth={lw} />
+                        fill="none" stroke={CORE_RIM} strokeWidth={lw} />
                     </g>
                   )}
                   {layers.labels && (
                     <text x={l.x + rw / 2 + lw * 2.5} y={l.y - rh / 2 - lw * 2}
                       fontSize={s * 0.5} fontFamily="The Neue Montreal, sans-serif"
-                      fill={col} opacity="0.75">
+                      fill={CORE_RIM} opacity="0.75">
                       {laid.length > 1 && r.name ? `${r.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 4)}-` : ''}{l.id}
                     </text>
                   )}
@@ -820,7 +1383,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   className="lp-pulse" pointerEvents="none"
                   style={{ animationDelay: `${((li * 137) % 1000) / 1000 * -2.8}s` }} />
                 {l.kind === 'large' && (
-                  <circle cx={l.x} cy={l.y} r={R * 1.9} fill={col} opacity="0.07" />
+                  <circle cx={l.x} cy={l.y} r={R * 1.9} fill={CORE_RIM} opacity="0.07" />
                 )}
                 {/* `.hit` ON THE CIRCLE, NOT ON THE GROUP. Everything inside
                     `.plan` is inert by default — see the note in styles.css,
@@ -839,19 +1402,45 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   onClick={pickable && l.design
                     ? (e) => { e.stopPropagation(); onPickChunk(r.id, l.design); }
                     : undefined}
-                  fill={l.kind === 'large' ? col : '#fff'}
-                  stroke={col} strokeWidth={lw * (warm ? 3.1 : 1.7)} />
-                {l.kind === 'small' && <circle cx={l.x} cy={l.y} r={R * 0.42} fill={col} />}
+                  /* CUT FROM THE RAMP AND NOTHING ELSE, like the spots.
+                     ONE FILL FOR BOTH SIZES. A small downlight was flat white
+                     and a large one was solid accent — the fill was carrying the
+                     size difference, which it never needed to: a large fitting
+                     is half again the radius and has a bar through it. So both
+                     get the lit ramp, and the two marks are told apart by the
+                     things that actually differ.
+                     AND THE RING IS THE RAMP'S RIM TONE, so no amber survives on
+                     a recessed fitting — the body, the ring, the bar, the
+                     coverage fans, both label tethers and the tag all sample the
+                     one accent ramp. See CORE_RIM at the head of this file for
+                     why a two-pixel stroke takes a colour rather than a
+                     gradient.
+                     THE TRACK HEADS ABOVE ARE DELIBERATELY UNTOUCHED. A head
+                     clipped into a profile is not a recessed downlight — it is
+                     not cut into the ceiling at all, it is a different line on
+                     the schedule, and it is drawn as a rect for exactly that
+                     reason. It keeps `col`. */
+                  fill="url(#lp-core)"
+                  stroke={CORE_RIM} strokeWidth={lw * (warm ? 3.1 : 1.7)} />
+                {/* THE CENTRE DOT IS GONE, same as on the spot and for the same
+                    reason: a solid disc of the accent COLOUR at 0.42R sat right
+                    where the ramp is brightest, so it covered the lit core with
+                    the one hue this is removing. Its job was to read as the lamp
+                    inside a white body; the ramp does that itself now.
+                    WHAT TELLS A SMALL FROM A LARGE WITHOUT IT: the radius (a
+                    large is 0.52 to a small's 0.3) and the ORIENTATION BAR, which
+                    only a large carries. Both were already doing the work — the
+                    fill and the dot were saying it a third and fourth time. */}
                 {l.kind === 'large' && (
                   <line
                     x1={l.axis === 'v' ? l.x : l.x - R * 1.7} y1={l.axis === 'v' ? l.y - R * 1.7 : l.y}
                     x2={l.axis === 'v' ? l.x : l.x + R * 1.7} y2={l.axis === 'v' ? l.y + R * 1.7 : l.y}
-                    stroke={col} strokeWidth={lw * 1.1} opacity="0.5" />
+                    stroke={CORE_RIM} strokeWidth={lw * 1.1} opacity="0.5" />
                 )}
                 {layers.labels && l.kind === 'large' && l.coverPx && l.coverPx.length > 1 && (
                   <g opacity="0.3">
                     {l.coverPx.map((q, k) => (
-                      <line key={k} x1={l.x} y1={l.y} x2={q.x} y2={q.y} stroke={col} strokeWidth={lw} />
+                      <line key={k} x1={l.x} y1={l.y} x2={q.x} y2={q.y} stroke={CORE_RIM} strokeWidth={lw} />
                     ))}
                   </g>
                 )}
@@ -865,23 +1454,23 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 {layers.labels && l.gridPx && (
                   <g opacity="0.45" pointerEvents="none">
                     <line x1={l.gridPx.x} y1={l.gridPx.y} x2={l.x} y2={l.y}
-                      stroke={col} strokeWidth={lw}
+                      stroke={CORE_RIM} strokeWidth={lw}
                       strokeDasharray={`${lw * 2} ${lw * 2}`} />
                     <circle cx={l.gridPx.x} cy={l.gridPx.y} r={lw * 1.4}
-                      fill="none" stroke={col} strokeWidth={lw} />
+                      fill="none" stroke={CORE_RIM} strokeWidth={lw} />
                   </g>
                 )}
                 {layers.labels && l.nudged && l.centrePx && (
                   <g opacity="0.5">
                     <line x1={l.centrePx.x} y1={l.centrePx.y} x2={l.x} y2={l.y}
-                      stroke={col} strokeWidth={lw} strokeDasharray={`${lw * 2} ${lw * 2}`} />
+                      stroke={CORE_RIM} strokeWidth={lw} strokeDasharray={`${lw * 2} ${lw * 2}`} />
                     <circle cx={l.centrePx.x} cy={l.centrePx.y} r={lw * 1.5} fill="none"
-                      stroke={col} strokeWidth={lw} />
+                      stroke={CORE_RIM} strokeWidth={lw} />
                   </g>
                 )}
                 {layers.labels && (
                   <text x={l.x + R * 1.6} y={l.y - R * 1.2} fontSize={s * 0.5}
-                    fontFamily="The Neue Montreal, sans-serif" fill={col} opacity="0.75">
+                    fontFamily="The Neue Montreal, sans-serif" fill={CORE_RIM} opacity="0.75">
                     {laid.length > 1 && r.name ? `${r.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 4)}-` : ''}{l.id}
                   </text>
                 )}
@@ -920,23 +1509,57 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           strip is a rectangle nobody can interpret, and the strip without the
           band is a run floating eight inches off a wall for no visible reason.
           They are one fitting and they hide together. */}
-      {layers.accents && reverseCoves.map((c) => {
-        const horizontal = c.horizontal;
+      {layers.accents && reverseCoves.map((c, ci) => {
+        const B = COVE_BAND_STYLE;
         // The inner lip: the edge away from the wall. `wall` says which side of
         // the band the wall is on, so the lip is the other one.
         const lip = c.wall === 'top' ? [{ x: c.rect.x0, y: c.rect.y1 }, { x: c.rect.x1, y: c.rect.y1 }]
           : c.wall === 'bottom' ? [{ x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x1, y: c.rect.y0 }]
           : c.wall === 'left' ? [{ x: c.rect.x1, y: c.rect.y0 }, { x: c.rect.x1, y: c.rect.y1 }]
           : [{ x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x0, y: c.rect.y1 }];
-        void horizontal;
+        // --- THE RAMP, ALONG THE BAND -------------------------------------
+        //
+        // `horizontal` FINALLY DOES SOMETHING. It sat here behind a `void` for
+        // exactly this reason — the band's orientation was worked out and then
+        // nothing on the mark needed it, because a flat fill has no direction.
+        // A gradient does, and it has to run the LENGTH of the slot: this is
+        // linear product, billed by the metre, and the strips and the track
+        // rails already grade along themselves. Across the eight inches the ramp
+        // would resolve over a fingernail of drawing and read as a flat tone
+        // with a dirty edge.
+        //
+        // userSpaceOnUse, and here it is a choice about DIRECTION rather than a
+        // dodge round a degenerate bounding box — a band has real extent both
+        // ways, so objectBoundingBox would work and would grade the wrong way on
+        // half the walls in the room: across for a horizontal band, along for a
+        // vertical one, from the same markup. Pinning the vector to the rect's
+        // own long axis makes every band on the sheet read the same.
+        const g = c.horizontal
+          ? { x1: c.rect.x0, y1: c.rect.y0, x2: c.rect.x1, y2: c.rect.y0 }
+          : { x1: c.rect.x0, y1: c.rect.y0, x2: c.rect.x0, y2: c.rect.y1 };
+        const gid = `lp-rcove-${ci}`;
         return (
           <g key={c.id} pointerEvents="none">
+            <defs>
+              <linearGradient id={gid} gradientUnits="userSpaceOnUse" {...g}>
+                {THROW_STYLE.stops.map((st) => (
+                  <stop key={st.at} offset={st.at} stopColor={st.color} />
+                ))}
+              </linearGradient>
+            </defs>
+            {/* A COMPLETE FILL, and transparent on purpose — see
+                COVE_BAND_STYLE. The outline and the lip take the ramp's rim tone
+                rather than the ramp itself: they are line work, and the slot's
+                set-out edge has to hold its weight the whole way along where a
+                ramp would fade it out in the middle. That is the same failure
+                the room selection outline hit; it is worth not repeating. */}
             <rect x={c.rect.x0} y={c.rect.y0}
               width={c.rect.x1 - c.rect.x0} height={c.rect.y1 - c.rect.y0}
-              fill={C.lit} fillOpacity="0.30"
-              stroke={C.lit} strokeWidth={lw} strokeOpacity="0.55" />
+              fill={`url(#${gid})`} fillOpacity={B.fillOpacity}
+              stroke={CORE_RIM} strokeWidth={lw} strokeOpacity={B.edgeOpacity} />
             <line x1={lip[0].x} y1={lip[0].y} x2={lip[1].x} y2={lip[1].y}
-              stroke={C.lit} strokeWidth={lw * 1.8} strokeOpacity="0.9" />
+              stroke={CORE_RIM} strokeWidth={lw * B.lipWeight}
+              strokeOpacity={B.lipOpacity} />
           </g>
         );
       })}
@@ -969,7 +1592,16 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // type back when a strip was red and a sconce amber; the type is
         // already in the symbol — a run with end caps, a crosshair on a wall —
         // so the hue was spare, and it is spent on "this is a light" instead.
-        const acol = C.lit;
+        //
+        // NOW ONLY THE SCONCE'S, AND NOW THE RAMP'S RIM TONE RATHER THAN AMBER.
+        // A linear run takes the accent GRADIENT along its length (see `tape`
+        // below); a sconce cannot, because a crosshair is line work and there is
+        // no length to grade across. So it takes the ramp's outermost colour,
+        // exactly as the spots' and the downlights' rings do — see CORE_RIM at
+        // the head of this file. Its own body already carries the full ramp, so
+        // the fitting reads as one object cut from one gradient, and there is no
+        // amber left anywhere on a sconce.
+        const acol = CORE_RIM;
         // Constant on screen, like every other control. See the ceiling-object
         // handles for the argument.
         const AH = (Math.max(width, height) / 155) / (zoom || 1);
@@ -999,8 +1631,62 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const spec = a.type === 'strip'
           ? specsFor(a.fixture || 'strip', { metres: runMetres(a, pxPerFt) })
           : specsFor('sconce');
+        // --- THE ACCENT GRADIENT, RUNNING ALONG THE TAPE ------------------
+        //
+        // The brand ramp laid down the LENGTH of the run rather than across it,
+        // so a strip reads as one continuous piece of product with the light
+        // graduating along it — which is what the gradient is for and what a
+        // flat #ffb900 could not say.
+        //
+        // userSpaceOnUse, AND THAT IS THE WHOLE DIFFICULTY. The obvious
+        // implementation is objectBoundingBox with x1=0,x2=1 — the default, and
+        // what the floor pools use — and on a strip it is BROKEN, for exactly
+        // the reason the `lp-strip-glow` filter region above is in user space:
+        // a horizontal or vertical line has a bounding box with zero height or
+        // zero width. A gradient mapped onto a degenerate box has nowhere to
+        // ramp, and most runs on a lighting plan are dead horizontal or dead
+        // vertical. So the stops are pinned to the run's ACTUAL endpoints in
+        // plan pixels, which cannot collapse.
+        //
+        // ONE GRADIENT PER RUN, KEYED ON THE MAP INDEX. It has to be per-run
+        // because the coordinates are — a gradient cannot be shared by two
+        // strips pointing different ways — and it is keyed on `ai` rather than
+        // on `a.id` because an accent id is composed from room and chunk keys
+        // and is not guaranteed to be a legal SVG fragment id. `ai` is unique
+        // within this map, which is all a document-scoped id needs to be.
+        //
+        // A COVE HAS NO ENDPOINTS, so it takes the diagonal of its own bounding
+        // box: a closed circuit has no single direction, and the diagonal is the
+        // one line that grades every side of it rather than leaving two sides
+        // flat. `x0` and friends are read off the loop rather than off `a.rect`
+        // — the rect is the model's box, which the drawing deliberately does
+        // not use for anything (see the note above).
+        const gid = `lp-strip-${ai}`;
+        const gline = a.run
+          ? { x1: a.run[0].x, y1: a.run[0].y, x2: a.run[1].x, y2: a.run[1].y }
+          : a.loop
+            ? {
+                x1: Math.min(...a.loop.map((q) => q.x)),
+                y1: Math.min(...a.loop.map((q) => q.y)),
+                x2: Math.max(...a.loop.map((q) => q.x)),
+                y2: Math.max(...a.loop.map((q) => q.y)),
+              }
+            : null;
+        // The tape's ink. Falls back to the flat accent for a sconce, which has
+        // no run to grade along — it is a crosshair on a wall, not a length of
+        // product.
+        const tape = gline ? `url(#${gid})` : acol;
         return (
           <g key={a.id} opacity={dim} {...feel(a.id, spec)}>
+            {gline && (
+              <defs>
+                <linearGradient id={gid} gradientUnits="userSpaceOnUse" {...gline}>
+                  {THROW_STYLE.stops.map((st) => (
+                    <stop key={st.at} offset={st.at} stopColor={st.color} />
+                  ))}
+                </linearGradient>
+              </defs>
+            )}
             {accSel && a.run && (
               <line x1={a.run[0].x} y1={a.run[0].y} x2={a.run[1].x} y2={a.run[1].y}
                 stroke={C.grip} strokeWidth={AFW * 5} strokeLinecap="round" opacity="0.28" />
@@ -1039,7 +1725,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               const d = a.loop.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ') + ' Z';
               return (
                 <g>
-                  <path d={d} fill="none" stroke={acol}
+                  <path d={d} fill="none" stroke={tape}
                     strokeWidth={lw * (S.glow + boost * 2)} strokeLinejoin="round"
                     opacity={S.glowOpacity} filter="url(#lp-strip-glow)"
                     pointerEvents="none" className="lp-breathe"
@@ -1049,7 +1735,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                              animationDuration: `${S.pulseMs}ms`,
                              animationDelay: `${((ai * 137) % 1000) / 1000 * -S.pulseMs}ms`,
                              animationPlayState: hot === a.id ? 'paused' : 'running' }} />
-                  <path d={d} fill="none" stroke={acol}
+                  <path d={d} fill="none" stroke={tape}
                     strokeWidth={lw * (S.stroke + boost)} strokeLinecap="round"
                     strokeDasharray={`${dot} ${gapl}`} className="lp-flow" />
                   {/* THE TAPE IS THE TARGET, NOT THE AREA IT ENCLOSES.
@@ -1123,7 +1809,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       properties because they are multiples of the sheet's line
                       weight, which the stylesheet cannot know. */}
                   <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
-                    stroke={acol} strokeWidth={lw * (S.glow + boost * 2)}
+                    stroke={tape} strokeWidth={lw * (S.glow + boost * 2)}
                     strokeLinecap="butt" opacity={S.glowOpacity}
                     filter="url(#lp-strip-glow)" pointerEvents="none"
                     className="lp-breathe"
@@ -1134,7 +1820,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                              animationDelay: `${((ai * 137) % 1000) / 1000 * -S.pulseMs}ms`,
                              animationPlayState: hot === a.id ? 'paused' : 'running' }} />
                   <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
-                    stroke={acol} strokeWidth={lw * (S.stroke + boost)}
+                    stroke={tape} strokeWidth={lw * (S.stroke + boost)}
                     strokeLinecap="round"
                     strokeDasharray={`${dot} ${gapl}`}
                     className="lp-flow hit" />
@@ -1147,7 +1833,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   {[p0, p1].map((q, i) => (
                     <rect key={i} x={q.x - lw * S.cap / 2} y={q.y - lw * S.cap / 2}
                       width={lw * S.cap} height={lw * S.cap}
-                      fill={acol} pointerEvents="none" />
+                      fill={tape} pointerEvents="none" />
                   ))}
                 </g>
               );
@@ -1162,13 +1848,16 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 The stem is the bracket, so it is what points at the wall; the
                 other three arms are equal and the whole thing turns with the
                 surface. Lines cross the circle rather than stopping at it, over
-                a white ground so it stays legible on top of the plan's own line
-                work. */}
+                an OPAQUE ground so it stays legible on top of the plan's own
+                line work — the lit ramp now, not flat white. Same swap as every
+                other fitting on the sheet and for the same reason: the ground
+                still has to be opaque, and it may as well say the fitting is
+                emitting while it is there. */}
             {SG && (() => {
               const { R, arm, ix, iy, ux, uy, cx, cy } = SG;
               return (
                 <g>
-                  <circle cx={cx} cy={cy} r={R} fill="#fff" />
+                  <circle cx={cx} cy={cy} r={R} fill="url(#lp-core)" />
                   <g stroke={acol} strokeWidth={lw * 1.8} strokeLinecap="round">
                     {/* the stem: from the wall, through the circle, out the far side */}
                     <line x1={a.point.x} y1={a.point.y}
@@ -1321,34 +2010,61 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           It is the only place in this app where that is the right answer. */}
       {audit && (
         <g className="audit">
-          {/* The beds. These are the one reading with no visible consequence
-              anywhere else on the sheet: the planner obeys them — a downlight
-              never lands over a mattress — but `drawnZones` deliberately
-              excludes them, so a wrong bed is invisible unless you know to look
-              for the hole it left in the grid. */}
-          {auditZones.map((z, i) => (
-            <g key={'az' + i}>
-              <rect x={z.x0} y={z.y0} width={z.x1 - z.x0} height={z.y1 - z.y0}
-                fill="#C026D3" fillOpacity="0.06" stroke="#C026D3"
-                strokeWidth={lw * 1.6} strokeDasharray={`${lw * 4} ${lw * 3}`} />
-              <text x={z.x0 + lw * 3} y={z.y0 - lw * 2} fill="#C026D3"
-                fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
-                bed
-              </text>
-            </g>
-          ))}
+          {/* THE BEDS ARE NOT DRAWN HERE ANY MORE, and the reason is a
+              consequence of this overlay's default rather than a change of mind
+              about the beds.
+              They used to be the argument FOR the overlay: the planner obeys a
+              bed — a downlight never lands over a mattress — but `drawnZones`
+              deliberately excludes them, so a wrong bed is invisible except as
+              a hole in the grid. Worth a magenta box while you are opening the
+              overlay on purpose to check one.
+              Now that it opens by default, they are a magenta box round the bed
+              on every plan, every time, next to the fittings they pushed out of
+              the way — and the thing the overlay is now open FOR is the lit task
+              surfaces. So the beds come off and the switch keeps its other two
+              readings. Their counts are still in the admin panel, which is where
+              a number belongs when the drawing does not need the shape; the
+              zones themselves still reach the planner through `zoneList`,
+              entirely unaffected. */}
           {/* The task surfaces, with the box the detector marked. The spot that
               came out of it is already on the drawing; this is the evidence
-              behind it. */}
+              behind it.
+
+              LIT IN THE BEAM'S OWN PAINT, AND NOT ONE MARK OF MAGENTA LEFT.
+              The fill is the accent ramp — the same stops the floor pools use,
+              laid flat rather than radial; see `lp-lit` in the defs for why the
+              radial one donuts on a rectangle. The dashed edge and the caption
+              are the accent too, so a task surface now reads entirely as
+              lighting: "the spot above this is FOR this", said in one colour,
+              which is the question the mark exists to answer. It used to say
+              only that a model had noticed a table.
+
+              THIS SPENDS THE OPERATOR HUE ON THIS ONE OVERLAY, deliberately and
+              on instruction. #C026D3 means exactly one thing everywhere else in
+              this app — see the note in styles.css — and it is "you are looking
+              at a reading, not at the design". The task surfaces no longer say
+              that, so the only thing marking them as working is the DASHED edge
+              against the solid line work of everything real. The beds and the
+              wall cells beside them keep the magenta and keep saying it.
+              WHAT TO WATCH, since this overlay now defaults to ON and nothing
+              strips it out of the PNG or SVG: a lit rectangle on an exported
+              sheet is no longer self-evidently ours-by-mistake. It is a dashed
+              amber box round the dining table, which reads as something drawn on
+              purpose.
+
+              A REJECTED SURFACE STILL DIMS TO 0.35 on the group, so it is lit
+              faintly rather than not at all: the detector found it and the
+              placer turned it down, and both halves of that are the point. */}
           {surfaces.map((sf) => {
             if (!sf.rect) return null;
             const r = sf.rect;
             return (
               <g key={'as' + sf.id} opacity={sf.rejected ? 0.35 : 1}>
                 <rect x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0}
-                  fill="#C026D3" fillOpacity="0.05" stroke="#C026D3"
+                  fill="url(#lp-lit)" fillOpacity={THROW_STYLE.litSurfaceOpacity}
+                  stroke={C.lit} strokeOpacity="0.75"
                   strokeWidth={lw * 1.6} strokeDasharray={`${lw * 6} ${lw * 3}`} />
-                <text x={r.x0 + lw * 3} y={r.y0 - lw * 2} fill="#C026D3"
+                <text x={r.x0 + lw * 3} y={r.y0 - lw * 2} fill={C.lit}
                   fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
                   {sf.label || sf.type || 'surface'}{sf.rejected ? ' (rejected)' : ''}
                 </text>
@@ -1496,10 +2212,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {layers.labels && sp.gridPx && (
               <g opacity="0.45" pointerEvents="none">
                 <line x1={sp.gridPx.x} y1={sp.gridPx.y} x2={sp.x} y2={sp.y}
-                  stroke={C.small} strokeWidth={lw}
+                  stroke={CORE_RIM} strokeWidth={lw}
                   strokeDasharray={`${lw * 2} ${lw * 2}`} />
                 <circle cx={sp.gridPx.x} cy={sp.gridPx.y} r={lw * 1.4}
-                  fill="none" stroke={C.small} strokeWidth={lw} />
+                  fill="none" stroke={CORE_RIM} strokeWidth={lw} />
               </g>
             )}
             <ellipse cx={sp.x} cy={sp.y}
@@ -1532,7 +2248,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <rect x={sp.x - bodyLen / 2} y={sp.y - bodyWide / 2}
                   width={bodyLen} height={bodyWide}
                   rx={bodyWide / 2} ry={bodyWide / 2}
-                  fill={C.small} stroke={C.small}
+                  fill="url(#lp-core)" stroke={CORE_RIM}
                   strokeWidth={lw * (hot === sp.id ? 2.4 : 0.7)} pointerEvents="none" />
                 {/* THE LENS, IN THE NOSE. Centred on the capsule's own end
                     radius, so it reads as the round end of the cylinder being
@@ -1544,21 +2260,32 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     switched off. */}
                 <ellipse cx={sp.x + bodyLen / 2 - bodyWide / 2} cy={sp.y}
                   rx={bodyWide * 0.31} ry={bodyWide * 0.47}
-                  fill="#fff" stroke={C.small}
+                  fill="url(#lp-core)" stroke={CORE_RIM}
                   strokeWidth={lw * (hot === sp.id ? 2.2 : 1.1)} pointerEvents="none" />
               </g>
             ) : (
               <>
-                <circle className="hit" cx={sp.x} cy={sp.y} r={R} fill="#fff"
-                  stroke={C.small} strokeWidth={lw * (hot === sp.id ? 3.4 : 2)} />
-                <circle cx={sp.x} cy={sp.y} r={R * 0.4} fill={C.small} />
+                {/* NOT ONE MARK OF AMBER LEFT ON A SPOT. The body is the
+                    accent ramp and the ring is the ramp's rim tone, so the
+                    whole symbol is cut from one gradient.
+                    THE CENTRE DOT IS GONE, and that is the part worth
+                    recording. It was a solid disc of #ffb900 at 0.4R — the most
+                    saturated thing on the fitting, sitting exactly where the
+                    ramp is brightest, so it covered the bright core and put
+                    back the one colour this was removing. Its job was to read
+                    as the lamp inside a WHITE body, and a lit ramp does that
+                    job by itself: the bright middle IS the aperture now. What
+                    still separates a spot from a downlight is what always
+                    separated them — the arrow. */}
+                <circle className="hit" cx={sp.x} cy={sp.y} r={R} fill="url(#lp-core)"
+                  stroke={CORE_RIM} strokeWidth={lw * (hot === sp.id ? 3.4 : 2)} />
               </>
             )}
             <line x1={x0} y1={y0} x2={x1} y2={y1}
-              stroke={C.small} strokeWidth={lw * 1.9} strokeLinecap="round" />
+              stroke={CORE_RIM} strokeWidth={lw * 1.9} strokeLinecap="round" />
             <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * 0.55},${y1 - uy * head + ny * head * 0.55}`
                    + ` L${x1 - ux * head - nx * head * 0.55},${y1 - uy * head - ny * head * 0.55} Z`}
-              fill={C.small} />
+              fill={CORE_RIM} />
           </g>
         );
       })}
@@ -1595,7 +2322,28 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       {ghost && pxPerFt && (() => {
         const t = CEILING_BY_ID[ghost.typeId];
         if (!t) return null;
-        const col = t.colour;
+        // THE GHOST TAKES THE PLACED OBJECT'S INK, NOT THE TYPE'S OWN `colour`.
+        //
+        // Every entry in the catalogue carries `colour: '#404040'` — near black
+        // — and this preview was the only thing that read it. That was fine on a
+        // white scan and invisible the moment the plan was inverted: dark grey
+        // at 0.55 opacity on a black ground is nothing, so arming an object and
+        // moving onto the plan in night mode showed no object at all. It looked
+        // like the tool had failed to arm.
+        //
+        // SO IT MIRRORS THE RULE THE PLACED OBJECT USES, exactly — see the long
+        // note by `col` in the fansPx block. A preview drawn in a colour the
+        // click will not produce is a small lie about the gesture, which is the
+        // same argument the sconce ghost's ground already makes; and matching it
+        // fixes the invisibility for free, because that rule is the one that
+        // knows about the ground.
+        //
+        // `colour` IS NOW UNREAD. It is left in ceilingObjects.js rather than
+        // deleted — it is a data field on a catalogue that gets serialised, and
+        // dropping it is a change to saved plans for no gain — but nothing paints
+        // with it any more, so do not reach for it expecting it to matter.
+        const round = !isRect(t);
+        const col = round && layers.invert ? C.object : C.lit;
         const r = (isRect(t) ? Math.hypot(t.wFt, t.hFt) / 2 : (t.diaFt || 0) / 2) * pxPerFt;
         return (
           <g opacity="0.55">
@@ -1717,15 +2465,21 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 stroke={C.guide} strokeWidth={lw} opacity="0.7"
                 strokeDasharray={`${lw * 4} ${lw * 4}`} />
             )}
-            <circle cx={cx} cy={cy} r={R} fill="#fff" />
-            <g stroke={C.lit} strokeWidth={lw * 1.8} strokeLinecap="round">
+            {/* THE GHOST TAKES THE SAME GROUND AS THE REAL THING. It previews
+                what the click is about to place, so a white-bodied preview of a
+                lit-bodied fitting would be a small lie about the gesture. */}
+            <circle cx={cx} cy={cy} r={R} fill="url(#lp-core)" />
+            {/* AND THE GHOST'S LINE WORK MATCHES THE PLACED FITTING'S, for the
+                same reason its ground does: a preview drawn in a colour the
+                click will not produce is a small lie about the gesture. */}
+            <g stroke={CORE_RIM} strokeWidth={lw * 1.8} strokeLinecap="round">
               <line x1={sconceGhost.point.x} y1={sconceGhost.point.y}
                 x2={cx + ix * arm} y2={cy + iy * arm} />
               <line x1={cx - ux * arm} y1={cy - uy * arm}
                 x2={cx + ux * arm} y2={cy + uy * arm} />
             </g>
             <circle cx={cx} cy={cy} r={R} fill="none"
-              stroke={C.lit} strokeWidth={lw * 2.1} />
+              stroke={CORE_RIM} strokeWidth={lw * 2.1} />
           </g>
         );
       })()}
@@ -1787,30 +2541,81 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           e.stopPropagation();
           onCycleOption(optionPick.roomId, optionPick.key, dir);
         };
+        // --- HOW THE PILL IS PAINTED -------------------------------------
+        //
+        // EVERY COLOUR COMES FROM PILL_STYLE, which is a block of its own in
+        // settings.js rather than part of THROW_STYLE. The reason is stated
+        // there and worth repeating in one line: this is a CONTROL, not a
+        // fitting. Everything else warm on this sheet shares one ramp because it
+        // is all making the same claim; the pill is a button sitting on top of
+        // the drawing, and it is allowed to look like one.
+        //
+        // FLAT BY DEFAULT, RAMPED IF ASKED. `stops` is null, so the body is a
+        // flat white and no gradient element is emitted at all. Set `stops` and
+        // it becomes ONE gradient in user space spanning the pill's left edge to
+        // its right — one, because the arrow ends and the body would otherwise
+        // each restart their own objectBoundingBox ramp and put two visible
+        // seams across a single control. There is only ever one pill on the
+        // canvas (it is drawn for `optionPick` and nothing else), so a fixed id
+        // is safe here where the strips and rails needed one per run.
+        const P = PILL_STYLE;
+        const pillFill = P.stops ? 'url(#lp-pill)' : P.fill;
+        const pillGrad = { x1: cx - w / 2, y1: cy, x2: cx + w / 2, y2: cy };
+        // THE ARROW BUTTONS ARE HIT TARGETS AND NOTHING ELSE — `transparent`,
+        // where they used to be filled with the pill's own paint.
+        //
+        // They never needed a fill. `w` is computed to INCLUDE both arrow cells,
+        // so the body rect already spans the full width and is already painted
+        // under them; filling them again only ever reproduced what was
+        // underneath. It was harmless while both were the same gradient and
+        // stops being harmless the moment the body took an EDGE: these rects
+        // cover the pill's rounded ends exactly, are drawn after it, and a
+        // white fill would have painted the edge off both caps. Dropping the
+        // fill fixes that and makes it impossible for a button to drift out of
+        // step with the body it sits on.
         const glyph = (x, mark, dir) => (
           <g>
             <rect className="hit" x={x} y={cy - h / 2} width={arrow} height={h}
-              fill={C.lit} rx={h / 2} ry={h / 2}
+              fill="transparent" rx={h / 2} ry={h / 2}
               style={{ cursor: 'pointer' }} onClick={step(dir)} />
             <text x={x + arrow / 2} y={cy + fs * 0.36} textAnchor="middle"
               fontSize={fs * 1.15} fontFamily="The Neue Montreal, sans-serif"
-              fill="#fff" opacity="0.85">{mark}</text>
+              fill={P.ink} opacity={P.arrowInk}>{mark}</text>
           </g>
         );
         return (
           <g>
+            {P.stops && (
+              <defs>
+                <linearGradient id="lp-pill" gradientUnits="userSpaceOnUse" {...pillGrad}>
+                  {P.stops.map((st) => (
+                    <stop key={st.at} offset={st.at} stopColor={st.color} />
+                  ))}
+                </linearGradient>
+              </defs>
+            )}
             {/* WHICH PIECE OF CEILING THIS IS ABOUT. The pill names the design;
-                only the outline says where it lands. */}
+                only this says where it lands — so it stays on the ACCENT while
+                the pill has gone white. It belongs to the drawing; the pill
+                belongs to the interface. Its wash was `url(#lp-lit)` and is now
+                a flat tone: at 4.5% opacity a ramp and its own midpoint are the
+                same picture, and a colour is something PILL_STYLE can hold. */}
             <rect x={ch.rect.x0} y={ch.rect.y0}
               width={ch.rect.x1 - ch.rect.x0} height={ch.rect.y1 - ch.rect.y0}
-              fill={C.lit} fillOpacity="0.045" stroke={C.lit} strokeWidth={lw * 1.8}
-              strokeDasharray={`${lw * 8} ${lw * 5}`} opacity="0.7"
+              fill={P.region.fill} fillOpacity={P.region.fillOpacity}
+              stroke={P.region.edge} strokeWidth={lw * P.region.weight}
+              strokeDasharray={`${lw * 8} ${lw * 5}`} opacity={P.region.opacity}
               pointerEvents="none" />
+            {/* THE BODY, AND IT CARRIES THE EDGE. A white chip on a white plan
+                is a floating word without it — see PILL_STYLE. Drawn before the
+                arrow glyphs and, now that those are transparent, never painted
+                over at the caps. */}
             <rect className="hit" x={cx - w / 2} y={cy - h / 2} width={w} height={h}
-              rx={h / 2} ry={h / 2} fill={C.lit}
+              rx={h / 2} ry={h / 2} fill={pillFill}
+              stroke={P.edge} strokeWidth={lw * P.edgeWeight}
               onClick={(e) => e.stopPropagation()} />
             <text x={cx} y={cy + fs * 0.36} textAnchor="middle" fontSize={fs}
-              fontFamily="The Neue Montreal, sans-serif" fill="#fff"
+              fontFamily="The Neue Montreal, sans-serif" fill={P.ink}
               letterSpacing={fs * 0.1}>{label}</text>
             {many && glyph(cx - w / 2, '\u2039', -1)}
             {many && glyph(cx + w / 2 - arrow, '\u203A', 1)}

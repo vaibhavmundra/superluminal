@@ -83,42 +83,46 @@ export default function AdminUsers() {
   const rows = data?.users ?? [];
 
   return (
-    <div className="shell">
+    <div className="grid grid-cols-[56px_1fr] h-full">
       <ProfileRail />
-      <div className="shell-body">
-        <div className="shell-inner">
-          <header className="page-head">
+      <div className="overflow-y-auto pt-[26px] px-[30px] pb-[60px] w-full">
+        <div className="w-full max-w-[1180px] mx-auto">
+          <header className="flex items-end justify-between gap-5 mt-[6px] mb-[26px]">
             <div>
-              <h1>Users</h1>
-              <p className="page-sub">
+              <h1 className="m-0 text-[26px] tracking-[-0.03em]">Users</h1>
+              <p className="mt-[6px] mb-0 text-muted text-[12.5px]">
                 {err ? 'Could not load'
                   : data == null ? 'Loading…'
                   : `${data.total ?? rows.length} account${data.total === 1 ? '' : 's'}`
                     + ' · open one to see the app as they see it'}
               </p>
             </div>
-            <form className="admin-search" onSubmit={(e) => {
+            <form className="flex items-center gap-2.5" onSubmit={(e) => {
               e.preventDefault();
               patch({ q: draft.trim() || null, page: null });
             }}>
               <input value={draft} onChange={(e) => setDraft(e.target.value)}
-                placeholder="Search name or email" aria-label="Search users" />
+                placeholder="Search name or email" aria-label="Search users"
+                className="w-[230px] py-[7px] px-[11px] rounded border border-border-strong bg-surface-3 text-[12.5px] text-ink focus:outline-none focus:border-ink focus:bg-surface" />
               {q && (
-                <button type="button" className="linkish"
+                <button type="button" className="border-0 bg-transparent text-[11.5px] text-accent cursor-pointer p-0 no-underline hover:underline"
                   onClick={() => patch({ q: null, page: null })}>Clear</button>
               )}
             </form>
           </header>
 
-          {err && <p className="note err">{err}</p>}
+          {err && <p className="text-[11.5px] leading-[1.5] mt-2 text-danger-ink border-l-2 border-danger pl-[9px]">{err}</p>}
 
           {/* THE SORT IS A ROW OF TABS AND NOT A <select>, because there are six
               of them and the one that is on is worth being able to see without
               opening anything. */}
-          <div className="admin-sorts" role="tablist" aria-label="Sort users">
+          <div className="flex gap-1 flex-wrap mb-4" role="tablist" aria-label="Sort users">
             {SORTS.map(([k, label]) => (
               <button key={k} role="tab" aria-selected={sort === k}
-                className={sort === k ? 'on' : ''}
+                className={
+                  'border border-transparent bg-transparent text-[12px] py-[5px] px-[10px] rounded-full cursor-pointer '
+                  + (sort === k ? 'bg-ink text-white' : 'text-muted hover:bg-surface-3 hover:text-ink')
+                }
                 onClick={() => patch({ sort: k === 'active' ? null : k, page: null })}>
                 {label}
               </button>
@@ -126,60 +130,62 @@ export default function AdminUsers() {
           </div>
 
           {!err && (
-            <div className={'admin-table-wrap' + (busy ? ' busy' : '')}>
-              <table className="admin-table">
+            <div className={'border border-border rounded-lg overflow-hidden bg-surface transition-opacity duration-150' + (busy ? ' opacity-60' : '')}>
+              <table className="w-full border-collapse text-[12.5px]">
                 <thead>
                   <tr>
-                    <th>User</th>
-                    <th className="num">Projects</th>
-                    <th className="num">Plans</th>
-                    <th className="num">Ready</th>
-                    <th>Last active</th>
+                    <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2">User</th>
+                    <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2 text-right w-[92px]">Projects</th>
+                    <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2 text-right w-[92px]">Plans</th>
+                    <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2 text-right w-[92px]">Ready</th>
+                    <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2">Last active</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data == null
                     ? Array.from({ length: 6 }, (_, i) => (
-                        <tr key={i} className="skel-row"><td colSpan={5}><span /></td></tr>
+                        <tr key={i} className="last:[&>td]:border-b-0"><td colSpan={5} className="p-0 border-b border-border align-middle"><span className="block h-[47px] bg-[linear-gradient(90deg,#F2F2F2_25%,#FFFFFF_50%,#F2F2F2_75%)] bg-[length:400%_100%] animate-[skel_1.3s_ease-in-out_infinite]" /></td></tr>
                       ))
                     : rows.length === 0
-                    ? <tr><td colSpan={5} className="admin-empty">
+                    ? <tr className="last:[&>td]:border-b-0"><td colSpan={5} className="py-[11px] px-[14px] border-b border-border align-middle text-center text-subtle">
                         {q ? `Nobody matches “${q}”.` : 'No users yet.'}
                       </td></tr>
                     : rows.map((u) => (
                       <tr key={u.id} role="button" tabIndex={0}
+                        className="group cursor-pointer last:[&>td]:border-b-0 hover:bg-[#FDF2FE] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#C026D3] focus-visible:outline-offset-[-2px]"
                         onClick={() => nav(`/admin/users/${u.id}`)}
                         onKeyDown={(e) => { if (e.key === 'Enter') nav(`/admin/users/${u.id}`); }}>
-                        <td>
-                          <div className="admin-who">
-                            <span className="bubble sm" aria-hidden="true">
+                        <td className="py-[11px] px-[14px] border-b border-border align-middle">
+                          <div className="flex items-center gap-2.5">
+                            <span aria-hidden="true"
+                              className="grid place-items-center w-[26px] h-[26px] rounded-full border border-border-strong bg-surface-3 text-muted text-[11.5px] flex-none [cursor:inherit] transition-[background,border-color,box-shadow] duration-[120ms] [transition-timing-function:ease] hover:bg-[#0060D9] hover:border-[#0060D9] hover:text-white group-hover:!border-[#C026D3] group-hover:!text-[#C026D3]">
                               {(u.full_name || u.email || '—').trim().charAt(0).toUpperCase()}
                             </span>
-                            <div>
-                              <b>{u.full_name || u.email || 'Unnamed'}</b>
+                            <div className="flex flex-col gap-[1px] min-w-0">
+                              <b className="text-[12.5px] font-medium">{u.full_name || u.email || 'Unnamed'}</b>
                               {/* The email is the identifier that actually
                                   matters in a support conversation, so it is
                                   always shown — even when it is also the name. */}
-                              <span>{u.email || '—'}</span>
+                              <span className="text-[11px] text-subtle overflow-hidden text-ellipsis whitespace-nowrap max-w-[34ch]">{u.email || '—'}</span>
                             </div>
-                            {u.role === 1 && <span className="tag admin">admin</span>}
+                            {u.role === 1 && <span className="font-sans text-[9.5px] tracking-[.05em] uppercase py-0.5 px-1.5 rounded-full border border-[#F0ABFC] bg-[#FDF2FE] text-[#C026D3] whitespace-nowrap">admin</span>}
                           </div>
                         </td>
-                        <td className="num muted">{u.projects}</td>
-                        <td className="num muted">{u.plans}</td>
+                        <td className="py-[11px] px-[14px] border-b border-border align-middle text-right w-[92px] text-subtle font-sans">{u.projects}</td>
+                        <td className="py-[11px] px-[14px] border-b border-border align-middle text-right w-[92px] text-subtle font-sans">{u.plans}</td>
                         {/* THE ONE NUMBER IN INK. Zero is drawn muted rather
                             than bold, because a column of bold zeroes shouts
                             about the thing that did not happen. */}
-                        <td className={'num' + (u.plans_ready ? ' strong' : ' muted')}>
+                        <td className={'py-[11px] px-[14px] border-b border-border align-middle text-right w-[92px] font-sans' + (u.plans_ready ? ' text-ink font-medium' : ' text-subtle')}>
                           {u.plans_ready}
                         </td>
-                        <td className="muted">
+                        <td className="py-[11px] px-[14px] border-b border-border align-middle text-subtle">
                           {/* 'epoch' comes back for somebody who has made
                               nothing at all — the view coalesces to it so the
                               sort has something to order by. It is not a date
                               worth printing. */}
                           {!u.last_active || new Date(u.last_active).getFullYear() < 1980
-                            ? <span className="dash">never</span>
+                            ? <span className="text-subtle">never</span>
                             : when(u.last_active)}
                         </td>
                       </tr>

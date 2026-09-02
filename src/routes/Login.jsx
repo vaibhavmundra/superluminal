@@ -100,59 +100,66 @@ export default function Login() {
   };
 
   return (
-    <div className="auth">
-      <div className="auth-top"><Wordmark /></div>
+    <div className="min-h-full flex flex-col items-center">
+      <div className="w-full h-14 flex items-center px-[22px] border-b border-border bg-surface"><Wordmark /></div>
 
-      <div className="auth-card">
+      <div className="w-[min(420px,92%)] m-auto bg-surface border border-border rounded-lg py-[30px] px-7 shadow">
         {!configured ? (
           <>
-            <h1>Supabase is not configured</h1>
-            <p className="auth-sub">
+            <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em]">Supabase is not configured</h1>
+            <p className="m-0 mb-[22px] text-muted text-[12.5px] leading-[1.6]">
               Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> to
               <code> .env.local</code> and restart the dev server.
             </p>
           </>
         ) : stage === 'email' ? (
           <>
-            <h1>Sign in to start designing</h1>
-            <p className="auth-sub">
+            <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em]">Sign in to start designing</h1>
+            <p className="m-0 mb-[22px] text-muted text-[12.5px] leading-[1.6]">
               {uploadName
                 ? <>We will email you a six-digit code, then open <b>{uploadName}</b>.</>
                 : <>We will email you a six-digit code. No password to remember.</>}
             </p>
-            <form onSubmit={submitEmail} className="auth-form">
-              <label className="auth-label" htmlFor="email">Email</label>
+            <form onSubmit={submitEmail} className="flex flex-col gap-2">
+              <label className="text-[10px] tracking-[0.11em] uppercase text-subtle" htmlFor="email">Email</label>
               <input id="email" type="email" autoComplete="email" autoFocus required
                 placeholder="you@studio.com" value={email}
+                className="h-field-h px-3.5 py-0 text-[14px]"
                 onChange={(e) => setEmail(e.target.value)} />
-              <button className="btn primary big" type="submit" disabled={busy || !email.trim()}>
+              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-cta bg-cta text-white inline-flex items-center justify-center cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border mt-2 w-full"
+                type="submit" disabled={busy || !email.trim()}>
                 {busy ? 'Sending…' : 'Send the code'}
               </button>
             </form>
           </>
         ) : (
           <>
-            <h1>Enter the code</h1>
-            <p className="auth-sub">Sent to <b>{email}</b>. It is good for an hour.</p>
-            <form onSubmit={submitCode} className="auth-form">
-              <label className="auth-label" htmlFor="code">Six-digit code</label>
+            <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em]">Enter the code</h1>
+            <p className="m-0 mb-[22px] text-muted text-[12.5px] leading-[1.6]">Sent to <b>{email}</b>. It is good for an hour.</p>
+            <form onSubmit={submitCode} className="flex flex-col gap-2">
+              <label className="text-[10px] tracking-[0.11em] uppercase text-subtle" htmlFor="code">Six-digit code</label>
               {/* `type="text"` is not decoration: the stylesheet reaches fields by
                   attribute selector, and an input with no type attribute is
                   matched by none of them — it was styled by the browser, not by
                   us. inputMode is what actually summons the numeric keypad. */}
-              <input id="code" ref={codeRef} className="otp" type="text" inputMode="numeric"
+              <input id="code" ref={codeRef} type="text" inputMode="numeric"
+                className="h-field-h px-3.5 py-0 text-[14px] tracking-[0.42em] text-center tabular-nums"
                 autoComplete="one-time-code" maxLength={6} placeholder="••••••"
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
-              <button className="btn primary big" type="submit" disabled={busy || code.length < 6}>
+              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-cta bg-cta text-white inline-flex items-center justify-center cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border mt-2 w-full"
+                type="submit" disabled={busy || code.length < 6}>
                 {busy ? 'Checking…' : 'Continue'}
               </button>
-              <div className="auth-alt">
-                <button type="button" className="linkish" disabled={!!resendIn}
+              <div className="flex justify-between gap-3 mt-3">
+                <button type="button"
+                  className="border-0 bg-transparent p-0 text-[11.5px] text-accent cursor-pointer no-underline hover:underline disabled:text-faint disabled:cursor-default disabled:no-underline"
+                  disabled={!!resendIn}
                   onClick={submitEmail}>
                   {resendIn ? `Resend in ${resendIn}s` : 'Resend the code'}
                 </button>
-                <button type="button" className="linkish"
+                <button type="button"
+                  className="border-0 bg-transparent p-0 text-[11.5px] text-accent cursor-pointer no-underline hover:underline"
                   onClick={() => { setStage('email'); setCode(''); setErr(''); }}>
                   Use a different email
                 </button>
@@ -161,11 +168,11 @@ export default function Login() {
           </>
         )}
 
-        {err && <p className="note err">{err}</p>}
+        {err && <p className="text-[11.5px] text-danger-ink leading-[1.5] mt-2 border-l-2 border-danger pl-[9px]">{err}</p>}
 
         {/* The honest sentence about the lost file — see pendingUpload.js. */}
         {loc.state?.upload && !waitingFile && !user && (
-          <p className="note">
+          <p className="text-[11.5px] text-muted leading-[1.5] mt-2">
             Your drawing was not carried over — the page reloaded. Sign in and drop it
             again from the dashboard.
           </p>

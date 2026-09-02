@@ -27,17 +27,20 @@ export default function Pager({ page, pages, total, perPage, noun = 'row', onPag
   const first = (page - 1) * perPage + 1;
   const last = known && total != null ? Math.min(page * perPage, total) : page * perPage;
 
+  const btn = 'font-sans text-xs leading-[1.5] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer ' +
+    'transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 ' +
+    'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
   return (
-    <nav className="pager" aria-label="Pagination">
-      <button className="btn" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+    <nav className="flex items-center justify-center gap-4 mt-6 mb-2" aria-label="Pagination">
+      <button className={btn} disabled={page <= 1} onClick={() => onPage(page - 1)}>
         ← Previous
       </button>
-      <span className="pager-at">
+      <span className="text-xs text-subtle font-sans min-w-[16ch] text-center">
         {total != null
           ? <>{first}–{last} of {total} {noun}{total === 1 ? '' : 's'}</>
           : <>Page {page}</>}
       </span>
-      <button className="btn" disabled={known && page >= pages} onClick={() => onPage(page + 1)}>
+      <button className={btn} disabled={known && page >= pages} onClick={() => onPage(page + 1)}>
         Next →
       </button>
     </nav>

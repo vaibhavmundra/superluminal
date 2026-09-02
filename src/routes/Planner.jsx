@@ -368,11 +368,13 @@ export default function Planner() {
 
   if (err && !plan) {
     return (
-      <div className="page-centre">
-        <div className="notice-card">
-          <h2>This plan could not be opened</h2>
-          <p>{err}</p>
-          <button className="btn" onClick={() => nav('/dashboard')}>Back to Dashboard</button>
+      <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
+        <div className="w-[min(460px,92%)] bg-surface border border-border rounded-lg p-6 text-center">
+          <h2 className="m-0 mb-2.5 text-lg tracking-[-0.025em]">This plan could not be opened</h2>
+          <p className="m-0 mb-3.5 text-[12.5px] text-muted leading-[1.6]">{err}</p>
+          <button
+            className="text-xs leading-[1.5] px-3 py-[7px] rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3"
+            onClick={() => nav('/dashboard')}>Back to Dashboard</button>
         </div>
       </div>
     );
@@ -380,9 +382,9 @@ export default function Planner() {
 
   if (!plan || !file) {
     return (
-      <div className="page-centre">
-        <div className="spinner" aria-label="Loading the drawing" />
-        <p className="note">{plan ? 'Reading the drawing…' : 'Opening…'}</p>
+      <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
+        <div className="w-[26px] h-[26px] rounded-full border-2 border-border border-t-accent animate-[sl-spin_0.8s_linear_infinite]" aria-label="Loading the drawing" />
+        <p className="text-[11.5px] text-muted leading-[1.5] mt-2">{plan ? 'Reading the drawing…' : 'Opening…'}</p>
       </div>
     );
   }

@@ -63,24 +63,24 @@ export default function Paywall({ refusal, onClose }) {
   }
 
   return (
-    <div className="modal-wrap"
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>
-      <div className="modal paywall">
+      <div className="w-[min(760px,94vw)] bg-surface border border-border rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]">
         {done ? (
           <>
-            <h2>You are on {TIER[state.tier]?.name ?? 'the new plan'}</h2>
-            <p className="note" style={{ margin: '0 0 20px' }}>
+            <h2 className="mt-0 mb-[6px] text-[17px] tracking-[-0.01em]">You are on {TIER[state.tier]?.name ?? 'the new plan'}</h2>
+            <p className="text-[11.5px] text-muted leading-[1.5] mt-0 mb-5">
               {fmtSqft(state.area.left)} available. Close this and light the plan —
               nothing has been lost.
             </p>
-            <div className="modal-foot">
-              <button className="btn primary" onClick={onClose}>Back to the drawing</button>
+            <div className="flex justify-end gap-2 mt-6">
+              <button className="text-[12px] py-[7px] px-3 rounded bg-cta text-white border border-cta cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover" onClick={onClose}>Back to the drawing</button>
             </div>
           </>
         ) : (
           <>
-            <h2>{isArea ? 'This plan is larger than what is left' : 'No render passes left'}</h2>
-            <p className="note" style={{ margin: '0 0 4px' }}>
+            <h2 className="mt-0 mb-[6px] text-[17px] tracking-[-0.01em]">{isArea ? 'This plan is larger than what is left' : 'No render passes left'}</h2>
+            <p className="text-[11.5px] text-muted leading-[1.5] mt-0 mb-1">
               {isArea ? (
                 <>
                   Lighting these spaces needs <b>{fmtSqft(refusal?.want ?? 0)}</b> and
@@ -105,13 +105,13 @@ export default function Paywall({ refusal, onClose }) {
               need={need}
               onChoose={(slug) => { setErr(''); setPicked(slug); }} />
 
-            {err && <p className="note err">{err}</p>}
+            {err && <p className="text-[11.5px] leading-[1.5] mt-2 text-danger-ink border-l-2 border-danger pl-[9px]">{err}</p>}
 
-            <div className="modal-foot spread">
-              <button className="btn secondary" onClick={() => nav('/pricing')}>
+            <div className="flex justify-between gap-2 mt-6">
+              <button className="text-[12px] py-[7px] px-3 rounded bg-surface text-ink border border-border-strong cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3" onClick={() => nav('/pricing')}>
                 See the full comparison
               </button>
-              <button className="btn" onClick={onClose}>Not now</button>
+              <button className="text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3" onClick={onClose}>Not now</button>
             </div>
           </>
         )}

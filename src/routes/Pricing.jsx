@@ -7,6 +7,11 @@ import { useAuth } from '../lib/auth.jsx';
 import { useBilling } from '../lib/billing.jsx';
 import { TIER, fmtSqft } from '../lib/plans.js';
 
+// The old bare `.btn` class, as Tailwind utilities — same split as
+// PlanPicker.jsx / RenderPassPanel.jsx.
+const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_DEFAULT = 'border-border bg-surface text-ink hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border';
+
 // ---------------------------------------------------------------------------
 // THE PRICING PAGE, AND IT IS A PUBLIC ONE.
 //
@@ -84,22 +89,27 @@ export default function Pricing() {
         { day: 'numeric', month: 'short', year: 'numeric' })
     : null;
 
+  // Same figure feeds the bar's width and its colour — see the CSS this
+  // replaces (`.usage-bar i[style*="width: 100%"]`), which turned the fill red
+  // once the meter reads full.
+  const usagePct = Math.min(100, (state.area.used / Math.max(1, state.area.allowed)) * 100);
+
   return (
-    <div className="home pricing">
-      <header className="home-top">
+    <div className="min-h-full flex flex-col">
+      <header className="h-14 flex-none flex items-center gap-3.5 max-[640px]:gap-2 px-[22px] max-[640px]:px-3.5 border-b border-border bg-[rgba(255,255,255,0.72)] backdrop-blur-[12px] backdrop-saturate-[180%]">
         <Wordmark />
-        <div className="spacer" />
-        <button className="btn" onClick={() => nav('/')}>Upload a plan</button>
+        <div className="flex-1" />
+        <button className={BTN_BASE + ' ' + BTN_DEFAULT} onClick={() => nav('/')}>Upload a plan</button>
         {authReady && (user
-          ? <button className="btn" onClick={() => nav('/dashboard')}>Your projects</button>
-          : <button className="btn" onClick={() => nav('/login')}>Sign in</button>)}
+          ? <button className={BTN_BASE + ' ' + BTN_DEFAULT} onClick={() => nav('/dashboard')}>Your projects</button>
+          : <button className={BTN_BASE + ' ' + BTN_DEFAULT} onClick={() => nav('/login')}>Sign in</button>)}
       </header>
 
-      <main className="pricing-main">
-        <div className="shell-inner">
-          <header className="page-head pricing-head">
+      <main className="flex-1 overflow-y-auto pt-5 px-[30px] pb-[70px] max-[760px]:pt-4 max-[760px]:px-[18px] max-[760px]:pb-[60px]">
+        <div className="w-full max-w-[1180px] mx-auto">
+          <header className="flex items-end justify-between gap-5 mt-1.5 mb-[30px] max-w-[66ch]">
             <div>
-              <h1>Pay for the area you light</h1>
+              <h1 className="m-0 text-[26px] tracking-[-0.03em]">Pay for the area you light</h1>
             </div>
           </header>
 
@@ -107,56 +117,61 @@ export default function Pricing() {
               strip on a cold visit would be three zeroes and a bar at 0%, which
               is chrome pretending to be information. */}
           {user && (
-            <section className="usage-strip">
-              <div className="usage-num">
-                <b>{fmtSqft(state.area.left)}</b>
-                <span>{state.unlimited ? 'no limit' : `left of ${fmtSqft(state.area.allowed)}`}</span>
+            <section className="grid grid-cols-[auto_1fr_auto] max-[760px]:grid-cols-1 gap-[18px] max-[760px]:gap-3 items-center bg-surface border border-border rounded-lg px-[18px] py-4 mb-[26px]">
+              <div>
+                <b className="block text-[20px] tracking-[-0.03em] tabular-nums">{fmtSqft(state.area.left)}</b>
+                <span className="text-[11px] text-subtle">{state.unlimited ? 'no limit' : `left of ${fmtSqft(state.area.allowed)}`}</span>
               </div>
               {/* AN UNLIMITED METER HAS NO BAR. A full-width blue bar would read
                   as "you have used everything" and an empty one as "you have used
                   nothing"; there is no honest position for a needle on a dial with
                   no end, so the dial goes. */}
-              <div className={'usage-bar' + (state.unlimited ? ' none' : '')}>
+              <div className={
+                'rounded-full overflow-hidden '
+                + (state.unlimited ? 'bg-border h-px self-center max-[760px]:self-stretch' : 'h-1.5 bg-surface-3')
+              }>
                 {!state.unlimited && (
-                  <i style={{ width: `${Math.min(100,
-                    (state.area.used / Math.max(1, state.area.allowed)) * 100)}%` }} />
+                  <i className={
+                    'block h-full rounded-full transition-[width] duration-300 '
+                    + (usagePct >= 100 ? 'bg-danger' : 'bg-accent')
+                  } style={{ width: `${usagePct}%` }} />
                 )}
               </div>
-              <div className="usage-side">
-                <span>
-                  <b>{TIER[state.tier]?.name ?? 'Free'}</b>
+              <div className="flex flex-col gap-[3px] text-right max-[760px]:text-left">
+                <span className="text-[11.5px] text-muted">
+                  <b className="text-ink">{TIER[state.tier]?.name ?? 'Free'}</b>
                   {state.unlimited ? ' · unmetered'
                     : state.lifetime ? ' · the free allowance does not refresh'
                     : endsOn ? ` · renews ${endsOn}` : ''}
                 </span>
                 {state.unlimited
-                  ? <span>{Math.round(state.area.used).toLocaleString('en-IN')} sq ft
+                  ? <span className="text-[11.5px] text-muted">{Math.round(state.area.used).toLocaleString('en-IN')} sq ft
                       {' '}and {state.passes.used} render pass
                       {state.passes.used === 1 ? '' : 'es'} used</span>
                   : state.passes.allowed > 0 && (
-                    <span>{state.passes.left} of {state.passes.allowed} render passes left</span>
+                    <span className="text-[11.5px] text-muted">{state.passes.left} of {state.passes.allowed} render passes left</span>
                   )}
                 {state.cancelAtPeriodEnd && (
-                  <span className="warnish">Cancelled — runs until {endsOn}</span>
+                  <span className="text-[11.5px] text-danger-ink">Cancelled — runs until {endsOn}</span>
                 )}
               </div>
             </section>
           )}
 
-          {msg && <p className="note ok-note">{msg}</p>}
-          {err && <p className="note err">{err}</p>}
+          {msg && <p className="text-[11.5px] leading-normal mt-2 bg-ok-soft border border-ok-line rounded text-ok py-[9px] px-[11px]">{msg}</p>}
+          {err && <p className="text-[11.5px] leading-normal mt-2 text-danger-ink border-l-2 border-danger pl-[9px]">{err}</p>}
 
           <PlanPicker current={user ? state.tier : 'free'} busyTier={busy ? picked : null}
             unlimited={state.unlimited} onChoose={choose} />
 
           {/* --- HOW THE METER WORKS ---------------------------------------- */}
-          <section className="page-sec pricing-faq">
-            <h3>How the meter works</h3>
+          <section className="mb-[34px]">
+            <h3 className="mb-[18px]">How the meter works</h3>
 
-            <div className="faq-grid">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-[22px_30px]">
               <div>
-                <h4>What is measured</h4>
-                <p>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">What is measured</h4>
+                <p className="m-0 text-xs leading-[1.65] text-muted">
                   The built area of the spaces you light — the sum of the outlines,
                   not the size of the sheet. A title block, a margin and a site plan
                   parked off to one side cost you nothing, which is why the same
@@ -164,16 +179,16 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4>When it is charged</h4>
-                <p>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">When it is charged</h4>
+                <p className="m-0 text-xs leading-[1.65] text-muted">
                   When a space is lit, once, at the area it had at that moment. The
                   outlines, the room detection, the scale, the BOQ and every export
                   format are not metered separately — they come with the layout.
                 </p>
               </div>
               <div>
-                <h4>Fixing a wall does not cost twice</h4>
-                <p>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">Fixing a wall does not cost twice</h4>
+                <p className="m-0 text-xs leading-[1.65] text-muted">
                   Charging is per space, not per drawing. If the detector gets nine
                   rooms right and one wrong, you drag the corners on that one and
                   re-light: the nine are already paid for and only the room whose
@@ -182,8 +197,8 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4>Render passes are counted, not measured</h4>
-                <p>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">Render passes are counted, not measured</h4>
+                <p className="m-0 text-xs leading-[1.65] text-muted">
                   A render pass reads the interior views you already have and marks
                   the panelling, the art and the shelving back onto the plan. It
                   costs the same whether the wall is nine feet or ninety, so it is
@@ -191,8 +206,8 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4>Running out mid-drawing</h4>
-                <p>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">Running out mid-drawing</h4>
+                <p className="m-0 text-xs leading-[1.65] text-muted">
                   Nothing is lost. The layout is refused before it runs, the outlines
                   stay exactly as you drew them, and the plan is waiting where you
                   left it once the allowance is there. There is no partial layout —
@@ -200,8 +215,8 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4>The free allowance is once</h4>
-                <p>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">The free allowance is once</h4>
+                <p className="m-0 text-xs leading-[1.65] text-muted">
                   3,000 sq ft, not refreshed monthly. It is enough to take one real
                   flat all the way through — detection, layout, schedule, DXF — so
                   the decision to pay is made against a finished drawing rather than
@@ -212,9 +227,9 @@ export default function Pricing() {
           </section>
 
           {user && state.tier !== 'free' && !state.unlimited && !state.cancelAtPeriodEnd && (
-            <section className="page-sec">
-              <p className="note">
-                <button className="linkish danger" onClick={async () => {
+            <section className="mb-[34px]">
+              <p className="text-[11.5px] text-muted leading-normal mt-2">
+                <button className="border-0 bg-transparent text-[11.5px] text-danger-ink p-0 no-underline cursor-pointer hover:underline" onClick={async () => {
                   if (!confirm('Cancel at the end of this month?\n\n'
                     + 'You keep everything until ' + (endsOn || 'the period ends')
                     + ', and nothing you have drawn is affected.')) return;

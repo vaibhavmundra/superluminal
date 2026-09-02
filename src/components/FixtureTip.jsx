@@ -33,22 +33,36 @@ export default function FixtureTip({ tip }) {
   const flipY = tip.y + OFF + H > vh - 8;
 
   return (
-    <div className="fixture-tip" role="tooltip"
+    <div
+      /* The blur IS the effect and the rgba fallback is for anywhere it is
+         unsupported — hence a real alpha rather than a token. See the note this
+         replaces in styles.css. */
+      className="fixed z-40 pointer-events-none min-w-[172px] max-w-[260px]
+        pt-2.5 px-3 pb-[9px] rounded-lg bg-white/[0.72]
+        backdrop-saturate-[1.8] backdrop-blur-[18px] border border-black/[0.09]
+        shadow-[0_8px_26px_rgba(10,10,10,.14),0_1px_2px_rgba(10,10,10,.08)]
+        animate-[tip-in_.11s_ease-out] motion-reduce:animate-none"
+      role="tooltip"
       style={{
         left: flipX ? undefined : tip.x + OFF,
         right: flipX ? Math.max(8, vw - tip.x + OFF) : undefined,
         top: flipY ? undefined : tip.y + OFF,
         bottom: flipY ? Math.max(8, vh - tip.y + OFF) : undefined,
       }}>
-      <h4>{tip.label}</h4>
-      <dl>
+      <h4 className="m-0 mb-[7px] text-xs text-ink tracking-[-0.01em] leading-[1.25]">{tip.label}</h4>
+      <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-[3px]">
         {tip.rows.map(([k, v]) => (
           <div key={k} style={{ display: 'contents' }}>
-            <dt>{k}</dt><dd>{v}</dd>
+            <dt className="text-[11px] text-muted whitespace-nowrap">{k}</dt>
+            <dd className="m-0 font-sans text-[11px] text-ink text-right tabular-nums">{v}</dd>
           </div>
         ))}
       </dl>
-      {tip.note && <p>{tip.note}</p>}
+      {tip.note && (
+        <p className="mt-2 pt-[7px] border-t border-black/[0.08] text-[10.5px] leading-[1.4] text-subtle">
+          {tip.note}
+        </p>
+      )}
     </div>
   );
 }

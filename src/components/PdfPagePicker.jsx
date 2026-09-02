@@ -20,29 +20,33 @@ import React from 'react';
 
 export default function PdfPagePicker({ name, pages, thumbs, onPick, onCancel }) {
   return (
-    <div className="modal-wrap">
-      <div className="modal wide">
-        <h2>Which page is the plan?</h2>
-        <p className="note" style={{ margin: '0 0 16px' }}>
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]">
+      <div className="w-[min(620px,94vw)] bg-surface border border-border rounded-[14px] pt-[22px] px-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]">
+        <h2 className="m-0 mb-1.5 text-[17px] tracking-[-0.01em]">Which page is the plan?</h2>
+        <p className="text-[11.5px] text-muted leading-normal m-0 mb-4">
           <b>{name}</b> has {pages} pages. Pick the floor plan — the others can be
           opened later as their own plans.
         </p>
 
-        <div className="pdf-pages">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(122px,1fr))] gap-2.5 max-h-[min(52vh,440px)] overflow-y-auto p-0.5">
           {Array.from({ length: pages }, (_, i) => i + 1).map((n) => (
-            <button key={n} className="pdf-page" onClick={() => onPick(n)}>
-              <span className="pdf-thumb">
+            <button key={n}
+              className="border border-border bg-surface rounded p-[7px] cursor-pointer flex flex-col gap-1.5 transition-colors duration-[120ms] hover:border-accent hover:bg-accent-soft"
+              onClick={() => onPick(n)}>
+              <span className="aspect-[1/1.35] bg-surface-3 border border-border rounded-[3px] grid place-items-center overflow-hidden">
                 {thumbs[n]
-                  ? <img src={thumbs[n]} alt="" />
-                  : <span className="pdf-thumb-wait" aria-hidden="true" />}
+                  ? <img src={thumbs[n]} alt="" className="w-full h-full object-contain block bg-white" />
+                  : <span className="w-4 h-4 rounded-full border-2 border-border-strong border-t-accent animate-[sl-spin_0.8s_linear_infinite]" aria-hidden="true" />}
               </span>
-              <span className="pdf-page-no">Page {n}</span>
+              <span className="text-[10.5px] tracking-[0.06em] uppercase text-subtle text-center">Page {n}</span>
             </button>
           ))}
         </div>
 
-        <div className="modal-foot">
-          <button className="btn secondary" onClick={onCancel}>Cancel</button>
+        <div className="flex justify-end gap-2 mt-6">
+          <button
+            className="text-[12px] px-3 py-[7px] rounded border border-border-strong bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3"
+            onClick={onCancel}>Cancel</button>
         </div>
       </div>
     </div>

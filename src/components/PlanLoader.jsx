@@ -62,9 +62,9 @@ export default function PlanLoader({
 }) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   return (
-    <div className="loader-wrap">
-      <div className="loader-stage">
-        <svg viewBox={`0 0 ${width} ${height}`} className="loader-plan"
+    <div className="absolute inset-0 z-40 grid place-items-center bg-[rgba(250,250,252,.93)] backdrop-blur-[2px]">
+      <div className="grid grid-cols-[minmax(0,1fr)_260px] gap-[26px] items-center w-[min(1020px,calc(100%-56px))] max-[900px]:grid-cols-[minmax(0,1fr)] max-[900px]:gap-4">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full max-h-[min(62vh,560px)] block"
           preserveAspectRatio="xMidYMid meet">
           <defs>
             <linearGradient id="sl-fill" x1="0" y1="0" x2="1" y2="1">
@@ -114,10 +114,12 @@ export default function PlanLoader({
           })}
         </svg>
 
-        <div className="loader-panel">
-          <div className="loader-phase">{phase}</div>
-          {detail && <div className="loader-detail">{detail}</div>}
-          <div className="loader-bar"><i style={{ width: `${pct}%` }} /></div>
+        <div>
+          <div className="text-[15px] tracking-[-0.01em] text-ink">{phase}</div>
+          {detail && <div className="text-[11.5px] text-muted mt-[3px] min-h-[15px]">{detail}</div>}
+          <div className="h-[3px] rounded-[2px] bg-grid mt-3 mb-3.5 overflow-hidden">
+            <i className="block h-full bg-accent rounded-[2px] transition-[width] duration-[350ms] ease-in-out" style={{ width: `${pct}%` }} />
+          </div>
           <ol className="loader-steps">
             {steps.map((s) => (
               <li key={s.key} className={s.state}>

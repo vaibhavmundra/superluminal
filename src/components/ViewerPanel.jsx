@@ -37,6 +37,11 @@ const LAYER_ROWS = [
   ['dim', 'Dimensions'],
 ];
 
+const SEC = 'border-t border-border pt-3.5 mt-2.5 first-of-type:border-t-0 first-of-type:mt-0 first-of-type:pt-0';
+const SEC_H3 = 'm-0 mb-2.5 text-[10px] tracking-[0.11em] uppercase text-subtle';
+const NOTE = 'text-[11.5px] text-muted leading-[1.5] mt-2';
+const BTN = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
+
 export default function ViewerPanel({
   rooms = [], totals, boq, layers, onToggleLayer,
   focusId = null, onFocus, surfaceCount = 0, accentCount = 0, spotCount = 0,
@@ -46,37 +51,47 @@ export default function ViewerPanel({
 
   return (
     <>
-      <div className="sec">
-        <h3>This plan</h3>
+      <div className={SEC}>
+        <h3 className={SEC_H3}>This plan</h3>
         {totals.rooms === 0 ? (
-          <p className="note">
+          <p className={NOTE}>
             No space on this drawing has a lighting layout yet — the user has
             uploaded it and stopped somewhere before the design.
           </p>
         ) : (
-          <div className="viewer-tiles">
-            <div className="viewer-tile"><b>{totals.rooms}</b><span>spaces lit</span></div>
-            <div className="viewer-tile"><b>{totals.lights}</b><span>fittings</span></div>
-            <div className="viewer-tile"><b>{Math.round(totals.areaSqft)}</b><span>sqft</span></div>
+          <div className="flex gap-2 mt-2.5">
+            <div className="flex-1 py-[9px] px-2.5 rounded bg-surface-3 border border-border flex flex-col gap-px">
+              <b className="text-[16px] leading-[1.1]">{totals.rooms}</b>
+              <span className="text-[10.5px] text-subtle">spaces lit</span>
+            </div>
+            <div className="flex-1 py-[9px] px-2.5 rounded bg-surface-3 border border-border flex flex-col gap-px">
+              <b className="text-[16px] leading-[1.1]">{totals.lights}</b>
+              <span className="text-[10.5px] text-subtle">fittings</span>
+            </div>
+            <div className="flex-1 py-[9px] px-2.5 rounded bg-surface-3 border border-border flex flex-col gap-px">
+              <b className="text-[16px] leading-[1.1]">{Math.round(totals.areaSqft)}</b>
+              <span className="text-[10.5px] text-subtle">sqft</span>
+            </div>
           </div>
         )}
         {totals.failed > 0 && (
-          <p className="note warn" style={{ marginTop: 10 }}>
+          <p className="text-[11.5px] leading-[1.5] text-muted border-l-2 border-border-strong pl-[9px] mt-2.5">
             {totals.failed} space{totals.failed > 1 ? 's' : ''} produced no layout.
           </p>
         )}
       </div>
 
       {!!laid.length && (
-        <div className="sec">
-          <h3>Spaces</h3>
-          <div className="viewer-rooms">
+        <div className={SEC}>
+          <h3 className={SEC_H3}>Spaces</h3>
+          <div className="flex flex-col gap-[3px] mt-2">
             {laid.map((r) => (
               <button key={r.id}
-                className={'viewer-room' + (focusId === r.id ? ' on' : '')}
+                className={'flex flex-col gap-px text-left py-[7px] px-[9px] rounded border cursor-pointer transition-colors duration-[120ms] hover:bg-surface-3 '
+                  + (focusId === r.id ? 'bg-surface-3 border-accent' : 'bg-transparent border-transparent')}
                 onClick={() => onFocus?.(focusId === r.id ? null : r.id)}>
-                <span className="viewer-room-name">{r.outline?.name || 'Space'}</span>
-                <span className="viewer-room-n">
+                <span className="text-[12.5px] text-ink">{r.outline?.name || 'Space'}</span>
+                <span className="text-[11px] text-subtle">
                   {r.plan.lights.length} fitting{r.plan.lights.length === 1 ? '' : 's'}
                   {' · '}{Math.round(r.plan.stats.areaSqft)} sqft
                 </span>
@@ -87,37 +102,37 @@ export default function ViewerPanel({
       )}
 
       {(surfaceCount > 0 || accentCount > 0 || spotCount > 0) && (
-        <div className="sec">
-          <h3>What the models found</h3>
+        <div className={SEC}>
+          <h3 className={SEC_H3}>What the models found</h3>
           {/* THE THREE MODEL-PROPOSED LAYERS, counted. This is the closest thing
               on this screen to the question the console exists to answer — not
               "did they get a layout" but "did the accent pass and the task pass
               actually contribute anything on a real drawing". */}
-          <div className="kv"><span>Accent fittings</span><b>{accentCount}</b></div>
-          <div className="kv"><span>Task surfaces</span><b>{surfaceCount}</b></div>
-          <div className="kv"><span>Task lights</span><b>{spotCount}</b></div>
+          <div className="flex justify-between text-[11.5px] py-[3px] text-muted"><span>Accent fittings</span><b className="text-ink tabular-nums">{accentCount}</b></div>
+          <div className="flex justify-between text-[11.5px] py-[3px] text-muted"><span>Task surfaces</span><b className="text-ink tabular-nums">{surfaceCount}</b></div>
+          <div className="flex justify-between text-[11.5px] py-[3px] text-muted"><span>Task lights</span><b className="text-ink tabular-nums">{spotCount}</b></div>
         </div>
       )}
 
-      <div className="sec">
-        <h3>Layers</h3>
-        <div className="viewer-layers">
+      <div className={SEC}>
+        <h3 className={SEC_H3}>Layers</h3>
+        <div className="grid grid-cols-2 gap-x-2.5 gap-y-0.5 mt-2">
           {LAYER_ROWS.map(([k, label]) => (
-            <label className="check" key={k}>
-              <input type="checkbox" checked={!!layers[k]} onChange={onToggleLayer(k)} />
+            <label className="flex items-center gap-2 mb-[7px] text-muted cursor-pointer" key={k}>
+              <input type="checkbox" className="accent-accent w-3.5 h-3.5 m-0" checked={!!layers[k]} onChange={onToggleLayer(k)} />
               {label}
             </label>
           ))}
         </div>
       </div>
 
-      <div className="sec">
-        <h3>Take it away</h3>
-        <p className="note" style={{ marginTop: 2, marginBottom: 10 }}>
+      <div className={SEC}>
+        <h3 className={SEC_H3}>Take it away</h3>
+        <p className="text-[11.5px] text-muted leading-[1.5] mt-0.5 mb-2.5">
           The exports are the same files the user gets. Nothing here writes to
           their plan.
         </p>
-        <button className="btn" style={{ width: '100%', marginBottom: 8 }}
+        <button className={BTN + ' w-full mb-2'}
           disabled={!boq || (!boq.lines?.length && !boq.rooms?.length)}
           onClick={onOpenBOQ}>
           Open the schedule
@@ -126,16 +141,16 @@ export default function ViewerPanel({
             produced a different drawing to the DXF button below it, and the
             operator on this screen has no way of knowing which one the designer
             meant. See the Export section in App.jsx. */}
-        <div className="btnrow">
-          <button className="btn" disabled={!totals.rooms} onClick={() => onExport('dxf')}>DXF</button>
-          <button className="btn" onClick={() => onExport('svg')}>SVG</button>
-          <button className="btn" onClick={() => onExport('png')}>PNG</button>
+        <div className="flex gap-[6px] flex-wrap">
+          <button className={BTN} disabled={!totals.rooms} onClick={() => onExport('dxf')}>DXF</button>
+          <button className={BTN} onClick={() => onExport('svg')}>SVG</button>
+          <button className={BTN} onClick={() => onExport('png')}>PNG</button>
         </div>
-        <p className="note" style={{ marginTop: 8 }}>
-          The DXF is the drawing on screen, on <code>superluminal_</code> layers
+        <p className="text-[11.5px] text-muted leading-[1.5] mt-2">
+          The DXF is the drawing on screen, on <code className="font-sans text-[10px] bg-input-bg px-[3px] rounded-[3px] text-ink">superluminal_</code> layers
           split by trade —{' '}
           {isVector
-            ? 'in the original drawing\u2019s own units and origin.'
+            ? 'in the original drawing’s own units and origin.'
             : 'in feet, since this plan came from an image.'}
         </p>
       </div>

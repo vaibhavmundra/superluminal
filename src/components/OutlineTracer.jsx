@@ -93,6 +93,99 @@ const GUIDE = '#0070F3';
 // can switch them off like any other.
 const TRACED_LAYER = 'outlines traced';
 
+// ---------------------------------------------------------------------------
+// THE DESIGN LANGUAGE, AS UTILITY STRINGS — the same set App.jsx names, for the
+// same reason: these were `.btn`, `.note`, `.kv`, `.sec` and their neighbours
+// in styles.css, used dozens of times each in the panel below.
+//
+// EVERY VARIANT IS BUILT FROM A SHAPE THAT DOES NOT SET WHAT THE VARIANT SETS.
+// `BTN + ' bg-cta'` does NOT give a filled button: Tailwind resolves two
+// utilities touching one property by their order in the GENERATED stylesheet,
+// not their order in the class attribute, so the base wins and the variant
+// silently does nothing. Hence a shape plus a colourway, never an append.
+//
+// `leading-[1.5]` on the button carries what `.btn` inherited from body and
+// Tailwind's `text-xs` would otherwise overwrite with its own 1rem.
+// ---------------------------------------------------------------------------
+const BTN_SHAPE = 'leading-[1.5] rounded border cursor-pointer '
+  + 'transition-[background-color,border-color,color] duration-[120ms] '
+  + 'disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_QUIET = 'bg-surface text-ink border-border hover:bg-surface-2 '
+  + 'hover:border-border-strong active:bg-surface-3 '
+  + 'disabled:hover:bg-surface disabled:hover:border-border';
+const BTN_CTA = 'bg-cta text-white border-cta hover:bg-cta-hover hover:border-cta-hover';
+const BTN = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_QUIET}`;
+const BTN_FULL = `${BTN} w-full`;
+const BTN_PRIMARY = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_CTA}`;
+const BTN_PRIMARY_FULL = `${BTN_PRIMARY} w-full`;
+const BTN_TINY = `text-[11px] px-[5px] py-0 ${BTN_SHAPE} ${BTN_QUIET}`;
+/* One of the three door widths: full width in the grid, and centred. */
+const BTN_DOOR = `text-[12px] w-full px-1 py-[7px] text-center ${BTN_SHAPE} ${BTN_QUIET}`;
+const BTN_DOOR_CTA = `text-[12px] w-full px-1 py-[7px] text-center ${BTN_SHAPE} ${BTN_CTA}`;
+/* ...and the quieter "or, if you know" row under them. */
+const BTN_CUSTOM = `text-[11.5px] w-full mt-1.5 px-3 py-[7px] ${BTN_SHAPE} `
+  + 'bg-surface text-muted border-border hover:bg-surface-2 hover:border-border-strong '
+  + 'active:bg-surface-3';
+
+/* ATTENTION, NOT ALARM: the warnings here are mostly guidance — "set the scale
+   above first" — so the default is quiet, with a rule down the left saying
+   "read this". `NE` is the red one, for something that actually failed.
+   `N`/`NW` are the margin-less shapes, for the sites that set their own. */
+const N = 'text-[11.5px] text-muted leading-[1.5]';
+const NW = `${N} border-l-2 border-border-strong pl-[9px] ml-0`;
+const NE = 'text-[11.5px] leading-[1.5] mt-2 text-danger-ink border-l-2 border-danger pl-[9px]';
+const NOTE = `${N} mt-2`;
+const NOTE_WARN = `${NW} mt-2`;
+
+/* TABULAR FIGURES WHEREVER A NUMBER IS READ DOWN A COLUMN. */
+const KV = 'flex justify-between text-[11.5px] py-[3px] text-muted '
+  + '[&>b]:text-ink [&>b]:tabular-nums';
+const BTNROW = 'flex gap-1.5 flex-wrap';
+const SEC = 'border-t border-border pt-3.5 mt-2.5 '
+  + 'first-of-type:border-t-0 first-of-type:mt-0 first-of-type:pt-0';
+const H3 = 'mt-0 mx-0 mb-2.5 text-[10px] tracking-[0.11em] uppercase text-subtle';
+const CHECK = 'flex items-center gap-2 mb-[7px] text-muted cursor-pointer '
+  + '[&>input]:accent-accent [&>input]:w-3.5 [&>input]:h-3.5 [&>input]:m-0';
+const ROW = 'flex items-center justify-between gap-2.5 mb-[9px] '
+  + '[&>label]:text-muted [&>label]:flex-1 [&>label]:min-w-0';
+
+/* THE TWO-WAY SWITCH above the scale controls. */
+const SEG = 'flex bg-surface-3 border border-border rounded p-0.5 gap-0.5 mb-2.5';
+const SEG_SHAPE = 'flex-1 border-0 text-[11.5px] leading-[1.5] px-1 py-1.5 rounded cursor-pointer';
+const SEG_BTN = `${SEG_SHAPE} bg-transparent text-muted`;
+const SEG_BTN_ON = `${SEG_SHAPE} bg-surface text-ink shadow-[0_1px_2px_rgba(0,0,0,.06)]`;
+
+/* THE HUD ON THE DRAWING: only what changes as you work. */
+const HUD = 'absolute left-2.5 bottom-2.5 flex gap-1.5 flex-wrap pointer-events-none tabular-nums';
+const CHIP_SHAPE = 'font-sans text-[10px] px-[7px] py-[3px] rounded-full border whitespace-nowrap';
+const CHIP = `${CHIP_SHAPE} bg-white/[0.92] border-border text-muted`;
+const CHIP_ON = `${CHIP_SHAPE} border-accent-line bg-accent-soft text-accent`;
+
+/* A ROW IN THE LIST OF SPACES. `border-transparent` lives on the off-state
+   rather than the shape, because the on-state sets border-colour too. */
+const ROW_EDGE = 'rounded-[7px] mb-[3px] border px-1.5 py-[5px]';
+const ROW_OFF = 'border-transparent';
+const ROW_ON = 'bg-surface-3 border-border-strong';
+const ROW_PICK = 'cursor-pointer hover:bg-surface-3 focus:outline-none '
+  + 'focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1';
+/* Three columns: the colour dot, the name, the area. */
+const PICK = 'grid grid-cols-[10px_minmax(0,1fr)_auto] gap-[7px] items-center w-full '
+  + 'border-0 bg-none p-0 text-left cursor-[inherit]';
+const NAME = 'font-sans text-[11px] text-text overflow-hidden text-ellipsis whitespace-nowrap';
+const META = 'flex justify-between items-center gap-1.5 text-[10px] text-subtle mt-[3px] '
+  + 'tabular-nums [&>span]:flex [&>span]:items-center [&>span]:gap-[5px]';
+const COUNT = 'font-sans text-[10px] text-subtle';
+const MINI = 'flex items-center gap-[3px] text-[10px] text-subtle cursor-pointer '
+  + '[&>input]:w-[11px] [&>input]:h-[11px] [&>input]:m-0 [&>input]:accent-accent';
+
+/* THE DXF'S LAYERS: a checkbox, a name, a count. */
+const LAYER_SHAPE = 'grid grid-cols-[14px_minmax(0,1fr)_auto_auto] gap-[7px] items-center '
+  + 'px-[5px] py-[3px] rounded cursor-pointer text-[11.5px] '
+  + '[&>input]:accent-accent [&>input]:w-[13px] [&>input]:h-[13px] [&>input]:m-0';
+const LAYER_ROW = `${LAYER_SHAPE} text-muted hover:bg-input-bg`;
+const LAYER_ROW_ON = `${LAYER_SHAPE} bg-accent-soft text-accent`;
+const LAYER_NAME = 'font-sans text-[10.5px] overflow-hidden text-ellipsis whitespace-nowrap tabular-nums';
+
 // Grid increments offered, in inches. Coarser than three inches and a grid
 // stops being a nicety and starts moving walls.
 
@@ -131,13 +224,25 @@ export default function OutlineTracer({
   onMovePoint, onInsertPoint, onRemovePoint, onProceed,
   detectState = null, onRedetect = null,
   unitId, unitCandidates, onUnitChange,
-  scale: scaleUI,
+  scale: scaleUI, invert = false,
 }) {
   const wrapRef = useRef(null);
   const stageRef = useRef(null);
   const { w: SW, h: SH } = useSize(wrapRef);
 
   const isRaster = source.kind === 'raster';
+
+  /* Re-applied whenever the flag, the source or the stage size changes: Konva
+     rebuilds a layer's canvas element on resize, and a style set on the old node
+     goes with it. Cheap enough to just state again. */
+  const planLayer = useRef(null);
+  useEffect(() => {
+    const layer = planLayer.current;
+    if (!layer) return;
+    const canvas = layer.getNativeCanvasElement?.();
+    if (!canvas) return;
+    canvas.classList.toggle('plan-invert', invert && isRaster);
+  }, [invert, isRaster, source, SW, SH]);
   const hasScale = pxPerFt > 0;
 
   const [zoom, setZoom] = useState(1);
@@ -591,10 +696,11 @@ export default function OutlineTracer({
     : 'Trace the space';
 
   return (
-    <div className="picker tracer">
-      <div className="picker-head">
-        <h2 className="wordmark">{headline}</h2>
-        <p>
+    <div className="max-w-[1400px] mx-auto">
+      <div className="mb-4">
+        <h2 className="font-display mt-0 mx-0 mb-1.5 text-[19px] leading-none
+          tracking-[-0.025em] uppercase text-ink whitespace-nowrap">{headline}</h2>
+        <p className="m-0 text-muted max-w-[78ch]">
           {measuring
             ? <>Click the two ends of something you can name, then say what it is.</>
             : doorScreen
@@ -612,8 +718,12 @@ export default function OutlineTracer({
         </p>
       </div>
 
-      <div className="rooms-layout">
-        <div className="rooms-plan tracer-plan" ref={wrapRef}
+      <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-[18px] items-start
+        [@media(max-width:1080px)]:grid-cols-[minmax(0,1fr)]">
+        <div ref={wrapRef}
+          className="bg-surface border border-border rounded-[12px]
+            shadow-[0_1px_2px_rgba(10,10,10,.04)] min-w-0
+            relative p-0 overflow-hidden h-[calc(100vh-262px)] min-h-[380px]"
           onAuxClick={(e) => e.preventDefault()}
           style={{ cursor: midPan ? 'grabbing'
             : panMode ? 'grab'
@@ -646,7 +756,19 @@ export default function OutlineTracer({
             onMouseLeave={() => setSnap(null)}
           >
             {/* the plan */}
-            <Layer listening={false}>
+            {/* THE INVERSION HAS TO BE PUT ON THE CANVAS BY HAND HERE, and that
+                is the whole reason this layer has a ref. Konva paints each Layer
+                into its own `<canvas>`, and a `<canvas>` is opaque to anything
+                Tailwind or JSX can say about its contents — there is no element
+                per shape to hang a class on. What there IS is exactly one DOM
+                node per layer, and this layer holds the scan and nothing else,
+                so the same `.plan-invert` rule the SVG renderer uses inverts
+                precisely the plan and leaves every outline, grip and guide on
+                the layers above it alone.
+                RASTER ONLY: on a DXF this layer holds our own paths, drawn by us
+                in colours we chose, and inverting those inverts our ink rather
+                than the plan. */}
+            <Layer listening={false} ref={planLayer}>
               {isRaster
                 ? source.el && <KImage image={source.el} width={source.w} height={source.h} />
                 : <>
@@ -918,26 +1040,33 @@ export default function OutlineTracer({
           {/* Only what changes as you work. The keyboard reference that used to
               live here — scroll to zoom, middle-drag or space to pan, F to fit —
               was static text taking up a third of the bar. */}
-          <div className="tracer-hud">
-            {midPan && <span className="chip on">panning</span>}
+          <div className={HUD}>
+            {midPan && <span className={CHIP_ON}>panning</span>}
             {!doorScreen && <>
-            {!ortho && <span className="chip">free angle</span>}
-            {drag && <span className="chip on">{shift ? 'nudging · square' : 'nudging · free'}</span>}
+            {!ortho && <span className={CHIP}>free angle</span>}
+            {drag && <span className={CHIP_ON}>{shift ? 'nudging · square' : 'nudging · free'}</span>}
             {(drag?.snap || (!drag && snap)) && (
-              <span className="chip snap">{(drag?.snap || snap).label}</span>
+              <span className={CHIP_ON}>{(drag?.snap || snap).label}</span>
             )}
             </>}
           </div>
         </div>
 
-        <div className={'rooms-side' + (doorScreen ? ' door-only' : '')}>
+        {/* `door-only` MADE THIS PANEL A COLUMN so the one question in it could
+            sit in the middle. Same rule, now on the element that has it. */}
+        <div className={'bg-surface border border-border rounded-[12px] p-3.5 '
+          + 'shadow-[0_1px_2px_rgba(10,10,10,.04)] overflow-auto '
+          + 'max-h-[calc(100vh-260px)] [@media(max-width:1080px)]:max-h-none '
+          + (doorScreen
+            ? 'h-[calc(100vh-262px)] [@media(max-width:1080px)]:h-auto flex flex-col'
+            : '')}>
           {/* --- the scale, on an image ------------------------------------ */}
           {isRaster && scaleUI && (
-            <div className="sec">
-              <h3>Scale{hasScale ? '' : ' — needed first'}</h3>
-              <div className="seg">
+            <div className={SEC + (doorScreen ? ' flex flex-col flex-1 min-h-0' : '')}>
+              <h3 className={H3}>Scale{hasScale ? '' : ' — needed first'}</h3>
+              <div className={SEG}>
                 {[['door', 'Doors'], ['ref', 'Measure']].map(([k, l]) => (
-                  <button key={k} className={scaleUI.mode === k ? 'on' : ''}
+                  <button key={k} className={scaleUI.mode === k ? SEG_BTN_ON : SEG_BTN}
                     onClick={() => scaleUI.setMode(k)}>{l}</button>
                 ))}
               </div>
@@ -945,17 +1074,17 @@ export default function OutlineTracer({
               {/* --- from a door ------------------------------------------- */}
               {scaleUI.mode === 'door' && (<>
                 {scaleUI.doorState?.status === 'running' && (
-                  <p className="note" style={{ marginTop: 8 }}>Looking for doors…</p>
+                  <p className={NOTE}>Looking for doors…</p>
                 )}
 
                 {scaleUI.doorState?.status === 'error' && (
-                  <p className="note warn" style={{ marginTop: 8 }}>
+                  <p className={NOTE_WARN}>
                     The door detector could not be reached. Measure something instead.
                   </p>
                 )}
 
                 {scaleUI.doorState?.status === 'done' && !scaleUI.doors.length && (
-                  <p className="note warn" style={{ marginTop: 8 }}>
+                  <p className={NOTE_WARN}>
                     No doors found on this plan. Measure something instead.
                   </p>
                 )}
@@ -968,9 +1097,11 @@ export default function OutlineTracer({
                     the only instruction on the screen, so it is set at display
                     size and given the whole panel to sit in the middle of. */}
                 {!!scaleUI.doors.length && !picked && (
-                  <div className="door-ask">
-                    <p className="door-ask-h">Select a door whose dimension you know.</p>
-                    <p className="door-ask-p">
+                  <div className="flex-1 flex flex-col justify-center items-center
+                    text-center gap-2.5 px-1 py-4 [@media(max-width:1080px)]:py-[22px]">
+                    <p className="m-0 text-[17px] leading-[1.32] tracking-[-0.02em]
+                      text-ink max-w-[20ch]">Select a door whose dimension you know.</p>
+                    <p className="m-0 text-[12px] leading-[1.5] text-muted max-w-[28ch]">
                       If you wish to proceed with another dimension, click on the
                       Measure tab above.
                     </p>
@@ -988,21 +1119,21 @@ export default function OutlineTracer({
                     below the three rather than among them because it is the
                     exception: a full-width row reads as "or, if you know". */}
                 {picked && (<>
-                  <p className="note" style={{ marginTop: 8, marginBottom: 6 }}>
+                  <p className={`${N} mt-2 mb-1.5`}>
                     How wide is this door? Its opening measures{' '}
                     <b>{picked.openingPx.toFixed(0)} px</b>.
                   </p>
-                  <div className="door-widths">
+                  <div className="grid grid-cols-3 gap-1.5">
                     {scaleUI.widths.map((w) => (
                       <button key={w.mm}
-                        className={'btn' + (scaleUI.pick?.mm === w.mm && !isCustomMm ? ' primary' : '')}
+                        className={scaleUI.pick?.mm === w.mm && !isCustomMm ? BTN_DOOR_CTA : BTN_DOOR}
                         onClick={() => { setCustomOpen(false); scaleUI.onSetWidth(w.mm); }}
                         title={w.note}>{w.label}</button>
                     ))}
                   </div>
 
                   {!customOpen ? (
-                    <button className="btn door-custom-open"
+                    <button className={BTN_CUSTOM}
                       onClick={() => {
                         // Seed the field with the width already in force, so
                         // "Custom — 825mm" opens on 825 rather than on empty.
@@ -1012,14 +1143,16 @@ export default function OutlineTracer({
                       {isCustomMm ? `Custom — ${scaleUI.pick.mm}mm` : 'Enter a custom width…'}
                     </button>
                   ) : (
-                    <div className="door-custom">
-                      <label htmlFor="door-custom-mm">Door width</label>
-                      <div className="door-custom-row">
+                    <div className="mt-1.5 p-2 rounded bg-surface-3 border border-border">
+                      <label className="block text-[11px] text-subtle mb-1"
+                        htmlFor="door-custom-mm">Door width</label>
+                      <div className="flex items-center gap-1.5">
                         {/* type=text, not number. A number input silently eats a
                             typed comma, spins the value on a stray scroll over
                             it, and hides the one thing worth showing here —
                             WHY a value was refused. */}
                         <input id="door-custom-mm" type="text" inputMode="numeric"
+                          className="flex-1 min-w-0"
                           autoFocus value={customMm}
                           placeholder="e.g. 825"
                           onChange={(e) => setCustomMm(e.target.value)}
@@ -1029,8 +1162,8 @@ export default function OutlineTracer({
                             }
                             if (e.key === 'Escape') setCustomOpen(false);
                           }} />
-                        <span className="door-custom-unit">mm</span>
-                        <button className="btn primary" disabled={!customParsed.ok}
+                        <span className="text-[11.5px] text-subtle">mm</span>
+                        <button className={`${BTN_PRIMARY} flex-none`} disabled={!customParsed.ok}
                           onClick={() => scaleUI.onSetWidth(customParsed.mm)}>Use</button>
                       </div>
                       {/* THE REFUSAL SAYS WHY. This one number divides the whole
@@ -1039,12 +1172,12 @@ export default function OutlineTracer({
                           drawing at ten times the scale that looks plausible
                           until somebody orders from it. */}
                       {customMm.trim() && !customParsed.ok && (
-                        <p className="note warn" style={{ margin: '6px 0 0' }}>
+                        <p className={`${NW} mt-1.5`}>
                           {customParsed.why}
                         </p>
                       )}
                       {customParsed.ok && (
-                        <p className="note" style={{ margin: '6px 0 0' }}>
+                        <p className={`${N} mt-1.5`}>
                           That makes this plan{' '}
                           <b>{(picked.openingPx / (customParsed.mm / 304.8)).toFixed(1)} px/ft</b>.
                         </p>
@@ -1053,7 +1186,7 @@ export default function OutlineTracer({
                   )}
 
                   {scaleUI.pick?.mm && (
-                    <button className="btn" style={{ marginTop: 6, width: '100%' }}
+                    <button className={`${BTN_FULL} mt-1.5`}
                       onClick={() => scaleUI.onPickDoor(null)}>Pick a different door</button>
                   )}
                 </>)}
@@ -1065,7 +1198,7 @@ export default function OutlineTracer({
                     and it is the only check available without a dimension
                     string on the drawing. */}
                 {hasScale && scaleUI.doors.length > 1 && (
-                  <div className="kv" style={{ marginTop: 8, alignItems: 'flex-start' }}>
+                  <div className={`${KV} mt-2 items-start`}>
                     <span>Other doors</span>
                     <b style={{ textAlign: 'right' }}>
                       {scaleUI.doors.filter((d) => d.id !== scaleUI.pick?.id)
@@ -1088,36 +1221,36 @@ export default function OutlineTracer({
                   ))}
                 </select>
                 {scaleUI.refId === 'custom' && (
-                  <div className="row" style={{ marginTop: 8 }}>
+                  <div className={`${ROW} mt-2`}>
                     <label>Real length (ft)</label>
                     <input type="number" step="0.05" value={scaleUI.customFt} style={{ maxWidth: 90 }}
                       onChange={(e) => scaleUI.setCustomFt(parseFloat(e.target.value) || 0)} />
                   </div>
                 )}
-                <div className="kv" style={{ marginTop: 8 }}>
+                <div className={`${KV} mt-2`}>
                   <span>{!scaleUI.measure.a ? 'Click the first end'
                     : !scaleUI.measure.b ? 'Click the other end' : 'Measured'}</span>
                   <b>{measureLen ? `${measureLen.toFixed(0)} px` : '—'}</b>
                 </div>
                 {scaleUI.measure.a && scaleUI.measure.b && !measureDone && (
-                  <button className="btn primary" style={{ marginTop: 8, width: '100%' }}
+                  <button className={`${BTN_PRIMARY_FULL} mt-2`}
                     onClick={() => setMeasureDone(true)}>
                     Use this measurement →
                   </button>
                 )}
                 {scaleUI.measure.a && (
-                  <button className="btn" style={{ marginTop: 6 }}
+                  <button className={`${BTN} mt-1.5`}
                     onClick={() => { scaleUI.setMeasure({ a: null, b: null }); setMeasureDone(false); }}>
                     Measure again</button>
                 )}
               </>)}
 
               {!doorScreen && (
-                <div className="kv" style={{ marginTop: 10 }}>
+                <div className={`${KV} mt-2.5`}>
                   <span>Scale</span><b>{hasScale ? describeScale(pxPerFt) : 'not set'}</b></div>
               )}
               {hasScale && (
-                <div className="kv"><span>Plan measures</span>
+                <div className={KV}><span>Plan measures</span>
                   <b>{ftin(widthFt)} × {ftin(heightFt)}</b></div>
               )}
             </div>
@@ -1132,35 +1265,35 @@ export default function OutlineTracer({
               which the tally-only version could not: a plan traced entirely by
               hand still has spaces to list. */}
           {(detectState || stats.length > 0) && !doorScreen && (
-            <div className="sec">
-              <h3>Spaces on the plan</h3>
+            <div className={SEC}>
+              <h3 className={H3}>Spaces on the plan</h3>
               {detectState?.status === 'running' && (
-                <p className="note">Reading the plan for spaces…</p>
+                <p className={NOTE}>Reading the plan for spaces…</p>
               )}
               {detectState?.status === 'error' && (
-                <p className="note err">The space detector is not answering
+                <p className={NE}>The space detector is not answering
                   ({detectState.error}). Trace by hand — everything below still works.</p>
               )}
               {detectState?.status === 'done' && (
                 detectState.proposed > 0 ? (<>
-                  <div className="kv"><span>Proposed</span><b>{detectState.proposed}</b></div>
+                  <div className={KV}><span>Proposed</span><b>{detectState.proposed}</b></div>
                   {detectState.dropped > 0 && (
-                    <div className="kv"><span>Discarded</span><b>{detectState.dropped}</b></div>
+                    <div className={KV}><span>Discarded</span><b>{detectState.dropped}</b></div>
                   )}
-                  <p className="note">Drag any corner to put it on the wall. The
+                  <p className={NOTE}>Drag any corner to put it on the wall. The
                     grip snaps like the cursor does. A dashed outline is one
                     nobody has looked at yet.</p>
                 </>) : detectState.returned > 0 ? (
-                  <p className="note">Nothing new — the {detectState.returned} space
+                  <p className={NOTE}>Nothing new — the {detectState.returned} space
                     {detectState.returned > 1 ? 's' : ''} it found {detectState.returned > 1 ? 'are' : 'is'}
                     {' '}already on the plan.</p>
                 ) : (
-                  <p className="note warn">No spaces found on this plan. Trace them
+                  <p className={NOTE_WARN}>No spaces found on this plan. Trace them
                     by hand — click the corners.</p>
                 )
               )}
               {stats.length > 0 && (
-                <div className="space-list">
+                <div className="mt-2.5 mb-2 flex flex-col gap-0.5">
                 {/* THE WHOLE ROW IS THE TARGET, same as the layout screen's
                     list. It was the name-plus-area button only, with the
                     dimensions, the square toggle and the controls outside it, so
@@ -1170,14 +1303,16 @@ export default function OutlineTracer({
                     THE CROSS WENT; Delete removes the selected outline. */}
                 {stats.map(({ o, st }, i) => (
                   <div key={o.id} role="button" tabIndex={0}
-                    className={'outline-row row-pick' + (o.id === selectedId ? ' on' : '')}
+                    className={`${ROW_EDGE} ${ROW_PICK} `
+                      + (o.id === selectedId ? ROW_ON : ROW_OFF)}
                     onClick={() => onSelect(o.id)}
                     onDoubleClick={() => onConfirm(o.id)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(o.id); }
                     }}>
-                    <div className="outline-pick">
-                      <span className="room-dot" style={{ background: FILL[i % FILL.length] }} />
+                    <div className={PICK}>
+                      <span className="w-[9px] h-[9px] rounded-[3px] block"
+                        style={{ background: FILL[i % FILL.length] }} />
                       {renaming === o.id ? (
                         <input autoFocus defaultValue={o.name || ''}
                           onClick={(e) => e.stopPropagation()}
@@ -1186,28 +1321,28 @@ export default function OutlineTracer({
                             if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setRenaming(null); }}
                           style={{ fontSize: 11, padding: '1px 4px' }} />
                       ) : (
-                        <span className="outline-name" onDoubleClick={(e) => { e.stopPropagation(); setRenaming(o.id); }}>
+                        <span className={NAME} onDoubleClick={(e) => { e.stopPropagation(); setRenaming(o.id); }}>
                           {o.name || `Space ${i + 1}`}
                         </span>
                       )}
-                      <span className="layer-count">
+                      <span className={COUNT}>
                         {o.detected && !o.reviewed ? 'found · ' : ''}{Math.round(st.areaSqft)} sqft
                       </span>
                     </div>
-                    <div className="outline-meta">
+                    <div className={META}>
                       <span>{ftin(st.widthFt)} × {ftin(st.heightFt)} · {st.corners} cnr</span>
                       <span onClick={(e) => e.stopPropagation()}>
-                        <label className="mini" title="Force right angles on this outline">
+                        <label className={MINI} title="Force right angles on this outline">
                           <input type="checkbox" checked={o.rectify}
                             onChange={(e) => onUpdateOutline(o.id, { rectify: e.target.checked })} />
                           square
                         </label>
-                        <button className="btn tiny" title="Rename"
+                        <button className={BTN_TINY} title="Rename"
                           onClick={() => setRenaming(o.id)}>✎</button>
                       </span>
                     </div>
                     {o.enclosingPx?.length > 0 && (
-                      <p className="note warn" style={{ margin: '2px 0 0' }}>
+                      <p className={`${NW} mt-0.5`}>
                         {o.enclosingPx.length} space{o.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly
                         inside this one, so it cannot be subtracted — the inner
                         {o.enclosingPx.length > 1 ? ' spaces are' : ' space is'} held out of this
@@ -1216,10 +1351,10 @@ export default function OutlineTracer({
                       </p>
                     )}
                     {o.note && !o.enclosingPx?.length && (
-                      <p className="note" style={{ margin: '2px 0 0' }}>{o.note}</p>
+                      <p className={`${N} mt-0.5`}>{o.note}</p>
                     )}
                     {o.rectify && st.movedFt > 0.08 && (
-                      <p className="note" style={{ margin: '2px 0 0' }}>
+                      <p className={`${N} mt-0.5`}>
                         Squaring moved a corner {(st.movedFt * 12).toFixed(0)}″ — the dashed
                         line on the plan is what you clicked.
                       </p>
@@ -1228,13 +1363,13 @@ export default function OutlineTracer({
                 ))}
                 </div>
               )}
-              <label className="check">
+              <label className={CHECK}>
                 <input type="checkbox" checked={showGrips}
                   onChange={(e) => setShowGrips(e.target.checked)} />
                 Show corner grips
               </label>
               {onRedetect && (
-                <button className="btn" style={{ marginTop: 6, width: '100%' }}
+                <button className={`${BTN_FULL} mt-1.5`}
                   disabled={detectState?.status === 'running'}
                   onClick={onRedetect}>Look again</button>
               )}
@@ -1243,40 +1378,40 @@ export default function OutlineTracer({
 
           {/* --- tracing --------------------------------------------------- */}
           {!doorScreen && (<>
-          <div className="sec">
-            <h3>{tracing ? `Tracing — ${draft.length} corner${draft.length > 1 ? 's' : ''}` : 'Trace'}</h3>
+          <div className={SEC}>
+            <h3 className={H3}>{tracing ? `Tracing — ${draft.length} corner${draft.length > 1 ? 's' : ''}` : 'Trace'}</h3>
             {tracing ? (
               <>
-                <div className="btnrow">
-                  <button className="btn" onClick={() => setDraft((d) => d.slice(0, -1))}>Undo corner</button>
-                  <button className="btn" onClick={() => { setDraft([]); setProblem(''); }}>Start over</button>
+                <div className={BTNROW}>
+                  <button className={BTN} onClick={() => setDraft((d) => d.slice(0, -1))}>Undo corner</button>
+                  <button className={BTN} onClick={() => { setDraft([]); setProblem(''); }}>Start over</button>
                 </div>
-                <button className="btn primary" style={{ marginTop: 8, width: '100%' }}
+                <button className={`${BTN_PRIMARY_FULL} mt-2`}
                   disabled={draft.length < 3} onClick={finish}>
                   Close the outline
                 </button>
               </>
             ) : !hasScale ? (
-              <p className="note warn">Set the scale above first.</p>
+              <p className={NOTE_WARN}>Set the scale above first.</p>
             ) : measuring ? (
-              <p className="note">{scaleUI?.measure?.b
+              <p className={NOTE}>{scaleUI?.measure?.b
                 ? <>Press <b>Use this measurement</b> to go back to tracing.</>
                 : <>Click the two ends of your reference on the plan.</>}</p>
             ) : (
-              <p className="note">Start tracing with cursor to add another space</p>
+              <p className={NOTE}>Start tracing with cursor to add another space</p>
             )}
-            {problem && <p className="note warn">{problem}</p>}
+            {problem && <p className={NOTE_WARN}>{problem}</p>}
           </div>
 
           {/* --- snapping -------------------------------------------------- */}
-          <div className="sec">
-            <h3>Snapping</h3>
-            <label className="check">
+          <div className={SEC}>
+            <h3 className={H3}>Snapping</h3>
+            <label className={CHECK}>
               <input type="checkbox" checked={orthoLock}
                 onChange={(e) => setOrthoLock(e.target.checked)} />
               Lock to right angles
             </label>
-            <label className="check">
+            <label className={CHECK}>
               <input type="checkbox" checked={alignOn}
                 onChange={(e) => setAlignOn(e.target.checked)} />
               Line up with corners already placed
@@ -1289,7 +1424,7 @@ export default function OutlineTracer({
                     first outline, so the panel reshuffled itself as you
                     worked. */}
             {isRaster && tracedSegs.length > 0 && (
-              <label className="check">
+              <label className={CHECK}>
                 <input type="checkbox" checked={visible.has(TRACED_LAYER)}
                   onChange={() => setVisible((v) => {
                     const n = new Set(v);
@@ -1304,10 +1439,10 @@ export default function OutlineTracer({
 
           {/* --- the file, on a DXF ---------------------------------------- */}
           {!isRaster && (
-            <div className="sec">
-              <h3>The file</h3>
-              <div className="kv"><span>Scale</span><b>exact, from the file</b></div>
-              <div className="kv"><span>Drawn in</span>
+            <div className={SEC}>
+              <h3 className={H3}>The file</h3>
+              <div className={KV}><span>Scale</span><b>exact, from the file</b></div>
+              <div className={KV}><span>Drawn in</span>
                 <b>
                   <select value={unitId} onChange={(e) => onUnitChange(e.target.value)}
                     style={{ width: 'auto', padding: '2px 4px', fontSize: 11 }}>
@@ -1315,10 +1450,10 @@ export default function OutlineTracer({
                   </select>
                 </b>
               </div>
-              <div className="kv"><span>Plan measures</span>
+              <div className={KV}><span>Plan measures</span>
                 <b>{ftin(widthFt)} × {ftin(heightFt)}</b></div>
               {(source.unitSource === 'inferred' || source.unitSource === 'overridden') && (
-                <p className="note warn">
+                <p className={NOTE_WARN}>
                   {source.unitSource === 'inferred'
                     ? 'The file did not say what it was drawn in — check the size above.'
                     : 'The file claims other units; at that scale this plan would be an implausible size.'}
@@ -1329,43 +1464,47 @@ export default function OutlineTracer({
 
           {/* --- layers, on a DXF ------------------------------------------ */}
           {!isRaster && (
-            <div className="sec">
-              <h3>Show &amp; snap to</h3>
-              <div className="layer-list">
+            <div className={SEC}>
+              <h3 className={H3}>Show &amp; snap to</h3>
+              <div className="flex flex-col gap-px mb-1">
                 {source.render.map((l) => (
-                  <label key={l.layer} className={'layer-row' + (visible.has(l.layer) ? ' on' : '')}>
+                  <label key={l.layer} className={visible.has(l.layer) ? LAYER_ROW_ON : LAYER_ROW}>
                     <input type="checkbox" checked={visible.has(l.layer)}
                       onChange={() => setVisible((v) => {
                         const n = new Set(v);
                         if (n.has(l.layer)) n.delete(l.layer); else n.add(l.layer);
                         return n;
                       })} />
-                    <span className="layer-name" title={l.layer}>{l.layer}</span>
-                    <span className="layer-count">{l.count}</span>
+                    <span className={LAYER_NAME} title={l.layer}>{l.layer}</span>
+                    <span className={COUNT}>{l.count}</span>
                   </label>
                 ))}
                 {tracedSegs.length > 0 && (
-                  <label className={'layer-row' + (visible.has(TRACED_LAYER) ? ' on' : '')}>
+                  <label className={visible.has(TRACED_LAYER) ? LAYER_ROW_ON : LAYER_ROW}>
                     <input type="checkbox" checked={visible.has(TRACED_LAYER)}
                       onChange={() => setVisible((v) => {
                         const n = new Set(v);
                         if (n.has(TRACED_LAYER)) n.delete(TRACED_LAYER); else n.add(TRACED_LAYER);
                         return n;
                       })} />
-                    <span className="layer-name">{TRACED_LAYER}</span>
-                    <span className="layer-count">{tracedSegs.length}</span>
+                    <span className={LAYER_NAME}>{TRACED_LAYER}</span>
+                    <span className={COUNT}>{tracedSegs.length}</span>
                   </label>
                 )}
               </div>
-              <p className="note">Hiding a layer stops the cursor snapping to it.</p>
+              <p className={NOTE}>Hiding a layer stops the cursor snapping to it.</p>
             </div>
           )}
 
         </div>
       </div>
 
-      <div className="picker-foot">
-        <div className="picker-foot-txt">
+      {/* THE GRADIENT IS WHAT MAKES A STICKY FOOT READ AS ONE: the panel
+          scrolls under it and fades out rather than butting against a line. */}
+      <div className="sticky bottom-0 mt-[18px] flex items-center gap-3.5
+        border-t border-border px-0.5 py-3.5
+        [background:linear-gradient(rgba(250,250,250,0),rgba(250,250,250,.95)_34%)]">
+        <div className="flex-1 text-muted text-[12px]">
           {measuring
             ? <>{scaleUI?.measure?.b
                   ? <>Measured {Math.round(measureLen)} px — that makes it
@@ -1395,7 +1534,7 @@ export default function OutlineTracer({
                     : <>Nothing traced yet. Click a corner on the plan to start.</>}
         </div>
         {measuring ? (
-          <button className="btn primary" disabled={!scaleUI?.measure?.b}
+          <button className={BTN_PRIMARY} disabled={!scaleUI?.measure?.b}
             onClick={() => setMeasureDone(true)}>
             Use this measurement →
           </button>
@@ -1405,14 +1544,14 @@ export default function OutlineTracer({
              them one at a time was an artefact of there having been only ever
              one outline to light. Lighting a single room stays available because
              a single room is genuinely sometimes the job. */
-          <div className="btnrow">
+          <div className={BTNROW}>
             {chosen && outlines.length > 1 && (
-              <button className="btn" disabled={tracing}
+              <button className={BTN} disabled={tracing}
                 onClick={() => onConfirm(chosen.o.id)}>
                 Just this space
               </button>
             )}
-            <button className="btn primary" disabled={!outlines.length || tracing}
+            <button className={BTN_PRIMARY} disabled={!outlines.length || tracing}
               onClick={() => (outlines.length > 1 || !chosen
                 ? onProceed?.()
                 : onConfirm(chosen.o.id))}>
