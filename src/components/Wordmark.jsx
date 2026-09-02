@@ -40,23 +40,47 @@ export function Logo({ width = 132, className = '' }) {
       className={'relative overflow-hidden flex-none block w-[var(--logo-w)] h-[calc(var(--logo-w)*0.349432)] ' + className}
       style={{ ['--logo-w']: `${width}px` }}
     >
+      {/* `max-w-none` IS LOAD-BEARING AND IT IS THE WHOLE BUG THIS CROP HAD.
+          Tailwind's preflight ships `img { max-width: 100% }`. The containing
+          block here is the span, which is `--logo-w` wide — 104px in the nav —
+          and the image is deliberately WIDER than that: 1.420455 × 104 =
+          147.73px, because the crop works by scaling the whole 500px canvas up
+          until the 352px of ink inside it measures exactly `--logo-w`. So
+          preflight clamped 147.73px back down to 104px, the image rendered at
+          70% of the size the offsets were computed for, and the window showed
+          the wrong part of the canvas — which is what "the logo is not
+          centred" actually was. Every one of the four constants was correct;
+          the element they applied to had been silently resized under them.
+
+          MEASURED, NOT DERIVED FROM THE OLD COMMENT. The ink's alpha bounding
+          box in the 500×500 canvas is x 41→392 (352 wide) and y 191→313 (123
+          tall), read off the file itself, and all four numbers below fall out of
+          it: 500/352 for the scale, 123/352 for the box's aspect, and 41/352 and
+          191/352 for the two offsets.
+
+          `invert` MAKES IT WHITE, and it is a filter rather than a second asset
+          because the artwork is pure #000000 on transparency — every ink pixel
+          samples (0,0,0) — so inverting RGB gives exactly #FFFFFF and leaves the
+          alpha channel alone. There is no halo to clean up and no white version
+          of the file to keep in step with this one. Every surface that carries
+          this mark is dark, so it is unconditional rather than a prop. */}
       <img
         src={LOGO}
         alt="Super Luminal"
-        className="absolute block w-[calc(var(--logo-w)*1.420455)] h-auto left-[calc(var(--logo-w)*-0.116477)] top-[calc(var(--logo-w)*-0.542614)]"
+        className="absolute block max-w-none invert w-[calc(var(--logo-w)*1.420455)] h-auto left-[calc(var(--logo-w)*-0.116477)] top-[calc(var(--logo-w)*-0.542614)]"
       />
     </span>
   );
 }
 
-export default function Wordmark({ where = null, to = '/', width = 104 }) {
+export default function Wordmark({ where = null, to = '/', width = 88 }) {
   return (
     <div className="flex items-center gap-2.5 min-w-0 tracking-[-0.025em]">
       <Link to={to} className="flex items-center gap-2.5 no-underline" aria-label="Super Luminal">
         <Logo width={width} />
       </Link>
       {where && <>
-        <span className="w-px h-[15px] bg-border flex-none rotate-[15deg]" aria-hidden="true" />
+        <span className="w-px h-[15px] bg-border/10 flex-none rotate-[15deg]" aria-hidden="true" />
         <span className="text-xs text-muted truncate">{where}</span>
       </>}
     </div>

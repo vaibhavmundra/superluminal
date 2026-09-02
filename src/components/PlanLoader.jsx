@@ -37,14 +37,23 @@ import React from 'react';
 // lockstep like a Christmas light.
 // ---------------------------------------------------------------------------
 
-/**
+/*
  * Head, body, trail. Ordered back to front so the head paints last and stays
  * crisp over the top of its own glow.
+ *
+ * THE THREE LAPS ARE THE THREE STOPS OF THE ACCENT RAMP, and that is what makes
+ * this a ramp rather than three tints of one colour. They were #0070F3 twice and
+ * #66AEFF for the head — the old flat accent, which is not what anything on the
+ * drawing is painted in any more. The ramp runs #c2a987 → #efd5b2 → #fef1dd
+ * dark to bright, so the trail takes the darkest stop, the body the middle and
+ * the HEAD the brightest: the comet gets warmer as well as denser towards its
+ * nose, which is the same gradient the finished outline is stroked with, read
+ * along time instead of along the path.
  */
 const PULSE = [
-  { len: 0.26, back: 0.225, opacity: 0.16, width: 3.4, colour: '#0070F3' },
-  { len: 0.13, back: 0.095, opacity: 0.42, width: 2.9, colour: '#0070F3' },
-  { len: 0.045, back: 0,    opacity: 1,    width: 2.4, colour: '#66AEFF' },
+  { len: 0.26,  back: 0.225, opacity: 0.16, width: 3.4, colour: '#c2a987' },
+  { len: 0.13,  back: 0.095, opacity: 0.42, width: 2.9, colour: '#efd5b2' },
+  { len: 0.045, back: 0,     opacity: 1,    width: 2.4, colour: '#fef1dd' },
 ];
 
 const perimeter = (pts) => {
@@ -62,15 +71,28 @@ export default function PlanLoader({
 }) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   return (
-    <div className="absolute inset-0 z-40 grid place-items-center bg-[rgba(250,250,252,.93)] backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-40 grid place-items-center bg-black/[0.92] backdrop-blur-[5px] backdrop-saturate-[1.8]">
       <div className="grid grid-cols-[minmax(0,1fr)_260px] gap-[26px] items-center w-[min(1020px,calc(100%-56px))] max-[900px]:grid-cols-[minmax(0,1fr)] max-[900px]:gap-4">
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full max-h-[min(62vh,560px)] block"
           preserveAspectRatio="xMidYMid meet">
           <defs>
+            {/* THE WASH INSIDE A FINISHED ROOM, and it is the ramp at a few per
+                cent — the same paint as the fittings about to land in it. */}
             <linearGradient id="sl-fill" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#0070F3" stopOpacity="0.04" />
-              <stop offset="0.5" stopColor="#0070F3" stopOpacity="0.14" />
-              <stop offset="1" stopColor="#0070F3" stopOpacity="0.04" />
+              <stop offset="0" stopColor="#c2a987" stopOpacity="0.05" />
+              <stop offset="0.5" stopColor="#fef1dd" stopOpacity="0.16" />
+              <stop offset="1" stopColor="#c2a987" stopOpacity="0.05" />
+            </linearGradient>
+            {/* ...AND THE RING ROUND IT IS THE RAMP ITSELF, not one stop of it.
+                A finished outline was a flat #0070F3 line; on this screen the
+                drawing's own outlines are stroked with this gradient, so the
+                loader's version of the same object now matches it. */}
+            <linearGradient id="sl-ring" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stopColor="#c2a987" />
+              <stop offset="0.25" stopColor="#efd5b2" />
+              <stop offset="0.5" stopColor="#fef1dd" />
+              <stop offset="0.75" stopColor="#efd5b2" />
+              <stop offset="1" stopColor="#c2a987" />
             </linearGradient>
           </defs>
 
@@ -81,8 +103,8 @@ export default function PlanLoader({
             return (
               <g key={r.id}>
                 <polygon points={pts}
-                  fill={r.state === 'done' ? 'url(#sl-fill)' : 'rgba(97,97,245,0.045)'}
-                  stroke="#E0E0E0" strokeWidth={lw} />
+                  fill={r.state === 'done' ? 'url(#sl-fill)' : 'rgba(255,255,255,0.03)'}
+                  stroke="rgba(234,234,234,0.16)" strokeWidth={lw} />
                 {r.state === 'busy' && PULSE.map((seg, k) => (
                   <polygon key={k} points={pts} fill="none"
                     stroke={seg.colour} strokeOpacity={seg.opacity}
@@ -98,14 +120,14 @@ export default function PlanLoader({
                     }} />
                 ))}
                 {r.state === 'done' && (
-                  <polygon points={pts} fill="none" stroke="#0070F3"
-                    strokeWidth={lw * 1.6} strokeLinejoin="round" opacity="0.85" />
+                  <polygon points={pts} fill="none" stroke="url(#sl-ring)"
+                    strokeWidth={lw * 1.6} strokeLinejoin="round" opacity="0.9" />
                 )}
                 {r.label && (
                   <text x={r.centre.x} y={r.centre.y} textAnchor="middle"
                     fontSize={Math.max(width, height) / 78}
                     fontFamily="The Neue Montreal, sans-serif"
-                    fill={r.state === 'done' ? '#000000' : '#A8A8A8'}>
+                    fill={r.state === 'done' ? '#FFFFFF' : '#7A7A7A'}>
                     {r.label}
                   </text>
                 )}
@@ -115,10 +137,10 @@ export default function PlanLoader({
         </svg>
 
         <div>
-          <div className="text-[15px] tracking-[-0.01em] text-ink">{phase}</div>
+          <div className="text-[15px] tracking-[-0.01em] text-white">{phase}</div>
           {detail && <div className="text-[11.5px] text-muted mt-[3px] min-h-[15px]">{detail}</div>}
-          <div className="h-[3px] rounded-[2px] bg-grid mt-3 mb-3.5 overflow-hidden">
-            <i className="block h-full bg-accent rounded-[2px] transition-[width] duration-[350ms] ease-in-out" style={{ width: `${pct}%` }} />
+          <div className="h-[3px] rounded-[2px] bg-white/10 mt-3 mb-3.5 overflow-hidden">
+            <i className="block h-full bg-white rounded-[2px] transition-[width] duration-[350ms] ease-in-out" style={{ width: `${pct}%` }} />
           </div>
           <ol className="loader-steps">
             {steps.map((s) => (

@@ -10,6 +10,14 @@ import Wordmark from '../components/Wordmark.jsx';
 // halves of one sentence and a second route for the code would be a URL a user
 // could land on with nothing to verify against.
 //
+// NO ACCENT ON THIS SCREEN, AND BOTH PRIMARIES ARE WHITE. The ramp is what the
+// rest of the app spends on a DESIGN act — light the spaces, add a plan, close
+// an outline — and signing in is not one of them however important it is. It is
+// the turnstile in front of the work, and dressing it in the colour the work
+// uses makes the turnstile look like the work. White is what this palette says a
+// primary with when the accent would be a lie about the act; the two text
+// actions under the code field are the same decision one step quieter.
+//
 // THE UPLOAD FINISHES HERE, and that is the point of the whole screen. Somebody
 // who dropped a plan on the home page is mid-task; landing them on a dashboard
 // after signing in would make them find and re-drop the file they already
@@ -101,12 +109,12 @@ export default function Login() {
 
   return (
     <div className="min-h-full flex flex-col items-center">
-      <div className="w-full h-14 flex items-center px-[22px] border-b border-border bg-surface"><Wordmark /></div>
+      <div className="w-full h-14 flex items-center px-[22px] border-b border-border/10 bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px]"><Wordmark /></div>
 
-      <div className="w-[min(420px,92%)] m-auto bg-surface border border-border rounded-lg py-[30px] px-7 shadow">
+      <div className="w-[min(420px,92%)] m-auto bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-lg py-[30px] px-7 shadow-pop">
         {!configured ? (
           <>
-            <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em]">Supabase is not configured</h1>
+            <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em] text-white">Supabase is not configured</h1>
             <p className="m-0 mb-[22px] text-muted text-[12.5px] leading-[1.6]">
               Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> to
               <code> .env.local</code> and restart the dev server.
@@ -114,7 +122,7 @@ export default function Login() {
           </>
         ) : stage === 'email' ? (
           <>
-            <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em]">Sign in to start designing</h1>
+            <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em] text-white">Sign in to start designing</h1>
             <p className="m-0 mb-[22px] text-muted text-[12.5px] leading-[1.6]">
               {uploadName
                 ? <>We will email you a six-digit code, then open <b>{uploadName}</b>.</>
@@ -126,7 +134,7 @@ export default function Login() {
                 placeholder="you@studio.com" value={email}
                 className="h-field-h px-3.5 py-0 text-[14px]"
                 onChange={(e) => setEmail(e.target.value)} />
-              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-cta bg-cta text-white inline-flex items-center justify-center cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border mt-2 w-full"
+              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-white bg-white text-black inline-flex items-center justify-center cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-40 disabled:cursor-not-allowed mt-2 w-full"
                 type="submit" disabled={busy || !email.trim()}>
                 {busy ? 'Sending…' : 'Send the code'}
               </button>
@@ -134,7 +142,7 @@ export default function Login() {
           </>
         ) : (
           <>
-            <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em]">Enter the code</h1>
+            <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em] text-white">Enter the code</h1>
             <p className="m-0 mb-[22px] text-muted text-[12.5px] leading-[1.6]">Sent to <b>{email}</b>. It is good for an hour.</p>
             <form onSubmit={submitCode} className="flex flex-col gap-2">
               <label className="text-[10px] tracking-[0.11em] uppercase text-subtle" htmlFor="code">Six-digit code</label>
@@ -147,19 +155,19 @@ export default function Login() {
                 autoComplete="one-time-code" maxLength={6} placeholder="••••••"
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
-              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-cta bg-cta text-white inline-flex items-center justify-center cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border mt-2 w-full"
+              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-white bg-white text-black inline-flex items-center justify-center cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-40 disabled:cursor-not-allowed mt-2 w-full"
                 type="submit" disabled={busy || code.length < 6}>
                 {busy ? 'Checking…' : 'Continue'}
               </button>
               <div className="flex justify-between gap-3 mt-3">
                 <button type="button"
-                  className="border-0 bg-transparent p-0 text-[11.5px] text-accent cursor-pointer no-underline hover:underline disabled:text-faint disabled:cursor-default disabled:no-underline"
+                  className="border-0 bg-transparent p-0 text-[11.5px] text-text cursor-pointer no-underline transition-colors duration-[120ms] hover:text-white hover:underline disabled:text-subtle disabled:cursor-default disabled:no-underline disabled:hover:text-subtle"
                   disabled={!!resendIn}
                   onClick={submitEmail}>
                   {resendIn ? `Resend in ${resendIn}s` : 'Resend the code'}
                 </button>
                 <button type="button"
-                  className="border-0 bg-transparent p-0 text-[11.5px] text-accent cursor-pointer no-underline hover:underline"
+                  className="border-0 bg-transparent p-0 text-[11.5px] text-text cursor-pointer no-underline transition-colors duration-[120ms] hover:text-white hover:underline disabled:text-subtle disabled:cursor-default disabled:no-underline disabled:hover:text-subtle"
                   onClick={() => { setStage('email'); setCode(''); setErr(''); }}>
                   Use a different email
                 </button>
@@ -168,7 +176,7 @@ export default function Login() {
           </>
         )}
 
-        {err && <p className="text-[11.5px] text-danger-ink leading-[1.5] mt-2 border-l-2 border-danger pl-[9px]">{err}</p>}
+        {err && <p className="text-[11.5px] text-danger leading-[1.5] mt-2 border-l-2 border-danger pl-[9px]">{err}</p>}
 
         {/* The honest sentence about the lost file — see pendingUpload.js. */}
         {loc.state?.upload && !waitingFile && !user && (

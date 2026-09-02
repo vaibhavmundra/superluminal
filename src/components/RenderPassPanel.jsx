@@ -6,7 +6,16 @@ import { RENDER_ACCEPT, RENDER_DEFAULTS } from '../lib/renderImage.js';
 // both apply.
 const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] disabled:cursor-not-allowed';
 const BTN_DEFAULT = 'border-border bg-none text-white hover:text-black hover:bg-surface-2 hover:border-border-strong active:bg-surface-3  ';
-const BTN_PRIMARY = 'bg-accent-gradient text-black backdrop-blur-xl hover:bg-white hover:border-cta-hover disabled:bg-[linear-gradient(to_right,#a1a1a1_0%,#a1a1a1_100%)]';
+/* WHITE, NOT THE RAMP. Reading a render is a step INSIDE a design that already
+   exists — the spaces are lit, the schedule is written, and this pass goes back
+   over one wall to mark what the photographs show. The ramp is spent on the acts
+   that begin work, and there are three of those; this is a recompute, and a
+   recompute in the loudest colour on the page competes with the drawing it is
+   about to change. It also drops a `disabled:` gradient that never worked:
+   `bg-*` sets background-COLOUR and cannot override a background-IMAGE, so a
+   dead button kept the full ramp under it. `BTN_BASE` only sets the cursor for
+   the disabled state, so the dimming is declared here with the colour it dims. */
+const BTN_PRIMARY = 'border-white bg-white text-black hover:bg-text hover:border-text disabled:opacity-40';
 
 // ---------------------------------------------------------------------------
 // RenderPassPanel — upload a couple of views of a space, get the wall features

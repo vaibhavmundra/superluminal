@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import App from '../App.jsx';
-import { getPlan, updatePlan, fetchPlanFile, uploadSnapshot, uploadRender, recordRevision,
-  touchPlanOpened, publicUrl } from '../lib/db.js';
+import { getPlan, getProject, updatePlan, fetchPlanFile, uploadSnapshot, uploadRender,
+  recordRevision, touchPlanOpened, publicUrl } from '../lib/db.js';
 import { getJob, subscribeJob, whenRowReady, retryUpload, releaseJob, provisionalPlan }
   from '../lib/uploads.js';
 import { useAuth } from '../lib/auth.jsx';
@@ -89,6 +89,9 @@ export default function Planner() {
   const [upload, setUpload] = useState(() => (job ? job.status : null));
   const [err, setErr] = useState('');
   const [saveState, setSaveState] = useState('idle');   // idle | dirty | saving | saved | error
+  // THE PROJECT'S CATEGORY, AS A FALLBACK FOR THE PLAN'S. See the note by the
+  // effect that fetches it.
+  const [projectType, setProjectType] = useState(null);
 
   // READ ONCE, AT MOUNT, and before anything can overwrite it. A draft is only
   // ever interesting in comparison with the row that is about to arrive.
@@ -124,6 +127,18 @@ export default function Planner() {
         if (!alive) return;
         setPlan(row);
         touchPlanOpened(planId);
+        // THE CATEGORY IS ASKED ONCE PER BUILDING, so a plan that does not carry
+        // one is not a question — it is a plan that was added before its
+        // project was classified. `project_type` is stamped onto a plan row at
+        // INSERT and never revisited, so the chooser on the project screen
+        // leaves every existing plan's copy null. Reading the project's answer
+        // here is what stops the editor asking again.
+        if (!row.project_type && row.project_id) {
+          try {
+            const proj = await getProject(row.project_id);
+            if (alive) setProjectType(proj?.project_type ?? null);
+          } catch { /* the dialog is the fallback, and it still works */ }
+        }
         if (!loc.state?.file) {
           const f = await fetchPlanFile(row);
           if (alive) setFile(f);
@@ -369,11 +384,11 @@ export default function Planner() {
   if (err && !plan) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
-        <div className="w-[min(460px,92%)] bg-surface border border-border rounded-lg p-6 text-center">
+        <div className="w-[min(460px,92%)] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-lg p-6 text-center">
           <h2 className="m-0 mb-2.5 text-lg tracking-[-0.025em]">This plan could not be opened</h2>
           <p className="m-0 mb-3.5 text-[12.5px] text-muted leading-[1.6]">{err}</p>
           <button
-            className="text-xs leading-[1.5] px-3 py-[7px] rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3"
+            className="text-xs leading-[1.5] px-3 py-[7px] rounded border border-border/10 bg-surface backdrop-blur-[5px] text-white cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3"
             onClick={() => nav('/dashboard')}>Back to Dashboard</button>
         </div>
       </div>
@@ -383,7 +398,7 @@ export default function Planner() {
   if (!plan || !file) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
-        <div className="w-[26px] h-[26px] rounded-full border-2 border-border border-t-accent animate-[sl-spin_0.8s_linear_infinite]" aria-label="Loading the drawing" />
+        <div className="lp-spin w-[26px] h-[26px]" aria-label="Loading the drawing" />
         <p className="text-[11.5px] text-muted leading-[1.5] mt-2">{plan ? 'Reading the drawing…' : 'Opening…'}</p>
       </div>
     );
@@ -407,7 +422,7 @@ export default function Planner() {
       key={plan.id}
       planName={plan.name}
       initialFile={file}
-      initialProjectType={plan.project_type ?? null}
+      initialProjectType={plan.project_type ?? projectType}
       initialPdfPage={chosen.state?.pdfPage ?? null}
       restore={chosen.state}
       saveState={saveState}

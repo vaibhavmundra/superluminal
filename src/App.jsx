@@ -108,8 +108,18 @@ const BTN_NUDGE = `text-[11px] px-[7px] py-px ml-2 ${BTN_SHAPE} ${BTN_QUIET}`;
 const BOQ_SHAPE = `text-[12px] w-full text-left px-2.5 py-2 block ${BTN_SHAPE} `
   + '[&>b]:block [&>b]:text-[12px] [&>span]:block [&>span]:text-[10px] '
   + '[&>span]:opacity-70 [&>span]:mt-px [&>span]:whitespace-normal';
+/* ONE COLOURWAY FOR ALL THREE, and `BTN_BOQ_CTA` is gone with the distinction.
+   Excel was the filled one on the reasoning that it is what most people want —
+   but these three are not a primary and two alternatives, they are the SAME act
+   in three file formats, and which one somebody wants is a fact about the office
+   they work in rather than a recommendation this panel gets to make. A row of
+   three identical blocks says "pick your format"; two quiet and one filled says
+   "take the Excel", to a quantity surveyor who has asked for a CSV.
+   IT WAS ALSO INVISIBLE. `BTN_CTA` is the `cta` token, which is #000000 — a
+   black block on a black panel, findable only by its border, while the two
+   underneath it were legible glass. So the "recommended" option was the one you
+   could not read. */
 const BTN_BOQ = `${BOQ_SHAPE} ${BTN_QUIET}`;
-const BTN_BOQ_CTA = `${BOQ_SHAPE} ${BTN_CTA}`;
 
 /* --- notes. ATTENTION, NOT ALARM: most of the warnings in this file are
    guidance — "set the scale first", "light a space first" — and rendering all
@@ -127,11 +137,20 @@ const CODE = 'font-sans text-[10px] bg-input-bg px-[3px] rounded-[3px] text-text
 /* --- the status pills in the top bar. */
 const PILL_SHAPE = 'font-sans text-[10.5px] px-2 py-[3px] rounded-full border '
   + 'whitespace-nowrap tabular-nums';
-const PILL = `${PILL_SHAPE} border-border bg-surface text-muted`;
-const PILL_OK = `${PILL_SHAPE} border-ok-line bg-ok-soft text-ok`;
-const PILL_BAD = `${PILL_SHAPE} border-danger-line bg-danger-soft text-danger-ink`;
+/* ONE GROUND FOR EVERY STATE OF THE SAVE PILL, AND IT IS WHITE. The three were
+   three different pills — 5% glass, a pale green wash, a pale red one — so the
+   thing in the corner of the bar changed SHAPE as well as wording every time it
+   changed state, which is a lot of movement for a label nobody is looking at.
+   White reads at 10.5px on this bar in a way glass does not, and the state is
+   then said by the type alone: grey while it is happening, green once it has,
+   red if it did not. The `-soft`/`-line` pairs it drops are light-theme tokens
+   anyway — #EDFAF1 on #FAFAFA was a tint of the old page, not of this one. */
+const PILL_WHITE = 'border-white bg-white';
+const PILL = `${PILL_SHAPE} ${PILL_WHITE} text-muted`;
+const PILL_OK = `${PILL_SHAPE} ${PILL_WHITE} text-ok`;
+const PILL_BAD = `${PILL_SHAPE} ${PILL_WHITE} text-danger-ink`;
 const PILL_VIEW = `${PILL_SHAPE} border-[#F0ABFC] bg-[#FDF2FE] text-[#C026D3]`;
-const PILL_RETRY = `${PILL_BAD} cursor-pointer hover:bg-danger-line`;
+const PILL_RETRY = `${PILL_BAD} cursor-pointer hover:bg-danger-soft`;
 
 /* TABULAR FIGURES WHEREVER A NUMBER IS READ DOWN A COLUMN. Not a nicety in
    this face: its proportional `1` is half the width of its `0`. */
@@ -508,6 +527,45 @@ export default function App({
   // ever had one. Now that the rooms arrive together from the detector, they
   // are lit together — one layout per outline, all on screen, one export.
   const [litIds, setLitIds] = useState([]);
+  /* --- GOING BACK TO THE OUTLINES NO LONGER THROWS THE LAYOUT AWAY ---------
+     `step` USED TO BE DERIVED FROM `litIds` ALONE, and that one line was the
+     whole reason the Outlines tab had to ask "are you sure". There was no screen
+     flag, so the only way to show the tracer was to empty the lit list — which
+     is the input every downstream memo reads, so the grids, the fittings and the
+     schedule all went with it, and coming back meant paying to have every space
+     on the sheet re-run.
+
+     THIS IS THAT MISSING FLAG. It says "the user asked to see the outlines",
+     nothing more; `litIds` is left exactly as it was, so `rooms` still holds
+     every room and one click on the Design tab puts them back on screen
+     untouched.
+
+     AND MOST OF WHAT A RELIGHT USED TO REBUILD REBUILDS ITSELF. `rooms` is a
+     memo over the lit outlines: drag a corner and that room's ambient grid is
+     recomputed on the spot, for free, because it was never stored. What a
+     relight actually buys is the MODEL's answers — what kind of room this is,
+     where the accents go, which surfaces are worked at — and those are the only
+     things a geometry change can make stale. Which is why the next flag exists. */
+  const [outlinesOpen, setOutlinesOpen] = useState(false);
+  /* --- WHICH OUTLINES HAVE MOVED SINCE THEY WERE LIT -----------------------
+     The pricing page has promised this in so many words for as long as it has
+     existed — "you drag the corners on that one and re-light: the nine are
+     already paid for and only the room whose geometry actually changed is
+     charged again" — and nothing implemented it. A relight claimed and re-ran
+     every space on the sheet.
+
+     A ROOM IS IN HERE WHEN ITS GEOMETRY MOVED AND IT IS ALREADY LIT. Both halves
+     matter. Geometry, not identity: a rename cannot change what the classifier
+     would say, so `updateOutline` marks this only when `rectify` is in the patch
+     and `editPoints` marks it on every corner move. And already lit, because an
+     outline that has never been lit is not CHANGED, it is simply pending — the
+     tracer counts those separately and neither list needs to know about the
+     other.
+
+     IT IS SERIALISED (see planState.js). The marks are the difference between
+     "relight three spaces" and "relight eleven", so losing them on a reload
+     would quietly put the bill back up. */
+  const [dirtyIds, setDirtyIds] = useState([]);
   const [focusId, setFocusId] = useState(null);       // which room the panel is editing
 
 
@@ -901,6 +959,7 @@ export default function App({
     setCeilingObjs([]); setObjMode(false); setSelObjId(null); setObjDrag(null);
     setArmed(null); setGuides([]); setGhost(null);
     setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
+    setOutlinesOpen(false); setDirtyIds([]);
     setUnitId(null);
   }, [initialProjectType]);
 
@@ -1126,7 +1185,7 @@ export default function App({
    */
   const stateSetters = useMemo(() => ({
     setUnitId, setScaleMode, setRefId, setCustomFt, setMeasure, setDoorPick, setCeilingFt,
-    setOutlines, setLitIds, setFocusId, setSelectedOutlineId, setRoomState,
+    setOutlines, setLitIds, setDirtyIds, setFocusId, setSelectedOutlineId, setRoomState,
     // `projectId` in here is the kind of BUILDING (residential, hospitality —
     // see roomTypes.js), not the database project. The alias is the whole
     // reason planState.js calls it projectType.
@@ -1203,6 +1262,14 @@ export default function App({
     () => outlinesPx.filter((o) => litIds.includes(o.id)),
     [outlinesPx, litIds]);
 
+  /* WHICH SPACES ARE LIT, READABLE FROM A CALLBACK. `markChanged` runs inside
+     the edit handlers and has to know whether the outline it is about to mark is
+     already lit; reading `litIds` through a `setLitIds` reducer to peek at it
+     would mean a `setDirtyIds` call inside another setter's reducer, and React
+     is free to invoke a reducer twice. Same pattern as `roomsRef` below. */
+  const litRef = useRef(litIds);
+  litRef.current = litIds;
+
   const commitOutline = useCallback((pointsPx) => {
     if (!source) return;
     const o = makeOutline(pointsPx, { name: nextOutlineName(outlines) });
@@ -1213,14 +1280,33 @@ export default function App({
     setSelectedOutlineId(stored.id);   // highlight it; confirming is a separate act
   }, [source, outlines]);
 
-  const updateOutline = useCallback((id, patch) => {
-    setOutlines((os) => os.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+  /**
+   * A ROOM IS MARKED DIRTY ONLY IF IT IS LIT. An outline nobody has lit yet is
+   * not a space whose answers have gone stale — it is a space with no answers,
+   * which the tracer already reports as "not lit". Kept as a callback so the two
+   * edit paths below cannot drift on the condition.
+   */
+  const markChanged = useCallback((id) => {
+    if (!litRef.current.includes(id)) return;
+    setDirtyIds((d) => (d.includes(id) ? d : [...d, id]));
   }, []);
+
+  const updateOutline = useCallback((id, patch) => {
+    // `rectify` SQUARES THE POLYGON, so it moves corners and counts as a change.
+    // A rename does not, and marking on one would offer a paid relight for
+    // having typed a better name.
+    if ('rectify' in patch) markChanged(id);
+    setOutlines((os) => os.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+  }, [markChanged]);
 
   const deleteOutline = useCallback((id) => {
     setOutlines((os) => os.filter((o) => o.id !== id));
     setSelectedOutlineId((s) => (s === id ? null : s));
     setLitIds((ids) => ids.filter((x) => x !== id));
+    // A SPACE THAT IS GONE IS NOT A SPACE THAT CHANGED. Left in, its id would
+    // sit in the dirty list for ever, and the tracer would offer a relight of a
+    // room that no longer exists.
+    setDirtyIds((d) => d.filter((x) => x !== id));
     setFocusId((f) => (f === id ? null : f));
   }, []);
 
@@ -1240,6 +1326,7 @@ export default function App({
    */
   const editPoints = useCallback((id, fn) => {
     if (!source) return;
+    markChanged(id);
     setOutlines((os) => os.map((o) => {
       if (o.id !== id) return o;
       const px = o.pointsDu.map(source.fromDu);
@@ -1247,7 +1334,7 @@ export default function App({
       if (!next || next.length < 3) return o;
       return { ...o, reviewed: true, pointsDu: next.map(source.toDu) };
     }));
-  }, [source]);
+  }, [source, markChanged]);
 
   const movePoint = useCallback((id, index, pointPx) => {
     editPoints(id, (px) => px.map((p, i) => (i === index ? pointPx : p)));
@@ -1410,6 +1497,8 @@ export default function App({
     // so the details pane is unaffected.
     setFocusId(null);
     setPickingId(null);
+    setDirtyIds([]);
+    setOutlinesOpen(false);
   }, [outlines, claimSpaces]);
 
   const lightOneRoom = useCallback(async (id) => {
@@ -1419,6 +1508,8 @@ export default function App({
     setLitIds([id]);
     setFocusId(id);
     setPickingId(null);
+    setDirtyIds((d) => d.filter((x) => x !== id));
+    setOutlinesOpen(false);
     // CONFIRMING THE SPACES IS ITS OWN DATAPOINT — "here is what the segmenter
     // proposed and here is what a person accepted" — and it is worth recording
     // whether or not the pipeline is ever run on it.
@@ -3490,10 +3581,38 @@ export default function App({
    * "Find accent zones" button was exactly that second implementation, and it
    * is gone.
    */
+  /**
+   * ...AND `only` RUNS IT OVER A SUBSET, WHICH IS THE RELIGHT-WHAT-CHANGED PATH.
+   *
+   * An array of outline ids, or null for the whole sheet. Three things read it
+   * and they are the three things that made a partial run impossible before:
+   *
+   *   THE CLAIM. `claimSpaces` is handed the subset, so a plan where one corner
+   *   moved is charged for one space. This is what the pricing page has always
+   *   said happens.
+   *
+   *   THE WORK LIST. Every pass runs `mapLimit` over `list`, so filtering that
+   *   one array narrows the classifier, the accents and the surfaces together.
+   *
+   *   THE BED PASS, WHICH IS SKIPPED. It is one call over the WHOLE sheet — it
+   *   contests bed candidates against each other across rooms — so running it
+   *   for one room would either re-do the sheet or produce a worse answer than
+   *   the one already saved. `beds` therefore defaults to "only on a full run".
+   *
+   * AND THE MERGES MATTER MORE THAN THE FILTER. `setRoomTypes(found)` REPLACED
+   * the map, which is invisible on a full run and wipes eight rooms' types on a
+   * partial one. The accent and surface passes already merged; the classifier
+   * now does too.
+   */
   const runPipeline = useCallback(async (opts = {}) => {
     const { classify = true, accents = true, surfaces = true, relight = true,
-            beds = true } = opts;
+            only = null } = opts;
+    const { beds = !only } = opts;
     if (!source || !outlines.length) return;
+    // The subset, as ids, narrowed to outlines that still exist.
+    const ids = only ? outlines.filter((o) => only.includes(o.id)).map((o) => o.id) : null;
+    if (ids && !ids.length) return;
+    const inRun = (id) => !ids || ids.includes(id);
 
     // THE GATE, AT THE VERY TOP, BEFORE THE LOADING SCREEN.
     //
@@ -3508,7 +3627,7 @@ export default function App({
     // false })` is how the accent and surface passes are re-run over a layout
     // that already exists — the spaces were paid for when they were lit and
     // asking again would charge a second time for one dismissed accent.
-    if (relight && !await claimSpaces(outlines.map((o) => o.id))) return;
+    if (relight && !await claimSpaces(ids ?? outlines.map((o) => o.id))) return;
 
     cancelPrep.current = false;
 
@@ -3532,9 +3651,9 @@ export default function App({
     // and this function does not get one.
     let bedsNow = detections;
     const roomState = {};
-    for (const o of outlines) roomState[o.id] = 'idle';
+    for (const o of outlines) if (inRun(o.id)) roomState[o.id] = 'idle';
     let steps = wanted.map((st, i) => ({ ...st, state: i === 0 ? 'busy' : 'idle' }));
-    let done = 0, total = relight ? outlines.length : 0;
+    let done = 0, total = relight ? (ids ?? outlines).length : 0;
     const paint = (patch = {}) => setPrep((prev) => ({
       phase: steps.find((x) => x.state === 'busy')?.label ?? 'Finishing',
       detail: '', ...prev, ...patch, steps: [...steps], roomState: { ...roomState },
@@ -3653,8 +3772,14 @@ export default function App({
       // Not a model call: mark everything lit so the memo produces the ambient
       // layout the rest of this depends on. AFTER the beds, so it is computed
       // once with their zones in it rather than once without and once with.
-      setOutlines((os) => os.map((o) => ({ ...o, reviewed: true })));
-      setLitIds(outlines.map((o) => o.id));
+      setOutlines((os) => os.map((o) => (inRun(o.id) ? { ...o, reviewed: true } : o)));
+      // A UNION, NOT AN ASSIGNMENT. On a partial relight the spaces that were
+      // already lit have to stay lit — assigning the subset here would blank the
+      // rest of the sheet, which is the very thing this whole change exists to
+      // stop happening.
+      setLitIds((prev) => (ids
+        ? [...prev, ...ids.filter((id) => !prev.includes(id))]
+        : outlines.map((o) => o.id)));
       // NOTHING IS SELECTED TO BEGIN WITH. `focusId` used to be seeded with the
       // first outline, which was harmless while it only decided which room the
       // panel described — it now also draws a blue outline on the canvas, and a
@@ -3670,7 +3795,7 @@ export default function App({
     // --- 1. the ambient layout
     let list = [];
     for (let i = 0; i < 80 && !cancelPrep.current; i++) {
-      list = (roomsRef.current || []).filter((r) => r.plan?.ok);
+      list = (roomsRef.current || []).filter((r) => r.plan?.ok && inRun(r.id));
       if (list.length) break;
       await new Promise((res) => setTimeout(res, 60));
     }
@@ -3715,8 +3840,11 @@ export default function App({
         return null;
       });
       if (cancelPrep.current) { setPrep(null); return; }
-      types = found;
-      setRoomTypes(found);
+      // MERGED, for the reason in this function's header: `found` covers only
+      // the rooms in this run, and replacing the map would drop the type of
+      // every room that was not.
+      types = { ...roomTypes, ...found };
+      setRoomTypes((m) => ({ ...m, ...found }));
       const named = (r) => roomTypeIn(projectId, found[r.id]?.type)?.label ?? 'unclassified';
       note('types', withFails(list.map((r) => named(r)).slice(0, 4).join(', ')
         + (list.length > 4 ? `, +${list.length - 4}` : ''), failed.types));
@@ -3763,7 +3891,9 @@ export default function App({
       stepTo('beds2');
       total += empty.length;
       if (!empty.length) note('beds2', 'every bedroom already has a bed');
-      for (const o of outlines) roomState[o.id] = empty.some((r) => r.id === o.id) ? 'idle' : 'done';
+      // `inRun` FOR THE SAME REASON THE WORK LIST IS NARROWED: a partial run
+      // must not paint a row for a space it is not touching. See the header.
+      for (const o of outlines) if (inRun(o.id)) roomState[o.id] = empty.some((r) => r.id === o.id) ? 'idle' : 'done';
       paint({ detail: empty.length
         ? `${empty.length} bedroom${empty.length > 1 ? 's' : ''} with no bed — looking closer`
         : 'nothing to re-check' });
@@ -3814,7 +3944,7 @@ export default function App({
       if (!forAccents.length) note('accents', 'nothing in this plan takes accents');
       paint({ detail: forAccents.length
         ? `${forAccents.length} space${forAccents.length > 1 ? 's' : ''} qualify` : 'none' });
-      for (const o of outlines) roomState[o.id] = forAccents.some((r) => r.id === o.id) ? 'idle' : 'done';
+      for (const o of outlines) if (inRun(o.id)) roomState[o.id] = forAccents.some((r) => r.id === o.id) ? 'idle' : 'done';
       const got = {};
       await mapLimit(forAccents, 2, async (r) => {
         if (cancelPrep.current) return null;
@@ -3851,7 +3981,7 @@ export default function App({
       total += forSpots.length;
       stepTo('spots');
       if (!forSpots.length) note('spots', 'nothing to aim at');
-      for (const o of outlines) roomState[o.id] = forSpots.some((r) => r.id === o.id) ? 'idle' : 'done';
+      for (const o of outlines) if (inRun(o.id)) roomState[o.id] = forSpots.some((r) => r.id === o.id) ? 'idle' : 'done';
       paint({ detail: forSpots.length ? 'Looking for task surfaces' : 'none' });
       const got = {};
       await mapLimit(forSpots, 2, async (r) => {
@@ -3883,6 +4013,14 @@ export default function App({
     // as a glitch.
     await new Promise((res) => setTimeout(res, anyFailed ? 2200 : 550));
     setPrep(null);
+    // WHAT THE RUN ANSWERED IS NO LONGER OUTSTANDING. A full run clears the list
+    // outright; a partial one clears only the ids it was given, so a space
+    // somebody moved WHILE this was running stays marked and is still offered.
+    if (relight) setDirtyIds((d) => (ids ? d.filter((x) => !ids.includes(x)) : []));
+    // ...AND THE TRACER GETS OUT OF THE WAY. A relight is the act of leaving the
+    // outlines, so finishing one lands on the drawing it just built rather than
+    // back on the screen the user pressed the button from.
+    if (relight) { setOutlinesOpen(false); setView('design'); }
     // A DESIGN NOW EXISTS. This is the moment worth a snapshot and a row in the
     // revision trail — the beat above is also what makes it safe, since React
     // has re-rendered by now and the milestone reads the finished state rather
@@ -3919,8 +4057,12 @@ export default function App({
     };
   }), [outlinesPx, prep, roomTypes, projectId]);
 
+  /* `outlinesOpen` IS THE FLAG THAT USED NOT TO EXIST — see its declaration.
+     `!litIds.length` stays alongside it and is not redundant: a plan with
+     outlines and nothing lit has no design to show, so it belongs on the tracer
+     whether anybody asked for it or not. The flag adds the other way in. */
   const step = !source ? 'upload'
-    : !litIds.length ? 'trace'
+    : (outlinesOpen || !litIds.length) ? 'trace'
     : pickingId ? 'chunks'
     : 'plan';
   // NEVER THE TRACER IN READ-ONLY. `step` is 'trace' whenever nothing has been
@@ -3929,6 +4071,54 @@ export default function App({
   // with whatever outlines exist instead, and the panel says plainly that there
   // is no layout.
   const showTrace = step === 'trace' && !readOnly;
+
+  /* --- ARRIVING AT THE DESIGN SCREEN TURNS THE PLAN DARK -------------------
+     THE TWO STEPS WANT OPPOSITE GROUNDS AND THAT IS NOT AN INCONSISTENCY.
+     Tracing is done ON somebody else's drawing: you are reading their line
+     work, finding a wall, clicking a corner — and a scan is white paper with
+     black ink on it, so inverting it to trace makes the thing you are reading
+     harder to read for no gain. The design step's subject is not the plan, it
+     is the LIGHT: pools, throws, strips, glows, every one of them drawn in the
+     cream ramp, and cream on white paper is four percent of contrast. So the
+     drawing goes to a negative at exactly the moment it stops being the subject.
+
+     IT WATCHES `litIds`, NOT `step`, AND THAT IS THE SECOND VERSION OF THIS.
+     The first watched `step` — `trace` → not `trace` — which was right while the
+     only way to see the tracer was to have no layout. It is not right now that
+     the Outlines tab is a detour that keeps the lights (see `outlinesOpen`): a
+     trip to fix one wall and back is a `trace` → `plan` crossing, so somebody
+     who had deliberately switched to paper would find it black again on the way
+     back, every time. "The plan just got its first lights" is the moment worth
+     acting on, and empty → non-empty says exactly that and nothing else. A
+     partial relight, which grows a non-empty list, does not fire it either.
+
+     Two consequences worth stating, because both are why this is not simply a
+     different default:
+
+       A REOPENED PLAN KEEPS WHAT IT WAS SAVED WITH. A plan that already has a
+       layout mounts at `plan` and never crosses, so somebody who deliberately
+       switched back to paper last week finds paper. `invert` is serialised with
+       the other layers for exactly that reason.
+
+       AND IT IS ARMED ONLY ONCE THE RESTORE HAS LANDED, which is the whole
+       reason `restoreApplied` is read here. A reopened plan mounts with `litIds`
+       empty and stays that way for one or more commits — the file has to be read
+       before the restore can be applied — so the restore itself is an empty →
+       non-empty crossing in every detail except intent. Without this guard,
+       reopening a plan somebody had switched back to paper would silently turn
+       it black again. `applyEditor` and `setRestoreApplied(true)` are called in
+       one synchronous block, so the first render that reads the flag true is the
+       same render that carries the restored `litIds` — see the note on the flag
+       itself for why it is state and not a ref. Until then the ref is parked at
+       `null`, which is not a state this fires from. */
+  const hadLights = useRef(null);
+  useEffect(() => {
+    const lit = litIds.length > 0;
+    if (restoreApplied && hadLights.current === false && lit) {
+      setLayers((l) => (l.invert ? l : { ...l, invert: true }));
+    }
+    hadLights.current = restoreApplied ? lit : null;
+  }, [litIds, restoreApplied]);
   // The BOQ tab takes the whole stage. Gated on `source` as well as on the tab
   // so that a stale `view` cannot survive a Clear and render a schedule of a
   // plan that is no longer loaded.
@@ -3937,34 +4127,39 @@ export default function App({
   const showPicker = step === 'chunks' && !zoneMode && !!picking && !readOnly;
 
   /**
-   * BACK TO THE OUTLINES, WHICH IS A TAB THAT CAN THROW WORK AWAY.
+   * BACK TO THE OUTLINES, AND IT NO LONGER THROWS ANYTHING AWAY.
    *
-   * `step` is derived from `litIds` — there is no separate screen flag — so the
-   * only way to show the tracer again is to clear the lit list, and everything
-   * downstream of it is a memo: the grids, the fittings, every accent and spot
-   * placed by hand. That is why this asks first, and why the confirm did not
-   * move when the control did.
+   * THIS USED TO ASK "ARE YOU SURE" AND THEN EMPTY `litIds`, because `step` was
+   * derived from that list and there was no other way to show the tracer. The
+   * cost was the whole layout: every memo downstream reads the lit outlines, so
+   * the grids, the fittings and the schedule went, and the only way back was a
+   * full relight of every space on the sheet — re-run and re-charged.
    *
-   * A TAB THAT CONFIRMS IS UNUSUAL AND IT IS THE HONEST SHAPE HERE. Tabs
-   * normally promise free movement between two views of one thing, and these two
-   * ARE that from the user's side — outlines, then design. What makes it
-   * different is that the app cannot hold a layout while showing the tracer. The
-   * alternative was to keep a button at the foot of the panel, which is where it
-   * was, and which put the way back to the previous step at the bottom of a long
-   * scroll under the section that has least to do with it.
+   * IT IS NOW WHAT A TAB IS SUPPOSED TO BE. `outlinesOpen` shows the tracer and
+   * `litIds` is not touched, so nothing is discarded, nothing needs confirming,
+   * and the Design tab puts the layout back exactly as it was. Corner edits made
+   * while here reach the drawing on their own — `rooms` is a memo — and the ones
+   * that need the model run again are collected in `dirtyIds` and offered on the
+   * tracer's own foot.
    *
-   * Returns false when the user backs out, so the tab can decline to switch.
+   * IT STILL RETURNS A BOOLEAN. The tab treats `false` as "decline to switch",
+   * and nothing here can refuse any more — but the signature is the tab's
+   * contract, not this function's, and the other two tabs read it too.
    */
   const backToOutlines = () => {
-    const n = rooms.length;
-    if (n && !window.confirm(
-      `Go back to the outlines?\n\n`
-      + `The layout for ${n} space${n === 1 ? '' : 's'} will be discarded — `
-      + `the fittings, and anything you placed or moved by hand. `
-      + `The outlines themselves are kept.\n\nThis cannot be undone.`)) return false;
-    setPickingId(null); setLitIds([]);
+    setPickingId(null);
+    setOutlinesOpen(true);
+    // AND THE BOQ TAB HAS TO LET GO OF THE STAGE. `boqOpen` is checked BEFORE
+    // `showTrace` in the stage's branch list, so clicking Outlines while the
+    // schedule is up would leave the schedule on screen with the tracer's panel
+    // beside it — the one combination of view and step that renders neither
+    // screen properly.
+    setView('design');
     return true;
   };
+
+  /** ...and the way back, which is the same flag and no questions either. */
+  const backToDesign = () => { setOutlinesOpen(false); setView('design'); };
 
 
   // --- interactions ---------------------------------------------------------
@@ -5530,7 +5725,7 @@ export default function App({
   // nothing is derived.
   const editorState = useMemo(() => serialiseEditor({
     unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
-    outlines, litIds, focusId, selectedOutlineId, roomState,
+    outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState,
     projectType: projectId, roomTypes, pdfPage,
     detections, dismissed, bedVerdicts, provider, zones,
     doors,
@@ -5540,7 +5735,7 @@ export default function App({
     wallResults, runTrims, renderRefs,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
-       outlines, litIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
+       outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
        detections, dismissed, bedVerdicts, provider, zones, doors,
        ceilingObjs, chunkPicks, designPicks, ceilingKinds,
        accentResults, accentDismissed, manualAccents,
@@ -5759,7 +5954,7 @@ export default function App({
             where anybody who cares about it is looking. */}
         {onBack ? (
           <div className="flex items-center gap-3 min-w-0">
-            <button className="border-0 bg-none text-[12px] text-muted cursor-pointer py-1 inline-flex items-center gap-[7px] m-0 whitespace-nowrap hover:text-ink [&>span]:text-[13px]" onClick={onBack}>
+            <button className="border-0 bg-none text-[12px] text-subtle cursor-pointer py-1 inline-flex items-center gap-[7px] m-0 whitespace-nowrap transition-colors duration-[120ms] hover:text-white [&>span]:text-[13px]" onClick={onBack}>
               <span aria-hidden="true">←</span> Back to Projects
             </button>
             <span className="w-px h-[15px] bg-border flex-none rotate-[15deg]" aria-hidden="true" />
@@ -5955,13 +6150,14 @@ export default function App({
           absolutely-positioned child of it would scroll away with the plan, and
           a switch you have to scroll back to find is not pinned chrome.
 
-          OFFERED ONLY WHERE IT DOES SOMETHING. A scan is pixels, so inverting it
-          is meaningful. A DXF is not: its geometry is drawn by us, in colours
-          from `C` in PlanCanvas, and a filter over it would invert our own ink
-          rather than the plan. So the switch is absent on a vector plan rather
-          than present and inert — the rule the View section follows about a
-          checkbox that turns on nothing. */}
-      {source && !isVector && !boqOpen && !showTrace && (
+          IT IS OFFERED ON A DXF TOO NOW, AND IT USED NOT TO BE. The old reason
+          was sound and has been dealt with: a DXF has no bitmap to subtract from
+          255, and a CSS filter over one would invert OUR OWN ink rather than the
+          plan, so the switch was hidden rather than left present and inert. What
+          changed is that PlanCanvas no longer needs a filter — it takes the line
+          work's greys from the ground (see the `vector` branch there), so a DXF
+          has a real night mode and the switch has something to do on one. */}
+      {source && !boqOpen && !showTrace && (
         <div className="absolute bottom-6 right-[364px] [@media(max-width:960px)]:right-6
           z-[5] flex gap-0.5 p-1 rounded-lg bg-white border border-border
           shadow-[0_2px_10px_rgba(0,0,0,0.35)]"
@@ -5977,16 +6173,22 @@ export default function App({
              + ' 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21'
              + ' 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z']].map(([on, label, d]) => {
             const live = layers.invert === on;
-            /* INK ON THE LIVE SIDE, GREY ON THE OTHER — because the pill is
-               white now, and that decides this. The accent RAMP was tried and
-               read as washed out at 17px: its tones are #c2a987 through #fef1dd,
-               which carry as a fill over a large shape and resolve to a pale
-               smudge in 1.7px strokes. There is nothing wrong with the gradient;
-               there is not enough of it in an icon for a gradient to be
-               anything. Then white icons, which were right while the pill was
-               dark glass and became invisible the moment it went white.
-               SO NO PAINT SERVER, AND `currentColor` DOES IT ALL. Both states
-               are a text colour on the button, which is why there is no
+            /* INK ON THE LIVE SIDE, GREY ON THE OTHER, and the PILL decides
+               which — this has been round the houses, so the reasoning stays
+               written down. The accent RAMP was tried and read as washed out at
+               17px: its tones are #c2a987 through #fef1dd, which carry as a fill
+               over a large shape and resolve to a pale smudge in 1.7px strokes.
+               There is nothing wrong with the gradient; there is not enough of
+               it in an icon for a gradient to be anything. White was tried while
+               the pill was dark glass and is wrong on a white one.
+               THE PILL IS DELIBERATELY OPAQUE WHITE AND STAYS THAT WAY. It is
+               the one piece of chrome that has to read against BOTH grounds —
+               it is the control that switches between them — so it cannot be
+               glass tinted for either. A white chip with black glyphs is legible
+               over a white scan and over a black one; anything translucent is
+               legible over one of them.
+               NO PAINT SERVER EITHER WAY, AND `currentColor` DOES IT ALL. Both
+               states are a text colour on the button, which is why there is no
                `<defs>` in here. */
             return (
               <button key={String(on)} type="button"
@@ -6030,10 +6232,10 @@ export default function App({
         {boqOpen ? (
           <BOQView boq={boq} planName={source.name} />
         ) : !source ? (
-          <div className={'w-[min(560px,92%)] border border-dashed border-border-strong '
-            + 'rounded-lg bg-surface px-8 py-[52px] text-center '
+          <div className={'w-[min(560px,92%)] border border-dashed border-border/10 '
+            + 'rounded-lg bg-surface backdrop-blur-[5px] px-8 py-[52px] text-center '
             + 'transition-[border-color,background-color] duration-150'
-            + (over ? ' border-accent border-solid bg-accent-soft' : '')}>
+            + (over ? ' border-border/10 border-solid bg-white/10' : '')}>
             <h2 className="m-0 mb-2 text-[20px] tracking-[-0.03em]">Drop a floor plan</h2>
             <p className="mx-auto mt-0 mb-[18px] text-muted max-w-[42ch]">
               To start creating lighting schemes</p>
@@ -6060,6 +6262,15 @@ export default function App({
             onDeleteOutline={deleteOutline}
             onConfirm={lightOneRoom}
             onProceed={runPipeline}
+            /* --- THE ROUND TRIP, AS THREE PROPS -----------------------------
+               `litIds` tells the tracer there is a design behind it, so its foot
+               can offer a way back instead of only a way forward; `dirtyIds` is
+               which spaces have moved since they were lit, which is what turns
+               "relight everything" into "relight the two you touched". Both are
+               ids and not counts, because the tracer marks the rows too. */
+            litIds={litIds}
+            dirtyIds={dirtyIds}
+            onBackToDesign={backToDesign}
             onMovePoint={movePoint}
             onInsertPoint={insertPoint}
             onRemovePoint={removePoint}
@@ -6302,7 +6513,7 @@ export default function App({
                 ['csv', 'CSV', '.csv — UTF-8, opens anywhere'],
                 ['pdf', 'PDF', '.pdf — plain, for printing and marking up']].map(([k, label, note]) => (
                 <button key={k} title={note} onClick={() => exportBOQ(k)}
-                  className={k === 'xlsx' ? BTN_BOQ_CTA : BTN_BOQ}>
+                  className={BTN_BOQ}>
                   <b>{label}</b><span>{note}</span>
                 </button>
               ))}
@@ -6387,7 +6598,7 @@ export default function App({
           <div className={`${SEC} flex-1 flex flex-col min-h-0`}>
             <div className="flex-1 flex flex-col items-center justify-center gap-4
               text-center px-1 py-6">
-              <p className="m-0 text-[17px] leading-[1.35] tracking-[-0.02em] text-ink
+              <p className="m-0 text-[17px] leading-[1.35] tracking-[-0.02em] text-white
                 max-w-[18ch]">Lighting up your space…</p>
               {/* ONE BUTTON, and it is the destructive one. `Stop` on its own
                   kept whatever had finished, which is genuinely useful and

@@ -58,7 +58,7 @@
   --color-surface:rgba(255,255,255,0.05);
   --color-surface-2:#FAFAFA;
   --color-surface-3:#F2F2F2;
-  --color-grid:#EFEFEF;
+  --color-grid:#232323;
 
   --color-border:#EAEAEA;
   --color-border-strong:#D4D4D4;
@@ -135,6 +135,51 @@
     pointer-events: none;
   }
 }
+/* --- A GRADIENT STROKE THAT TRAVELS ROUND THE BUTTON, ONCE, ON HOVER -------
+   The static half is the same trick `gradient-ring` above uses and the comment
+   there is the reference: a `::before` inset to the button's own edge, `padding:
+   1px`, filled with the ramp, and two masks composited with `exclude` so only
+   the one-pixel frame survives. What is different is the FILL and what happens
+   to it.
+
+   A CONIC GRADIENT, NOT A LINEAR ONE, AND THAT IS THE WHOLE POINT. Sliding a
+   linear ramp's `background-position` moves it left to right across the ring —
+   a highlight crossing the button, which is the `lp-shine` sweep and reads as
+   light passing over a surface. "Round it" is angular: a conic gradient is
+   measured in degrees about the centre, so rotating its start angle walks every
+   stop along the perimeter in order — down the right edge, across the bottom,
+   back up the left. Masked to a 1px frame, that is a ramp running round the
+   outline.
+
+   THE RAMP IS LAID TWICE ROUND THE CIRCLE. `--accent-stops` runs dark → light →
+   dark across its length, so one lap would put the single bright point on one
+   side and the two dark ends meeting on the other — a seam. Two passes at half
+   the interval give two bright points opposite each other and no visible join,
+   which is what makes the rotation read as continuous motion rather than as a
+   mark being dragged.
+
+   `@property` IS WHAT MAKES IT ANIMATE AT ALL. A custom property is a token
+   stream by default and interpolates DISCRETELY — it would jump from 0 to 360
+   halfway through, which is no animation. Registering it with `syntax:
+   '<angle>'` makes it a typed value the engine can tween. It has to sit outside
+   `@layer base`: `@property` is not a style rule and is ignored inside a layer.
+
+   AND IT DEGRADES TO A STILL RING RATHER THAN TO NOTHING. `var(--lp-glow-a,
+   0deg)` carries its own fallback, so where `@property` is unsupported the
+   property is invalid-at-computed-value-time, the fallback answers, and the
+   button keeps its gradient stroke — it simply does not move. Without the
+   fallback the whole `conic-gradient()` would be invalid and the stroke would
+   disappear, which is a worse outcome than a static one.
+
+   ONCE, ON HOVER, AND NOT A LOOP. Same argument as `lp-shine`: a stroke that
+   chases itself for ever is a barber's pole the eye learns to ignore, and this
+   is meant to be the button answering the pointer. */
+@property --lp-glow-a {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
 /* EVERYTHING BELOW, UNTIL THE MATCHING CLOSE AT THE END OF THE FILE, IS IN
    `@layer base`, AND IT HAS TO STAY THAT WAY. Tailwind's own utilities live in
    `@layer utilities`, which the cascade-layers spec always ranks ABOVE an
@@ -209,13 +254,13 @@
   --text-subtle:#7A7A7A;    /* tertiary: column heads, disabled, hints */
 
   --bg:#000000;             /* the page behind the sheet */
-  --grid:#222;           /* the page's own graph paper */
+  --grid:#232323;           /* the page's own graph paper */
 
   --border:#EAEAEA;         /* the hairline. One weight, everywhere. */
   --border-strong:#D4D4D4;  /* ...and the one that has to be seen */
 
   --accent:#0070F3;         /* interactive, selected, focused, and nothing else */
-  --input-bg:#FFFFFF;
+  --input-bg:rgba(255,255,255,.1);
 
   --font:'The Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
   --r:6px;                  /* the radius. One value; the larger one is `--radius-lg`. */
@@ -243,7 +288,7 @@ body{
   font-feature-settings:'ss01' 1;
   letter-spacing:-0.006em;
   background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
-  background-size:40px 40px
+  background-size:24px 24px
 }
 
 /* body::after {
@@ -296,15 +341,27 @@ input[type=range]{flex:1.1;max-width:130px;accent-color:var(--accent);height:18p
    two-borders-rotated-45deg trick cannot be given round caps. `%23` is `#`,
    which has to be escaped inside a url().
 
-   `.lp-check` AND NOT A BARE `input[type=checkbox]`, because the tracer has its
-   own checkboxes on a light panel that are none of this rule's business. The
-   class is on the three lists that share the dark panel: the editor's View
-   section, the admin toggle beside it, and the read-only viewer's Layers. */
+   `.lp-check` AND NOT A BARE `input[type=checkbox]`, because the app has native
+   checkboxes elsewhere that are none of this rule's business. It is opt-in, and
+   the opt-in is now EVERY checkbox in the product: the editor's View section,
+   the admin toggle beside it, the read-only viewer's Layers, and the tracer's
+   seven — square, corner grips, the two snap locks and the DXF layer list. The
+   tracer's were the last `accent-color:#ffb900` boxes in the app, which is to
+   say the last AMBER ones: `accent-color` paints the BOX, so an amber accent
+   gives an amber square with a dark tick in it. There is no version of that
+   property that produces a white box, which is exactly why this rule exists.
+
+   THE TICK IS SIZED IN PER CENT, not in pixels, because the tracer's three
+   lists use three box sizes (14px, 13px, 11px) and a fixed 10px glyph would
+   overflow the smallest. 72% of 14px is 10.08px, so the boxes that were already
+   right are unchanged. The size itself stays the caller's: a `w-*`/`h-*` utility
+   on the input outranks anything in `@layer base`, which is what lets one rule
+   serve all three. */
 input[type=checkbox].lp-check{
   appearance:none;-webkit-appearance:none;
   width:14px;height:14px;margin:0;flex:none;
   border:1px solid var(--border-strong);border-radius:3px;
-  background:#fff no-repeat center/10px 10px;
+  background:#fff no-repeat center/72% 72%;
   cursor:pointer
 }
 input[type=checkbox].lp-check:checked{
@@ -320,12 +377,14 @@ input[type=checkbox].lp-check:checked{
    a new field cannot silently arrive unstyled again. */
 input[type=number],input[type=text],input[type=email],input[type=password],
 input[type=search],input[type=tel],input[type=url],select{
-  font:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);
+  font:inherit;font-size:12px;padding:6px 9px;
+  border:1px solid rgba(234,234,234,.12);
   border-radius:var(--r);background:var(--input-bg);color:var(--text);width:100%;
+  backdrop-filter:blur(12px);
   transition:border-color .12s,box-shadow .12s
 }
 input[type=number]:hover,input[type=text]:hover,input[type=email]:hover,
-input[type=password]:hover,input[type=search]:hover,select:hover{border-color:var(--border-strong)}
+input[type=password]:hover,input[type=search]:hover,select:hover{border-color:rgba(234,234,234,.3)}
 /* THE FOCUS RING IS THE ACCENT, and it is a ring rather than a glow: 1px border
    plus a 3px halo at low alpha. Anything softer stops being a focus indicator
    and starts being a decoration. */
@@ -388,6 +447,202 @@ input:focus,select:focus,textarea:focus{
    it — auth, the PDF picker, the project-type dialog, the planner. */
 @keyframes sl-spin{to{transform:rotate(360deg)}}
 
+/* --- THE LOADING RING, AND IT IS THE ACCENT RAMP GOING ROUND -------------
+   Every spinner in the app was `border-2 border-border border-t-accent`: a
+   #EAEAEA ring with one #0070F3 quarter. Two problems on a black page. The ring
+   is a bright hairline circle — the same too-strong `--border` this app has been
+   walking back everywhere else — and the accent is no longer a flat blue, it is
+   the RAMP, which a border-colour cannot hold.
+
+   SO THE RING IS A CONIC GRADIENT WITH A HOLE PUNCHED IN IT. `background` paints
+   the full disc with the ramp swept round 360°, fading to nothing at the tail so
+   there is still the one gap that reads as motion, and the radial `mask` cuts
+   everything but a `--lp-spin-w` band at the edge. Rotating THAT rotates the
+   gradient itself rather than a coloured arc, which is what "a rotating
+   gradient" actually looks like.
+
+   NO BORDER, so a caller must not keep one: `border-2` would sit outside the
+   mask as a solid circle and put the old bright ring back. The width is the
+   custom property, not a border, and the size is still the caller's `w-*`/`h-*`.
+
+   TWO MASK SYNTAXES because they are not alternatives — WebKit needs the
+   prefixed one and everything else reads the standard property. */
+.lp-spin{
+  --lp-spin-w:2px;
+  border-radius:9999px;
+  background:conic-gradient(from 0deg,
+    rgba(194,169,135,0)   0deg,
+    rgba(194,169,135,.28) 70deg,
+    #c2a987               170deg,
+    #efd5b2               250deg,
+    #fef1dd               340deg,
+    #fef1dd               360deg);
+  -webkit-mask:radial-gradient(farthest-side,#0000 calc(100% - var(--lp-spin-w)),#000 calc(100% - var(--lp-spin-w)));
+  mask:radial-gradient(farthest-side,#0000 calc(100% - var(--lp-spin-w)),#000 calc(100% - var(--lp-spin-w)));
+  animation:sl-spin .9s linear infinite;
+  will-change:transform
+}
+/* SLOWED, NOT STOPPED. A frozen spinner is a spinner that has crashed, which is
+   the opposite of what it is there to say — so somebody who has asked their
+   machine to calm down gets a slow sweep rather than a still ring. */
+@media (prefers-reduced-motion:reduce){.lp-spin{animation-duration:2.6s}}
+
+/* --- THE GLOWING BUTTON, AS ONE NAMED STYLE -------------------------------
+   THREE BUTTONS IN THE APP WEAR THIS and they are the three that begin the
+   work: upload a floor plan, choose a drawing on an empty dashboard, light the
+   spaces. It is the loudest thing this design language has, which is exactly why
+   it is a named class used three times rather than a handful of utilities
+   anybody can paste — a fourth glowing button would make none of them mean
+   anything.
+
+   IT CARRIES ITS OWN GROUND AND INK, so a call site cannot half-apply it: black
+   face, white type, and the two pseudo-elements below. What it does NOT carry is
+   size, padding or radius — those differ at all three sites, and `border-radius:
+   inherit` on the ring is what lets the caller pick the corner and have the
+   stroke follow it.
+
+   See the long note by `@property --lp-glow-a` above for the ring, and the one
+   over `::after` for the halo. */
+.lp-glow-btn{
+  --lp-glow-a:0deg;
+  position:relative;
+  isolation:isolate;
+  background:#000;
+  color:#fff;
+  cursor:pointer
+}
+.lp-glow-btn::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  padding:1px;
+  border-radius:inherit;
+  background:conic-gradient(from var(--lp-glow-a, 0deg),
+    #c2a987 0%,   #efd5b2 12.5%, #fef1dd 25%,  #efd5b2 37.5%,
+    #c2a987 50%,  #efd5b2 62.5%, #fef1dd 75%,  #efd5b2 87.5%,
+    #c2a987 100%);
+  mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite:exclude;
+  -webkit-mask-composite:xor;
+  pointer-events:none
+}
+.lp-glow-btn:hover:not(:disabled)::before{
+  animation:lp-glow-ring 1100ms cubic-bezier(.42,0,.58,1)
+}
+@keyframes lp-glow-ring{ to { --lp-glow-a:360deg } }
+/* The stroke stays; it just stops going anywhere. */
+@media (prefers-reduced-motion:reduce){.lp-glow-btn:hover::before{animation:none}}
+
+/* --- AND IT BREATHES, THE WAY A RECESSED COB DOES ------------------------
+   THE SAME 2.8s ease-in-out CYCLE AS `.lp-pulse`, deliberately to the
+   millisecond: that is the rhythm every fitting on the drawing is on, so a
+   button borrowing it reads as the same kind of object rather than as a second
+   animation with its own opinion about timing.
+
+   A BOX-SHADOW ON AN EMPTY `::after`, AND THAT SOLVES THE ONE HARD PART. The
+   glow has to sit OUTSIDE the button without washing the black inside it, and
+   an outer box-shadow is specified as clipped to the outside of its own
+   border-box — it is never painted within it, whatever the background is. So a
+   pseudo-element with no background at all and one shadow gives a halo that
+   cannot bleed inward, with no `z-index` juggling and nothing painted over the
+   button's face or over the ring at its edge.
+
+   OPACITY ONLY, WHERE THE COB ALSO SCALES. On the drawing the growth IS the
+   read — a pool of light swelling under a fitting — and it works there because
+   the circle is the glow. Here the glow is a shadow cast by a rectangle, and
+   scaling the caster moves its clip edge outward past the button's own, which
+   lets a sliver of shadow appear over the ring. Fractions of a pixel, and
+   visible on a 1px stroke. Opacity alone breathes just as legibly and cannot
+   touch the outline.
+
+   FROZEN BRIGHT RATHER THAN FROZEN OFF for anybody who has asked their machine
+   to stop moving things: `animation:none` leaves whatever the base rule says, so
+   the base says a mid value and the button keeps its halo.
+
+   AND IT OPENS UP UNDER THE POINTER — BY GROWING THE SHADOW, NOT THE ELEMENT.
+   `transform:scale()` is the obvious way to make a halo bigger and it is the one
+   thing this pseudo-element cannot do, for the reason above: its border-box is
+   exactly the button's, and the shadow is only drawn outside that box, so
+   scaling the caster pushes the clip edge outward and lets a sliver of shadow
+   fall across the 1px ring. Growing the BLUR and SPREAD instead leaves the box
+   where it is — the clip never moves, the ring stays clean, and the light simply
+   reaches further.
+
+   A TRANSITION AND NOT A SECOND ANIMATION, which is also what keeps it out of
+   the breathing's way. The keyframes own `opacity` and nothing else; the
+   transition owns `box-shadow` and nothing else. Two properties, two mechanisms,
+   no frame where one is fighting the other for the same value — and the halo
+   goes on breathing at the same rate while it opens. */
+.lp-glow-btn::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius:inherit;
+  box-shadow:0 0 22px 3px rgba(239,213,178,.26);
+  opacity:.78;
+  pointer-events:none;
+  animation:lp-glow-halo 2.8s ease-in-out infinite;
+  transition:box-shadow 260ms ease-out;
+  will-change:opacity
+}
+.lp-glow-btn:hover:not(:disabled)::after{
+  box-shadow:0 0 34px 7px rgba(239,213,178,.34)
+}
+@keyframes lp-glow-halo{
+  0%,100%{opacity:.5}
+  50%    {opacity:1}
+}
+@media (prefers-reduced-motion:reduce){.lp-glow-btn::after{animation:none}}
+
+/* A DEAD BUTTON DOES NOT BREATHE. "Light all N spaces" is disabled until
+   something is traced, and a halo pulsing under a control that cannot be pressed
+   is the most confident thing on the screen promising nothing. The ring stays —
+   it is the button's outline, and an outline is how you find the thing at all —
+   and the caller's own `disabled:opacity-40` takes it down with everything else.
+   Only the light goes out. */
+.lp-glow-btn:disabled::after{ animation:none; opacity:0 }
+.lp-glow-btn:disabled::before{ animation:none }
+
+/* --- THE GLINT, ON A BUTTON ----------------------------------------------
+   THE SAME IDEA AS `.lp-glint` AND DELIBERATELY NOT THE SAME MECHANISM. That
+   one is a dashed arc chasing itself round a polygon's own perimeter, which
+   needs an SVG path to run on; a button is a rounded box. So the sweep is a
+   narrow diagonal highlight that travels across the face and leaves.
+
+   IT IS ON HOVER AND IT RUNS ONCE, like the outline's does when a space is
+   selected. A glint that loops is a barber's pole — it stops being a response
+   to the pointer and becomes decoration the eye has to learn to ignore.
+
+   `:not(:disabled)` BECAUSE THE ONE BUTTON THAT WEARS THIS IS OFTEN DEAD. "Light
+   all N spaces" is disabled until something is traced, and a dead button that
+   glints when pointed at is a dead button that looks clickable.
+
+   `overflow:hidden` PLUS `border-radius:inherit` is what keeps the sweep inside
+   the button's corners, and `isolation:isolate` stops the ::after being hoisted
+   over a neighbouring stacking context on the sticky foot. */
+.lp-shine{position:relative;overflow:hidden;isolation:isolate}
+.lp-shine::after{
+  content:"";
+  position:absolute;top:0;bottom:0;left:0;width:42%;
+  border-radius:inherit;
+  pointer-events:none;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.78),transparent);
+  transform:translateX(-170%);
+  opacity:0
+}
+.lp-shine:hover:not(:disabled)::after{
+  animation:lp-shine 820ms cubic-bezier(.42,0,.58,1)
+}
+@keyframes lp-shine{
+  0%  {transform:translateX(-170%); opacity:0}
+  14% {opacity:1}
+  82% {opacity:.85}
+  100%{transform:translateX(330%);  opacity:0}
+}
+/* Suppressed outright rather than frozen, for the reason the outline's glint is:
+   a flourish held still is a bright bar stuck across the button forever. */
+@media (prefers-reduced-motion:reduce){.lp-shine::after{animation:none}}
+
 /* One lap of the outline per cycle. --lap is the polygon's own perimeter, set
    per room, so a WC and a hall pulse at the same apparent speed rather than the
    same absolute one. */
@@ -402,14 +657,14 @@ input:focus,select:focus,textarea:focus{
   font-size:11.5px;color:var(--text-subtle)
 }
 .loader-steps li .dot{
-  width:6px;height:6px;border-radius:50%;background:var(--border);
+  width:6px;height:6px;border-radius:50%;background:rgba(234,234,234,.18);
   margin-top:5px;grid-column:1
 }
 .loader-steps li>div{grid-column:2;min-width:0}
 .loader-steps li.busy{color:var(--text)}
-.loader-steps li.busy .dot{background:var(--accent);animation:sl-blink 1.1s ease-in-out infinite}
+.loader-steps li.busy .dot{background:#fff;animation:sl-blink 1.1s ease-in-out infinite}
 .loader-steps li.done{color:var(--text-muted)}
-.loader-steps li.done .dot{background:var(--ink);opacity:.35}
+.loader-steps li.done .dot{background:#fff;opacity:.32}
 .loader-steps li em{display:block;font-style:normal;font-size:10px;color:var(--text-subtle);
   margin-top:1px}
 @keyframes sl-blink{0%,100%{opacity:1}50%{opacity:.25}}

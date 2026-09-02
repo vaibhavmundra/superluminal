@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ProfileRail from '../components/ProfileRail.jsx';
 import PlanCard from '../components/PlanCard.jsx';
+import HowToLink from '../components/HowToLink.jsx';
 import { when } from './Dashboard.jsx';
 import { getProject, listPlans, renameProject, deletePlan, setProjectType,
          subscribePlans, coalesce } from '../lib/db.js';
@@ -55,9 +56,9 @@ export default function ProjectDetail() {
     // Into THIS project, explicitly — the automatic project only happens when
     // there is no context to put a drawing in, and here there is. The category
     // rides along from the project, so the editor never asks.
-    const job = startPlanUpload(file, { projectId });
+    const job = startPlanUpload(file, { projectId, projectType: project?.project_type ?? null });
     nav(`/plans/${job.planId}`);
-  }, [projectId, nav]);
+  }, [projectId, project, nav]);
 
   return (
     <div className="grid grid-cols-[56px_1fr] h-full">
@@ -80,12 +81,12 @@ export default function ProjectDetail() {
             back arrow lines up with the first card's left edge and the button
             with the last card's right edge. A bar whose contents run to the
             window edge over a centred grid reads as a different page. */}
-        <div className="h-14 flex-none flex items-center px-[30px] bg-white/[72%] [backdrop-filter:saturate(180%)_blur(12px)] border-b border-border">
+        <div className="h-14 flex-none flex items-center px-[30px] bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px] border-b border-border/10">
           <div className="w-full max-w-[1180px] mx-auto flex items-center gap-3 min-w-0">
-            <button className="border-0 bg-transparent text-[12px] text-muted cursor-pointer py-1 px-0 inline-flex items-center gap-[7px] m-0 whitespace-nowrap hover:text-ink" onClick={() => nav('/dashboard')}>
+            <button className="border-0 bg-transparent text-[12px] text-subtle cursor-pointer py-1 px-0 inline-flex items-center gap-[7px] m-0 whitespace-nowrap transition-colors duration-[120ms] hover:text-white" onClick={() => nav('/dashboard')}>
               <span aria-hidden="true" className="text-[13px]">←</span> Back to Dashboard
             </button>
-            <span className="w-px h-[15px] bg-border flex-none [transform:rotate(15deg)]" aria-hidden="true" />
+            <span className="w-px h-[15px] bg-border/10 flex-none [transform:rotate(15deg)]" aria-hidden="true" />
             {editing ? (
               <input className="text-[13.5px] w-[26ch] py-[3px] px-1.5" autoFocus value={draftName}
                 onChange={(e) => setDraftName(e.target.value)}
@@ -95,13 +96,13 @@ export default function ProjectDetail() {
                   if (e.key === 'Escape') { setEditing(false); }
                 }} />
             ) : (
-              <button className="border-0 bg-transparent text-[13.5px] text-ink cursor-text py-[3px] px-1.5 rounded max-w-[40ch] overflow-hidden text-ellipsis whitespace-nowrap hover:bg-surface-3 hover:shadow-[inset_0_-1px_0_var(--border-strong)]" title="Rename this project"
+              <button className="border-0 bg-transparent text-[13.5px] text-white cursor-text py-[3px] px-1.5 rounded max-w-[40ch] overflow-hidden text-ellipsis whitespace-nowrap transition-colors duration-[120ms] hover:bg-surface hover:backdrop-blur-[5px]" title="Rename this project"
                 onClick={() => { setDraftName(project?.name || ''); setEditing(true); }}>
                 {project?.name || 'Loading…'}
               </button>
             )}
             <div className="flex-1" />
-            <button className="text-[12px] px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3"
+            <button className="text-[12px] px-3 py-[7px] rounded border border-white bg-white text-black hover:bg-text hover:border-text cursor-pointer transition-colors duration-[120ms]"
               onClick={() => fileRef.current?.click()}>+ Add a plan</button>
             <input ref={fileRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
               onChange={(e) => upload(e.target.files?.[0])} />
@@ -136,7 +137,7 @@ export default function ProjectDetail() {
               {project && (
                 <div className="flex items-center gap-2 flex-wrap mt-[9px]">
                   {project.project_type ? (
-                    <span className="font-sans text-[10.5px] tabular-nums px-2 py-[3px] rounded-full border border-ok-line bg-ok-soft text-ok whitespace-nowrap">
+                    <span className="font-sans text-[10.5px] tabular-nums px-[11px] py-[4px] rounded-full border border-border/10 bg-white text-black whitespace-nowrap">
                       {PROJECT_TYPES.find((t) => t.id === project.project_type)?.label
                         ?? project.project_type}
                     </span>
@@ -144,7 +145,7 @@ export default function ProjectDetail() {
                     <>
                       <span className="text-[11.5px] text-muted leading-[1.5] m-0">No category yet:</span>
                       {PROJECT_TYPES.map((t) => (
-                        <button key={t.id} className="border-0 bg-transparent p-0 text-[11.5px] text-accent cursor-pointer no-underline hover:underline" onClick={async () => {
+                        <button key={t.id} className="font-sans text-[10.5px] px-[11px] py-[4px] rounded-full border border-border/10 bg-white text-black whitespace-nowrap cursor-pointer transition-colors duration-[120ms] hover:bg-text" onClick={async () => {
                           try { setProject(await setProjectType(projectId, t.id)); }
                           catch (e) { setErr(String(e.message || e)); }
                         }}>{t.label}</button>
@@ -156,23 +157,27 @@ export default function ProjectDetail() {
             </div>
           </header>
 
-          {err && <p className="text-[11.5px] text-danger-ink leading-[1.5] mt-2 border-l-2 border-danger pl-[9px]">{err}</p>}
+          {err && <p className="text-[11.5px] text-danger leading-[1.5] mt-2 border-l-2 border-danger pl-[9px]">{err}</p>}
 
           {plans == null ? (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3.5">{[0, 1, 2].map((i) => <div key={i} className="h-[150px] rounded-lg bg-surface-3 animate-[sl-breathe_1.6s_ease-in-out_infinite]" />)}</div>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3.5">{[0, 1, 2].map((i) => <div key={i} className="h-[150px] rounded-lg bg-white/5 border border-border/10 backdrop-blur-[5px] animate-[sl-breathe_1.6s_ease-in-out_infinite]" />)}</div>
           ) : plans.length === 0 ? (
-            <div className={'w-full border-[1.5px] border-dashed border-border-strong rounded-[16px] text-center transition-[border-color,background] duration-150 py-[76px] px-14 max-[700px]:py-12 max-[700px]:px-6' + (over ? ' bg-accent-soft' : ' bg-surface')}>
+            <div className={'w-full border-[1.5px] border-dashed border-border/10 rounded-[16px] text-center backdrop-blur-[5px] transition-[border-color,background] duration-150 py-[76px] px-14 max-[700px]:py-12 max-[700px]:px-6' + (over ? ' bg-white/10' : ' bg-surface')}>
               <h2 className="m-0 mb-3 text-[32px] tracking-[-0.035em] max-[700px]:text-[24px]">Drop a floor plan</h2>
               <p className="mx-auto mt-0 mb-[18px] text-muted max-w-[52ch] text-[14px] leading-[1.65]">
                 Anywhere on this page. It joins this project
                 {project?.project_type ? ' and inherits its category, so you will not be asked again' : ''}.
               </p>
               <div className="flex gap-1.5 flex-wrap justify-center mt-[22px]">
-                <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-cta bg-cta text-white inline-flex items-center justify-center cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3"
+                <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-white bg-white text-black hover:bg-text hover:border-text inline-flex items-center justify-center cursor-pointer transition-colors duration-[120ms]"
                   onClick={() => fileRef.current?.click()}>
                   Choose a DXF, PDF or image
                 </button>
               </div>
+              {/* BELOW THE BUTTON ROW RATHER THAN INSIDE IT. The row is centred
+                  and wraps; a link as a fourth flex child would be treated as
+                  another button and would sit on the same baseline as one. */}
+              <HowToLink className="mt-3.5" />
             </div>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3.5">

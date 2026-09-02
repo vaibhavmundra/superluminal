@@ -6,8 +6,8 @@ import { TIERS, fmtSqft } from '../lib/plans.js';
 // hover variants present) so Tailwind's generated CSS order can't decide
 // which hover colour wins when both would otherwise apply.
 const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] w-full justify-center disabled:opacity-40 disabled:cursor-not-allowed';
-const BTN_DEFAULT = 'border-border bg-surface text-ink hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border';
-const BTN_PRIMARY = 'border-cta bg-cta text-white hover:bg-cta-hover hover:border-cta-hover disabled:hover:bg-surface disabled:hover:border-border';
+const BTN_DEFAULT = 'border-border/10 bg-surface backdrop-blur-[5px] text-white hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border/10';
+const BTN_PRIMARY = 'border-transparent bg-accent-gradient backdrop-blur-[5px] text-black hover:brightness-110';
 
 // ---------------------------------------------------------------------------
 // THE THREE CARDS, in one component because they appear on two screens and a
@@ -48,10 +48,10 @@ export default function PlanPicker({ current = 'free', busyTier = null, compact 
         return (
           <article key={t.slug}
             className={
-              'relative flex flex-col bg-surface border rounded-lg '
+              'relative flex flex-col bg-surface backdrop-blur-[5px] rounded-lg border '
               + (compact ? 'pt-[15px] px-[14px] pb-[14px] ' : 'pt-5 px-[18px] pb-[18px] ')
-              + (featured ? 'border-accent shadow-[0_0_0_1px_var(--color-accent)] ' : 'border-border ')
-              + (isCurrent ? 'bg-surface-2' : '')
+              + (featured ? 'border-transparent gradient-ring ' : 'border-border/10 ')
+              + (isCurrent ? 'bg-white/10 ' : '')
             }>
             {/* AN UNMETERED ACCOUNT IS NOT "ON" ANY OF THESE, so none of them is
                 flagged as current and none of them is offered — a role-1 login
@@ -59,9 +59,9 @@ export default function PlanPicker({ current = 'free', busyTier = null, compact 
                 already has more of. The cards stay visible because this is also
                 the page an operator opens to check what customers see. */}
             {!unlimited && featured
-              && <span className="absolute -top-[9px] left-4 bg-accent text-white rounded-full text-[9.5px] tracking-[0.07em] uppercase px-[9px] py-[3px]">{need != null ? 'Fits this plan' : 'Most chosen'}</span>}
+              && <span className="absolute -top-[9px] left-4 bg-accent-gradient text-black rounded-full text-[9.5px] tracking-[0.07em] uppercase px-[9px] py-[3px]">{need != null ? 'Fits this plan' : 'Most chosen'}</span>}
             {!unlimited && isCurrent
-              && <span className="absolute -top-[9px] left-auto right-4 bg-ink text-white rounded-full text-[9.5px] tracking-[0.07em] uppercase px-[9px] py-[3px]">Your plan</span>}
+              && <span className="absolute -top-[9px] left-auto right-4 bg-white text-black rounded-full text-[9.5px] tracking-[0.07em] uppercase px-[9px] py-[3px]">Your plan</span>}
 
             <h3 className="m-0 mb-2 text-[13px] tracking-[0.06em] uppercase text-subtle">{t.name}</h3>
             <div className="flex items-baseline gap-1 mb-2.5">
@@ -70,7 +70,7 @@ export default function PlanPicker({ current = 'free', busyTier = null, compact 
             </div>
             <p className={'m-0 mb-3.5 text-[12px] text-muted leading-[1.55] min-h-[2.6em] ' + (compact ? 'hidden' : '')}>{t.blurb}</p>
 
-            <div className="bg-surface-3 rounded py-[9px] px-[11px] mb-3.5">
+            <div className="bg-white/5 border border-border/10 backdrop-blur-[5px] rounded py-[9px] px-[11px] mb-3.5">
               <b className="block text-[15px] tracking-[-0.02em] tabular-nums">{fmtSqft(t.area)}</b>
               <span className="text-[10.5px] text-subtle">{t.lifetime ? 'does not renew' : 'every month'}</span>
             </div>
@@ -78,7 +78,7 @@ export default function PlanPicker({ current = 'free', busyTier = null, compact 
             <ul className={'list-none m-0 mb-[18px] p-0 flex-1 flex flex-col gap-[7px] ' + (compact ? 'hidden' : '')}>
               {t.lines.map((l) => (
                 <li key={l}
-                  className="text-[12px] text-muted leading-[1.45] pl-[15px] relative before:content-[''] before:absolute before:left-[2px] before:top-[6px] before:w-[5px] before:h-[5px] before:rounded-full before:bg-border-strong">
+                  className="text-[12px] text-muted leading-[1.45] pl-[15px] relative before:content-[''] before:absolute before:left-[2px] before:top-[6px] before:w-[5px] before:h-[5px] before:rounded-full before:bg-border/25">
                   {l}
                 </li>
               ))}

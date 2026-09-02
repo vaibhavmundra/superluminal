@@ -12,9 +12,9 @@ const STATUS = {
 // The old `.pill` / `.pill.ok` / `.pill.bad` classes, as Tailwind utilities.
 const PILL_BASE = 'font-sans text-[10.5px] px-2 py-[3px] rounded-full border whitespace-nowrap tabular-nums';
 const PILL_CLS = {
-  '': 'border-border bg-surface text-muted',
-  ok: 'border-ok-line bg-ok-soft text-ok',
-  bad: 'border-danger-line bg-danger-soft text-danger-ink',
+  '': 'border-border/10 bg-white/5 backdrop-blur-[5px] text-subtle',
+  ok: 'border-ok/10 bg-ok/10 backdrop-blur-[5px] text-ok',
+  bad: 'border-danger/10 bg-danger/10 backdrop-blur-[5px] text-danger',
 };
 
 /**
@@ -30,10 +30,10 @@ export default function PlanCard({ plan, project = null, onOpen, onDelete = null
 
   return (
     <article
-      className="relative flex flex-col bg-surface border border-border rounded-lg overflow-hidden cursor-pointer pt-5 px-[18px] pb-[18px] transition-[border-color,box-shadow,transform] duration-[120ms] [transition-timing-function:ease] hover:border-border-strong hover:shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+      className="relative flex flex-col bg-surface backdrop-blur-[5px] border border-border/10 rounded-lg overflow-hidden cursor-pointer pt-5 px-[18px] pb-[18px] transition-[border-color,background-color,box-shadow] duration-[120ms] [transition-timing-function:ease] hover:bg-white/10 hover:border-border/10 hover:shadow-pop focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
       role="button" tabIndex={0}
       onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }}>
-      <div className="aspect-[4/3] bg-surface-2 border-b border-border grid place-items-center overflow-hidden">
+      <div className="aspect-[4/3] bg-black/40 border-b border-border/10 grid place-items-center overflow-hidden">
         {shot
           ? <img src={shot} alt="" loading="lazy" className="w-full h-full object-cover block" />
           : <div className="text-[10px] tracking-[0.14em] uppercase text-faint">{plan.source_kind === 'vector' ? 'DXF' : 'Plan'}</div>}
@@ -46,16 +46,16 @@ export default function PlanCard({ plan, project = null, onOpen, onDelete = null
         </div>
         {!!s.lights && (
           <div className="flex gap-3.5 mt-2.5 text-[11px] text-muted">
-            <span><b className="text-ink tabular-nums">{s.rooms}</b> spaces</span>
-            <span><b className="text-ink tabular-nums">{s.lights}</b> fittings</span>
-            <span><b className="text-ink tabular-nums">{Math.round(s.areaSqft)}</b> sqft</span>
+            <span><b className="text-white tabular-nums">{s.rooms}</b> spaces</span>
+            <span><b className="text-white tabular-nums">{s.lights}</b> fittings</span>
+            <span><b className="text-white tabular-nums">{Math.round(s.areaSqft)}</b> sqft</span>
           </div>
         )}
       </div>
       {onDelete && (
-        <div className="py-2 px-3.5 border-t border-border flex justify-end">
+        <div className="py-2 px-3.5 border-t border-border/10 flex justify-end">
           <button
-            className="border-0 bg-transparent text-[11.5px] text-danger-ink cursor-pointer p-0 no-underline hover:underline"
+            className="border-0 bg-transparent text-[11.5px] text-danger cursor-pointer p-0 no-underline hover:underline"
             onClick={(e) => { e.stopPropagation(); onDelete(); }}>
             Delete
           </button>

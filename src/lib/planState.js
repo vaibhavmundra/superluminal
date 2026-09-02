@@ -65,6 +65,11 @@ export function serialiseEditor(s) {
     // detector payload below is what shows the tweak.
     outlines: s.outlines,
     litIds: s.litIds,
+    // WHICH LIT SPACES HAVE MOVED SINCE. The difference between the tracer
+    // offering "relight 2 changed spaces" and offering the whole sheet, so
+    // dropping it on a reload would quietly put the bill back up. See the note
+    // on `dirtyIds` in App.jsx.
+    dirtyIds: s.dirtyIds,
     focusId: s.focusId ?? null,
     selectedOutlineId: s.selectedOutlineId ?? null,
     // The segmenter's own reply, unedited, kept beside the edited version for
@@ -191,6 +196,7 @@ export function applyEditor(p, set) {
 
   set.setOutlines(p.outlines ?? []);
   set.setLitIds(p.litIds ?? []);
+  set.setDirtyIds(p.dirtyIds ?? []);
   set.setFocusId(p.focusId ?? null);
   set.setSelectedOutlineId(p.selectedOutlineId ?? null);
   // The detector's status is restored as 'done' with its count so the tracer

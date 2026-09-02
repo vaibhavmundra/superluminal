@@ -36,7 +36,7 @@ export default function PdfPagePicker({ name, pages, thumbs, onPick, onCancel })
               <span className="aspect-[1/1.35] bg-surface-3 border border-border rounded-[3px] grid place-items-center overflow-hidden">
                 {thumbs[n]
                   ? <img src={thumbs[n]} alt="" className="w-full h-full object-contain block bg-white" />
-                  : <span className="w-4 h-4 rounded-full border-2 border-border-strong border-t-accent animate-[sl-spin_0.8s_linear_infinite]" aria-hidden="true" />}
+                  : <span className="lp-spin block w-4 h-4 [--lp-spin-w:1.5px]" aria-hidden="true" />}
               </span>
               <span className="text-[10.5px] tracking-[0.06em] uppercase text-subtle text-center">Page {n}</span>
             </button>

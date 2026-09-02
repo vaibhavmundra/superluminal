@@ -342,7 +342,7 @@ function Reconnecting({ onRetry }) {
 function Waiting() {
   return (
     <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
-      <div className="w-[26px] h-[26px] rounded-full border-2 border-border border-t-accent [animation:sl-spin_0.8s_linear_infinite]" aria-label="Loading" />
+      <div className="lp-spin w-[26px] h-[26px]" aria-label="Loading" />
     </div>
   );
 }

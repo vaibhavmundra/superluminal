@@ -30,12 +30,12 @@ import { PROJECT_TYPES } from '../lib/roomTypes.js';
 export default function ProjectTypeDialog({ planName, onPick, busy = null, note = null }) {
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]">
-      <div className="w-[min(520px,calc(100vw-40px))] bg-surface border border-border rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]">
+      <div className="w-[min(520px,calc(100vw-40px))] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop">
         {busy ? (
           <div className="flex items-center gap-[14px] py-[10px] px-0.5 min-h-[74px]">
-            <div className="w-[22px] h-[22px] flex-none rounded-full border-2 border-border border-t-accent animate-[sl-spin_.7s_linear_infinite]" aria-hidden="true" />
+            <div className="lp-spin w-[22px] h-[22px] flex-none" aria-hidden="true" />
             <div>
-              <b className="text-sm block">{busy}</b>
+              <b className="text-sm block text-white">{busy}</b>
               {note && <p className="text-[11.5px] text-muted leading-normal m-0 mt-1">{note}</p>}
             </div>
           </div>
@@ -48,8 +48,8 @@ export default function ProjectTypeDialog({ planName, onPick, busy = null, note 
           </p>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2">
             {PROJECT_TYPES.map((p) => (
-              <button key={p.id} className="flex flex-col items-start gap-0.5 px-3 py-[11px] border border-border rounded-[9px] bg-surface cursor-pointer text-left transition-[border-color_.12s,background-color_.12s,transform_.08s] hover:border-ink hover:bg-surface-2 active:translate-y-px" onClick={() => onPick(p.id)}>
-                <b className="text-[13px]">{p.label}</b>
+              <button key={p.id} className="flex flex-col items-start gap-0.5 px-3 py-[11px] rounded-[9px] cursor-pointer text-left bg-surface backdrop-blur-[5px] transition-[border-color,background-color,transform] duration-[120ms] active:translate-y-px border border-border/10 hover:bg-white/10" onClick={() => onPick(p.id)}>
+                <b className="text-[13px] text-text">{p.label}</b>
                 <span className="text-[10.5px] text-subtle leading-[1.3]">{p.blurb}</span>
               </button>
             ))}

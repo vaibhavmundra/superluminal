@@ -37,7 +37,7 @@ export default function NewProjectDialog({ onCreate, onCancel, busy = false }) {
 
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel?.(); }}>
-      <form className="w-[min(620px,94vw)] bg-surface border border-border rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]" onSubmit={submit}>
+      <form className="w-[min(620px,94vw)] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop" onSubmit={submit}>
         <h2 className="m-0 mb-1.5 text-[17px] tracking-[-0.01em]">New project</h2>
         <p className="text-[11.5px] text-muted leading-normal m-0 mb-[18px]">
           A project holds every plan for one building. The category decides what
@@ -56,24 +56,21 @@ export default function NewProjectDialog({ onCreate, onCancel, busy = false }) {
           {PROJECT_TYPES.map((p) => (
             <button key={p.id} type="button"
               className={
-                'flex flex-col items-start gap-0.5 px-3 py-[11px] rounded-[9px] cursor-pointer text-left transition-[border-color_.12s,background-color_.12s,transform_.08s] active:translate-y-px border ' +
-                (type === p.id
-                  ? 'border-accent bg-accent-soft shadow-[0_0_0_1px_var(--color-accent)_inset]'
-                  : 'border-border bg-surface hover:border-ink hover:bg-surface-2')
+                'flex flex-col items-start gap-0.5 px-3 py-[11px] rounded-[9px] cursor-pointer text-left bg-surface backdrop-blur-[5px] transition-[border-color,background-color,transform] duration-[120ms] active:translate-y-px border ' + (type === p.id ? 'border-transparent gradient-ring' : 'border-border/10 hover:bg-white/10')
               }
               aria-pressed={type === p.id}
               onClick={() => setType(p.id)}>
-              <b className={type === p.id ? 'text-[13px] text-accent' : 'text-[13px]'}>{p.label}</b>
+              <b className={type === p.id ? 'text-[13px] text-white' : 'text-[13px] text-text'}>{p.label}</b>
               <span className="text-[10.5px] text-subtle leading-[1.3]">{p.blurb}</span>
             </button>
           ))}
         </div>
 
         <div className="flex justify-end gap-2 mt-6">
-          <button type="button" className="text-xs px-3 py-[7px] rounded border border-border-strong bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
+          <button type="button" className="text-xs px-3 py-[7px] rounded border border-border/10 bg-surface backdrop-blur-[5px] text-white cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-40 disabled:cursor-not-allowed" disabled={!ready}>
+          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-transparent bg-accent-gradient backdrop-blur-[5px] text-black cursor-pointer transition-[filter] duration-[120ms] hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed" disabled={!ready}>
             {busy ? 'Creating…' : 'Create project'}
           </button>
         </div>

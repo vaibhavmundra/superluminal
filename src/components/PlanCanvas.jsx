@@ -179,11 +179,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
    * has to know which mode it is in. Swapping a gradient for a flat colour per
    * mode would have meant touching every one of them.
    *
-   * A VECTOR PLAN IS THE KNOWN INEXACTNESS. It has no bitmap to invert and
-   * draws on the page's own black, so it is a dark ground while reporting
-   * `invert: false` — it therefore gets the amber set. Amber reads on both
-   * grounds, cream reads on one, so this is the safe direction to be wrong in;
-   * the same note is on the ceiling objects' ink.
+   * A VECTOR PLAN USED TO BE THE KNOWN INEXACTNESS AND IS NOT ANY MORE. The
+   * note here said a DXF has no bitmap to invert, draws on the page's own black,
+   * and therefore sits on a dark ground while reporting `invert: false` — so it
+   * took the amber set, amber being readable on both grounds and cream on only
+   * one. Two halves of that have since changed: a DXF is drawn on an opaque
+   * white sheet in day mode (see the paper card in App.jsx), so it was NOT on a
+   * dark ground; and it now has a real night mode of its own, so the flag tells
+   * the truth about it. Either way `layers.invert` is the ground, for a DXF as
+   * much as for a scan, and this line needs no exception.
    */
   const RAMP = layers.invert ? THROW_STYLE : THROW_STYLE.day;
   const rim = RAMP.rim;
@@ -447,22 +451,78 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       </defs>
 
       {/* The plan underneath. A raster plan is an image; a DXF is its own line
-          work, drawn one path per layer — the layers being read as walls in
-          black, everything else faint, so what the room outline was taken from
-          stays visible under the layout. */}
+          work, drawn one path per layer — the layers being read as walls at full
+          weight, everything else faint, so what the room outline was taken from
+          stays visible under the layout.
+
+          AND A DXF HAS A NIGHT MODE NOW, WHICH IT DID NOT BEFORE. `invert` used
+          to mean one thing only — the scan has been subtracted from 255 upstream
+          — and a DXF has no bitmap to subtract, so the switch was hidden on one
+          and this branch drew #4A4A4A walls on white paper unconditionally. On
+          the black ground the design step now opens with, those greys are two
+          shades off invisible.
+
+          SO THE GREYS COME FROM THE GROUND, which is the one thing a filter
+          could never have done here: these paths are OUR ink, so inverting the
+          element would invert the drawing we chose the colours for. Picking a
+          light pair instead of a dark pair is the same decision made in the
+          right place, and it costs two ternaries.
+
+          NOT A LITERAL INVERSION OF THE TWO VALUES. 255 minus #4A4A4A is
+          #B5B5B5 and minus #9E9E9E is #616161 — a wall that reads and a
+          secondary line that has gone dark grey on black, i.e. the faint layer
+          becomes the invisible one and the hierarchy flips over. The pair below
+          keeps the hierarchy: walls carry, everything else recedes, on either
+          ground. */}
       {layers.plan && (vector
         ? <g opacity={layers.dim ? 0.5 : 1}>
-            <g fill="none" stroke="#9E9E9E" strokeWidth={lw * 1.1} opacity="0.5">
+            {/* --- THE DRAWING'S OWN GROUND, AND ITS SIZE IS KNOWN EXACTLY ---
+                A DXF in night mode had no ground at all. A raster gets one for
+                free — the bitmap is opaque, and in day mode there is a white
+                paper card behind it (App.jsx) — but a vector plan is a handful
+                of stroked paths with nothing between them, so the page showed
+                through: 24px graph paper crossing every room, which reads as
+                part of somebody's drawing rather than as the wallpaper it is.
+
+                AND THE EXTENT IS NOT A GUESS. The source carries `w`/`h` —
+                derived from the DXF's own bbox in planSource.js — and this
+                <svg> is `viewBox="0 0 width height"` with those very numbers in
+                it. So `0,0,width,height` IS the drawing's bounding box, in the
+                same coordinate space, to the pixel. No measuring, no heuristic,
+                and nothing to fall back to.
+
+                NIGHT ONLY, because day already has the paper card and it does
+                the job better: it carries the padding, the hairline and the
+                shadow that make the sheet read as a sheet. A second opaque rect
+                inside it would be invisible at best and would cover the card's
+                own margin at worst. */}
+            {layers.invert && <rect x="0" y="0" width={width} height={height} fill="#000" />}
+            <g fill="none" stroke={layers.invert ? '#8C8C8C' : '#9E9E9E'}
+              strokeWidth={lw * 1.5} opacity="0.6">
               {vector.filter((l) => !wallLayers?.has(l.layer))
                      .map((l) => <path key={l.layer} d={l.path} />)}
             </g>
-            <g fill="none" stroke="#4A4A4A" strokeWidth={lw * 1.6} opacity="0.85">
+            {/* --- THE WALLS CARRY THE DRAWING, SO THEY ARE DRAWN LIKE IT ----
+                These two weights were 1.1 and 1.6 — a 45% difference, which is
+                not enough to read as a hierarchy at all, and both of them thin
+                enough that a DXF under a finished layout looked like a faint
+                sketch the fittings were floating over. The walls are what makes
+                a plan legible as rooms, so they get more than double the
+                secondary weight (1.5 against 3.2) and close to full opacity.
+                STILL LIGHTER THAN THE FITTINGS. `lw` is the sheet's own line
+                weight and the fittings are drawn in multiples of it too, so this
+                stays proportional at every zoom and on every drawing size —
+                the plan gets heavier without becoming the subject. */}
+            <g fill="none" stroke={layers.invert ? '#D9D9D9' : '#3A3A3A'}
+              strokeWidth={lw * 3.2} opacity="0.95" strokeLinecap="round"
+              strokeLinejoin="round">
               {vector.filter((l) => wallLayers?.has(l.layer))
                      .map((l) => <path key={l.layer} d={l.path} />)}
             </g>
             {vector.flatMap((l) => l.circles.map((c, k) => (
               <circle key={l.layer + k} cx={c.cx} cy={c.cy} r={c.r}
-                fill="none" stroke="#9E9E9E" strokeWidth={lw} opacity="0.5" />
+                fill="none" stroke={layers.invert ? '#8C8C8C' : '#9E9E9E'}
+                strokeWidth={lw * 1.4} opacity="0.6" />
             )))}
           </g>
         /* NO FILTER ON THIS ELEMENT. The bitmap handed down as `src` is
@@ -994,12 +1054,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         //                                 takes the accent, which is what it
         //                                 always was and what reads on white
         //
-        // A vector plan has no bitmap to invert and draws on the page's own
-        // black, so it is a dark ground whatever this flag says — see the
-        // `vector` branch. It reports `invert: false`, which means an object on
-        // a DXF takes the accent rather than white. That is the one case this
-        // gets slightly wrong, and it is the safe direction to be wrong in: the
-        // accent is visible on both grounds, white is visible on one.
+        // THE DXF EXCEPTION THAT USED TO BE HERE IS GONE. It read: a vector
+        // plan has no bitmap to invert, draws on the page's own black, and so is
+        // a dark ground whatever this flag says while reporting `invert: false`
+        // — meaning an object on a DXF took the accent rather than white, the
+        // one case this got slightly wrong. A DXF has a real night mode now (see
+        // the `vector` branch, which picks its greys from the ground) and in day
+        // mode it sits on an opaque white sheet, so the flag is true of a DXF as
+        // much as of a scan and the rule above applies unaltered.
         //
         // THE RECTANGLES KEEP THE ACCENT IN BOTH MODES. A cassette and a hatch
         // are filled shapes with hatching inside them, and white-on-white would

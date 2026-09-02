@@ -10,7 +10,7 @@ import { TIER, fmtSqft } from '../lib/plans.js';
 // The old bare `.btn` class, as Tailwind utilities — same split as
 // PlanPicker.jsx / RenderPassPanel.jsx.
 const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] disabled:opacity-40 disabled:cursor-not-allowed';
-const BTN_DEFAULT = 'border-border bg-surface text-ink hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border';
+const BTN_DEFAULT = 'border-border/10 bg-surface backdrop-blur-[5px] text-white hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border/10';
 
 // ---------------------------------------------------------------------------
 // THE PRICING PAGE, AND IT IS A PUBLIC ONE.
@@ -96,7 +96,7 @@ export default function Pricing() {
 
   return (
     <div className="min-h-full flex flex-col">
-      <header className="h-14 flex-none flex items-center gap-3.5 max-[640px]:gap-2 px-[22px] max-[640px]:px-3.5 border-b border-border bg-[rgba(255,255,255,0.72)] backdrop-blur-[12px] backdrop-saturate-[180%]">
+      <header className="h-14 flex-none flex items-center gap-3.5 max-[640px]:gap-2 px-[22px] max-[640px]:px-3.5 border-b border-border/10 bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px]">
         <Wordmark />
         <div className="flex-1" />
         <button className={BTN_BASE + ' ' + BTN_DEFAULT} onClick={() => nav('/')}>Upload a plan</button>
@@ -117,7 +117,7 @@ export default function Pricing() {
               strip on a cold visit would be three zeroes and a bar at 0%, which
               is chrome pretending to be information. */}
           {user && (
-            <section className="grid grid-cols-[auto_1fr_auto] max-[760px]:grid-cols-1 gap-[18px] max-[760px]:gap-3 items-center bg-surface border border-border rounded-lg px-[18px] py-4 mb-[26px]">
+            <section className="grid grid-cols-[auto_1fr_auto] max-[760px]:grid-cols-1 gap-[18px] max-[760px]:gap-3 items-center bg-surface backdrop-blur-[5px] border border-border/10 rounded-lg px-[18px] py-4 mb-[26px]">
               <div>
                 <b className="block text-[20px] tracking-[-0.03em] tabular-nums">{fmtSqft(state.area.left)}</b>
                 <span className="text-[11px] text-subtle">{state.unlimited ? 'no limit' : `left of ${fmtSqft(state.area.allowed)}`}</span>
@@ -128,18 +128,18 @@ export default function Pricing() {
                   no end, so the dial goes. */}
               <div className={
                 'rounded-full overflow-hidden '
-                + (state.unlimited ? 'bg-border h-px self-center max-[760px]:self-stretch' : 'h-1.5 bg-surface-3')
+                + (state.unlimited ? 'bg-border/10 h-px self-center max-[760px]:self-stretch' : 'h-1.5 bg-white/10 border border-border/10')
               }>
                 {!state.unlimited && (
                   <i className={
                     'block h-full rounded-full transition-[width] duration-300 '
-                    + (usagePct >= 100 ? 'bg-danger' : 'bg-accent')
+                    + (usagePct >= 100 ? 'bg-danger' : 'bg-accent-gradient')
                   } style={{ width: `${usagePct}%` }} />
                 )}
               </div>
               <div className="flex flex-col gap-[3px] text-right max-[760px]:text-left">
                 <span className="text-[11.5px] text-muted">
-                  <b className="text-ink">{TIER[state.tier]?.name ?? 'Free'}</b>
+                  <b className="text-white">{TIER[state.tier]?.name ?? 'Free'}</b>
                   {state.unlimited ? ' · unmetered'
                     : state.lifetime ? ' · the free allowance does not refresh'
                     : endsOn ? ` · renews ${endsOn}` : ''}
@@ -152,25 +152,25 @@ export default function Pricing() {
                     <span className="text-[11.5px] text-muted">{state.passes.left} of {state.passes.allowed} render passes left</span>
                   )}
                 {state.cancelAtPeriodEnd && (
-                  <span className="text-[11.5px] text-danger-ink">Cancelled — runs until {endsOn}</span>
+                  <span className="text-[11.5px] text-danger">Cancelled — runs until {endsOn}</span>
                 )}
               </div>
             </section>
           )}
 
-          {msg && <p className="text-[11.5px] leading-normal mt-2 bg-ok-soft border border-ok-line rounded text-ok py-[9px] px-[11px]">{msg}</p>}
-          {err && <p className="text-[11.5px] leading-normal mt-2 text-danger-ink border-l-2 border-danger pl-[9px]">{err}</p>}
+          {msg && <p className="text-[11.5px] leading-normal mt-2 bg-ok/10 backdrop-blur-[5px] border border-ok/20 rounded text-ok py-[9px] px-[11px]">{msg}</p>}
+          {err && <p className="text-[11.5px] leading-normal mt-2 text-danger border-l-2 border-danger pl-[9px]">{err}</p>}
 
           <PlanPicker current={user ? state.tier : 'free'} busyTier={busy ? picked : null}
             unlimited={state.unlimited} onChoose={choose} />
 
           {/* --- HOW THE METER WORKS ---------------------------------------- */}
-          <section className="mb-[34px]">
-            <h3 className="mb-[18px]">How the meter works</h3>
+          <section className="mb-[34px] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-lg px-[22px] pt-[18px] pb-[22px]">
+            <h3 className="m-0 mb-[18px] text-[10px] tracking-[0.11em] uppercase text-subtle">How the meter works</h3>
 
             <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-[22px_30px]">
               <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">What is measured</h4>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">What is measured</h4>
                 <p className="m-0 text-xs leading-[1.65] text-muted">
                   The built area of the spaces you light — the sum of the outlines,
                   not the size of the sheet. A title block, a margin and a site plan
@@ -179,7 +179,7 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">When it is charged</h4>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">When it is charged</h4>
                 <p className="m-0 text-xs leading-[1.65] text-muted">
                   When a space is lit, once, at the area it had at that moment. The
                   outlines, the room detection, the scale, the BOQ and every export
@@ -187,7 +187,7 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">Fixing a wall does not cost twice</h4>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">Fixing a wall does not cost twice</h4>
                 <p className="m-0 text-xs leading-[1.65] text-muted">
                   Charging is per space, not per drawing. If the detector gets nine
                   rooms right and one wrong, you drag the corners on that one and
@@ -197,7 +197,7 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">Render passes are counted, not measured</h4>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">Render passes are counted, not measured</h4>
                 <p className="m-0 text-xs leading-[1.65] text-muted">
                   A render pass reads the interior views you already have and marks
                   the panelling, the art and the shelving back onto the plan. It
@@ -206,7 +206,7 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">Running out mid-drawing</h4>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">Running out mid-drawing</h4>
                 <p className="m-0 text-xs leading-[1.65] text-muted">
                   Nothing is lost. The layout is refused before it runs, the outlines
                   stay exactly as you drew them, and the plan is waiting where you
@@ -215,7 +215,7 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em]">The free allowance is once</h4>
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">The free allowance is once</h4>
                 <p className="m-0 text-xs leading-[1.65] text-muted">
                   3,000 sq ft, not refreshed monthly. It is enough to take one real
                   flat all the way through — detection, layout, schedule, DXF — so
@@ -229,7 +229,7 @@ export default function Pricing() {
           {user && state.tier !== 'free' && !state.unlimited && !state.cancelAtPeriodEnd && (
             <section className="mb-[34px]">
               <p className="text-[11.5px] text-muted leading-normal mt-2">
-                <button className="border-0 bg-transparent text-[11.5px] text-danger-ink p-0 no-underline cursor-pointer hover:underline" onClick={async () => {
+                <button className="border-0 bg-transparent text-[11.5px] text-danger p-0 no-underline cursor-pointer hover:underline" onClick={async () => {
                   if (!confirm('Cancel at the end of this month?\n\n'
                     + 'You keep everything until ' + (endsOn || 'the period ends')
                     + ', and nothing you have drawn is affected.')) return;

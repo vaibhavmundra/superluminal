@@ -110,22 +110,59 @@ const TRACED_LAYER = 'outlines traced';
 const BTN_SHAPE = 'leading-[1.5] rounded border cursor-pointer '
   + 'transition-[background-color,border-color,color] duration-[120ms] '
   + 'disabled:opacity-40 disabled:cursor-not-allowed';
-const BTN_QUIET = 'bg-surface text-ink border-border hover:bg-surface-2 '
-  + 'hover:border-border-strong active:bg-surface-3 '
-  + 'disabled:hover:bg-surface disabled:hover:border-border';
-const BTN_CTA = 'bg-cta text-white border-cta hover:bg-cta-hover hover:border-cta-hover';
+/* WORD FOR WORD THE PLANNING SCREEN'S PAIR (see App.jsx), because these two
+   panels are the same panel two steps apart and they had drifted into two
+   different themes. The quiet one was `bg-surface text-ink border-border` — ink
+   type and a full-strength #EAEAEA hairline, which is a LIGHT-panel button
+   rendered on a black page: black text on 5% white, inside a bright outline.
+   White type and a `/10` hairline is what the other panel wears. */
+const BTN_QUIET = 'bg-surface backdrop-blur-[5px] text-white border-border/10 '
+  + 'hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 '
+  + 'disabled:hover:bg-surface disabled:hover:border-border/10';
+/* AND THE PRIMARY IS THE ACCENT RAMP, not `--cta`. Every act this panel's
+   primary button performs is a design act — set the scale, close an outline,
+   light the spaces — and the ramp is what the app now spends on those (the
+   render pass's own Run button, the chunk picker's selection, Add a plan). It
+   was `bg-cta`, which resolves to #000000: a black button on a black page,
+   findable only by its border. */
+const BTN_ACCENT = 'bg-accent-gradient backdrop-blur-[5px] text-black border-transparent '
+  + 'hover:brightness-110';
+/* WHITE, AND IT IS NOT A DEMOTION. The ramp means "this is the act" — light the
+   plan, close the outline, take the measurement. The two buttons below are not
+   acts, they are the SELECTED value of a set: which of three door widths this
+   door is, and the custom number that replaces them. A latched value is what
+   this app says with white everywhere else (the panel's live tab, the account
+   bubble, the project's category pill), and spending the ramp on it left two
+   gold buttons on the door screen competing with the one that proceeds. */
+const BTN_WHITE = 'bg-white text-black border-white hover:bg-text hover:border-text';
+/* --- THE GLOWING ONE, AND THERE IS EXACTLY ONE ON THIS SCREEN -------------
+   `lp-glow-btn` is the shared style (styles.css) and it brings its own black
+   ground, white type, gradient stroke and breathing halo. Only the SIZE and the
+   corner are set here, plus `border-transparent`: `BTN_SHAPE` declares `border`
+   for the width every other colourway needs, and left to `currentColor` that
+   would be a solid white 1px frame sitting on top of the gradient one.
+
+   IT IS ON "LIGHT ALL N SPACES" AND ON NOTHING ELSE HERE. That button is the
+   end of the tracing step — the one act this whole screen exists to reach — and
+   it is one of three in the app allowed to glow. "Back to the design", right
+   beside it in the other branch of the same foot, deliberately does not: it is
+   a way OUT of a detour, and two glowing buttons in one corner would be the
+   screen shouting twice. */
+const BTN_GLOW = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} lp-glow-btn border-transparent`;
 const BTN = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_QUIET}`;
 const BTN_FULL = `${BTN} w-full`;
-const BTN_PRIMARY = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_CTA}`;
+const BTN_PRIMARY = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_ACCENT}`;
 const BTN_PRIMARY_FULL = `${BTN_PRIMARY} w-full`;
 const BTN_TINY = `text-[11px] px-[5px] py-0 ${BTN_SHAPE} ${BTN_QUIET}`;
 /* One of the three door widths: full width in the grid, and centred. */
 const BTN_DOOR = `text-[12px] w-full px-1 py-[7px] text-center ${BTN_SHAPE} ${BTN_QUIET}`;
-const BTN_DOOR_CTA = `text-[12px] w-full px-1 py-[7px] text-center ${BTN_SHAPE} ${BTN_CTA}`;
+const BTN_DOOR_CTA = `text-[12px] w-full px-1 py-[7px] text-center ${BTN_SHAPE} ${BTN_WHITE}`;
+/* The custom width's Use, which commits the same kind of value. */
+const BTN_USE = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_WHITE}`;
 /* ...and the quieter "or, if you know" row under them. */
 const BTN_CUSTOM = `text-[11.5px] w-full mt-1.5 px-3 py-[7px] ${BTN_SHAPE} `
-  + 'bg-surface text-muted border-border hover:bg-surface-2 hover:border-border-strong '
-  + 'active:bg-surface-3';
+  + 'bg-surface backdrop-blur-[5px] text-muted border-border/10 hover:bg-surface-2 '
+  + 'hover:text-black hover:border-border-strong active:bg-surface-3';
 
 /* ATTENTION, NOT ALARM: the warnings here are mostly guidance — "set the scale
    above first" — so the default is quiet, with a rule down the left saying
@@ -133,40 +170,68 @@ const BTN_CUSTOM = `text-[11.5px] w-full mt-1.5 px-3 py-[7px] ${BTN_SHAPE} `
    `N`/`NW` are the margin-less shapes, for the sites that set their own. */
 const N = 'text-[11.5px] text-muted leading-[1.5]';
 const NW = `${N} border-l-2 border-border-strong pl-[9px] ml-0`;
-const NE = 'text-[11.5px] leading-[1.5] mt-2 text-danger-ink border-l-2 border-danger pl-[9px]';
+const NE = 'text-[11.5px] leading-[1.5] mt-2 text-danger border-l-2 border-danger pl-[9px]';
 const NOTE = `${N} mt-2`;
 const NOTE_WARN = `${NW} mt-2`;
 
 /* TABULAR FIGURES WHEREVER A NUMBER IS READ DOWN A COLUMN. */
+/* `[&>b]:text-white` AND NOT `text-ink`. The value is the half of a readout
+   anybody actually reads, and #000000 on this ground is a value that is not
+   there — the label was legible and the number was invisible. */
 const KV = 'flex justify-between text-[11.5px] py-[3px] text-muted '
-  + '[&>b]:text-ink [&>b]:tabular-nums';
+  + '[&>b]:text-white [&>b]:tabular-nums';
 const BTNROW = 'flex gap-1.5 flex-wrap';
-const SEC = 'border-t border-border pt-3.5 mt-2.5 '
+const SEC = 'border-t border-border/10 pt-3.5 mt-2.5 '
   + 'first-of-type:border-t-0 first-of-type:mt-0 first-of-type:pt-0';
 const H3 = 'mt-0 mx-0 mb-2.5 text-[10px] tracking-[0.11em] uppercase text-subtle';
+/* THE LABEL'S LAYOUT AND THE BOX'S SIZE, AND NOTHING ABOUT ITS COLOUR — the
+   same split App.jsx's own CHECK makes. `accent-accent` was here and it was the
+   amber: `accent-color` paints the box, so it gave an amber square. The box is
+   `.lp-check` in styles.css now (white, black tick) and it is on the input. */
 const CHECK = 'flex items-center gap-2 mb-[7px] text-muted cursor-pointer '
-  + '[&>input]:accent-accent [&>input]:w-3.5 [&>input]:h-3.5 [&>input]:m-0';
+  + '[&>input]:w-3.5 [&>input]:h-3.5 [&>input]:m-0';
 const ROW = 'flex items-center justify-between gap-2.5 mb-[9px] '
   + '[&>label]:text-muted [&>label]:flex-1 [&>label]:min-w-0';
 
 /* THE TWO-WAY SWITCH above the scale controls. */
-const SEG = 'flex bg-surface-3 border border-border rounded p-0.5 gap-0.5 mb-2.5';
-const SEG_SHAPE = 'flex-1 border-0 text-[11.5px] leading-[1.5] px-1 py-1.5 rounded cursor-pointer';
-const SEG_BTN = `${SEG_SHAPE} bg-transparent text-muted`;
-const SEG_BTN_ON = `${SEG_SHAPE} bg-surface text-ink shadow-[0_1px_2px_rgba(0,0,0,.06)]`;
+/* THE TWO-WAY SWITCH above the scale controls, and it is the planning screen's
+   TABS shell — glass, a `/10` hairline, and the live half said with WHITE rather
+   than with a raised near-white pill. `bg-surface-3` is #F2F2F2: an opaque slab
+   with two invisible labels on it, which is exactly the bug the layout panel's
+   undo/redo shell already had and already fixed. */
+const SEG = 'flex bg-surface backdrop-blur-[5px] border border-border/10 rounded p-0.5 gap-0.5 mb-2.5';
+const SEG_SHAPE = 'flex-1 border-0 text-[11.5px] leading-[1.5] px-1 py-1.5 rounded cursor-pointer '
+  + 'transition-[background-color,color] duration-[120ms]';
+const SEG_BTN = `${SEG_SHAPE} bg-transparent text-subtle hover:text-white`;
+const SEG_BTN_ON = `${SEG_SHAPE} bg-white/10 text-white`;
 
 /* THE HUD ON THE DRAWING: only what changes as you work. */
 const HUD = 'absolute left-2.5 bottom-2.5 flex gap-1.5 flex-wrap pointer-events-none tabular-nums';
 const CHIP_SHAPE = 'font-sans text-[10px] px-[7px] py-[3px] rounded-full border whitespace-nowrap';
-const CHIP = `${CHIP_SHAPE} bg-white/[0.92] border-border text-muted`;
-const CHIP_ON = `${CHIP_SHAPE} border-accent-line bg-accent-soft text-accent`;
+/* THE TAG SITS ON THE DRAWING, WHICH IS WHY IT IS BLACK AND NOT PANEL GLASS.
+   Every other frosted surface in this app floats over the page's own dark
+   ground, so 5% white plus a blur reads as glass. This one floats over the PLAN
+   — grey linework, sometimes a scan — and 5% white over that is a smear you can
+   read the drawing through. So the ground is black at 58% and the blur is the
+   panel's: a dark lozenge the linework goes quiet behind, with the hairline
+   doing the work of an edge.
+   ONE HAIRLINE FOR BOTH STATES, and the difference is the type. The live tag
+   wore the accent ramp, which put a solid gold pill in the corner of a drawing
+   whose fittings are drawn in that same ramp — the one colour that is supposed
+   to mean "a fitting" was also meaning "a caption". */
+const CHIP_GLASS = 'bg-black/[0.58] backdrop-blur-[5px] border-border/10';
+const CHIP = `${CHIP_SHAPE} ${CHIP_GLASS} text-subtle`;
+const CHIP_ON = `${CHIP_SHAPE} ${CHIP_GLASS} text-white`;
 
 /* A ROW IN THE LIST OF SPACES. `border-transparent` lives on the off-state
    rather than the shape, because the on-state sets border-colour too. */
 const ROW_EDGE = 'rounded-[7px] mb-[3px] border px-1.5 py-[5px]';
 const ROW_OFF = 'border-transparent';
-const ROW_ON = 'bg-surface-3 border-border-strong';
-const ROW_PICK = 'cursor-pointer hover:bg-surface-3 focus:outline-none '
+/* THE SAME TILE THE LAYOUT PANEL'S SPACE ROWS ARE — `bg-white/5`, a `/10`
+   hairline, the panel's blur — rather than an opaque #F2F2F2 slab inside a
+   #D4D4D4 outline. Two lists of the same object one screen apart. */
+const ROW_ON = 'bg-white/5 border-border/10 backdrop-blur-[5px]';
+const ROW_PICK = 'cursor-pointer hover:bg-white/5 focus:outline-none '
   + 'focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1';
 /* Three columns: the colour dot, the name, the area. */
 const PICK = 'grid grid-cols-[10px_minmax(0,1fr)_auto] gap-[7px] items-center w-full '
@@ -176,14 +241,16 @@ const META = 'flex justify-between items-center gap-1.5 text-[10px] text-subtle 
   + 'tabular-nums [&>span]:flex [&>span]:items-center [&>span]:gap-[5px]';
 const COUNT = 'font-sans text-[10px] text-subtle';
 const MINI = 'flex items-center gap-[3px] text-[10px] text-subtle cursor-pointer '
-  + '[&>input]:w-[11px] [&>input]:h-[11px] [&>input]:m-0 [&>input]:accent-accent';
+  + '[&>input]:w-[11px] [&>input]:h-[11px] [&>input]:m-0';
 
 /* THE DXF'S LAYERS: a checkbox, a name, a count. */
 const LAYER_SHAPE = 'grid grid-cols-[14px_minmax(0,1fr)_auto_auto] gap-[7px] items-center '
   + 'px-[5px] py-[3px] rounded cursor-pointer text-[11.5px] '
-  + '[&>input]:accent-accent [&>input]:w-[13px] [&>input]:h-[13px] [&>input]:m-0';
-const LAYER_ROW = `${LAYER_SHAPE} text-muted hover:bg-input-bg`;
-const LAYER_ROW_ON = `${LAYER_SHAPE} bg-accent-soft text-accent`;
+  + '[&>input]:w-[13px] [&>input]:h-[13px] [&>input]:m-0';
+const LAYER_ROW = `${LAYER_SHAPE} text-muted hover:bg-white/10 hover:text-text`;
+/* WHITE, NOT THE ACCENT. A shown layer is a state, and the panel says a state
+   with white — the ramp is spent on the things that act. */
+const LAYER_ROW_ON = `${LAYER_SHAPE} bg-white/10 text-white`;
 const LAYER_NAME = 'font-sans text-[10.5px] overflow-hidden text-ellipsis whitespace-nowrap tabular-nums';
 
 // Grid increments offered, in inches. Coarser than three inches and a grid
@@ -225,12 +292,35 @@ export default function OutlineTracer({
   detectState = null, onRedetect = null,
   unitId, unitCandidates, onUnitChange,
   scale: scaleUI, invert = false,
+  litIds = [], dirtyIds = [], onBackToDesign = null,
 }) {
   const wrapRef = useRef(null);
   const stageRef = useRef(null);
   const { w: SW, h: SH } = useSize(wrapRef);
 
   const isRaster = source.kind === 'raster';
+
+  /* --- COMING BACK HERE FROM A FINISHED DESIGN ------------------------------
+     THIS SCREEN USED TO BE REACHABLE ONLY ONE WAY: forwards, with nothing behind
+     it, because the Outlines tab had to discard the layout to get here. It does
+     not any more (see `backToOutlines` in App.jsx), so the tracer can now be
+     opened OVER a design — and that is a different screen with a different
+     question at the bottom of it.
+
+     `hasLayout`    there is a design to go back to, so the foot offers that.
+     `changed`      spaces that are lit AND have moved since. These are the ones
+                    whose room type, accents and task surfaces may now be wrong,
+                    and the only ones a relight needs to spend a call on.
+     `unlit`        outlines that have never been lit. Not the same thing at all,
+                    and counted separately: one is stale, the other is missing.
+
+     BOTH LISTS ARE INTERSECTED WITH WHAT IS ON SCREEN. `dirtyIds` is serialised
+     and `outlines` is not guaranteed to still contain every id in it — a space
+     deleted in another tab, an older saved plan — and a foot that offers to
+     relight four spaces when three exist is a foot that fails on the press. */
+  const hasLayout = litIds.length > 0;
+  const changed = outlines.filter((o) => litIds.includes(o.id) && dirtyIds.includes(o.id));
+  const unlit = outlines.filter((o) => !litIds.includes(o.id));
 
   /* Re-applied whenever the flag, the source or the stage size changes: Konva
      rebuilds a layer's canvas element on resize, and a style set on the old node
@@ -699,7 +789,7 @@ export default function OutlineTracer({
     <div className="max-w-[1400px] mx-auto">
       <div className="mb-4">
         <h2 className="font-display mt-0 mx-0 mb-1.5 text-[19px] leading-none
-          tracking-[-0.025em] uppercase text-ink whitespace-nowrap">{headline}</h2>
+          tracking-[-0.025em] uppercase text-white whitespace-nowrap">{headline}</h2>
         <p className="m-0 text-muted max-w-[78ch]">
           {measuring
             ? <>Click the two ends of something you can name, then say what it is.</>
@@ -721,8 +811,8 @@ export default function OutlineTracer({
       <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-[18px] items-start
         [@media(max-width:1080px)]:grid-cols-[minmax(0,1fr)]">
         <div ref={wrapRef}
-          className="bg-surface border border-border rounded-[12px]
-            shadow-[0_1px_2px_rgba(10,10,10,.04)] min-w-0
+          className="bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8]
+            border border-border/10 rounded-[12px] min-w-0
             relative p-0 overflow-hidden h-[calc(100vh-262px)] min-h-[380px]"
           onAuxClick={(e) => e.preventDefault()}
           style={{ cursor: midPan ? 'grabbing'
@@ -1054,8 +1144,10 @@ export default function OutlineTracer({
 
         {/* `door-only` MADE THIS PANEL A COLUMN so the one question in it could
             sit in the middle. Same rule, now on the element that has it. */}
-        <div className={'bg-surface border border-border rounded-[12px] p-3.5 '
-          + 'shadow-[0_1px_2px_rgba(10,10,10,.04)] overflow-auto '
+        {/* THE SAME GLASS AS THE LAYOUT SCREEN'S RIGHT PANEL, down to the
+            saturation and the 5px blur: this IS that panel, one step earlier. */}
+        <div className={'bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] '
+          + 'border border-border/10 rounded-[12px] p-3.5 overflow-auto '
           + 'max-h-[calc(100vh-260px)] [@media(max-width:1080px)]:max-h-none '
           + (doorScreen
             ? 'h-[calc(100vh-262px)] [@media(max-width:1080px)]:h-auto flex flex-col'
@@ -1100,7 +1192,7 @@ export default function OutlineTracer({
                   <div className="flex-1 flex flex-col justify-center items-center
                     text-center gap-2.5 px-1 py-4 [@media(max-width:1080px)]:py-[22px]">
                     <p className="m-0 text-[17px] leading-[1.32] tracking-[-0.02em]
-                      text-ink max-w-[20ch]">Select a door whose dimension you know.</p>
+                      text-white max-w-[20ch]">Select a door whose dimension you know.</p>
                     <p className="m-0 text-[12px] leading-[1.5] text-muted max-w-[28ch]">
                       If you wish to proceed with another dimension, click on the
                       Measure tab above.
@@ -1143,7 +1235,7 @@ export default function OutlineTracer({
                       {isCustomMm ? `Custom — ${scaleUI.pick.mm}mm` : 'Enter a custom width…'}
                     </button>
                   ) : (
-                    <div className="mt-1.5 p-2 rounded bg-surface-3 border border-border">
+                    <div className="mt-1.5 p-2 rounded bg-white/5 backdrop-blur-[5px] border border-border/10">
                       <label className="block text-[11px] text-subtle mb-1"
                         htmlFor="door-custom-mm">Door width</label>
                       <div className="flex items-center gap-1.5">
@@ -1163,7 +1255,7 @@ export default function OutlineTracer({
                             if (e.key === 'Escape') setCustomOpen(false);
                           }} />
                         <span className="text-[11.5px] text-subtle">mm</span>
-                        <button className={`${BTN_PRIMARY} flex-none`} disabled={!customParsed.ok}
+                        <button className={`${BTN_USE} flex-none`} disabled={!customParsed.ok}
                           onClick={() => scaleUI.onSetWidth(customParsed.mm)}>Use</button>
                       </div>
                       {/* THE REFUSAL SAYS WHY. This one number divides the whole
@@ -1330,10 +1422,21 @@ export default function OutlineTracer({
                       </span>
                     </div>
                     <div className={META}>
-                      <span>{ftin(st.widthFt)} × {ftin(st.heightFt)} · {st.corners} cnr</span>
+                      <span>{ftin(st.widthFt)} × {ftin(st.heightFt)} · {st.corners} cnr
+                        {/* WHICH ROWS THE FOOT'S OFFER IS ABOUT. A button that
+                            says "relight 2 changed spaces" and a list that does
+                            not say WHICH two is a button you have to trust; the
+                            mark is what makes the count checkable. Only shown
+                            over an existing design — before there is one, every
+                            outline is unlit and a column of "not lit" says
+                            nothing. */}
+                        {hasLayout && (dirtyIds.includes(o.id) && litIds.includes(o.id)
+                          ? <> · <b className="text-white">changed</b></>
+                          : !litIds.includes(o.id) ? <> · not lit</> : null)}
+                      </span>
                       <span onClick={(e) => e.stopPropagation()}>
                         <label className={MINI} title="Force right angles on this outline">
-                          <input type="checkbox" checked={o.rectify}
+                          <input type="checkbox" className="lp-check" checked={o.rectify}
                             onChange={(e) => onUpdateOutline(o.id, { rectify: e.target.checked })} />
                           square
                         </label>
@@ -1364,7 +1467,7 @@ export default function OutlineTracer({
                 </div>
               )}
               <label className={CHECK}>
-                <input type="checkbox" checked={showGrips}
+                <input type="checkbox" className="lp-check" checked={showGrips}
                   onChange={(e) => setShowGrips(e.target.checked)} />
                 Show corner grips
               </label>
@@ -1407,12 +1510,12 @@ export default function OutlineTracer({
           <div className={SEC}>
             <h3 className={H3}>Snapping</h3>
             <label className={CHECK}>
-              <input type="checkbox" checked={orthoLock}
+              <input type="checkbox" className="lp-check" checked={orthoLock}
                 onChange={(e) => setOrthoLock(e.target.checked)} />
               Lock to right angles
             </label>
             <label className={CHECK}>
-              <input type="checkbox" checked={alignOn}
+              <input type="checkbox" className="lp-check" checked={alignOn}
                 onChange={(e) => setAlignOn(e.target.checked)} />
               Line up with corners already placed
             </label>
@@ -1425,7 +1528,7 @@ export default function OutlineTracer({
                     worked. */}
             {isRaster && tracedSegs.length > 0 && (
               <label className={CHECK}>
-                <input type="checkbox" checked={visible.has(TRACED_LAYER)}
+                <input type="checkbox" className="lp-check" checked={visible.has(TRACED_LAYER)}
                   onChange={() => setVisible((v) => {
                     const n = new Set(v);
                     if (n.has(TRACED_LAYER)) n.delete(TRACED_LAYER); else n.add(TRACED_LAYER);
@@ -1469,7 +1572,7 @@ export default function OutlineTracer({
               <div className="flex flex-col gap-px mb-1">
                 {source.render.map((l) => (
                   <label key={l.layer} className={visible.has(l.layer) ? LAYER_ROW_ON : LAYER_ROW}>
-                    <input type="checkbox" checked={visible.has(l.layer)}
+                    <input type="checkbox" className="lp-check" checked={visible.has(l.layer)}
                       onChange={() => setVisible((v) => {
                         const n = new Set(v);
                         if (n.has(l.layer)) n.delete(l.layer); else n.add(l.layer);
@@ -1481,7 +1584,7 @@ export default function OutlineTracer({
                 ))}
                 {tracedSegs.length > 0 && (
                   <label className={visible.has(TRACED_LAYER) ? LAYER_ROW_ON : LAYER_ROW}>
-                    <input type="checkbox" checked={visible.has(TRACED_LAYER)}
+                    <input type="checkbox" className="lp-check" checked={visible.has(TRACED_LAYER)}
                       onChange={() => setVisible((v) => {
                         const n = new Set(v);
                         if (n.has(TRACED_LAYER)) n.delete(TRACED_LAYER); else n.add(TRACED_LAYER);
@@ -1501,9 +1604,13 @@ export default function OutlineTracer({
 
       {/* THE GRADIENT IS WHAT MAKES A STICKY FOOT READ AS ONE: the panel
           scrolls under it and fades out rather than butting against a line. */}
+      {/* NO RULE ACROSS THE TOP OF IT. The gradient is the edge — that is the
+          whole point of fading a sticky foot rather than butting it — and a
+          hairline drawn over the fade gives the thing two edges half a pixel
+          apart, one hard and one soft. Same argument the layout panel's own
+          strip settled the same way. */}
       <div className="sticky bottom-0 mt-[18px] flex items-center gap-3.5
-        border-t border-border px-0.5 py-3.5
-        [background:linear-gradient(rgba(250,250,250,0),rgba(250,250,250,.95)_34%)]">
+        px-0.5 py-3.5">
         <div className="flex-1 text-muted text-[12px]">
           {measuring
             ? <>{scaleUI?.measure?.b
@@ -1528,6 +1635,17 @@ export default function OutlineTracer({
                   ? <><b>{chosen.o.name || 'Space'}</b> — {ftin(chosen.st.widthFt)} × {ftin(chosen.st.heightFt)},
                       {' '}{Math.round(chosen.st.areaSqft)} sq ft, {chosen.st.corners} corners.
                       {' '}Drag a corner to move it, right-click one to delete it.</>
+                  : hasLayout
+                    ? <>{changed.length
+                          ? <>{changed.length} space{changed.length > 1 ? 's have' : ' has'} moved
+                              since {changed.length > 1 ? 'they were' : 'it was'} lit
+                              {unlit.length ? <>, and {unlit.length} {unlit.length > 1
+                                ? 'are' : 'is'} not lit yet</> : null}.
+                              The rest of the design is untouched.</>
+                          : unlit.length
+                            ? <>{unlit.length} outline{unlit.length > 1 ? 's are' : ' is'} not
+                                lit yet. Nothing already lit has changed.</>
+                            : <>Nothing has changed. The design is as you left it.</>}</>
                   : outlines.length
                     ? <>{outlines.length} outline{outlines.length > 1 ? 's' : ''} on the plan.
                         Nudge the corners, then light the lot.</>
@@ -1538,7 +1656,46 @@ export default function OutlineTracer({
             onClick={() => setMeasureDone(true)}>
             Use this measurement →
           </button>
-        ) : !hasScale ? null : (
+        ) : !hasScale ? null : hasLayout ? (
+          /* --- THE FOOT OVER AN EXISTING DESIGN ---------------------------
+             Opened from the Outlines tab, this screen is a detour rather than a
+             step, so the primary act is GOING BACK — and it is free, because
+             nothing here discarded anything. Corner edits have already reached
+             the drawing on their own; `rooms` in App.jsx is a memo over the lit
+             outlines, so a nudged wall re-lays that room's ambient grid the
+             moment it moves, with no call and no charge.
+
+             THE RELIGHT IS OFFERED, NOT REQUIRED, AND ONLY FOR WHAT MOVED. It
+             buys the things geometry cannot recompute by itself — what kind of
+             room this is, where the accents belong, which surfaces are worked at
+             — so it is worth a button when something has moved and worth nothing
+             at all when nothing has. It names its own count so the press is not
+             a guess about the bill: two spaces changed is two spaces charged.
+
+             NOT THE PRIMARY, EVEN THOUGH IT IS THE EXPENSIVE ONE. Most trips
+             here are to fix one wall and leave, and the button under the cursor
+             should be the one most people want. The relight sits beside it and
+             says exactly what it will do. */
+          <div className={BTNROW}>
+            {!!changed.length && (
+              <button className={BTN} disabled={tracing}
+                title={changed.map((o) => o.name || 'Space').join(', ')}
+                onClick={() => onProceed?.({ only: changed.map((o) => o.id) })}>
+                Relight {changed.length} changed space{changed.length > 1 ? 's' : ''}
+              </button>
+            )}
+            {!!unlit.length && (
+              <button className={BTN} disabled={tracing}
+                onClick={() => onProceed?.({ only: unlit.map((o) => o.id) })}>
+                Light {unlit.length} new space{unlit.length > 1 ? 's' : ''}
+              </button>
+            )}
+            <button className={`${BTN_PRIMARY} lp-shine`} disabled={tracing}
+              onClick={() => onBackToDesign?.()}>
+              Back to the design →
+            </button>
+          </div>
+        ) : (
           /* THE WHOLE PLAN IS THE PRIMARY ACT. A floor plan is a floor plan —
              the rooms come as a set, the detector proposes the set, and lighting
              them one at a time was an artefact of there having been only ever
@@ -1551,7 +1708,14 @@ export default function OutlineTracer({
                 Just this space
               </button>
             )}
-            <button className={BTN_PRIMARY} disabled={!outlines.length || tracing}
+            {/* THE GLOWING BUTTON, AND `lp-shine` IS GONE FROM IT. The sweep
+                and the travelling stroke answer the same question — the pointer
+                has arrived — and running both meant two flourishes crossing each
+                other on one 90px button. The ring is the better of the two here
+                because it also reads at REST: a stroke and a halo say "this is
+                the one" before anybody points at anything, where a sweep can
+                only say it afterwards. */}
+            <button className={BTN_GLOW} disabled={!outlines.length || tracing}
               onClick={() => (outlines.length > 1 || !chosen
                 ? onProceed?.()
                 : onConfirm(chosen.o.id))}>
