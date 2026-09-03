@@ -107,7 +107,7 @@ export function ContactDialog({ onSaved, onCancel }) {
     <div className="fixed inset-0 z-[70] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel?.(); }}
       onKeyDown={(e) => { if (e.key === 'Escape' && !busy) { e.stopPropagation(); onCancel?.(); } }}>
-      <form className="w-[min(480px,94vw)] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8]
+      <form className="w-[min(480px,94vw)] bg-black/80 backdrop-blur-lg backdrop-saturate-[1.8]
         border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop"
         onSubmit={submit}>
 
