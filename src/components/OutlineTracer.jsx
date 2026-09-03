@@ -119,21 +119,22 @@ const BTN_SHAPE = 'leading-[1.5] rounded border cursor-pointer '
 const BTN_QUIET = 'bg-surface backdrop-blur-[5px] text-white border-border/10 '
   + 'hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 '
   + 'disabled:hover:bg-surface disabled:hover:border-border/10';
-/* AND THE PRIMARY IS THE ACCENT RAMP, not `--cta`. Every act this panel's
-   primary button performs is a design act — set the scale, close an outline,
-   light the spaces — and the ramp is what the app now spends on those (the
-   render pass's own Run button, the chunk picker's selection, Add a plan). It
-   was `bg-cta`, which resolves to #000000: a black button on a black page,
-   findable only by its border. */
-const BTN_ACCENT = 'bg-accent-gradient backdrop-blur-[5px] text-black border-transparent '
-  + 'hover:brightness-110';
-/* WHITE, AND IT IS NOT A DEMOTION. The ramp means "this is the act" — light the
-   plan, close the outline, take the measurement. The two buttons below are not
-   acts, they are the SELECTED value of a set: which of three door widths this
-   door is, and the custom number that replaces them. A latched value is what
-   this app says with white everywhere else (the panel's live tab, the account
-   bubble, the project's category pill), and spending the ramp on it left two
-   gold buttons on the door screen competing with the one that proceeds. */
+/* WHITE IS THE PANEL'S PRIMARY, AND THE RAMP IS NOT A BUTTON COLOUR ANY MORE.
+   This was `bg-accent-gradient` — the gold ramp — on the argument that every act
+   this panel performs is a design act and the ramp is what the app spends on
+   those. The trouble is that the ramp was ALSO the app's "this one is selected"
+   marker (the light and ceiling swatches, the chunk card, the category tile),
+   so a gold fill meant two different things depending on what it was painted
+   on, and a panel could show a gold latch and a gold act in the same column.
+
+   The ramp is now spent in exactly one place — a travelling stroke round the
+   ONE button that proceeds (`BTN_GLOW` below) — and everything the panel
+   promotes without wanting the glow is white. White is what the app already
+   says for "this is the one you want": the door widths, the custom width's Use,
+   the dashboard's New Project, the render pass's Run.
+
+   It was `bg-cta` before the ramp, which resolves to #000000: a black button on
+   a black page, findable only by its border. That is what not to go back to. */
 const BTN_WHITE = 'bg-white text-black border-white hover:bg-text hover:border-text';
 /* --- THE GLOWING ONE, AND THERE IS EXACTLY ONE ON THIS SCREEN -------------
    `lp-glow-btn` is the shared style (styles.css) and it brings its own black
@@ -144,14 +145,14 @@ const BTN_WHITE = 'bg-white text-black border-white hover:bg-text hover:border-t
 
    IT IS ON "LIGHT ALL N SPACES" AND ON NOTHING ELSE HERE. That button is the
    end of the tracing step — the one act this whole screen exists to reach — and
-   it is one of three in the app allowed to glow. "Back to the design", right
+   it is one of four in the app allowed to glow. "Back to the design", right
    beside it in the other branch of the same foot, deliberately does not: it is
    a way OUT of a detour, and two glowing buttons in one corner would be the
    screen shouting twice. */
 const BTN_GLOW = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} lp-glow-btn border-transparent`;
 const BTN = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_QUIET}`;
 const BTN_FULL = `${BTN} w-full`;
-const BTN_PRIMARY = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_ACCENT}`;
+const BTN_PRIMARY = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_WHITE}`;
 const BTN_PRIMARY_FULL = `${BTN_PRIMARY} w-full`;
 const BTN_TINY = `text-[11px] px-[5px] py-0 ${BTN_SHAPE} ${BTN_QUIET}`;
 /* One of the three door widths: full width in the grid, and centred. */
@@ -1690,7 +1691,7 @@ export default function OutlineTracer({
                 Light {unlit.length} new space{unlit.length > 1 ? 's' : ''}
               </button>
             )}
-            <button className={`${BTN_PRIMARY} lp-shine`} disabled={tracing}
+            <button className={BTN_PRIMARY} disabled={tracing}
               onClick={() => onBackToDesign?.()}>
               Back to the design →
             </button>

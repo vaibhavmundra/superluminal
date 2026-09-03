@@ -70,7 +70,7 @@ export default function NewProjectDialog({ onCreate, onCancel, busy = false }) {
           <button type="button" className="text-xs px-3 py-[7px] rounded border border-border/10 bg-surface backdrop-blur-[5px] text-white cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-transparent bg-accent-gradient backdrop-blur-[5px] text-black cursor-pointer transition-[filter] duration-[120ms] hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed" disabled={!ready}>
+          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-white bg-white text-black cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-40 disabled:cursor-not-allowed" disabled={!ready}>
             {busy ? 'Creating…' : 'Create project'}
           </button>
         </div>

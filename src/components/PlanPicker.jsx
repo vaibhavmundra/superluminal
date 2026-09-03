@@ -7,7 +7,19 @@ import { TIERS, fmtSqft } from '../lib/plans.js';
 // which hover colour wins when both would otherwise apply.
 const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] w-full justify-center disabled:opacity-40 disabled:cursor-not-allowed';
 const BTN_DEFAULT = 'border-border/10 bg-surface backdrop-blur-[5px] text-white hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border/10';
-const BTN_PRIMARY = 'border-transparent bg-accent-gradient backdrop-blur-[5px] text-black hover:brightness-110';
+// THE FEATURED TIER'S BUTTON GLOWS, and it is the only paid act in the app that
+// does. It was a flat gold fill, which put the ramp in three places on one card
+// — the card's own `gradient-ring`, the "Most chosen" badge, and the button —
+// so the eye had no way to tell which of them was the thing to press. The
+// travelling stroke of `lp-glow-btn` (styles.css) reads as the button rather
+// than as the card's decoration, and it is the same gesture the app uses at
+// every other moment of commitment: upload a plan, light the spaces.
+//
+// `border-transparent` because BTN_BASE declares `border` for the width the
+// other colourways need; left to `currentColor` that is a solid white 1px frame
+// sitting on top of the gradient one. The ground, type and halo come from the
+// shared class, so nothing here sets a colour.
+const BTN_PRIMARY = 'lp-glow-btn border-transparent';
 
 // ---------------------------------------------------------------------------
 // THE THREE CARDS, in one component because they appear on two screens and a
