@@ -405,14 +405,84 @@ function lamp(page, T, at, rPx, { dot = true, color = INK } = {}) {
   if (dot) page.drawCircle({ x: c.x, y: c.y, size: Math.min(r * 0.42, 1.6), color });
 }
 
-/** A cross at a centre — what an obstacle gets instead of a dot. Nothing here emits. */
-function cross(page, T, at, armPx, color = INK) {
+/**
+ * A CEILING FAN, DRAWN AS A CEILING FAN.
+ *
+ * WHAT THIS REPLACES, and why it was wrong. Every round object that was not a
+ * chandelier got a circle with a cross through it — the same mark the DXF puts
+ * on the obstacles layer, and there for a reason that does not survive the trip
+ * to paper: in CAD the cross is a SNAP TARGET, the point a fan is set out from,
+ * and a circle alone gives a drafter nothing to grab. A PDF is not snapped to.
+ * So on the sheet the cross bought nothing and cost the only thing that
+ * mattered, which is that somebody reading the drawing can tell at a glance what
+ * the object is. A circle with a plus in it is the universal symbol for "a
+ * circle with a plus in it".
+ *
+ * THE SYMBOL IS THE SCREEN'S. PlanCanvas draws a fan as a hub with three blades
+ * radiating from it at 120°, first blade at 30° — see the `fansPx` block there —
+ * and a plot that disagreed with the editor about what a fan looks like would be
+ * the same failure this whole file exists to avoid. What is added on paper is
+ * the SWEEP CIRCLE, which the canvas leaves out because the dashed ring it draws
+ * is clearance, a working overlay. On a sheet the swept envelope is a real
+ * dimension and worth having.
+ *
+ * NOTHING IS FILLED, AND THAT IS THIS FILE'S GRAMMAR RATHER THAN A STYLE CHOICE.
+ * A solid mark means "this emits" — it is what `lamp()`'s dot says and the only
+ * thing it says. A fan does not emit, so solid blades would quietly file it with
+ * the downlights, and a hub drawn as a filled dot would read as a fitting at the
+ * centre of one. Outlines throughout; the hub is a small ring, which still gives
+ * the eye the centre without claiming to be a lamp.
+ *
+ * THE BLADES ARE TAPERED PADDLES, not strokes. A thick line is a stick and three
+ * sticks in a circle is a hazard symbol; a paddle that widens from root to tip
+ * is what a blade is, and it is four line segments.
+ *
+ * BUILT IN PAGE POINTS AND NOT IN PLAN PIXELS, which is the opposite of the rule
+ * the AC cassette follows two blocks down — so it is worth saying why the
+ * exception is safe. That rule exists because a rotation carried across the Y
+ * flip comes out MIRRORED, and a mirrored cassette is a wrong drawing. A fan
+ * with three blades symmetric about their own axes is not: mirroring maps the
+ * set of angles {30°, 150°, 270°} onto {90°, 210°, 330°}, which is the same
+ * symbol turned 60°. Building in points instead means the small-scale floor
+ * below applies to the circle and the blades together, rather than to the circle
+ * alone — which is how you get blades poking out of their own sweep on a plan
+ * plotted very small.
+ */
+function fan(page, T, at, rPx, color = INK) {
   const c = T.p(at);
-  const a = Math.max(T.len(armPx), 1.6);
-  page.drawLine({ start: { x: c.x - a, y: c.y }, end: { x: c.x + a, y: c.y },
-                  thickness: WEIGHT.setout, color });
-  page.drawLine({ start: { x: c.x, y: c.y - a }, end: { x: c.x, y: c.y + a },
-                  thickness: WEIGHT.setout, color });
+  // The floor is the same idea as `lamp()`'s: below a certain size a symbol
+  // stops being a symbol, and a fan that has collapsed to a dot is worse than
+  // one drawn slightly too big.
+  const R = Math.max(T.len(rPx), 2.4);
+
+  // The sweep, at the weight anything orderable gets.
+  page.drawCircle({ x: c.x, y: c.y, size: R, borderWidth: WEIGHT.fitting,
+                    borderColor: color });
+
+  // A BLADE IS LONG AND NARROW, and the first pass had it neither: a stubby
+  // paddle a third of the sweep wide reads as a radiation trefoil rather than as
+  // a fan. Full width at the tip is 0.23R here, the root is barely wider than
+  // the hub it grows out of, and the tip stops just short of the sweep — which
+  // is also true of the real thing.
+  const hub = Math.max(R * 0.13, 0.8);
+  const root = hub, tip = R * 0.9;
+  const wRoot = R * 0.042, wTip = R * 0.115;
+
+  for (let k = 0; k < 3; k++) {
+    const a = (k * 2 * Math.PI) / 3 + Math.PI / 6;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    // Along the blade by `d`, across it by `w`.
+    const at2 = (d, w) => ({ x: c.x + ca * d - sa * w, y: c.y + sa * d + ca * w });
+    const q = [at2(root, -wRoot), at2(tip, -wTip), at2(tip, wTip), at2(root, wRoot)];
+    for (let i = 0; i < 4; i++) {
+      page.drawLine({ start: q[i], end: q[(i + 1) % 4],
+                      thickness: WEIGHT.setout, color });
+    }
+  }
+
+  // The hub last, so it sits over the blade roots that run into it.
+  page.drawCircle({ x: c.x, y: c.y, size: hub, borderWidth: WEIGHT.setout,
+                    borderColor: color });
 }
 
 /**
@@ -546,10 +616,12 @@ export async function plotToPDF({
       });
       polyline(page, T, pts, WEIGHT.fitting, true, line);
     } else {
-      const cc = T.p(o);
-      page.drawCircle({ x: cc.x, y: cc.y, size: Math.max(T.len(o.r || 0), 1.1),
-                        borderWidth: WEIGHT.fitting, borderColor: line });
-      cross(page, T, o, (o.r || 0) * 0.5, line);
+      // EVERYTHING ROUND THAT IS NOT A CHANDELIER IS A FAN. The catalogue in
+      // ceilingObjects.js has exactly four kinds and the three above are the
+      // other three, so this is the fan branch rather than a default — and if a
+      // fifth round kind is ever added, it wants its own symbol here and not
+      // this one, because it will not be a fan.
+      fan(page, T, o, o.r || 0, line);
     }
   }
 

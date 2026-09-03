@@ -46,8 +46,8 @@ const BTN_QUIET = 'text-xs px-3 py-[7px] rounded border border-border/10 bg-surf
   + 'disabled:opacity-40 disabled:cursor-not-allowed';
 
 const ROLES = [
-  ['view', 'Can view', 'Opens the drawing and the schedule, and can export. Nothing they do is saved.'],
-  ['edit', 'Can edit', 'Lays out lighting and adds drawings, exactly as you do. Cannot rename or delete the project.'],
+  ['view', 'Can view', 'Full view access, and can export.'],
+  ['edit', 'Can edit', 'Full edit access.'],
 ];
 
 /**
@@ -226,9 +226,9 @@ export default function ShareDialog({ projectId, projectName = '', onClose }) {
                 tell them it is there. And the grant is keyed on the ADDRESS
                 (see migration 0006), so signing up with a different one is the
                 one way this quietly does not work. */}
-            They do not get an email from us — send them the link below. The
+            Send them the link below. The
             project also appears under “Shared with me” on their dashboard, as
-            long as they sign in with <em className="not-italic text-text">this
+            long as they sign in with <em className="not-italic text-subtle">this
             address</em>.
           </p>
         </form>
@@ -276,7 +276,7 @@ export default function ShareDialog({ projectId, projectName = '', onClose }) {
 
         {/* --- BY LINK ------------------------------------------------------ */}
         <div className="border-t border-border/10 pt-3.5 mt-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center justify-between gap-3 mb-2.5">
             <h3 className={`${LABEL} block`}>Anyone with the link</h3>
             {!linkOpen && (
               <button type="button" className={BTN_QUIET} onClick={() => setLinkOpen(true)}>
@@ -287,22 +287,13 @@ export default function ShareDialog({ projectId, projectName = '', onClose }) {
 
           {linkOpen && (
             <>
-              <p className={`${NOTE} mt-2 mb-2.5`}>
-                One address for this project. Whoever opens it signs in first —
-                with any account — and then sees the drawings and the schedules,
-                read only.
-              </p>
+              
               {/* THE THING PEOPLE ASSUME WRONGLY, SAID BEFORE THEY ASSUME IT.
                   The link does not cap anybody: somebody on the list above who
                   follows it lands in the project with the access you gave them,
                   editor included. So one link works for everyone, and the list
                   above is what decides who can do what with it. */}
-              <p className={`${NOTE} mt-0 mb-2.5`}>
-                It does not override the list above. Anyone you have invited by
-                email follows the same link into their own copy of the project,
-                with the access you gave them — so you can send one link to
-                everybody.
-              </p>
+              
 
               {link ? (
                 <>
