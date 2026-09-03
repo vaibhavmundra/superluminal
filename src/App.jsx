@@ -32,6 +32,10 @@ import { buildBOQ, FIXTURE_BY_ID, trackFixtureFor } from './lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
 import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, targetAreaFor, fixtureFor } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
+import OptionCoach from './components/OptionCoach.jsx';
+/* The walkthrough, playing in the panel rather than linked out of it. Named
+   export: the default one is the line of type that opens it in a dialog. */
+import { HowToVideo } from './components/HowToLink.jsx';
 import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
 import { planTaskSpots, chunkFor, isBedZone,
          SPOT_DEFAULTS } from './lib/taskSpots.js';
@@ -349,6 +353,93 @@ import { serialiseEditor, applyEditor, statsFrom, statusFrom } from './lib/planS
 
 const LS = 'lightPlanner.v1';
 
+/* --- SWITCHING THE OPTIONS CARD OFF, PER PLAN ------------------------------
+   THE PILL OPENS ON EVERY LANDING; THE CARD OVER IT IS THE PART THAT CAN BE
+   SILENCED, and it is silenced for ONE PLAN rather than for the person. A plan
+   is a job somebody comes back to a dozen times — every landing on it would
+   otherwise re-explain a control they have been using all afternoon — while the
+   next plan is a fresh set of rooms and may well be somebody else's first look
+   at the app on this machine.
+
+   IN THE BROWSER AND NOT IN THE SAVED STATE, WHICH IS THE ONE DECISION HERE
+   WORTH ARGUING. `editorState` is the undo stack's basis — see the note on the
+   memo — so a tutorial flag living in it would make ticking a checkbox an
+   undoable step, and, worse, an undo of something real would resurrect the card.
+   It is a preference about being told things, not a fact about the drawing.
+
+   ONE KEY HOLDING A LIST, CAPPED. A key per plan would grow without limit in a
+   store nothing ever prunes; a list keeps the whole preference in one entry, and
+   the cap means the oldest plans quietly start explaining themselves again
+   rather than the entry growing forever. Losing the tail is the cheapest thing
+   in this file to lose.
+
+   A READ THAT THROWS SHOWS THE CARD. Private mode and blocked storage cannot
+   remember a tick, so the choice is between a card that has to be dismissed once
+   per landing and a control that is never explained — and here the dismissal is
+   a single click on the card itself, so the nag is cheap and the silence is not
+   worth faking. */
+const COACH_LS = 'lightPlanner.optionsCoach.v1';
+const COACH_CAP = 200;
+const coachList = () => {
+  try { const l = JSON.parse(localStorage.getItem(COACH_LS) || '[]'); return Array.isArray(l) ? l : []; }
+  catch { return []; }
+};
+const coachOff = (planId) => !!planId && coachList().includes(planId);
+const silenceCoach = (planId) => {
+  if (!planId) return;
+  // MOVED TO THE END RATHER THAN APPENDED BLINDLY, so re-ticking a plan that is
+  // already in the list refreshes its place instead of adding a duplicate that
+  // pushes something else off the front.
+  const kept = coachList().filter((x) => x !== planId);
+  try { localStorage.setItem(COACH_LS, JSON.stringify([...kept, planId].slice(-COACH_CAP))); }
+  catch { /* private mode */ }
+};
+
+/**
+ * WHICH SPACE INTRODUCES THE DESIGN SCREEN.
+ *
+ * THE ROOM PEOPLE CAME FOR, PER PROJECT TYPE. The point of the pill is that a
+ * ceiling has alternatives, and the room where that lands hardest is the one the
+ * project is actually about — the living room in a flat, the lobby in a hotel,
+ * the dining area in a restaurant. Opening on a toilet would be technically
+ * correct (it has a pill) and would teach the feature at its least interesting.
+ *
+ * ONLY CHUNKS WITH SOMETHING TO FLIP TO. A chunk with one option draws no
+ * arrows, so a card pointing at them would point at nothing — this is the same
+ * `many` test the pill itself uses, applied one step earlier to the choice of
+ * where to park. Note this can pick a room's SECOND-biggest chunk, where
+ * `optionPickFor` always takes the biggest: there the question is "which piece
+ * of ceiling is this room", here it is "which piece of ceiling has a choice in
+ * it", and they are not the same question.
+ *
+ * THEN THE BIGGEST OF THOSE, and area is the tie-break rather than the ranking,
+ * so a large toilet never outranks a small living room.
+ */
+const INTRO_TYPES = {
+  residential: ['living_space', 'bedroom'],
+  office: ['conference_room', 'reception', 'office_chamber'],
+  hotel: ['lobby', 'banquet', 'suite'],
+  restaurant: ['dining_area', 'private_dining', 'bar'],
+  educational: ['library', 'canteen', 'lecture_hall'],
+};
+
+function introSpace(rooms, roomTypes, projectId) {
+  const pref = INTRO_TYPES[projectId] ?? [];
+  let best = null;
+  for (const r of rooms) {
+    const many = (r.designChunksPx ?? []).filter((d) => (d.options?.length ?? 0) > 1);
+    if (!many.length) continue;
+    const chunk = many.reduce((m, d) => (d.wFt * d.hFt > m.wFt * m.hFt ? d : m));
+    const at = pref.indexOf(roomTypes[r.id]?.type ?? '');
+    const rank = at < 0 ? pref.length : at;
+    const area = chunk.wFt * chunk.hFt;
+    if (!best || rank < best.rank || (rank === best.rank && area > best.area)) {
+      best = { roomId: r.id, key: chunk.key, rank, area };
+    }
+  }
+  return best;
+}
+
 // WHAT THE SAVE PILL SAYS. Four words, and 'idle' says nothing at all — a bar
 // that permanently reads "Saved" on a plan nobody has touched is noise, and it
 // is also a claim about a write that never happened.
@@ -383,6 +474,13 @@ const ftin = (v) => {
  *                         it is set the plan-level dialog never appears — see
  *                         NewProjectDialog. Null falls back to asking.
  *   planName / onRename   the name in the top-left, and where an edit to it goes
+ *   planId                THIS PLAN'S IDENTITY, AND ONLY AS A KEY. Nothing here
+ *                         looks it up, sends it anywhere or shows it: it names
+ *                         the one preference this editor keeps in the browser
+ *                         rather than in the saved state — whether the options
+ *                         card has been switched off for this plan. Null in the
+ *                         standalone editor and in every test, where nothing is
+ *                         remembered and the card simply shows.
  *   initialFile           a File to open on mount instead of showing the drop zone
  *   restore               a saved editor_state to put back once the file is read
  *   onPersist             called with the full state whenever it changes; the
@@ -433,7 +531,7 @@ const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: true,
   invert: false };
 
 export default function App({
-  planName = null, initialFile = null, restore = null, saveState = 'idle',
+  planName = null, planId = null, initialFile = null, restore = null, saveState = 'idle',
   initialProjectType = null, initialPdfPage = null, uploadState = null, isAdmin = false,
   onRename = null, onPersist = null, onMilestone = null, onBack = null,
   onRetryUpload = null,
@@ -782,6 +880,47 @@ export default function App({
    * clicked, and the pill has to still be there to flip back with.
    */
   const [optionPick, setOptionPick] = useState(null);
+  /* --- THE CARD THAT SAYS THE PILL IS A CONTROL ----------------------------
+     `{roomId, key, ticked}` — WHICH PILL IT IS ATTACHED TO, and not a boolean,
+     because the answer to "is the card showing" is "is the card's pill the pill
+     that is open". A flag would have gone on pointing after the user selected
+     some other space, since `optionPick` moves and a boolean does not.
+
+     `ticked` IS THE HALF-SECOND BETWEEN THE CLICK AND THE CARD GOING. "Do not
+     show again" that vanishes the instant it is pressed never shows the reader
+     that it took — so the box fills, and THEN the card leaves. See the effect
+     below, which owns the timer.
+
+     `landed` IS THE OTHER HALF, AND IT EXISTS BECAUSE THE ANSWER IS NOT READY
+     WHEN THE QUESTION IS ASKED. The pipeline finishes and hands us the design
+     screen, but `rooms` — with the chunks and their options in it — is a memo
+     over state that run has only just set, so there is nothing to choose a space
+     from until React has re-rendered. So the run raises a flag and the effect
+     below spends it on the next pass. */
+  const [coach, setCoach] = useState(null);
+  const [landed, setLanded] = useState(false);
+  /**
+   * PUT THE CARD AWAY FOR NOW — the reader engaged with the thing it was
+   * pointing at, so it has done its job on this screen. It remembers nothing:
+   * only the checkbox speaks for the next landing.
+   */
+  const hideCoach = useCallback(() => setCoach(null), []);
+  /**
+   * ...AND FOR GOOD, ON THIS PLAN. The tick goes in first and the card follows
+   * it out — see `ticked` above and the effect that clears it.
+   */
+  const silenceCoachHere = useCallback(() => {
+    silenceCoach(planId);
+    setCoach((c) => (c ? { ...c, ticked: true } : null));
+  }, [planId]);
+  /* THE ONLY REASON THIS IS AN EFFECT AND NOT A `setTimeout` IN THE HANDLER is
+     unmounting: leaving the plan mid-fade would otherwise fire a setter on a
+     component that has gone. A cleanup is the cheap way to be sure. */
+  useEffect(() => {
+    if (!coach?.ticked) return undefined;
+    const t = setTimeout(() => setCoach(null), 430);
+    return () => clearTimeout(t);
+  }, [coach?.ticked]);
   const [pickingId, setPickingId] = useState(null);   // the room whose chunking is being chosen
 
   // The room detector. Runs on upload, like the bed one, and for the same
@@ -4247,6 +4386,13 @@ export default function App({
     // outlines, so finishing one lands on the drawing it just built rather than
     // back on the screen the user pressed the button from.
     if (relight) { setOutlinesOpen(false); setView('design'); }
+    /* AND THE DESIGN SCREEN INTRODUCES ITSELF WHEN IT ARRIVES — but nothing
+       about that is arranged here. The run used to raise the flag itself, which
+       made a hint about the ceiling a property of HOW you got to the design
+       rather than of being on it: a reload of the same plan, or "Back to the
+       design" from the outlines, landed on the identical screen and said
+       nothing. It is a fact about arriving, so it is watched for where arriving
+       can be seen — see `landed` and the effect that raises it. */
     // A DESIGN NOW EXISTS. This is the moment worth a snapshot and a row in the
     // revision trail — the beat above is also what makes it safe, since React
     // has re-rendered by now and the milestone reads the finished state rather
@@ -5232,9 +5378,10 @@ export default function App({
    */
   const pickChunkOptions = useCallback((roomId, key) => {
     if (!roomId || !key) return;
+    hideCoach();
     setFocusId(roomId);
     setOptionPick({ roomId, key });
-  }, []);
+  }, [hideCoach]);
 
   /**
    * SELECT A SPACE FROM THE PANEL'S LIST — and open its ceiling options with it.
@@ -5260,17 +5407,105 @@ export default function App({
    * selected", and a pill floating over a room the panel is no longer describing
    * is exactly the disagreement `pickChunkOptions` exists to prevent.
    */
-  const pickSpace = useCallback((roomId) => {
-    const off = focusId === roomId;
-    setFocusId(off ? null : roomId);
-    if (off) { setOptionPick(null); return; }
+  const optionPickFor = useCallback((roomId) => {
     const chunks = rooms.find((r) => r.id === roomId)?.designChunksPx ?? [];
     const biggest = chunks.reduce(
       (best, d) => (!best || d.wFt * d.hFt > best.wFt * best.hFt ? d : best), null);
     // A space whose layout failed has no chunks at all — select it and say
     // nothing, rather than opening a pill over a room with no ceiling in it.
-    setOptionPick(biggest ? { roomId, key: biggest.key } : null);
-  }, [focusId, rooms]);
+    return biggest ? { roomId, key: biggest.key } : null;
+  }, [rooms]);
+
+  /* --- WHAT COUNTS AS LANDING ON THE DESIGN SCREEN -------------------------
+     THE SCREEN AND NOT THE ROUTE THAT REACHED IT. There are four ways onto this
+     drawing — a render finishing, reopening a saved plan, "Back to the design"
+     from the Outlines tab, and closing the chunk picker — and the pill should
+     open on the first three, because all three are somebody arriving at a
+     ceiling they have not looked at yet in this sitting. Hanging the hint off
+     the PIPELINE (which is where it started) got only the first of them: a
+     reload of the very same plan landed on the identical screen and said
+     nothing, which is exactly how somebody testing the feature by refreshing
+     the page concludes it does not work.
+
+     THE PICKER IS THE ONE EXCLUSION, and it is the reason this reads a previous
+     value rather than just firing on `step === 'plan'`. Choosing a chunking
+     leaves the design screen and comes straight back to it, mid-thought, on a
+     room the user chose — yanking the selection to the living room at that
+     moment would be the app interrupting a decision it had just asked for.
+
+     `screen` FOLDS THE RUN IN AS A STATE OF ITS OWN, which is what makes the
+     pipeline case work at all. `step` becomes 'plan' partway THROUGH a run —
+     `setLitIds` lands in the geometry phase — so a bare step watcher recorded
+     'plan' while the loader was still up and then saw no change when the loader
+     came down. With the wait as its own value the sequence is busy → plan, and
+     an arrival is a change like any other. */
+  const screen = prep ? 'busy' : step;
+  const wasScreen = useRef(null);
+  useEffect(() => {
+    const prev = wasScreen.current;
+    wasScreen.current = screen;
+    if (readOnly || screen !== 'plan') return;
+    if (prev !== 'plan' && prev !== 'chunks') setLanded(true);
+  }, [screen, readOnly]);
+
+  /* --- AND SPENDING THE FLAG ------------------------------------
+     ON THE NEXT PASS, NOT IN THE RUN, and the note on `landed` says why: the
+     chunks and their options do not exist until React has re-rendered with the
+     state the pipeline finished writing. `rooms` is in the dependencies for
+     exactly that reason — the first pass where it is populated is the pass this
+     fires on.
+
+     `!prep` AND `step === 'plan'` ARE BOTH GUARDS AGAINST A LANDING THAT DID NOT
+     HAPPEN. A run that was stopped from the panel clears `prep` with nothing
+     lit, which leaves the tracer up; opening a pill under it would put a hint on
+     a screen that is not showing.
+
+     AND IT SPENDS THE FLAG BEFORE IT LOOKS, so a plan where nothing has options
+     — every chunk standard, every ceiling flat — does not re-check on every
+     later render of the same screen. */
+  useEffect(() => {
+    if (!landed || prep || step !== 'plan' || !rooms.length) return;
+    setLanded(false);
+    const at = introSpace(rooms, roomTypes, projectId);
+    if (!at) return;
+    setFocusId(at.roomId);
+    setOptionPick({ roomId: at.roomId, key: at.key });
+    /* THE PILL ALWAYS, THE CARD ONLY IF IT HAS NOT BEEN SWITCHED OFF HERE. They
+       are two different promises: opening the pill is the app showing you what
+       it decided about the ceiling and that the decision is yours, which is
+       worth doing on every landing; the card is a sentence explaining the
+       arrows, which is worth doing until somebody says stop. */
+    if (!coachOff(planId)) setCoach({ roomId: at.roomId, key: at.key, ticked: false });
+  }, [landed, prep, step, rooms, roomTypes, projectId, planId]);
+
+  /* --- IS THE CARD SHOWING, AND WHAT DOES ITS COPY OF THE PILL SAY ---------
+     ONE CONDITION IN ONE PLACE. `coach` names the pill the card was raised for
+     and `optionPick` names the pill actually open, and the card exists only
+     while those agree — selecting another space moves the second and not the
+     first, which is exactly when a leader line would start pointing at bare
+     ceiling. `armed` and `addTool` are in here for the reason the canvas's own
+     `optionPick` prop has them: while a fitting is waiting to be placed the pill
+     is not drawn, so there is nothing for the line to reach.
+
+     AND THE LABEL IS READ OFF THE LAYOUT, not remembered from when the card went
+     up. The card carries a picture of the chip, and the two are claiming to be
+     the same object — so flipping the real pill has to move the copy with it, or
+     the picture becomes a lie about what is on the drawing. */
+  const coachOn = !!coach && !readOnly && !armed && !addTool
+    && coach.roomId === optionPick?.roomId && coach.key === optionPick?.key;
+  const coachLabel = useMemo(() => {
+    if (!coachOn) return '';
+    const ch = rooms.find((r) => r.id === coach.roomId)
+      ?.designChunksPx?.find((d) => d.key === coach.key);
+    return ch?.options?.find((o) => o.id === ch.pick)?.label ?? '';
+  }, [coachOn, coach, rooms]);
+
+  const pickSpace = useCallback((roomId) => {
+    const off = focusId === roomId;
+    hideCoach();
+    setFocusId(off ? null : roomId);
+    setOptionPick(off ? null : optionPickFor(roomId));
+  }, [focusId, optionPickFor, hideCoach]);
 
   /**
    * FLIP ONE CHUNK THROUGH ITS OPTIONS.
@@ -5284,6 +5519,10 @@ export default function App({
    * exactly as it is, and still stores nothing for a standard ceiling.
    */
   const cycleChunkOption = useCallback((roomId, key, dir = 1) => {
+    // THE ARROW WAS PRESSED, SO THE CARD HAS DONE ITS JOB — and it goes now
+    // rather than on the second press, because the first flip is the moment the
+    // chip stops being a label and starts being a control.
+    hideCoach();
     const room = rooms.find((r) => r.id === roomId);
     const chunk = room?.designChunksPx?.find((d) => d.key === key);
     if (!chunk || (chunk.options?.length ?? 0) < 2) return;
@@ -5293,7 +5532,7 @@ export default function App({
     for (const d of room.designChunksPx) if (d.pick !== 'standard') base[d.key] = d.pick;
     if (next === 'standard') delete base[key]; else base[key] = next;
     setDesignPicks((m) => ({ ...m, [roomId]: base }));
-  }, [rooms]);
+  }, [rooms, hideCoach]);
 
   const onCanvasClick = (e) => {
     // Ceiling objects are handled entirely in the pointer events — see the note
@@ -5329,12 +5568,36 @@ export default function App({
     // stopPropagation on pointerdown, so clicking one does not also re-select
     // the space under it and yank the panel to a different room.
     const hit = roomAt(svgPoint(e));
+    hideCoach();
     setFocusId(hit ? hit.id : null);
-    // THE PILL CLOSES ON ANY CLICK THAT IS NOT ON A FITTING. A light, a cove
-    // line and the pill itself all stop the click before it gets here, so this
-    // only fires on the ceiling around them — which is exactly the gesture
-    // "never mind" wants to be.
-    setOptionPick(null);
+    /* --- SELECTING A SPACE OPENS ITS OPTIONS, WHEREVER YOU SELECTED IT FROM
+       This used to close the pill outright on any click that was not on a
+       fitting, and that made the same act mean two different things depending on
+       where you performed it: clicking a space's ROW in the panel opened its
+       ceiling options (see `pickSpace`), and clicking the space itself on the
+       drawing — the more obvious of the two by far — opened nothing. The pill is
+       how a ceiling is chosen, so the direct route to a space was the one route
+       that did not offer it.
+
+       IT ALSO MEANT THE PILL WAS ONLY EVER REACHABLE THROUGH A LIGHT. A chunk
+       lit by a cove alone has no downlight to click, and a person who has not
+       worked out that the fittings are clickable has no way in at all — so the
+       control that decides the ceiling was behind a gesture nothing suggests.
+
+       CLICKING OFF THE PLAN STILL CLOSES IT, and that is the half worth
+       keeping: the ceiling around a space is the one place a click can honestly
+       mean "never mind".
+
+       AND A CLICK INSIDE THE ROOM WHOSE PILL IS ALREADY OPEN LEAVES IT WHERE IT
+       IS. `optionPickFor` answers with the room's BIGGEST chunk, which is the
+       right answer to "what is this room" and the wrong one to "and you were
+       already looking at its little one": somebody who opened the pill on a
+       small chunk by clicking a light in it, and then clicked the ceiling an
+       inch away, would have watched their pill jump to the other end of the
+       room. Same room, existing pill, no move. */
+    setOptionPick((cur) => (hit
+      ? (cur?.roomId === hit.id ? cur : optionPickFor(hit.id))
+      : null));
     if (!hit) { setSelAccId(null); setSelObjId(null); }
   };
 
@@ -6965,6 +7228,21 @@ export default function App({
               placeSnap={!readOnly && addTool === 'strip' ? addSnap : null}
               sconceGhost={!readOnly && addTool === 'sconce' ? addGhost : null} />
             <FixtureTip tip={tip} />
+            {/* --- THE CARD THAT EXPLAINS THE OPTIONS PILL --------------------
+                BESIDE THE CANVAS AND NOT INSIDE IT, because it deliberately
+                sits OFF the sheet with a leader line back to the chip — see
+                OptionCoach, which measures the pill in the document rather than
+                recomputing where it ought to be.
+
+                ONLY WHILE ITS OWN PILL IS THE ONE OPEN. `coach` names the pill
+                it was raised for; `optionPick` is the pill actually showing, and
+                the two part company the moment somebody selects another space.
+                A card left pointing at a chip that is no longer there would be a
+                leader line to a piece of blank ceiling. */}
+            {coachOn && (
+              <OptionCoach stage={stageRef} label={coachLabel}
+                ticked={coach.ticked} onSilence={silenceCoachHere} />
+            )}
           </div>
         )}
         {prep && !boqOpen && (
@@ -7031,6 +7309,28 @@ export default function App({
             Share
           </button>
         )}
+        {/* --- THE WALKTHROUGH, UNDER IT ------------------------------------
+            ONLY ON THE OUTLINES STEP, AND THAT IS THE WHOLE PLACEMENT. On this
+            step the panel holds the Share button and nothing else — everything
+            below is gated on `step !== 'trace'` because every one of those
+            sections is a control over a LAYOUT, and there is no layout yet. So
+            this column is 340px of empty glass beside the one screen that asks
+            somebody to do something with a mouse they have not done before.
+            Past this step the panel has fourteen sections to hold, and a video
+            at the top of it would push the spaces list off the fold to explain
+            a screen you have already got through.
+
+            UNDER SHARE RATHER THAN OVER IT, because Share is the primary act of
+            this surface — the one white button on the panel — and the thing that
+            reads as "press me first" should not be a video. It is also where the
+            tab strip sits on the other two steps: the slot under the button is
+            already the panel's "about this screen" slot.
+
+            `!prep` FOR THE SAME REASON THE BUTTON ABOVE HAS IT: while the
+            pipeline runs the panel collapses to the wait and its one way out,
+            and a walkthrough over that is an invitation to walk away from a
+            thing that is happening. */}
+        {showTrace && !prep && <HowToVideo className="flex-none mb-3" />}
         {/* --- WHERE YOU ARE, AND IT IS THE FIRST THING IN THE PANEL --------
             THREE STEPS, AS THREE TABS. Tracing the outlines, laying out the
             design, and reading the schedule are the three things this app does,

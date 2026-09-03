@@ -863,6 +863,27 @@ input:focus,select:focus,textarea:focus{
    card is and why it is frosted. */
 @keyframes tip-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
 
+/* THE COACH CARD'S POINTER, NUDGING AT THE ARROW IT WANTS PRESSED.
+   A CLICK, NOT A DRIFT. Two versions went before this one: a slow float (read
+   as the card settling, not as an instruction) and a pulse on the whole cursor
+   (read as a warning). What reads as "press this" is the gesture itself —
+   forward and down along the pointer's own axis, a beat's hold, and back — which
+   is what a hand does to a mouse button.
+   THE UNITS ARE THE GLYPH'S OWN viewBox, not the page's: this animates inside
+   the 13x18 SVG in OptionCoach's PillCopy, so 1.6 is a little under a tenth of
+   the cursor's height whatever size the card draws it at.
+   AND IT STOPS FOR ANYBODY WHO ASKED IT TO. The card still says what it says;
+   the invitation is the only part that moves. */
+.lp-coach-cursor{
+  animation:lp-coach-cursor 1.9s ease-in-out infinite;
+  will-change:transform
+}
+@keyframes lp-coach-cursor{
+  0%,58%,100%{transform:none}
+  22%,40%    {transform:translate(1.6px,1.6px)}
+}
+@media (prefers-reduced-motion:reduce){.lp-coach-cursor{animation:none}}
+
 /* The card skeletons, while a list is being fetched. */
 @keyframes sl-breathe{0%,100%{opacity:.55}50%{opacity:1}}
 

@@ -53,6 +53,20 @@ const EMBED = `https://www.youtube-nocookie.com/embed/${VIDEO_ID}`
   + '?autoplay=1&rel=0&modestbranding=1&playsinline=1';
 
 /**
+ * ...AND WHAT THE ALWAYS-ON EMBED LOADS.
+ *
+ * NO `autoplay`, WHICH IS THE ONE DIFFERENCE THAT MATTERS. The modal above is
+ * opened by somebody clicking the words "Learn how to use", so starting the
+ * video is the whole of what they asked for. The embed below is simply SITTING
+ * on the outlines screen next to a drawing somebody is mid-way through tracing;
+ * a video that begins talking on its own there is an interruption, not a help.
+ * So it shows YouTube's own poster and play button and waits to be pressed —
+ * and because the host is `youtube-nocookie.com`, nothing is set until it is.
+ */
+const EMBED_INLINE = `https://www.youtube-nocookie.com/embed/${VIDEO_ID}`
+  + '?rel=0&modestbranding=1&playsinline=1';
+
+/**
  * THE YOUTUBE BADGE, DRAWN RATHER THAN LOADED, for the reason every other icon
  * in this app is: it takes `currentColor` with it, so one element decides both
  * the type and the mark, and it stays sharp at any density.
@@ -191,5 +205,87 @@ export default function HowToLink({ className = '' }) {
         </div>
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// THE SAME WALKTHROUGH, PLAYING IN PLACE.
+//
+// WHY A SECOND COMPONENT RATHER THAN A PROP ON THE FIRST. `HowToLink` is a line
+// of type that opens a player over the top of whatever you were doing; this is
+// a player that is simply THERE, in the right panel under the Share button.
+// Those are two different things wearing one video, and folding them together
+// would mean a component whose markup is an if-statement from the first line to
+// the last.
+//
+// IT LIVES HERE ANYWAY, BESIDE THE LINK, because the thing they share is the
+// part worth sharing: the video id, the two embed URLs and the badge. A second
+// file would be a second place to edit when the walkthrough is re-cut, which is
+// the argument the link's own header already makes about its three call sites.
+//
+// WHY THE OUTLINES STEP GETS ONE AND THE OTHER TWO DO NOT. On the outlines step
+// the right panel holds the Share button and nothing else — the fourteen
+// sections below it are all controls over a LAYOUT, and there is no layout yet.
+// So the panel is a 340px column of empty glass beside the one screen in the app
+// that asks somebody to do something with a mouse they have not done before:
+// click the corners of a room. A link there would ask them to open a dialog over
+// the drawing they are working on; a player already in the panel can be pressed
+// with the plan still in view beside it, which is how you follow a walkthrough
+// while doing the thing. Past that step the panel has fourteen sections to hold
+// and no room to spare, and `HowToLink` is still on the empty states for anybody
+// who wants it.
+// ---------------------------------------------------------------------------
+
+/**
+ * @param className extra utilities from the caller — the caller owns where this
+ *   sits and what it does in its parent's layout, the same way `HowToLink` does.
+ */
+export function HowToVideo({ className = '' }) {
+  return (
+    /* THE PANEL'S OWN GLASS — except the panel IS glass, so this is not a card
+       on it. `bg-white/5` over `bg-white/5` is two coats of the same paint and
+       reads as a smudge, not a surface. The hairline and the 12px corners are
+       what the panel's sections would wear if any of them were boxed, and the
+       ground stays the panel's. */
+    <div className={'border border-border/10 rounded-[12px] p-2.5 ' + className}>
+      {/* THE HEADING IS THE PANEL'S HEADING, down to the tracking: 10px,
+          uppercase, #8A8A8A. Every section in this column is announced that way
+          and a louder label here would make the video the subject of the screen,
+          which it is not — the drawing is. */}
+      <div className="flex items-center gap-2 mb-2">
+        <h3 className="mt-0 mx-0 mb-0 text-[10px] tracking-[0.11em] uppercase text-subtle">
+          How to use
+        </h3>
+        <div className="flex-1" />
+        {/* THE ESCAPE HATCH, for the reason the modal has the same line: a 340px
+            column is a small picture, and somebody who wants to actually read
+            the cursor in it wants it full size on YouTube. */}
+        <a href={WATCH} target="_blank" rel="noopener noreferrer"
+          className="text-[10px] text-subtle no-underline transition-colors duration-[120ms]
+            hover:text-white focus-visible:outline-2 focus-visible:outline-accent
+            focus-visible:outline-offset-2 focus-visible:rounded-[3px]">
+          Full size ↗
+        </a>
+      </div>
+      {/* AN ASPECT BOX AND NOT A HEIGHT. The panel is a fixed column on a desktop
+          and the full width of the screen on a narrow one, and a 16:9 player that
+          is told its height gets a black band down two sides at one of those. */}
+      <div className="relative w-full aspect-video overflow-hidden rounded-[8px] bg-black">
+        <iframe
+          className="absolute inset-0 w-full h-full border-0"
+          src={EMBED_INLINE}
+          title="How to use Super Luminal"
+          /* NO `autoplay` IN THE ALLOW-LIST EITHER, and not only because the URL
+             does not ask for it: the permission is what a script inside the frame
+             would need to start itself, and this player has no business starting
+             beside a drawing somebody is working on. Fullscreen IS here — the
+             picture is a panel wide, so the player's own expand button is the
+             most useful control on it. */
+          allow="encrypted-media; picture-in-picture; fullscreen"
+          allowFullScreen
+          loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin" />
+      </div>
+    </div>
   );
 }

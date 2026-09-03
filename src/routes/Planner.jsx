@@ -534,6 +534,11 @@ export default function Planner() {
     <App
       key={plan.id}
       planName={plan.name}
+      /* THE ROW'S ID AND NOT THE ROUTE'S PARAM, the same rule the claims above
+         follow — except inverted, because here the two are interchangeable and
+         the row is simply the more canonical of them. The editor uses it as a
+         storage key and nothing else; see `planId` in App.jsx. */
+      planId={plan.id ?? planId}
       initialFile={file}
       initialProjectType={plan.project_type ?? projectType}
       initialPdfPage={chosen.state?.pdfPage ?? null}

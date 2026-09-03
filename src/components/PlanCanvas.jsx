@@ -2824,7 +2824,16 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 is a floating word without it — see PILL_STYLE. Drawn before the
                 arrow glyphs and, now that those are transparent, never painted
                 over at the caps. */}
-            <rect className="hit" x={cx - w / 2} y={cy - h / 2} width={w} height={h}
+            {/* `data-pill-body` IS AN ANCHOR FOR SOMETHING OUTSIDE THIS FILE.
+                The card that explains this control sits OFF the drawing with a
+                leader line back to it (see OptionCoach), which means something
+                in the document has to be able to find the pill and measure it.
+                Measuring the real element rather than recomputing this
+                arithmetic in viewport space is the whole point: the answer
+                cannot drift from the pill, whatever the pan, the zoom or the
+                scroll position, because it IS the pill. */}
+            <rect className="hit" data-pill-body="" x={cx - w / 2} y={cy - h / 2}
+              width={w} height={h}
               rx={h / 2} ry={h / 2} fill={pillFill}
               stroke={P.edge} strokeWidth={lw * P.edgeWeight}
               onClick={(e) => e.stopPropagation()} />
