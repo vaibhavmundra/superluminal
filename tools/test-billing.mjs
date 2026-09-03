@@ -30,6 +30,7 @@ process.env.RZP_CURRENCY = 'USD';
 
 const { TIER, TIERS, ADMIN, tierOf, sellableTier, windowStart, usageFrom, balanceFrom, balanceFromTotals,
         canSpend, fingerprintOutline, fingerprintPass, hash64, fmtSqft, fmtAllowance,
+        fmtPlans, tierHeadline, fmtRemaining,
         normaliseEmail, MAX_CLAIM_SQFT, MIN_CLAIM_SQFT } = await import('../src/lib/plans.js');
 const { __test: bill } = await import('../api/billing.js');
 const { __test: hook } = await import('../api/razorpay-webhook.js');
@@ -73,11 +74,26 @@ section('the price list is internally consistent');
   ok('price and area rise together',
     paid.every((t, i) => i === 0 || (t.area > paid[i - 1].area
       && t.renderPasses >= paid[i - 1].renderPasses)));
-  ok('every tier is bigger than free', paid.every((t) => t.area > TIER.free.area));
   ok('the stated numbers match the spec',
-    TIER.free.area === 3000 && TIER.starter.area === 10000 && TIER.pro.area === 50000
+    TIER.free.area === 15000 && TIER.starter.area === 10000 && TIER.pro.area === 50000
     && TIER.starter.usd === 10 && TIER.pro.usd === 30
     && TIER.starter.renderPasses === 5 && TIER.pro.renderPasses === 20);
+
+  // THE FREE TIER IS METERED ON DRAWINGS AND THE PAID ONES ARE NOT, which is
+  // the fork every formatter and the whole of canSpend's first branch turn on.
+  // `null` and not a large number: a cap of 999 is still a cap.
+  ok('free is capped at three floor plans', TIER.free.plans === 3);
+  ok('no paid tier caps plans', paid.every((t) => t.plans === null));
+
+  // "EVERY TIER IS BIGGER THAN FREE" WAS ASSERTED HERE AND IS GONE, because it
+  // is no longer true and no longer means anything. Free's 15,000 sq ft is a
+  // BACKSTOP behind a three-drawing cap, not an allowance — Starter's 10,000 is
+  // smaller and buys far more, because it refreshes every month and has no plan
+  // limit at all. Comparing the two numbers compares two different kinds of
+  // thing. What must hold is that the paid tiers are ordered among THEMSELVES,
+  // which the assertion above this block already checks.
+  ok('free is a lifetime backstop, not a monthly allowance',
+    TIER.free.lifetime === true && paid.every((t) => !t.lifetime));
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +215,8 @@ section('what has been spent');
 // ---------------------------------------------------------------------------
 section('may this be lit');
 {
-  const b = balanceFrom(null, [ev('layout', { area_sqft: 2400 })]);   // free, 600 left
+  // FREE, WITH 14,400 OF ITS 15,000 SQ FT BACKSTOP SPENT ACROSS ONE DRAWING.
+  const b = balanceFromTotals(null, { area: 14400, passes: 0, plans: 1 });
   ok('600 left covers 500', canSpend(b, { area: 500 }).ok);
 
   // ALL OR NOTHING. There is no such thing as lighting a third of a room.
@@ -221,6 +238,76 @@ section('may this be lit');
   ok('but not twenty-one', canSpend(pro, { passes: 21 }).ok === false);
 
   ok('asking for nothing is allowed', canSpend(b, {}).ok);
+}
+
+// ---------------------------------------------------------------------------
+section('three floor plans, and the fourth is not one');
+{
+  // THE HEADLINE METER. Free is sold as three DRAWINGS; the area is a backstop
+  // behind it. These are the assertions that stop the two being confused.
+  const two = balanceFromTotals(null, { area: 2400, passes: 0, plans: 2 });
+  ok('two lit leaves one', two.plans.left === 1 && two.plans.allowed === 3);
+  ok('a third drawing is allowed', canSpend(two, { area: 900, newPlans: 1 }).ok);
+
+  const three = balanceFromTotals(null, { area: 3600, passes: 0, plans: 3 });
+  ok('three lit leaves none', three.plans.left === 0);
+
+  // THE WHOLE POINT OF "CLEAN": the three you have are not frozen. Re-lighting
+  // one of them is `newPlans: 0` and must cost nothing, or the tier is really
+  // "three claims" and a single re-trace spends one.
+  ok('re-lighting one of the three is still free',
+    canSpend(three, { area: 900, newPlans: 0 }).ok);
+
+  const fourth = canSpend(three, { area: 900, newPlans: 1 });
+  ok('but a fourth drawing is refused', fourth.ok === false);
+  ok('and the reason is the plan count, not the area', fourth.reason === 'plans');
+  ok('and it says what the cap was', fourth.allowed === 3 && fourth.left === 0);
+
+  // ORDER MATTERS IN THE REFUSAL. Somebody on their fourth drawing with plenty
+  // of square feet left must be told they are out of PLANS. If the area check
+  // ran first they would be told "this needs 900 sq ft and you have 11,400
+  // left" — true, unhelpful, and followed by a refusal for another reason.
+  ok('the plan count is reported before the area',
+    canSpend(three, { area: 900, newPlans: 1 }).reason === 'plans');
+
+  // AND THE BACKSTOP STILL BITES INSIDE THE THREE. Three hotel floors is what
+  // the 15,000 exists to stop, and it has to refuse even though a slot is free.
+  const huge = balanceFromTotals(null, { area: 14000, passes: 0, plans: 2 });
+  const over = canSpend(huge, { area: 5000, newPlans: 1 });
+  ok('a third drawing that busts the backstop is refused', over.ok === false);
+  ok('and that refusal is about the area', over.reason === 'area');
+  ok('and says the shortfall', over.need === 4000, `got ${over.need}`);
+
+  // NO PAID TIER HAS A PLAN CAP, and `null` must not be compared as a quantity.
+  const paid = balanceFromTotals(subAt(), { area: 0, passes: 0, plans: 40 });
+  ok('a paid tier reports no plan allowance', paid.plans.allowed === null);
+  ok('and no plan remainder either', paid.plans.left === null);
+  ok('a fortieth drawing on pro is fine', canSpend(paid, { area: 900, newPlans: 1 }).ok);
+
+  // NOR DOES AN UNMETERED ACCOUNT.
+  const admin = balanceFromTotals(null, { area: 9e6, passes: 900, plans: 900 },
+                                  { isAdmin: true });
+  ok('an admin has no plan cap', admin.plans.allowed === null);
+  ok('and is refused nothing', canSpend(admin, { area: 9e9, newPlans: 1 }).ok);
+
+  // THE COUNT COMES OUT OF THE LEDGER BY DISTINCT DRAWING, not by row. Four
+  // events across two plans is two plans — this is what makes re-lighting free.
+  const events = [
+    ev('layout', { area_sqft: 400, plan_id: 'plan-a' }),
+    ev('layout', { area_sqft: 500, plan_id: 'plan-a' }),
+    ev('layout', { area_sqft: 600, plan_id: 'plan-b' }),
+    ev('render_pass', { plan_id: 'plan-c' }),
+  ];
+  const u = usageFrom(null, events);
+  ok('four events across two drawings count as two', u.plans === 2, `got ${u.plans}`);
+  ok('a render pass does not open a plan slot', u.plans === 2);
+
+  // A NULL plan_id IS AN EVENT THAT NEVER KNEW ITS DRAWING — a pre-0007 row
+  // whose plan was already deleted, or the standalone editor. It counts for area
+  // and not for plans, and it must not blow up the Set.
+  const orphan = usageFrom(null, [ev('layout', { area_sqft: 700, plan_id: null })]);
+  ok('an event with no drawing counts area but no plan',
+    orphan.area === 700 && orphan.plans === 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -264,7 +351,7 @@ section('role 1 is unmetered');
 
   // AND A NON-ADMIN IS UNAFFECTED, which is the assertion that would catch the
   // flag being defaulted the wrong way round.
-  const normal = balanceFromTotals(null, { area: 2900, passes: 0 });
+  const normal = balanceFromTotals(null, { area: 14900, passes: 0, plans: 1 });
   ok('a normal user is still metered', normal.unlimited === false);
   ok('and still refused', canSpend(normal, { area: 500 }).ok === false);
   ok('the flag defaults to off', balanceFromTotals(null, spent).tier.slug === 'free');
@@ -466,6 +553,32 @@ section('bounds and formatting');
     fmtAllowance(TIER.pro).includes('50,000') && fmtAllowance(TIER.pro).includes('20 render'));
   ok('free mentions no passes it does not have',
     !fmtAllowance(TIER.free).includes('render'));
+
+  // THE FORK. Free is sold on a count of drawings and the paid tiers on area,
+  // and `tierHeadline` is the one place that decides which — four screens print
+  // it, and four independent guesses is how a visitor reads "15,000 sq ft" on a
+  // card and is refused at three plans.
+  ok('free leads with the plan count', tierHeadline(TIER.free) === '3 floor plans');
+  ok('and never with the backstop', !tierHeadline(TIER.free).includes('15,000'));
+  ok('a paid tier still leads with area', tierHeadline(TIER.starter) === '10,000 sq ft');
+  ok('unmetered is a word', tierHeadline(ADMIN) === 'Unlimited');
+  ok('the allowance line follows it', fmtAllowance(TIER.free) === '3 floor plans');
+
+  ok('one plan is singular', fmtPlans(1) === '1 floor plan');
+  ok('and none is plural', fmtPlans(0) === '0 floor plans');
+  ok('null is unlimited, as everywhere else', fmtPlans(null) === 'Unlimited');
+
+  // `fmtRemaining` IS THE RUNNING FIGURE and takes the balance rather than the
+  // tier — the profile rail and the pricing strip both print it, so they cannot
+  // disagree about which meter this account is on.
+  ok('free counts down in drawings',
+    fmtRemaining(balanceFromTotals(null, { area: 900, passes: 0, plans: 1 }))
+      === '2 of 3 plans left');
+  ok('a paid tier counts down in square feet',
+    fmtRemaining(balanceFromTotals(subAt(), { area: 1000, passes: 0, plans: 9 }))
+      === '49,000 sq ft left');
+  ok('unmetered says so',
+    fmtRemaining(balanceFromTotals(null, {}, { isAdmin: true })) === 'Unlimited');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

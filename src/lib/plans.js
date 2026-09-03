@@ -43,25 +43,58 @@
 /**
  * THE PRICE LIST.
  *
- * `area` is in square feet and `renderPasses` is a count. `lifetime: true` on
- * free is the whole difference between the free tier and a cheap one: it does
- * not refresh, ever, so 3,000 sq ft is a trial with a drawing at the end of it
+ * `area` is in square feet, `renderPasses` is a count, and `plans` is a count of
+ * DRAWINGS — null on every paid tier, which is what "no cap" means. `lifetime:
+ * true` on free is the whole difference between the free tier and a cheap one:
+ * it does not refresh, ever, so free is a trial with a drawing at the end of it
  * rather than a small monthly allowance somebody can live inside forever.
  *
  * `usd` is the headline price and the amount Razorpay is asked for is
  * `usd * 100` in the account's currency — see tools/razorpay-plans.mjs, which
  * is where a rupee price is set if the account cannot take dollars.
+ *
+ * --- WHY FREE IS METERED TWICE, AND ONLY FREE ----------------------------
+ *
+ * It used to be 3,000 sq ft and nothing else, and that is a promise nobody can
+ * hold in their head. "You have 3,000 square feet" means nothing to somebody who
+ * has not yet measured their drawing; they find out what it bought when the
+ * server refuses the fourth room of the first flat, which is the worst possible
+ * moment to learn the shape of a free tier.
+ *
+ * THREE FLOOR PLANS IS A PROMISE SOMEBODY CAN CHECK. It is countable before you
+ * start, it maps onto the thing the app is actually for, and it survives being
+ * repeated back — "I got three plans" is either true or it is a bug.
+ *
+ * SO THE AREA CEILING BECOMES A BACKSTOP RATHER THAN THE HEADLINE, and it is set
+ * where it stops the case the plan count cannot: three plans is generous for
+ * three flats and absurd for three hotel floors, so 15,000 sq ft is the line
+ * past which "three plans" was never the offer being made. It is deliberately
+ * high enough that an ordinary residential user never meets it — three 1,200 sq
+ * ft flats is 3,600 — and low enough that the tier cannot be used to light a
+ * tower for nothing.
+ *
+ * BOTH GATES ARE ENFORCED SERVER-SIDE and both refuse the same way. The count is
+ * what the UI promises; the area is what protects it. Neither is checked in the
+ * browser for anything but drawing a number — see the header of api/billing.js.
  */
 export const TIERS = [
   {
     slug: 'free',
     name: 'Free',
-    blurb: 'Enough to light a flat and take the drawing away.',
+    blurb: 'Three floor plans, lit and exported, at no cost.',
     usd: 0,
     lifetime: true,
-    area: 3000,
+    // THE HEADLINE. See above: countable before you start, and the number the
+    // pricing page, the paywall and the profile menu all print.
+    plans: 3,
+    // THE BACKSTOP. Not advertised, because a second number on a free tier is a
+    // second thing to explain and nobody who is meant to be on this tier will
+    // ever meet it. It is stated plainly the moment it refuses, which is the
+    // only moment it is worth knowing.
+    area: 15000,
     renderPasses: 0,
     lines: [
+      'Three floor plans, lit end to end',
       'Room detection, outlines and scale',
       'Ambient grid, accents and task spots',
       'DXF, XLSX, CSV, PDF, JSON, SVG and PNG export',
@@ -74,6 +107,10 @@ export const TIERS = [
     blurb: 'For one designer, working steadily.',
     usd: 10,
     lifetime: false,
+    // NULL, NOT A BIG NUMBER. A paid tier is metered on area and on nothing
+    // else; a cap of 999 would be a cap, and the first person to hit it would be
+    // right to be annoyed. See balanceFromTotals, which reads null as "no cap".
+    plans: null,
     area: 10000,
     renderPasses: 5,
     lines: [
@@ -89,6 +126,7 @@ export const TIERS = [
     blurb: 'For a practice, or a showroom quoting all day.',
     usd: 30,
     lifetime: false,
+    plans: null,
     area: 50000,
     renderPasses: 20,
     lines: [
@@ -106,8 +144,8 @@ export const TIERS = [
  * Role 1 is an owner of this app rather than a customer of it (see the note in
  * src/lib/auth.jsx), and metering the people tuning the models is metering
  * ourselves: every plan an admin opens is a test, every render pass is a prompt
- * being adjusted, and a 3,000 sq ft ceiling on that work means the person
- * debugging the accent pass runs out of allowance on a Tuesday.
+ * being adjusted, and a three-drawing cap on that work means the person
+ * debugging the accent pass runs out of allowance before lunch.
  *
  * DELIBERATELY ABSENT FROM `TIERS`, because `TIERS` is the price list — it is
  * what the pricing page maps over and what the plan-creation script creates
@@ -128,9 +166,10 @@ export const ADMIN = {
   usd: 0,
   lifetime: false,
   unlimited: true,
+  plans: null,
   area: Infinity,
   renderPasses: Infinity,
-  lines: ['Every feature', 'No area limit', 'No render-pass limit'],
+  lines: ['Every feature', 'No plan limit', 'No area limit', 'No render-pass limit'],
 };
 
 /**
@@ -258,12 +297,25 @@ const inWindow = (ev, from) => !from || Date.parse(ev.created_at ?? 0) >= Date.p
 export function usageFrom(sub, events = []) {
   const from = windowStart(sub);
   let area = 0, passes = 0;
+  // DISTINCT DRAWINGS THAT HAVE BEEN LIT, which is the free tier's other meter.
+  //
+  // THIS COUNT IS ONLY HONEST BECAUSE MIGRATION 0007 DROPPED THE FOREIGN KEY ON
+  // `plan_id`. It used to be `on delete set null`, so deleting a plan blanked the
+  // link — and a count over a blanked column hands the slot back, which turns
+  // "three plans" into "three at a time" and then into no limit at all for
+  // anybody willing to press Delete between uploads. The uuid now stays put,
+  // which is the same rule 0004 already applies to the square feet: the models
+  // ran, the layout was drawn, and removing the drawing afterwards does not
+  // un-run them.
+  const seen = new Set();
   for (const ev of events) {
     if (!inWindow(ev, from)) continue;
-    if (ev.kind === 'layout') area += Number(ev.area_sqft) || 0;
-    else if (ev.kind === 'render_pass') passes += Number(ev.units) || 0;
+    if (ev.kind === 'layout') {
+      area += Number(ev.area_sqft) || 0;
+      if (ev.plan_id) seen.add(ev.plan_id);
+    } else if (ev.kind === 'render_pass') passes += Number(ev.units) || 0;
   }
-  return { area: Math.max(0, area), passes: Math.max(0, passes) };
+  return { area: Math.max(0, area), passes: Math.max(0, passes), plans: seen.size };
 }
 
 export function balanceFrom(sub, events = [], opts = {}) {
@@ -286,7 +338,7 @@ export function balanceFrom(sub, events = [], opts = {}) {
  * `balanceFrom` with that total handed in, so the two cannot disagree about what
  * a total MEANS.
  */
-export function balanceFromTotals(sub, totals = { area: 0, passes: 0 }, opts = {}) {
+export function balanceFromTotals(sub, totals = { area: 0, passes: 0, plans: 0 }, opts = {}) {
   // ADMIN OVERRIDES THE ROW, AND IT IS PASSED IN RATHER THAN READ FROM THE SUB.
   //
   // `isAdmin` comes from `profiles.role`, which lives on a different table from
@@ -298,7 +350,8 @@ export function balanceFromTotals(sub, totals = { area: 0, passes: 0 }, opts = {
   // it can be trusted.
   const tier = opts.isAdmin ? ADMIN : tierOf(sub);
   const used = { area: Math.max(0, Number(totals.area) || 0),
-                 passes: Math.max(0, Number(totals.passes) || 0) };
+                 passes: Math.max(0, Number(totals.passes) || 0),
+                 plans: Math.max(0, Number(totals.plans) || 0) };
 
   // NULL, NOT Infinity, AND NOT A BIG NUMBER. Null survives JSON, reads as "no
   // limit" to anything that formats it, and cannot be accidentally compared as
@@ -312,10 +365,19 @@ export function balanceFromTotals(sub, totals = { area: 0, passes: 0 }, opts = {
       unlimited: true,
       area: { allowed: null, used: used.area, left: null },
       passes: { allowed: null, used: used.passes, left: null },
+      plans: { allowed: null, used: used.plans, left: null },
       periodEnd: null,
       lifetime: false,
     };
   }
+
+  // A NULL CAP TRAVELS AS A NULL ALLOWANCE, exactly as an unlimited account's
+  // does — same shape, same rendering, and `canSpend` reads the same `=== null`
+  // for both. A paid tier is metered on area alone, and the alternative (a
+  // `plans` key that is present on free and missing on Starter) would mean every
+  // reader needing to know which tier it was looking at before it could format a
+  // number.
+  const planCap = Number.isFinite(tier.plans) ? tier.plans : null;
 
   return {
     tier,
@@ -324,6 +386,8 @@ export function balanceFromTotals(sub, totals = { area: 0, passes: 0 }, opts = {
     area: { allowed: tier.area, used: used.area, left: Math.max(0, tier.area - used.area) },
     passes: { allowed: tier.renderPasses, used: used.passes,
               left: Math.max(0, tier.renderPasses - used.passes) },
+    plans: { allowed: planCap, used: used.plans,
+             left: planCap === null ? null : Math.max(0, planCap - used.plans) },
     periodEnd: tier.lifetime ? null : (sub?.current_period_end ?? null),
     lifetime: !!tier.lifetime,
   };
@@ -337,11 +401,37 @@ export function balanceFromTotals(sub, totals = { area: 0, passes: 0 }, opts = {
  * lighting a third of a room, and a half-drawn ceiling somebody has to notice is
  * worse than a clear "you need 1,600 more".
  */
-export function canSpend(balance, { area = 0, passes = 0 } = {}) {
+export function canSpend(balance, { area = 0, passes = 0, newPlans = 0 } = {}) {
   // BEFORE ANYTHING IS COMPARED. An unlimited balance carries null allowances, and
   // `null < 500` is false in JavaScript — so this would happen to work by
   // accident, which is the worst reason for it to work. Stated, it is a rule.
   if (balance.unlimited) return { ok: true };
+
+  // THE PLAN COUNT IS CHECKED FIRST, and the order is the message. Somebody who
+  // has lit their three free plans and opens a fourth is short of PLANS, not of
+  // square feet — and if the area check ran first they would be told "this plan
+  // needs 900 sq ft and you have 11,400 left", which is true, unhelpful, and
+  // followed immediately by a refusal for a different reason.
+  //
+  // `newPlans` AND NOT `plans`, because the caller is not asking to spend a plan
+  // — it is telling us whether this claim OPENS one. Re-lighting a drawing that
+  // is already among the three costs nothing here, which is the whole of what
+  // "three plans, clean" means: you keep working on them. Only api/billing.js
+  // may answer that question, because only it can see the ledger.
+  //
+  // `cap.allowed != null` IS LOOSE ON PURPOSE, and it is the only loose equality
+  // in this file. It has to catch two different absences with one test: NULL,
+  // which every paid tier sends and means "not metered on this", and UNDEFINED,
+  // which is what a browser that is one deploy behind the server gets back —
+  // `publicState` did not carry a `plans` key before this change. Both mean
+  // "there is no plan cap to check", and the strict version would have read the
+  // second as a cap of zero and refused every claim on the app's own pricing
+  // page. Contrast fmtSqft, where the two absences must NOT be conflated.
+  const cap = balance.plans;
+  if (newPlans > 0 && cap && cap.allowed != null && cap.left < newPlans) {
+    return { ok: false, reason: 'plans', need: newPlans - cap.left,
+             want: newPlans, left: cap.left, allowed: cap.allowed };
+  }
   if (area > 0 && balance.area.left < area) {
     return { ok: false, reason: 'area', need: Math.ceil(area - balance.area.left),
              want: Math.ceil(area), left: Math.floor(balance.area.left) };
@@ -430,12 +520,53 @@ export const fmtSqft = (n, unlimited = 'Unlimited') => (n === null ? unlimited
 
 export const fmtUsd = (n) => (Number(n) === 0 ? 'Free' : `$${Number(n)}`);
 
-/** "10,000 sq ft · 5 render passes" — the one-line shape of an allowance. */
+/** "3 floor plans". Null is "no cap", for the same reason fmtSqft treats it so. */
+export const fmtPlans = (n, unlimited = 'Unlimited') => (n === null ? unlimited
+  : `${Math.round(Number(n) || 0)} floor plan${Math.round(Number(n) || 0) === 1 ? '' : 's'}`);
+
+/**
+ * THE ONE NUMBER A TIER IS SOLD ON, and there are two kinds of them now.
+ *
+ * Free is sold on a COUNT OF DRAWINGS and the paid tiers on AREA — see the note
+ * on TIERS for why. This function is where that fork lives, and it exists so
+ * that the pricing card, the paywall's card, the checkout summary and the
+ * profile menu cannot each pick a different one. Getting it wrong in one of
+ * those four is how a user reads "15,000 sq ft" on the card, lights three small
+ * flats, and is refused with 11,000 apparently untouched.
+ *
+ * THE AREA BACKSTOP IS DELIBERATELY NOT IN HERE. It is not what free is being
+ * sold on, it is what stops free being abused, and printing both on a card is
+ * asking a visitor to reason about two meters before they have uploaded
+ * anything. It is said in full at the one moment it matters, which is the
+ * refusal — see Paywall.
+ */
+export const tierHeadline = (tier) => (tier.unlimited ? 'Unlimited'
+  : Number.isFinite(tier.plans) ? fmtPlans(tier.plans)
+  : fmtSqft(tier.area));
+
+/** "3 floor plans" / "10,000 sq ft · 5 render passes" — an allowance in a line. */
 export function fmtAllowance(tier) {
   if (tier.unlimited) return 'Unlimited';
-  const bits = [fmtSqft(tier.area)];
+  const bits = [tierHeadline(tier)];
   if (tier.renderPasses) bits.push(`${tier.renderPasses} render pass${tier.renderPasses === 1 ? '' : 'es'}`);
   return bits.join(' · ');
+}
+
+/**
+ * WHAT IS LEFT, IN THE UNITS THIS ACCOUNT IS METERED IN — "2 of 3 plans left",
+ * "7,400 sq ft left", "Unlimited".
+ *
+ * Takes the live BALANCE rather than the tier, because this is the running
+ * figure rather than the offer, and it is what the profile rail and the pricing
+ * page's usage strip both print. Same fork as tierHeadline, made once.
+ */
+export function fmtRemaining(balance) {
+  if (!balance || balance.unlimited) return 'Unlimited';
+  const p = balance.plans;
+  if (p && p.allowed != null) {
+    return `${p.left} of ${p.allowed} plan${p.allowed === 1 ? '' : 's'} left`;
+  }
+  return `${fmtSqft(balance.area?.left ?? 0)} left`;
 }
 
 /** The sane bounds of a single claim. Anything outside is a bug or a forgery. */

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
 import { useBilling } from '../lib/billing.jsx';
-import { fmtSqft } from '../lib/plans.js';
+import { fmtRemaining } from '../lib/plans.js';
 
 // ---------------------------------------------------------------------------
 // THE RAIL. Fifty-six pixels wide, and it holds two things: the mark at the top
@@ -171,9 +171,13 @@ export default function ProfileRail() {
                 they work. Here it is one click away, next to the name it
                 belongs to, and only when somebody went looking. */}
             <span className="text-[10.5px] text-subtle tracking-[0.02em] tabular-nums mt-[3px]">
+              {/* WHICHEVER METER THIS ACCOUNT IS ON. Free counts drawings and
+                  the paid tiers count square feet — see tierHeadline in
+                  plans.js — and `fmtRemaining` is the one place that fork is
+                  made, so this line cannot drift from the pricing page's. */}
               {state.unlimited
                 ? `${tier.name} · unmetered`
-                : `${tier.name} · ${fmtSqft(state.area.left)} left`}
+                : `${tier.name} · ${fmtRemaining(state)}`}
             </span>
           </div>
           <button role="menuitem"

@@ -267,6 +267,38 @@ export function AuthProvider({ children }) {
     if (data) setProfile(data);
   }, [session?.user?.id]);
 
+  /**
+   * THE WHATSAPP NUMBER AND THE OCCUPATION, asked at the first export rather
+   * than at sign-up — see the header of src/lib/profile.js for why that moment
+   * and not the other one.
+   *
+   * IT THROWS WHERE saveName SWALLOWS, and the difference is what the caller
+   * does next. A rename is optimistic and cosmetic: it is already on screen, and
+   * a failed write is worth a shrug. This is a gate — the export is waiting on
+   * it — so a failure has to reach the dialog and be shown, or the user is left
+   * looking at a form that appears to have done nothing.
+   *
+   * THE ROW COMES BACK AND REPLACES THE LOCAL ONE, which is what closes the
+   * gate. `profileComplete` reads that row; without the round trip the dialog
+   * would reopen on the very next export until something else happened to
+   * refetch it.
+   *
+   * NOTHING VALIDATES HERE. The shapes are decided in profile.js and the caller
+   * has already run them through it — a second, slightly different opinion about
+   * what a phone number is would be the classic way for the stored value and the
+   * checked value to disagree.
+   */
+  const saveContact = useCallback(async ({ phone, occupation }) => {
+    if (!supabase || !session?.user) throw new Error('Not signed in');
+    const { data, error } = await supabase.from('profiles')
+      .update({ phone, occupation })
+      .eq('id', session.user.id)
+      .select().maybeSingle();
+    if (error) throw error;
+    if (data) setProfile(data);
+    return data;
+  }, [session?.user?.id]);
+
   const value = useMemo(() => {
     const user = session?.user ?? null;
     const name = profile?.full_name || user?.user_metadata?.full_name || '';
@@ -290,9 +322,10 @@ export function AuthProvider({ children }) {
       // The bubble's letter. Falls back through name → email → a dash, because
       // an empty circle looks like a loading state that never finishes.
       initial: (name || user?.email || '—').trim().charAt(0).toUpperCase(),
-      sendCode, verifyCode, signOut, saveName,
+      sendCode, verifyCode, signOut, saveName, saveContact,
     };
-  }, [ready, session, profile, stalled, revalidate, sendCode, verifyCode, signOut, saveName]);
+  }, [ready, session, profile, stalled, revalidate, sendCode, verifyCode, signOut,
+      saveName, saveContact]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

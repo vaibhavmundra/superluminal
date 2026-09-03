@@ -485,6 +485,26 @@ export default function App({
   // read-only sheet without a second guard: no route passes it there.
   onShare = null,
   // ---------------------------------------------------------------------
+  // A GATE IN FRONT OF EVERY EXPORT, and like `onShare` it is a callback rather
+  // than a dialog, for the same reason: what it asks for lives on the user's
+  // `profiles` row, and this component does not know Supabase exists.
+  //
+  // ASYNC, AND FALSE MEANS DO NOTHING. It resolves true when the export may go
+  // ahead and false when the person closed the question — see useContactGate in
+  // components/ContactGate.jsx. Every export handler below awaits it first and
+  // returns on false; the drawing is untouched either way, so a cancelled export
+  // is a click that did nothing rather than a state to unwind.
+  //
+  // IT NEVER BLOCKS ON ITS OWN FAILURE. A gate that throws — a dead session, a
+  // column that is not there yet — must not take the download with it: the user
+  // asked for a file they are entitled to, and losing it to a lead-capture form
+  // that broke is the worst possible trade. `gateExport` below swallows and
+  // proceeds, deliberately.
+  //
+  // NULL IN THE STANDALONE EDITOR, IN THE ADMIN VIEWER AND IN EVERY TEST, where
+  // there is nobody to ask and every export runs as it always did.
+  onBeforeExport = null,
+  // ---------------------------------------------------------------------
   // READ-ONLY MODE — the viewer an admin gets on somebody else's plan.
   //
   // ONE PROP, AND IT WAS THE RIGHT UNIT OF CHANGE. The alternative was a
@@ -3593,8 +3613,30 @@ export default function App({
     plan: source?.name ?? null,
   }), [rooms, accentZonesPx, taskSpotsPx, ceilingObjs, pxPerFt, source]);
 
+  /**
+   * MAY THIS EXPORT GO AHEAD — one gate, awaited by all nine export buttons.
+   *
+   * See the note on `onBeforeExport` in the props. The two rules that matter are
+   * both here rather than at nine call sites: no gate at all means yes, and a
+   * gate that THROWS also means yes. The second is the one worth stating twice —
+   * a lead-capture form that failed must never be the reason somebody does not
+   * get the file they asked for, so the failure is logged and the download runs.
+   * Only a person actively closing the question stops it.
+   */
+  const gateExport = useCallback(async () => {
+    if (!onBeforeExport) return true;
+    try { return (await onBeforeExport()) !== false; }
+    catch (err) {
+      console.warn('[export] the contact gate failed — exporting anyway', err);
+      return true;
+    }
+  }, [onBeforeExport]);
+
   /** The schedule as a file. Three formats, one table — see boqExport.js. */
-  const exportBOQ = useCallback((fmt) => {
+  const exportBOQ = useCallback(async (fmt) => {
+    // GATED ONCE FOR ALL THREE FORMATS, which is the whole reason this stayed a
+    // single function when the buttons were split out.
+    if (!await gateExport()) return;
     const base = (source?.name || 'plan').replace(/\.[^.]+$/, '');
     const title = `Lighting schedule — ${base}`;
     if (fmt === 'csv') {
@@ -3609,7 +3651,7 @@ export default function App({
       return;
     }
     download(`${base}-boq.pdf`, boqToPDF(boq, { title }), 'application/pdf');
-  }, [boq, source]);
+  }, [boq, source, gateExport]);
 
   /** One line per room, and only where something actually went wrong. */
   const troubles = useMemo(() => rooms.flatMap((r) => {
@@ -7114,7 +7156,12 @@ export default function App({
             spotCount={taskSpotsPx.length}
             isVector={isVector}
             onOpenBOQ={() => setView('boq')}
-            onExport={(kind) => {
+            onExport={async (kind) => {
+              /* ALL THREE BEHIND ONE GATE, at the top, before any of the work.
+                 The DXF is built synchronously and the PDF re-renders the base
+                 page — doing either and then asking would mean a cancelled
+                 export that had already spent a second of somebody's laptop. */
+              if (!await gateExport()) return;
               /* ONE DXF, AND IT IS THE SAME ONE ON BOTH SCREENS. There were two
                  — a CAD overlay and a "standalone" file on its own invented
                  layers — and the standalone one carried the planner's working
@@ -8007,7 +8054,8 @@ export default function App({
                 happened instead. */}
             <div className={BTNROW}>
               <button className={BTN} disabled={!totals.rooms}
-                onClick={() => {
+                onClick={async () => {
+                  if (!await gateExport()) return;
                   download(`${exportBase}-lights.dxf`, toSuperluminalDXF({
                     source, pxPerFt, heightPx: source.h,
                     rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
@@ -8034,10 +8082,12 @@ export default function App({
                   wrong sheet. The thumbnail does NOT follow it — see
                   `getSnapshot` — because a card picture should look the same
                   whichever view somebody left the plan in. */}
-              <button className={BTN} disabled={!source} onClick={async () => download(
-                `${exportBase}-lights.png`,
-                await svgToPNG(svgRef.current, source.w,
-                  { asScanned: !layers.invert, ground: layers.invert ? '#000000' : '#fff' }))}>PNG</button>
+              <button className={BTN} disabled={!source} onClick={async () => {
+                if (!await gateExport()) return;
+                download(`${exportBase}-lights.png`,
+                  await svgToPNG(svgRef.current, source.w,
+                    { asScanned: !layers.invert, ground: layers.invert ? '#000000' : '#fff' }));
+              }}>PNG</button>
               {/* PDF IS PLOTTED FROM THE GEOMETRY, NOT PRINTED FROM THE SCREEN.
                   It went through the browser's print dialog for one revision and
                   the output was a photograph of a user interface: haloes, hover
@@ -8049,6 +8099,7 @@ export default function App({
                   view the presentation sheet — black paper, the plan inverted,
                   the fittings glowing as real PDF gradients. */}
               <button className={BTN} disabled={!source} onClick={async () => {
+                if (!await gateExport()) return;
                 try {
                   /* THE SHEET FOLLOWS THE VIEW. Night view is the
                      presentation drawing — black paper, the plan inverted

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import App from '../App.jsx';
 import SharedBanner from '../components/SharedBanner.jsx';
+import { useContactGate } from '../components/ContactGate.jsx';
 import { openSharedPlan } from '../lib/sharing.js';
 import { fetchPlanFile } from '../lib/db.js';
 
@@ -44,6 +45,12 @@ export default function SharedPlanViewer() {
   const [row, setRow] = useState(null);          // { plan, project }
   const [file, setFile] = useState(null);
   const [err, setErr] = useState('');
+
+  // ASKED HERE TOO, AND THIS IS ARGUABLY THE BEST PLACE IN THE APP FOR IT.
+  // Somebody on this screen followed a link, signed up to read it, and is now
+  // downloading a drawing — a brand new account with nothing on its profile,
+  // taking a file away. See components/ContactGate.jsx.
+  const { onBeforeExport, contactDialog } = useContactGate();
 
   useEffect(() => {
     let alive = true;
@@ -111,6 +118,7 @@ export default function SharedPlanViewer() {
     // 8,000 lines keeps the editor unaware that this mode exists beyond the one
     // flag it actually needs.
     <div className="grid grid-rows-[auto_minmax(0,1fr)] h-full">
+      {contactDialog}
       <SharedBanner projectName={project?.name ?? ''} planName={plan.name}
         backTo={`/shared/${token}`} />
       <div className="min-h-0 relative [&>*]:h-full">
@@ -122,6 +130,7 @@ export default function SharedPlanViewer() {
           initialProjectType={plan.project_type ?? project?.project_type ?? null}
           initialPdfPage={plan.editor_state?.pdfPage ?? null}
           restore={plan.editor_state ?? null}
+          onBeforeExport={onBeforeExport}
           onBack={() => nav(`/shared/${token}`)}
         />
       </div>

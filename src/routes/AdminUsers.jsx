@@ -4,6 +4,7 @@ import ProfileRail from '../components/ProfileRail.jsx';
 import Pager from '../components/Pager.jsx';
 import { adminUsers } from '../lib/admin.js';
 import { when } from './Dashboard.jsx';
+import { occupationLabel } from '../lib/profile.js';
 
 // ---------------------------------------------------------------------------
 // EVERY USER OF THE APP, AND WHAT THEY HAVE MADE.
@@ -135,6 +136,11 @@ export default function AdminUsers() {
                 <thead>
                   <tr>
                     <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2">User</th>
+                    {/* WHO THEY ARE, WHICH IS WHY THE EXPORT DIALOG ASKS. A
+                        number and an occupation collected and never looked at is
+                        half a feature — this column is the other half, and it is
+                        the reason a WhatsApp number is worth having at all. */}
+                    <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2">Contact</th>
                     <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2 text-right w-[92px]">Projects</th>
                     <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2 text-right w-[92px]">Plans</th>
                     <th className="text-left font-medium text-[10.5px] tracking-[.06em] uppercase text-subtle py-[10px] px-[14px] border-b border-border bg-surface-2 text-right w-[92px]">Ready</th>
@@ -144,10 +150,10 @@ export default function AdminUsers() {
                 <tbody>
                   {data == null
                     ? Array.from({ length: 6 }, (_, i) => (
-                        <tr key={i} className="last:[&>td]:border-b-0"><td colSpan={5} className="p-0 border-b border-border align-middle"><span className="block h-[47px] bg-[linear-gradient(90deg,#F2F2F2_25%,#FFFFFF_50%,#F2F2F2_75%)] bg-[length:400%_100%] animate-[skel_1.3s_ease-in-out_infinite]" /></td></tr>
+                        <tr key={i} className="last:[&>td]:border-b-0"><td colSpan={6} className="p-0 border-b border-border align-middle"><span className="block h-[47px] bg-[linear-gradient(90deg,#F2F2F2_25%,#FFFFFF_50%,#F2F2F2_75%)] bg-[length:400%_100%] animate-[skel_1.3s_ease-in-out_infinite]" /></td></tr>
                       ))
                     : rows.length === 0
-                    ? <tr className="last:[&>td]:border-b-0"><td colSpan={5} className="py-[11px] px-[14px] border-b border-border align-middle text-center text-subtle">
+                    ? <tr className="last:[&>td]:border-b-0"><td colSpan={6} className="py-[11px] px-[14px] border-b border-border align-middle text-center text-subtle">
                         {q ? `Nobody matches “${q}”.` : 'No users yet.'}
                       </td></tr>
                     : rows.map((u) => (
@@ -169,6 +175,23 @@ export default function AdminUsers() {
                               <span className="text-[11px] text-subtle overflow-hidden text-ellipsis whitespace-nowrap max-w-[34ch]">{u.email || '—'}</span>
                             </div>
                             {u.role === 1 && <span className="font-sans text-[9.5px] tracking-[.05em] uppercase py-0.5 px-1.5 rounded-full border border-[#F0ABFC] bg-[#FDF2FE] text-[#C026D3] whitespace-nowrap">admin</span>}
+                          </div>
+                        </td>
+                        <td className="py-[11px] px-[14px] border-b border-border align-middle">
+                          <div className="flex flex-col gap-[1px] min-w-0">
+                            {/* A `tel:` LINK AND NOT PLAIN TEXT, because the one
+                                thing anybody does with this column is get in
+                                touch — and the number is stored in E.164, which
+                                is exactly what an href wants. It stops the row's
+                                own click, or reaching for the phone would open
+                                the user's account instead. */}
+                            {u.phone
+                              ? <a href={`tel:${u.phone}`} className="text-[12px] text-ink no-underline hover:underline"
+                                  onClick={(e) => e.stopPropagation()}>{u.phone}</a>
+                              : <span className="text-[12px] text-faint">—</span>}
+                            <span className="text-[11px] text-subtle whitespace-nowrap">
+                              {occupationLabel(u.occupation) ?? 'not asked yet'}
+                            </span>
                           </div>
                         </td>
                         <td className="py-[11px] px-[14px] border-b border-border align-middle text-right w-[92px] text-subtle font-sans">{u.projects}</td>

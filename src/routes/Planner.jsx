@@ -9,6 +9,7 @@ import { useAuth } from '../lib/auth.jsx';
 import { useBilling } from '../lib/billing.jsx';
 import Paywall from '../components/Paywall.jsx';
 import ShareDialog from '../components/ShareDialog.jsx';
+import { useContactGate } from '../components/ContactGate.jsx';
 import { myAccess } from '../lib/sharing.js';
 import { readDraft, saveDraft, clearDraft, pickRestore } from '../lib/draft.js';
 
@@ -121,6 +122,13 @@ export default function Planner() {
   // all, since a drop is your own drawing by construction.
   const [access, setAccess] = useState(() => (job ? 'owner' : undefined));
   const [shareOpen, setShareOpen] = useState(false);
+
+  // THE TWO QUESTIONS IN FRONT OF THE FIRST DOWNLOAD — a WhatsApp number and an
+  // occupation, asked once, ever. The hook owns the promise and the dialog; App
+  // gets a plain async function it awaits before every export. See
+  // components/ContactGate.jsx, and src/lib/profile.js for why this moment and
+  // not the sign-up form.
+  const { onBeforeExport, contactDialog } = useContactGate();
 
   // READ ONCE, AT MOUNT, and before anything can overwrite it. A draft is only
   // ever interesting in comparison with the row that is about to arrive.
@@ -520,6 +528,9 @@ export default function Planner() {
       <ShareDialog projectId={plan.project_id} projectName={project?.name ?? ''}
         onClose={() => setShareOpen(false)} />
     )}
+    {/* ABOVE THE EDITOR AND ABOVE THE SHARE DIALOG, which is the right stacking:
+        an export is only reachable from the panel underneath both. */}
+    {contactDialog}
     <App
       key={plan.id}
       planName={plan.name}
@@ -540,6 +551,10 @@ export default function Planner() {
       onPersist={canEdit ? onPersist : null}
       onMilestone={canEdit ? onMilestone : null}
       onShare={isOwner && plan.project_id ? () => setShareOpen(true) : null}
+      /* GATED FOR A VIEWER TOO, and not only for whoever can edit. A 'view'
+         share still has every export button — that is most of the point of
+         being given one — so the question belongs there as much as here. */
+      onBeforeExport={onBeforeExport}
       onBack={() => nav(plan.project_id ? `/projects/${plan.project_id}` : '/dashboard')}
     />
     </>

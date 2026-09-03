@@ -25,11 +25,18 @@ import HowToLink from '../components/HowToLink.jsx';
 //
 // The argument for putting it there was that somebody asks "what does this cost"
 // on the way out. The argument against is stronger: this page exists to get a
-// drawing into the app, the answer to "what does it cost" is FREE for the first
-// three thousand square feet, and a row of dollar amounts under the upload button
-// invites the visitor to price the tool before they have watched it light a single
-// room. The first three thousand square feet are the sales pitch; the prices are
-// one word away in the header for anybody who wants them sooner.
+// drawing into the app, the answer to "what does it cost" is FREE FOR THE FIRST
+// THREE FLOOR PLANS, and a row of dollar amounts under the upload button invites
+// the visitor to price the tool before they have watched it light a single room.
+// Those first three plans are the sales pitch; the prices are one word away in
+// the header for anybody who wants them sooner.
+//
+// IT USED TO BE "the first three thousand square feet", and the change is worth
+// noting because it is the same argument one level down. A visitor who has not
+// measured their drawing cannot tell whether 3,000 sq ft is generous or nothing
+// at all, so the old promise was a number that could only be understood after
+// the thing it was meant to persuade them to do. Three plans is countable
+// before you start. See TIERS in src/lib/plans.js.
 // ---------------------------------------------------------------------------
 export default function Home() {
   const nav = useNavigate();

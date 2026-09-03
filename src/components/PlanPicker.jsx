@@ -1,5 +1,5 @@
 import React from 'react';
-import { TIERS, fmtSqft } from '../lib/plans.js';
+import { TIERS, tierHeadline } from '../lib/plans.js';
 
 // The old `.btn` / `.btn.primary` classes, as Tailwind utilities. Split into
 // two mutually-exclusive strings (rather than one merged string with both
@@ -35,8 +35,15 @@ const BTN_PRIMARY = 'lp-glow-btn border-transparent';
 // checks, and it is the promise a user quotes back when the server says no.
 //
 // PRO IS MARKED AND FREE IS NOT DIMMED. A greyed-out free column reads as a
-// column that has been taken away, and free is a real tier here — 3,000 square
-// feet is a whole flat, exported, with the schedule. It is a floor, not bait.
+// column that has been taken away, and free is a real tier here — three floor
+// plans, lit and exported, with the schedule. It is a floor, not bait.
+//
+// THE HEADLINE NUMBER IS NOT ALWAYS THE SAME KIND OF NUMBER. Free is sold on a
+// count of DRAWINGS and the paid tiers on AREA (see TIERS in plans.js), so the
+// figure in the box comes from `tierHeadline` rather than from `fmtSqft`. That
+// fork is made once, in plans.js, because this card, the checkout summary, the
+// paywall and the profile menu all print it and four independent guesses is how
+// a visitor reads "15,000 sq ft" here and is refused at three plans.
 // ---------------------------------------------------------------------------
 
 export default function PlanPicker({ current = 'free', busyTier = null, compact = false,
@@ -52,7 +59,13 @@ export default function PlanPicker({ current = 'free', busyTier = null, compact 
         // paywall opens because a 12,000 sq ft floor would not fit, the useful
         // recommendation is Pro and not "the popular one" — so the highlight is
         // computed from the shortfall rather than fixed in the markup.
-        const covers = need == null || t.area >= need;
+        // A TIER THAT IS METERED ON DRAWINGS CANNOT COVER A SHORTFALL OF SQUARE
+        // FEET, and free is now such a tier. Its 15,000 sq ft is a backstop and
+        // not an offer, so comparing `need` against it would mark free as
+        // "Fits this plan" for a 12,000 sq ft floor — an answer that is wrong
+        // twice over, since the person reading it is already on free and is
+        // being refused by the plan count as often as by the area.
+        const covers = need == null || (t.usd > 0 && t.area >= need);
         const featured = need != null ? (covers && t.usd > 0
             && !TIERS.some((o) => o.usd > 0 && o.area >= need && o.usd < t.usd))
           : t.slug === 'pro';
@@ -83,7 +96,7 @@ export default function PlanPicker({ current = 'free', busyTier = null, compact 
             <p className={'m-0 mb-3.5 text-[12px] text-muted leading-[1.55] min-h-[2.6em] ' + (compact ? 'hidden' : '')}>{t.blurb}</p>
 
             <div className="bg-white/5 border border-border/10 backdrop-blur-[5px] rounded py-[9px] px-[11px] mb-3.5">
-              <b className="block text-[15px] tracking-[-0.02em] tabular-nums">{fmtSqft(t.area)}</b>
+              <b className="block text-[15px] tracking-[-0.02em] tabular-nums">{tierHeadline(t)}</b>
               <span className="text-[10.5px] text-subtle">{t.lifetime ? 'does not renew' : 'every month'}</span>
             </div>
 

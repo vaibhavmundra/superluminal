@@ -293,7 +293,13 @@ async function totalsOf(userId, sub) {
     body: { p_owner: userId, p_from: from ? new Date(from).toISOString() : null },
   });
   const r = Array.isArray(rows) ? rows[0] : rows;
-  return { area: Number(r?.area) || 0, passes: Number(r?.passes) || 0 };
+  // `plans` ARRIVES ONLY ONCE MIGRATION 0007 HAS RUN, and `|| 0` is what makes
+  // the deploy order not matter: against an older database the column is absent,
+  // the count reads zero, and a free account is metered on area exactly as it
+  // was before. The alternative — undefined propagating into the arithmetic —
+  // would make `left` NaN and refuse everybody.
+  return { area: Number(r?.area) || 0, passes: Number(r?.passes) || 0,
+           plans: Number(r?.plans) || 0 };
 }
 
 async function balanceOf(user) {
@@ -324,6 +330,9 @@ const publicState = (sub, balance) => ({
   lifetime: balance.lifetime,
   area: balance.area,
   passes: balance.passes,
+  // The free tier's headline meter. Null allowances on every paid tier, which
+  // the UI reads as "not metered on this" — see fmtRemaining in plans.js.
+  plans: balance.plans,
 });
 
 // ---------------------------------------------------------------------------
@@ -810,7 +819,37 @@ async function consumeAction(user, body) {
   }
 
   const total = fresh.reduce((s2, c) => s2 + c.sqft, 0);
-  const verdict = canSpend(balance, { area: total });
+
+  // --- DOES THIS OPEN A NEW PLAN SLOT ---------------------------------------
+  //
+  // The free tier is three DRAWINGS (see TIERS in src/lib/plans.js), and the
+  // only question that meter needs answering is whether this plan is already one
+  // of them. Re-lighting a drawing that has been lit before costs no slot —
+  // that is the whole of what "three plans, clean" means, and without it the
+  // tier would be "three claims", which a single re-trace would spend.
+  //
+  // ASKED OF THE LEDGER AND NOT OF `plans`. A row in the `plans` table proves
+  // somebody uploaded a drawing, which is free and always will be; what consumes
+  // a slot is LIGHTING one, and the only record of that is a layout event.
+  //
+  // AND `plan_id` IS RELIABLE HERE ONLY BECAUSE MIGRATION 0007 DROPPED ITS
+  // FOREIGN KEY. Until then the column was `on delete set null`, so deleting a
+  // drawing blanked the link and this check would have found nothing and handed
+  // the slot back — which would have made the delete button the most valuable
+  // thing on the free tier. The uuid now outlives the row it points at, which is
+  // what 0004's own comment always claimed the event did.
+  //
+  // SKIPPED ENTIRELY WHEN THE METER DOES NOT APPLY — an unlimited account, or
+  // any paid tier, where `plans.allowed` is null. One fewer round trip on every
+  // claim a paying customer makes, and the question would have no consequence.
+  let newPlans = 0;
+  if (planId && !balance.unlimited && balance.plans?.allowed != null) {
+    const lit = await rest(`usage_events?owner=eq.${enc(user.id)}&kind=eq.layout`
+      + `&plan_id=eq.${enc(planId)}&select=id&limit=1`);
+    if (!lit.length) newPlans = 1;
+  }
+
+  const verdict = canSpend(balance, { area: total, newPlans });
   if (!verdict.ok) {
     return { ok: false, ...verdict, spaces: fresh.length, state: publicState(sub, balance) };
   }

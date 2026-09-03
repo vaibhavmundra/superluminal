@@ -4,7 +4,7 @@ import PlanPicker from './PlanPicker.jsx';
 import CheckoutDialog from './CheckoutDialog.jsx';
 import { useBilling } from '../lib/billing.jsx';
 import { useAuth } from '../lib/auth.jsx';
-import { TIER, fmtSqft } from '../lib/plans.js';
+import { TIER, fmtSqft, fmtPlans } from '../lib/plans.js';
 
 // ---------------------------------------------------------------------------
 // THE WALL, AND WHERE IT IS ALLOWED TO STAND.
@@ -33,11 +33,24 @@ export default function Paywall({ refusal, onClose }) {
   const [err, setErr] = useState('');
   const [done, setDone] = useState(false);
 
-  const isArea = refusal?.reason !== 'passes';
+  // THREE REASONS NOW, AND THEY ARE NOT INTERCHANGEABLE. `plans` is the free
+  // tier's headline meter — three drawings — and it is the one most people will
+  // actually meet; `area` is the backstop behind it; `passes` is the render pass
+  // count. Each gets its own sentence below, because "you have run out" without
+  // saying out of WHAT is the failure this modal exists to prevent.
+  const reason = refusal?.reason === 'plans' ? 'plans'
+    : refusal?.reason === 'passes' ? 'passes' : 'area';
   // THE SHORTFALL AS THE PLAN NEEDS IT, not as the tier lists it. "You need
-  // 1,600 more" is actionable; "you have used 2,400 of 3,000" is a statement
+  // 1,600 more" is actionable; "you have used 13,400 of 15,000" is a statement
   // about the past.
-  const need = isArea ? Math.ceil(refusal?.want ?? 0) : null;
+  //
+  // NULL WHEN THE REFUSAL WAS NOT ABOUT AREA. `need` steers PlanPicker's "Fits
+  // this plan" badge, and a plan-count refusal has no square footage to fit —
+  // recommending Starter because 900 sq ft fits in 10,000 would be answering a
+  // question nobody asked. With null it falls back to marking the popular tier,
+  // which is the right recommendation when the problem is simply "free is used
+  // up".
+  const need = reason === 'area' ? Math.ceil(refusal?.want ?? 0) : null;
 
   const pay = async (details) => {
     setBusy(true); setErr('');
@@ -70,6 +83,9 @@ export default function Paywall({ refusal, onClose }) {
           <>
             <h2 className="mt-0 mb-[6px] text-[17px] tracking-[-0.01em]">You are on {TIER[state.tier]?.name ?? 'the new plan'}</h2>
             <p className="text-[11.5px] text-muted leading-[1.5] mt-0 mb-5">
+              {/* THE PAID TIERS ARE METERED ON AREA AND HAVE NO PLAN CAP, so
+                  after a successful upgrade this is always the square footage —
+                  there is no fork to make here, unlike everywhere else. */}
               {fmtSqft(state.area.left)} available. Close this and light the plan —
               nothing has been lost.
             </p>
@@ -79,13 +95,31 @@ export default function Paywall({ refusal, onClose }) {
           </>
         ) : (
           <>
-            <h2 className="mt-0 mb-[6px] text-[17px] tracking-[-0.01em]">{isArea ? 'This plan is larger than what is left' : 'No render passes left'}</h2>
+            <h2 className="mt-0 mb-[6px] text-[17px] tracking-[-0.01em]">
+              {reason === 'plans'
+                ? `You have lit all ${fmtPlans(refusal?.allowed ?? state.plans?.allowed ?? 3)}`
+                : reason === 'area' ? 'This plan is larger than what is left'
+                : 'No render passes left'}
+            </h2>
             <p className="text-[11.5px] text-muted leading-[1.5] mt-0 mb-1">
-              {isArea ? (
+              {reason === 'plans' ? (
+                <>
+                  {/* THE PART THAT STOPS THIS FEELING LIKE A TRICK. Somebody who
+                      has spent their three plans has to be told that the three
+                      are not frozen — they can go on working on them for ever,
+                      and it is only the FOURTH drawing that costs anything. A
+                      refusal that reads as "your work is now locked" is a
+                      refusal that loses the account. */}
+                  The free tier covers three floor plans, and this is a fourth.
+                  Everything you have already lit stays yours — you can keep
+                  editing those three, re-run them and export them, at no cost.
+                  {' '}The outlines on this drawing are safe; nothing has been discarded.
+                </>
+              ) : reason === 'area' ? (
                 <>
                   Lighting these spaces needs <b>{fmtSqft(refusal?.want ?? 0)}</b> and
                   you have <b>{fmtSqft(refusal?.left ?? 0)}</b> left
-                  {state.lifetime ? ' on the free tier' : ' this month'}.
+                  {state.lifetime ? ' of the free tier’s total area' : ' this month'}.
                   {' '}The outlines are safe — nothing has been discarded.
                 </>
               ) : (

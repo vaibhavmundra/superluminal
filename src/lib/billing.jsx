@@ -31,6 +31,9 @@ const BLANK = {
   currency: 'USD', periodStart: null, periodEnd: null, lifetime: true,
   area: { allowed: FREE.area, used: 0, left: FREE.area },
   passes: { allowed: FREE.renderPasses, used: 0, left: FREE.renderPasses },
+  // The free tier's headline meter. Paid tiers send a null allowance, which
+  // every reader treats as "not metered on this" — see fmtRemaining in plans.js.
+  plans: { allowed: FREE.plans, used: 0, left: FREE.plans },
 };
 
 async function authHeader() {

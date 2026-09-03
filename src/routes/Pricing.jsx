@@ -5,7 +5,7 @@ import PlanPicker from '../components/PlanPicker.jsx';
 import CheckoutDialog from '../components/CheckoutDialog.jsx';
 import { useAuth } from '../lib/auth.jsx';
 import { useBilling } from '../lib/billing.jsx';
-import { TIER, fmtSqft } from '../lib/plans.js';
+import { TIER, fmtSqft, fmtPlans } from '../lib/plans.js';
 
 // The old bare `.btn` class, as Tailwind utilities — same split as
 // PlanPicker.jsx / RenderPassPanel.jsx.
@@ -92,7 +92,15 @@ export default function Pricing() {
   // Same figure feeds the bar's width and its colour — see the CSS this
   // replaces (`.usage-bar i[style*="width: 100%"]`), which turned the fill red
   // once the meter reads full.
-  const usagePct = Math.min(100, (state.area.used / Math.max(1, state.area.allowed)) * 100);
+  // THE BAR SHOWS WHICHEVER METER WILL ACTUALLY REFUSE THIS ACCOUNT FIRST.
+  //
+  // On free that is the plan count — three drawings — and an area bar there
+  // would read 4% full while the very next claim is turned away, which is the
+  // most misleading a progress bar can be. On a paid tier there is no plan cap
+  // and area is the only meter, so it is the area bar exactly as before.
+  const onPlans = !state.unlimited && state.plans?.allowed != null;
+  const meter = onPlans ? state.plans : state.area;
+  const usagePct = Math.min(100, (meter.used / Math.max(1, meter.allowed)) * 100);
 
   return (
     <div className="min-h-full flex flex-col">
@@ -119,8 +127,16 @@ export default function Pricing() {
           {user && (
             <section className="grid grid-cols-[auto_1fr_auto] max-[760px]:grid-cols-1 gap-[18px] max-[760px]:gap-3 items-center bg-surface backdrop-blur-[5px] border border-border/10 rounded-lg px-[18px] py-4 mb-[26px]">
               <div>
-                <b className="block text-[20px] tracking-[-0.03em] tabular-nums">{fmtSqft(state.area.left)}</b>
-                <span className="text-[11px] text-subtle">{state.unlimited ? 'no limit' : `left of ${fmtSqft(state.area.allowed)}`}</span>
+                <b className="block text-[20px] tracking-[-0.03em] tabular-nums">
+                  {state.unlimited ? fmtSqft(null)
+                    : onPlans ? fmtPlans(state.plans.left)
+                    : fmtSqft(state.area.left)}
+                </b>
+                <span className="text-[11px] text-subtle">
+                  {state.unlimited ? 'no limit'
+                    : onPlans ? `left of ${state.plans.allowed}`
+                    : `left of ${fmtSqft(state.area.allowed)}`}
+                </span>
               </div>
               {/* AN UNLIMITED METER HAS NO BAR. A full-width blue bar would read
                   as "you have used everything" and an empty one as "you have used
@@ -144,6 +160,19 @@ export default function Pricing() {
                     : state.lifetime ? ' · the free allowance does not refresh'
                     : endsOn ? ` · renews ${endsOn}` : ''}
                 </span>
+                {/* THE BACKSTOP, SAID ONLY TO SOMEBODY ALREADY ON THE TIER, and
+                    only here. It is not on the pricing card, because a visitor
+                    who has uploaded nothing should not have to reason about two
+                    meters — see tierHeadline in plans.js. But a free user
+                    looking at their own usage page is exactly the person who
+                    should be able to find it, rather than meeting it for the
+                    first time as a refusal. */}
+                {onPlans && (
+                  <span className="text-[11.5px] text-subtle">
+                    {Math.round(state.area.used).toLocaleString('en-IN')} of
+                    {' '}{fmtSqft(state.area.allowed)} used across them
+                  </span>
+                )}
                 {state.unlimited
                   ? <span className="text-[11.5px] text-muted">{Math.round(state.area.used).toLocaleString('en-IN')} sq ft
                       {' '}and {state.passes.used} render pass
@@ -215,12 +244,21 @@ export default function Pricing() {
                 </p>
               </div>
               <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">The free allowance is once</h4>
+                {/* THE ONE PLACE THE BACKSTOP IS EXPLAINED TO A COLD VISITOR,
+                    and it belongs here rather than on the card. A card is an
+                    offer and has room for one number; this section is where
+                    somebody who wants to know exactly how the meter works comes
+                    to read, and leaving the 15,000 out of it entirely would make
+                    the first refusal feel like a term nobody mentioned. */}
+                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">The free tier is three plans, once</h4>
                 <p className="m-0 text-xs leading-[1.65] text-muted">
-                  3,000 sq ft, not refreshed monthly. It is enough to take one real
-                  flat all the way through — detection, layout, schedule, DXF — so
-                  the decision to pay is made against a finished drawing rather than
-                  a feature list.
+                  Three floor plans, not refreshed monthly, and you can go on
+                  editing and re-lighting those three for nothing — only a fourth
+                  drawing needs a paid tier. Each one goes all the way through:
+                  detection, layout, schedule, DXF. There is a{' '}
+                  {fmtSqft(TIER.free.area)} ceiling across the three, which is
+                  well past three flats and is there to stop the tier being used
+                  on a tower.
                 </p>
               </div>
             </div>
