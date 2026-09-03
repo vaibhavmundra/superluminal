@@ -86,6 +86,40 @@ export function normalisePhone(raw) {
   return `+${digits}`;
 }
 
+/**
+ * A COUNTRY CODE AND A NATIONAL NUMBER TO E.164, or null.
+ *
+ * This is what the dialog's two controls produce — a dial code chosen from a
+ * list and digits typed into a box — and keeping it separate from
+ * `normalisePhone` is deliberate: that one parses a WHOLE number somebody wrote
+ * out, this one assembles a number from parts that are each already known.
+ *
+ * THE LEADING TRUNK ZERO IS DROPPED, and this is the one piece of real telephony
+ * knowledge in the file. People write their number the way they would dial it at
+ * home — `020 7946 0958` in the UK, `098765 43210` in India — and that leading
+ * zero is a NATIONAL prefix that does not exist in the international form. Left
+ * in, it produces `+4402079460958`: fifteen digits, passes every length check,
+ * and unreachable.
+ *
+ * EXCEPT IN ITALY, WHERE THE ZERO IS PART OF THE NUMBER. +39 06 is Rome and
+ * always has been — Italy kept its trunk digit when it went to fixed-format
+ * numbers in 1998, and stripping it there breaks every landline in the country.
+ * It is the one well-known exception and it is worth the special case; getting
+ * it wrong in the other direction (never stripping) breaks a great many more
+ * numbers than it saves.
+ *
+ * ONE ZERO, NOT ALL OF THEM. `^0+` would eat the front of a national number that
+ * legitimately begins 00, and the international `00` prefix is not this
+ * function's problem — it is handled where a pasted number is split.
+ */
+export function toE164(dial, local) {
+  const d = String(dial ?? '').replace(/\D/g, '');
+  let n = String(local ?? '').replace(/\D/g, '');
+  if (d !== '39' && n.startsWith('0')) n = n.slice(1);
+  if (!d || !n) return null;
+  return normalisePhone(`+${d}${n}`);
+}
+
 /** What to show in the field for a number already on the row. */
 export const displayPhone = (p) => String(p ?? '');
 

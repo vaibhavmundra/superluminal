@@ -1,6 +1,8 @@
 import React, { useCallback, useState } from 'react';
 import { useAuth } from '../lib/auth.jsx';
-import { OCCUPATIONS, normalisePhone, occupationOf, profileComplete } from '../lib/profile.js';
+import { OCCUPATIONS, normalisePhone, occupationOf, profileComplete, toE164 } from '../lib/profile.js';
+import { DIAL_CODES, DEFAULT_ISO, splitDial, countryForDial, countryForIso, flagOf }
+  from '../lib/dialCodes.js';
 
 // ---------------------------------------------------------------------------
 // TWO QUESTIONS, ASKED ONCE, IN FRONT OF THE FIRST EXPORT.
@@ -36,16 +38,50 @@ const BTN_QUIET = 'text-xs px-3 py-[7px] rounded border border-border/10 bg-surf
 
 export function ContactDialog({ onSaved, onCancel }) {
   const { profile, saveContact } = useAuth();
+
   // PRE-FILLED FROM WHATEVER IS ALREADY THERE, because "incomplete" can mean one
   // of the two is answered — somebody who gave a number months ago should be
-  // asked for the occupation and not for both again.
-  const [phone, setPhone] = useState(profile?.phone || '+91 ');
+  // asked for the occupation and not for both again. A stored number is E.164,
+  // so it splits cleanly back into the two controls.
+  const [iso, setIso] = useState(() => {
+    const parts = splitDial(normalisePhone(profile?.phone) ?? '');
+    return countryForDial(parts?.dial)?.iso ?? DEFAULT_ISO;
+  });
+  const [local, setLocal] = useState(() => {
+    const parts = splitDial(normalisePhone(profile?.phone) ?? '');
+    return parts?.national ?? '';
+  });
   const [job, setJob] = useState(() => occupationOf(profile?.occupation));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  const tidy = normalisePhone(phone);
+  const country = countryForIso(iso) ?? countryForIso(DEFAULT_ISO);
+  const tidy = toE164(country.dial, local);
   const ready = !!tidy && !!job && !busy;
+
+  /**
+   * WHAT HAPPENS WHEN SOMEBODY PASTES A WHOLE INTERNATIONAL NUMBER into the
+   * national box — which is the commonest way a wrong country code would get
+   * stored, because a pasted `+44 20 7946 0958` behind a select that still says
+   * India produces `+914420…`.
+   *
+   * THE `+` OR `00` IS THE ONLY SIGNAL, and it has to be, because a bare
+   * national number is genuinely ambiguous: `9876543210` splits perfectly well
+   * as Iran's +98 followed by eight digits. Guessing a country from digits that
+   * do not claim to carry one is exactly the class of silent error this whole
+   * control exists to stop, so the split runs only when the text says it is
+   * international.
+   */
+  const onLocal = (raw) => {
+    setErr('');
+    const intl = raw.trim().startsWith('+') || /^\s*00\d/.test(raw);
+    if (intl) {
+      const parts = splitDial(raw.replace(/\D/g, '').replace(/^00/, ''));
+      const found = parts && countryForDial(parts.dial);
+      if (found) { setIso(found.iso); setLocal(parts.national); return; }
+    }
+    setLocal(raw);
+  };
 
   const submit = async (e) => {
     e?.preventDefault();
@@ -86,16 +122,52 @@ export function ContactDialog({ onSaved, onCancel }) {
         </p>
 
         <label className={LABEL} htmlFor="contact-phone">WhatsApp number</label>
-        <input id="contact-phone" type="tel" autoFocus value={phone}
-          placeholder="+91 98765 43210" autoComplete="tel"
-          onChange={(e) => { setPhone(e.target.value); setErr(''); }} />
+        {/* TWO CONTROLS AND NOT ONE TEXT BOX, and the reason is a trap the one
+            box set. It was pre-filled with `+91 `, which reads as part of YOUR
+            NUMBER rather than as a choice — so somebody in London types after it
+            and stores `+912079460958`: wrong country, plausible length, and
+            nothing anywhere can tell. A select is visibly a control, so it is
+            visibly changeable, and it costs the majority who are in India
+            exactly nothing. See src/lib/dialCodes.js. */}
+        <div className="flex gap-2 items-start">
+          <select value={iso} aria-label="Country"
+            /* WIDE ENOUGH FOR "United Kingdom +44" AND NOT FOR EVERY NAME, which
+               is the honest compromise: a native select shows its chosen option
+               truncated to the control's width, and sizing for "Bosnia &
+               Herzegovina" would give a third of the dialog to a control that is
+               correct by default. The preview line underneath always names the
+               country in full, so nothing is ever only half-said. */
+            className="flex-none w-[11rem] max-[420px]:w-[8.5rem] text-[12.5px]"
+            onChange={(e) => { setIso(e.target.value); setErr(''); }}>
+            {DIAL_CODES.map((c) => (
+              /* THE FLAG, THE NAME AND THE CODE, in that order, and all three
+                 are needed. The flag is the fast scan, the name is what somebody
+                 searches for by typing into a native select, and the code is the
+                 thing being chosen — a list of flags alone is unreadable on a
+                 platform that renders them as letter pairs. The closed control
+                 is narrow, so it shows the flag and the code; the open list has
+                 room for the name. */
+              <option key={c.iso} value={c.iso}>
+                {flagOf(c.iso)} {c.name} +{c.dial}
+              </option>
+            ))}
+          </select>
+          <input id="contact-phone" type="tel" autoFocus value={local}
+            className="flex-1 min-w-0"
+            placeholder="98765 43210" autoComplete="tel-national"
+            onChange={(e) => onLocal(e.target.value)} />
+        </div>
         <p className={`${NOTE} mt-1.5 mb-0`}>
-          {/* THE COUNTRY CODE IS THE ONE THING THAT CANNOT BE GUESSED, so it is
-              the one thing the hint insists on. `+91` is pre-filled because this
-              is where most of the drawings come from — it is a starting point
-              and not an assumption, and it selects and overtypes like any other
-              text. */}
-          With the country code, so a message actually reaches you.
+          {/* THE PREVIEW IS THE POINT OF THE WHOLE ARRANGEMENT. It shows the
+              exact string that will be stored, so a wrong country is visible
+              BEFORE it is saved rather than when a message bounces — and it is
+              where the trunk-zero rule announces itself, since somebody who
+              types `020 7946 0958` sees `+442079460958` come back and can tell
+              at a glance that the zero was understood rather than swallowed. */}
+          {tidy
+            ? <>Saved as <b className="text-text">{tidy}</b> · {country.name}</>
+            : <>Your number without the country code — pick the country on the left.
+                Pasting a full <code className="font-sans">+…</code> number works too.</>}
         </p>
 
         <div className="h-[18px]" />
