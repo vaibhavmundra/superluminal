@@ -128,5 +128,13 @@ export async function pageToImg(rendered, { name }) {
   return {
     src: rendered.src, el, w: rendered.w, h: rendered.h,
     name, base64: rendered.base64, mime: rendered.mime,
+    /* THE PAGE'S REAL SIZE IN POINTS, CARRIED FORWARD. `render` has always
+       computed it — it is how the render scale is chosen — and it was dropped
+       here, which meant the app knew the sheet it came off and then forgot.
+       The PDF export needs it to put the drawing back on the same sheet: a plan
+       imported from an A1 is an A1 drawing, and fitting it to A4 because that is
+       the only size anybody wrote down is how a 1:50 becomes a 1:141. */
+    pageSizePt: rendered.pageSizePt ?? null,
+    pageNo: rendered.pageNo ?? null,
   };
 }

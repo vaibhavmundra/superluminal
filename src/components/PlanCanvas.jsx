@@ -557,10 +557,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
            channel from 255 once, because a CSS filter only reaches whichever
            element happens to be painting the plan and this app paints it two
            ways. A filter here as well would invert it straight back.
-           `data-src-as-scanned` CARRIES THE ORIGINAL so the exports do not go
-           out as negatives: `svgString` puts it back on the way out (see
-           exporters.js). The fade is handled upstream too — an inverted plan is
-           passed `dim: false`. */
+           `data-src-as-scanned` CARRIES THE ORIGINAL, so an export can be
+           either polarity without this component re-rendering: `svgString` swaps
+           the one attribute on its clone. It used to always put the scan back —
+           now the PNG and PDF exports follow the view and the thumbnail does
+           not, which is a decision that belongs to them and not here. See
+           `asScanned` in exporters.js. The fade is handled upstream too — an
+           inverted plan is passed `dim: false`. */
         : <image href={src} x="0" y="0" width={width} height={height}
             data-src-as-scanned={srcAsScanned || undefined}
             opacity={layers.dim ? 0.42 : 1} />
@@ -878,6 +881,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             // inch wide too, so they seat INSIDE the run as white modules in a
             // dark carrier — which is what a track looks like on a ceiling, and
             // what no pair of hairlines could say.
+            /* THE ONE STROKE ON THIS SHEET THAT STILL SCALES WITH THE ZOOM,
+               and every element drawn from `w`, `core` or `grab` below carries
+               `.real-width` to say so. A CLASS AND NOT A `vector-effect`
+               ATTRIBUTE: the attribute loses to the stylesheet's own rule, which
+               is how this first shipped doing nothing at all. See styles.css.
+               Everything else here is a LINE WEIGHT — a convention about how
+               heavy a mark reads — and the stylesheet now holds all of it at a
+               constant screen width. This is not a line weight. It is the track
+               extrusion's actual profile, one true inch of aluminium, and the
+               heads seat inside it as white modules at their own real width. Pin
+               it to the screen and it stops being a dimension: at 8x the rail
+               would be a hairline with inch-wide heads sitting outside it. */
             const w = inch(TRACK_DIMS_IN.profile);
             // The black core, inset by one edge weight on each side. Clamped so
             // a very small plan cannot invert it into a negative stroke width —
@@ -890,6 +905,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             // Invisible, so the drawing is unaffected.
             const grab = Math.max(w * 3, HIT_BAND);
             const hit = pickable ? 'hit' : undefined;
+            /* THE HIT BAND SCALES WITH THE RAIL IT GUARDS. It is `w * 3`, so
+               pinning it to the screen while the rail grew would leave a pointer
+               target narrower than the visible track at high zoom — the one
+               place where a stroke that is not drawn still has to be a real
+               dimension. Both classes, because it is also the click target. */
+            const railHit = [hit, 'real-width'].filter(Boolean).join(' ');
             // `pointerEvents: 'stroke'` AND NOT THE `.hit` DEFAULT OF `all`.
             // The closed arrangement is a closed path, and `all` would make it
             // live over the whole rectangle it encloses — the same fault the
@@ -911,10 +932,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     </linearGradient>
                   </defs>
                   <path d={d} fill="none" stroke={`url(#${rgid})`} strokeWidth={w}
-                    strokeLinejoin="miter" pointerEvents="none" />
+                    className="real-width" strokeLinejoin="miter" pointerEvents="none" />
                   <path d={d} fill="none" stroke={C.ink} strokeWidth={core}
-                    strokeLinejoin="miter" pointerEvents="none" />
-                  <path className={hit} style={cur} onClick={click} d={d}
+                    className="real-width" strokeLinejoin="miter" pointerEvents="none" />
+                  <path className={railHit} style={cur} onClick={click} d={d}
                     fill="none" stroke="transparent" strokeWidth={grab} />
                 </g>
               );
@@ -937,11 +958,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                         cap that is not a separate item. */}
                     <line x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
                       stroke={`url(#${rgid})`} strokeWidth={w} strokeLinecap="butt"
-                      pointerEvents="none" />
+                      className="real-width" pointerEvents="none" />
                     <line x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
                       stroke={C.ink} strokeWidth={core} strokeLinecap="butt"
-                      pointerEvents="none" />
-                    <line className={hit} style={cur} onClick={click}
+                      className="real-width" pointerEvents="none" />
+                    <line className={railHit} style={cur} onClick={click}
                       x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
                       stroke="transparent" strokeWidth={grab} strokeLinecap="butt" />
                   </g>
@@ -1355,8 +1376,16 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // is most of why this reads as an editor rather than a drawing. The plan
         // scales with the zoom; a grab target must not, or it is unusably small
         // at 40% and a dinner plate at 300%.
+        /* NO LONGER DIVIDED BY THE ZOOM, and leaving the division in would
+           have been a double correction: the stylesheet now pins every stroke
+           on this sheet to screen space (`non-scaling-stroke` — see the note in
+           styles.css), so a width already scaled DOWN by the zoom would have
+           got thinner the further you zoomed IN. `HS` is a hit target's size
+           and not a stroke, so it keeps its division — a grab handle has to be
+           the same size under the finger at every magnification, and geometry
+           is the only way to say that. */
         const HS = (Math.max(width, height) / 145) / (zoom || 1);
-        const FW = (Math.max(width, height) / 1500) / (zoom || 1);
+        const FW = Math.max(width, height) / 1500;
         // `.hit` is what makes an element a CONTROL rather than drawing — see
         // the hit-test rule in styles.css. Without it the element is inert and
         // the click falls through to the canvas.
@@ -1785,8 +1814,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const acol = rim;
         // Constant on screen, like every other control. See the ceiling-object
         // handles for the argument.
+        // Same split as the ceiling object's HS/FW above: the handle stays
+        // zoom-compensated because it is a size, the frame's weight does not
+        // because it is a stroke and the stylesheet holds it now.
         const AH = (Math.max(width, height) / 155) / (zoom || 1);
-        const AFW = (Math.max(width, height) / 1500) / (zoom || 1);
+        const AFW = Math.max(width, height) / 1500;
         // THE SYMBOL'S GEOMETRY, WORKED OUT ONCE. It used to live inside the
         // block that draws the sconce, which meant the hit area was put at
         // `a.point` — on the WALL — while the symbol it was supposed to catch
@@ -2341,8 +2373,9 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // control on this canvas — see the ceiling-object handles. A ring drawn
         // in drawing units would vanish at low zoom on the one fitting somebody
         // is trying to confirm they have hold of.
+        // ...and again for the spot's ring: `SR` is a radius, `SFW` a weight.
         const SR = Math.max(R * 2.1, (Math.max(width, height) / 150) / (zoom || 1));
-        const SFW = (Math.max(width, height) / 1400) / (zoom || 1);
+        const SFW = Math.max(width, height) / 1400;
         return (
           // THE SAME SYMBOL FOR BOTH, deliberately. A spot aimed at a painting
           // and one aimed at a desk are the same fitting in the same ceiling and

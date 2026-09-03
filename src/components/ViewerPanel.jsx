@@ -147,8 +147,14 @@ export default function ViewerPanel({
             meant. See the Export section in App.jsx. */}
         <div className="flex gap-[6px] flex-wrap">
           <button className={BTN} disabled={!totals.rooms} onClick={() => onExport('dxf')}>DXF</button>
-          <button className={BTN} onClick={() => onExport('svg')}>SVG</button>
+          {/* NO SVG. See the note on the editor's own export row: it was the
+              one file on it that nobody's recipient could open in the thing they
+              were going to open it in, and PDF is the vector export now. */}
           <button className={BTN} onClick={() => onExport('png')}>PNG</button>
+          {/* PDF IS A PRINT, NOT A DOWNLOAD — the browser's own printer is the
+              only thing here that can put a drawing in a PDF, and it does it in
+              vector. "Save as PDF" is the destination in the dialog it opens. */}
+          <button className={BTN} onClick={() => onExport('pdf')}>PDF</button>
         </div>
         <p className="text-[11.5px] text-muted leading-[1.5] mt-2">
           The DXF is the drawing on screen, on <code className="font-sans text-[10px] bg-input-bg px-[3px] rounded-[3px] text-ink">superluminal_</code> layers

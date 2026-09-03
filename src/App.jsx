@@ -19,7 +19,8 @@ import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, DOOR_WIDTHS } from './lib/doors.js';
 import { proposeOutlines } from './lib/outlineSources.js';
 import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, plausibleBed, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER, wireProvider } from './lib/furniture.js';
-import { download, toJSON, toSuperluminalDXF, svgString, svgToPNG } from './lib/exporters.js';
+import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
+import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import LightPalette from './components/LightPalette.jsx';
 import ChunkIcon from './components/ChunkIcon.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
@@ -7066,11 +7067,25 @@ export default function App({
                 }), 'application/dxf');
                 return;
               }
-              if (kind === 'svg') {
-                download(`${exportBase}-lights.svg`, svgString(svgRef.current), 'image/svg+xml');
+              // The same sheet the editor prints, and the same view rule — one
+              // implementation, so an operator's PDF and an owner's cannot come
+              // out differently.
+              if (kind === 'pdf') {
+                (layers.invert
+                  ? nightBase(openPdf, initialFile, pdfPage).catch(() => null)
+                  : Promise.resolve(null))
+                  .then((base) => plotToPDF({
+                    source, pxPerFt, rooms, objects: obstaclesPx,
+                    accents: accentZonesPx, spots: taskSpotsPx, coves: reverseCoves,
+                    file: initialFile, pageNo: pdfPage, title: exportBase,
+                    night: layers.invert, base,
+                  }))
+                  .then((out) => download(`${exportBase}-lights.pdf`, out.bytes, 'application/pdf'))
+                  .catch((err) => console.error('[viewer] the plot failed', err));
                 return;
               }
-              svgToPNG(svgRef.current, source.w)
+              svgToPNG(svgRef.current, source.w,
+                { asScanned: !layers.invert, ground: layers.invert ? '#000000' : '#fff' })
                 .then((png) => download(`${exportBase}-lights.png`, png))
                 .catch((err) => console.error('[viewer] png export failed', err));
             }} />
@@ -7940,8 +7955,59 @@ export default function App({
                   }), 'application/dxf');
                   milestone.current?.('export');
                 }}>DXF</button>
-              <button className={BTN} disabled={!source} onClick={() => download(`${exportBase}-lights.svg`, svgString(svgRef.current), 'image/svg+xml')}>SVG</button>
-              <button className={BTN} disabled={!source} onClick={async () => download(`${exportBase}-lights.png`, await svgToPNG(svgRef.current, source.w))}>PNG</button>
+              {/* SVG WENT. It was the only export nobody could open in the
+                  thing they were going to open it in: a consultant gets a DXF,
+                  a client gets a PDF or a PNG, and an SVG is a file for a
+                  browser or a designer's editor — neither of which is on the
+                  path this drawing takes. It also carried the whole plan
+                  base64'd into it, so it was the largest file on the row and the
+                  least useful. PDF is the vector export now, which is what the
+                  SVG was really being asked for. */}
+              {/* PNG AND PDF FOLLOW THE VIEW. Night view is a deliverable in its
+                  own right — a dark sheet with the fittings glowing on it is how
+                  a scheme gets presented — so an export that quietly handed back
+                  the day version would be overruling a choice that is visibly
+                  on screen. `layers.invert` is that choice, and it decides the
+                  plan's polarity AND the ground together: either alone is the
+                  wrong sheet. The thumbnail does NOT follow it — see
+                  `getSnapshot` — because a card picture should look the same
+                  whichever view somebody left the plan in. */}
+              <button className={BTN} disabled={!source} onClick={async () => download(
+                `${exportBase}-lights.png`,
+                await svgToPNG(svgRef.current, source.w,
+                  { asScanned: !layers.invert, ground: layers.invert ? '#000000' : '#fff' }))}>PNG</button>
+              {/* PDF IS PLOTTED FROM THE GEOMETRY, NOT PRINTED FROM THE SCREEN.
+                  It went through the browser's print dialog for one revision and
+                  the output was a photograph of a user interface: haloes, hover
+                  states and selection frames all landed as ink, up to 1.1mm on
+                  an A4. See pdfPlot.js — same inputs as the DXF, three line
+                  weights, and the imported page embedded as vector so the plan
+                  stays sharp at any zoom on its own sheet size.
+                  AND IT FOLLOWS THE VIEW: day view gives the line plot, night
+                  view the presentation sheet — black paper, the plan inverted,
+                  the fittings glowing as real PDF gradients. */}
+              <button className={BTN} disabled={!source} onClick={async () => {
+                try {
+                  /* THE SHEET FOLLOWS THE VIEW. Night view is the
+                     presentation drawing — black paper, the plan inverted
+                     under it, the fittings glowing as the accent ramp — and
+                     day view is the line plot. The base is re-rendered from
+                     the original file at the sheet's own resolution rather
+                     than reusing the editor's 2400px copy; that is the whole
+                     reason it is awaited separately. */
+                  const base = layers.invert
+                    ? await nightBase(openPdf, initialFile, pdfPage).catch(() => null)
+                    : null;
+                  const out = await plotToPDF({
+                    source, pxPerFt, rooms, objects: obstaclesPx,
+                    accents: accentZonesPx, spots: taskSpotsPx, coves: reverseCoves,
+                    file: initialFile, pageNo: pdfPage, title: exportBase,
+                    night: layers.invert, base,
+                  });
+                  download(`${exportBase}-lights.pdf`, out.bytes, 'application/pdf');
+                  milestone.current?.('export');
+                } catch (err) { console.error('[export] the plot failed', err); }
+              }}>PDF</button>
             </div>
             <p className={`${NOTE} mt-2`}>
               When you export as DXF. Everything is on a{' '}

@@ -142,15 +142,35 @@ export function toCSV(rooms, { pxPerFt } = {}) {
   return rows.map((r) => r.join(',')).join('\n');
 }
 
-export function svgString(svgEl) {
+/**
+ * The canvas as SVG markup.
+ *
+ * `asScanned` — DOES THE PLAN GO OUT AS SCANNED, OR AS IT IS ON SCREEN?
+ *
+ * It used to be neither a question nor an option: the plan always went out as
+ * scanned, on the reasoning that a pixel-inverted copy is a way of LOOKING at a
+ * drawing rather than a change to it, and nobody wants a negative on a sheet.
+ * Half right. It is the correct default for anything the app generates for its
+ * own purposes — a card thumbnail is a picture OF a plan and should look the
+ * same whichever view somebody happened to leave it in.
+ *
+ * It is the wrong answer for an EXPORT. Night view is a deliverable in its own
+ * right — a dark sheet with the fittings glowing on it is how a lighting scheme
+ * gets presented — and an export that silently hands back the day version is
+ * the app overruling a choice the user made on screen and can see.
+ *
+ * So the callers decide. `true` keeps the old behaviour, which is why it is the
+ * default; the PNG and PDF exports pass the live view. The element carries both
+ * images — see `srcAsScanned` in PlanCanvas — so this is a swap of one
+ * attribute either way and never a re-render.
+ */
+export function svgString(svgEl, { asScanned = true } = {}) {
   const clone = svgEl.cloneNode(true);
-  // THE PLAN GOES OUT AS SCANNED, EVEN IN DARK MODE. The canvas may be showing a
-  // pixel-inverted copy of the drawing; that is a way of looking at it, not a
-  // change to it, and a negative is not what anybody wants on a sheet. The
-  // element carries the original alongside, and this puts it back.
   for (const im of clone.querySelectorAll('[data-src-as-scanned]')) {
-    const original = im.getAttribute('data-src-as-scanned');
-    im.setAttribute('href', original);
+    if (asScanned) im.setAttribute('href', im.getAttribute('data-src-as-scanned'));
+    // The attribute goes either way: it is a channel between this app's canvas
+    // and this function, and a file that carries it is a file with a second copy
+    // of the whole plan base64'd into it for no reader's benefit.
     im.removeAttribute('data-src-as-scanned');
   }
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -158,8 +178,18 @@ export function svgString(svgEl) {
   return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
 }
 
-export async function svgToPNG(svgEl, width) {
-  const str = svgString(svgEl);
+/**
+ * The canvas as a PNG.
+ *
+ * `ground` IS NOT OPTIONAL DECORATION. The SVG paints no background — on screen
+ * the ground is the wrapper's, white in day view and the page's black in night —
+ * so a canvas filled white and then handed an inverted plan is a dark drawing
+ * floating on a white page, which is neither view. The caller passes the ground
+ * that goes with the plan it asked for, and `asScanned` and `ground` are
+ * therefore two halves of one decision.
+ */
+export async function svgToPNG(svgEl, width, { asScanned = true, ground = '#fff' } = {}) {
+  const str = svgString(svgEl, { asScanned });
   const vb = svgEl.viewBox.baseVal;
   const w = width || vb.width, h = (vb.height / vb.width) * w;
   const img = new Image();
@@ -171,7 +201,7 @@ export async function svgToPNG(svgEl, width) {
   const cv = document.createElement('canvas');
   cv.width = Math.round(w); cv.height = Math.round(h);
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = ground; ctx.fillRect(0, 0, cv.width, cv.height);
   ctx.drawImage(img, 0, 0, cv.width, cv.height);
   return new Promise((res) => cv.toBlob(res, 'image/png'));
 }

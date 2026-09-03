@@ -104,6 +104,12 @@ export function rasterSource(img) {
     el: img.el,
     base64: img.base64,
     mime: img.mime,
+    /* THE SHEET IT CAME OFF, where it came off one. Only a PDF import knows
+       this — see pageToImg — and it is null for an image, which has no size in
+       the world at all, only pixels. The PDF export reads it to put the drawing
+       back on the same paper. */
+    pageSizePt: img.pageSizePt ?? null,
+    pageNo: img.pageNo ?? null,
     toDu: same, fromDu: same,
     render: [],
     segmentsPx: [],

@@ -409,6 +409,51 @@ input:focus,select:focus,textarea:focus{
 .plan text,.plan image,.plan polyline{pointer-events:none}
 .plan .hit{pointer-events:all}
 
+/* --- THE SHEET'S LINE WEIGHTS DO NOT ZOOM ---------------------------------
+   The plan is drawn at a fixed viewBox and rendered at `width * zoom`, so the
+   whole drawing scales uniformly — and that took every stroke with it. At 4x a
+   hairline was four pixels and at 8x it was eight: the geometry got closer and
+   the ink got fatter with it, which is the opposite of what zooming in is for.
+   You zoom to see MORE detail, and the drawing answered by making its marks
+   coarser.
+
+   `non-scaling-stroke` keeps a stroke's width in the VIEWPORT's space, so an
+   authored width is a screen width at every magnification. The numbers in this
+   file's sibling components are already the right ones — `lw` is one pixel at
+   1:1 — so this pins the whole sheet to the way it has always looked at 100%
+   and lets the zoom do only what it should, which is show more of it.
+
+   IT MAKES THIS SCREEN AGREE WITH THE TRACER, which is the argument that
+   settles it rather than a taste about hairlines. OutlineTracer is a Konva
+   stage and nearly every stroke in it already carries
+   `strokeScaleEnabled={false}` — the same idea under the other renderer's name.
+   Two screens showing the same walls at the same zoom with different line
+   weights was the actual bug.
+
+   ENUMERATED, NOT `.plan *`, and NOT on `.plan` itself. `vector-effect` is not
+   an inherited property: setting it on a group does nothing for the shapes
+   inside, and a great many strokes here are authored on a `<g>` and inherited
+   down. So every shape that can carry a stroke is named, exactly as the
+   pointer-events rule above names them and for the same reason.
+
+   DASH PATTERNS COME WITH IT, and that is intended rather than tolerated. A
+   dash array is measured along the stroke, so it lands in the same space: the
+   unreviewed outline's dashes, the clearance circles and the guides now hold
+   their pattern at every zoom instead of stretching into long bars.
+
+   TO OPT A STROKE BACK INTO SCALING, give it `.real-width` — NOT a
+   `vector-effect="none"` attribute on the element. That was the first attempt
+   and it silently did nothing: a presentation attribute sits BELOW every CSS
+   declaration in the cascade, so the rule below simply won and the one stroke in
+   the app that must scale went on not scaling. Exactly the trap `.hit` above
+   documents from the other direction, and the fix is the same shape — a class,
+   which beats the element selector on specificity (0,2,0 against 0,1,1). */
+.plan rect,.plan circle,.plan ellipse,.plan line,.plan path,
+.plan polygon,.plan polyline,.plan text{vector-effect:non-scaling-stroke}
+/* A stroke whose width is a real dimension rather than a line weight: the track
+   rail's one-inch extrusion, and nothing else so far. */
+.plan .real-width{vector-effect:none}
+
 /* ---------- the plan, inverted -------------------------------------------
    A WHITE PLAN WITH BLACK LINES BECOMES A BLACK PLAN WITH WHITE LINES, and it
    is a rule here rather than a utility because TWO DIFFERENT RENDERERS have to
