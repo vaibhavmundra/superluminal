@@ -30,7 +30,7 @@ import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
 import { buildBOQ, FIXTURE_BY_ID, trackFixtureFor } from './lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
-import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, targetAreaFor, fixtureFor } from './lib/roomTypes.js';
+import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, targetAreaFor, fixtureForCell } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
 import OptionCoach from './components/OptionCoach.jsx';
 /* The walkthrough, playing in the panel rather than linked out of it. Named
@@ -2241,8 +2241,17 @@ export default function App({
         : null;
       const chosenId = picked ?? chunking.recommendedId ?? null;
 
-      /** What a light of this geometric kind is BOUGHT as in this room. */
-      const roomFixture = (kind) => fixtureFor(roomTypes[o.id]?.type, kind);
+      /** What a light of this geometric kind is BOUGHT as in this room — and,
+       *  in a bedroom, in this CELL. See fixtureForCell in roomTypes.js: a cell
+       *  of 18 sqft or under takes the 5 W narrow lamp, because the foot-of-bed
+       *  rule leaves a bedroom with rows of genuinely different depths and a
+       *  36-degree cone over a shallow one lands on the wall. `cellSqft` is 0
+       *  for a large light, which has no single cell, and the room-level answer
+       *  stands for it. */
+      const roomFixture = (kind, cellSqft = 0) =>
+        fixtureForCell(projectId, roomTypes[o.id]?.type, kind, cellSqft);
+      const cellSqftOf = (l) =>
+        (l.kind === 'small' && l.cell ? l.cell.w * l.cell.h : 0);
 
       // --- THE CEILING ITSELF -------------------------------------------
       //
@@ -2342,7 +2351,8 @@ export default function App({
        * its room or its piece of ceiling. See TRACK_FIXTURE in boq.js.
        */
       const lightFixture = (l) => {
-        const base = res.chunks?.[chunkIndexOf(l)]?.coveFixture ?? roomFixture(l.kind);
+        const base = res.chunks?.[chunkIndexOf(l)]?.coveFixture
+          ?? roomFixture(l.kind, cellSqftOf(l));
         return l.track ? trackFixtureFor(base) : base;
       };
       /**
@@ -7492,6 +7502,22 @@ export default function App({
             accentCount={accentZonesPx.length}
             spotCount={taskSpotsPx.length}
             isVector={isVector}
+            /* THE OPERATOR'S TWO. `isAdmin` is only passed by the /admin route —
+               the share-link viewer passes none — so both stay off a client's
+               copy of this same panel. */
+            isAdmin={isAdmin}
+            showGrid={showGrid}
+            onToggleGrid={() => setShowGrid((v) => !v)}
+            originalName={initialFile?.name || null}
+            /* NOT BEHIND `gateExport`. That gate is the till, and it is asking
+               the OWNER to pay for a drawing this app produced. This is the file
+               they already own, handed back to an operator who is looking at
+               their plan; charging for it would be charging the wrong person for
+               the wrong thing. */
+            onDownloadOriginal={initialFile
+              ? () => download(initialFile.name || 'original', initialFile,
+                               initialFile.type || 'application/octet-stream')
+              : null}
             onOpenBOQ={() => setView('boq')}
             onExport={async (kind) => {
               /* ALL THREE BEHIND ONE GATE, at the top, before any of the work.
@@ -8583,6 +8609,28 @@ export default function App({
                         thing on screen that knew. A split reads as a description
                         of the pipeline when it is right and as an obvious bug
                         when it is not. */}
+                    {/* THE FOOT-OF-BED RE-CUT. Its ordinary answer is "no",
+                        so a count alone would be indistinguishable from the
+                        rule being off or broken — the sentence beside each
+                        space is the point. See bedGrid.js. */}
+                    {(() => {
+                      const bedrooms = rooms.filter((r) => r.plan?.ok
+                        && (r.plan.stats?.bedFootApplied || r.plan.stats?.bedFootWhy));
+                      if (!bedrooms.length) return null;
+                      const on = bedrooms.filter((r) => r.plan.stats.bedFootApplied);
+                      return (
+                        <>
+                          <div className={KV_ADMIN}><span>Foot-of-bed re-cut</span>
+                            <b>{on.length} of {bedrooms.length}</b></div>
+                          {bedrooms.filter((r) => r.plan.stats.bedFootWhy).map((r) => (
+                            <p key={r.id} className="text-[11px] text-white leading-[1.5] mt-1">
+                              <b>{r.outline?.name || 'Space'}</b>
+                              {' — '}{r.plan.stats.bedFootWhy}
+                            </p>
+                          ))}
+                        </>
+                      );
+                    })()}
                     <div className={KV_ADMIN}><span>Bed zones</span><b>{detectedZones.length}</b></div>
                     <div className={KV_ADMIN}><span>&nbsp;&nbsp;· bed-filter, whole plan</span>
                       <b>{detectedZones.filter((z) => !z.closeUp).length}</b></div>

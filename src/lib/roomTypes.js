@@ -312,6 +312,47 @@ export const FIXTURE_BY_TYPE = {
 export const fixtureFor = (typeId, kind) =>
   FIXTURE_BY_TYPE[typeId]?.[kind] ?? kind;
 
+/**
+ * A CELL SMALL ENOUGH THAT THE ORDINARY FITTING IS THE WRONG ONE, in sqft.
+ *
+ * 18 is not a new number: it is the toilet's own cell, and the argument above
+ * for why a toilet buys the 5 W narrow lamp is an argument about THE CELL, not
+ * about the room. A 36-degree cone over a 4.2 ft square throws most of itself
+ * at the walls whether the walls are tiled or papered.
+ *
+ * What makes it worth stating separately is that a bedroom's cells are not all
+ * one size any more. The foot-of-bed rule copies the rows of the chunks beside
+ * the bed, and a strip alongside a mattress is shallow — one row of that column
+ * can be a third the depth of the next. Sized by the room, those cells all buy
+ * the same 7 W lamp; sized by the cell, the shallow ones buy the lamp that
+ * suits them, and the row comes out consistent with the flank row it is level
+ * with, which is usually shallow for the same reason.
+ */
+export const SMALL_CELL_SQFT = 18;
+
+/**
+ * What to buy, given the room AND the cell the light sits in.
+ *
+ * BEDROOMS ONLY, and `expectsBed` is what "bedroom" means across the three
+ * project vocabularies — a residential bedroom, a hotel guest room, a suite.
+ * The rule is defensible in any room and is deliberately not applied to any
+ * other, because every other type either has no cell-size variation worth
+ * speaking of or already states its own fitting (a toilet buys this same lamp
+ * outright, so the two never disagree).
+ *
+ * LARGE LIGHTS ARE UNTOUCHED. A large light sits on the line two cells share
+ * and answers for both, so "the area of its cell" is not a quantity it has.
+ *
+ * `cellSqft` of 0 or null means the caller does not know — a light with no cell
+ * recorded, or a plan saved before this existed — and the room-level answer
+ * stands, which is what this app has always given.
+ */
+export const fixtureForCell = (projectId, typeId, kind, cellSqft) =>
+  (kind === 'small' && cellSqft > 0 && cellSqft <= SMALL_CELL_SQFT
+   && expectsBed(projectId, typeId))
+    ? 'small-narrow'
+    : fixtureFor(typeId, kind);
+
 // --- the prompt -------------------------------------------------------------
 
 /**

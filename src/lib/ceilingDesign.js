@@ -237,6 +237,10 @@ export function planCeilingDesign({
   designChunks = [], picks = {},
   opt = {}, chunkOpt = null, strategy = null,
   criteria = 20,
+  // `(kind, cellSqft) => catalogueId`. The second argument is what lets a
+  // bedroom's shallow cells be priced as the 5 W lamp they are actually bought
+  // as — see fixtureForCell in roomTypes.js. A caller that ignores it gets the
+  // room-level answer, which is what this defaulted to before it existed.
   fixtureFor = (kind) => kind,
   tolerance = COVE_TOLERANCE,
 } = {}) {
@@ -344,7 +348,14 @@ export function planCeilingDesign({
       const ch = res.chunks[chunkOf(l)];
       if (!ch?.cove) continue;
       m.set(ch.design, (m.get(ch.design) || 0)
-        + lumensOf(ch.coveFixture ?? fixtureFor(l.kind)));
+        // THE CELL, NOT JUST THE KIND. The ladder is deciding whether a cove
+        // needs more fittings, and it decides on lumens — so it has to count
+        // the lamp the schedule will actually bill, not the one the room type
+        // alone would name. A bedroom whose shallow rows buy the 450 lm lamp
+        // and whose ladder counted them at 900 would talk a cove out of half
+        // its fittings.
+        + lumensOf(ch.coveFixture
+                   ?? fixtureFor(l.kind, l.kind === 'small' && l.cell ? l.cell.w * l.cell.h : 0)));
     }
     return m;
   };

@@ -36,6 +36,7 @@ import {
   enumerateChunkings, findChunking, prepareZones,
   normalizeZone, pointInZone, inAnyZone,
 } from './chunking.js';
+import { bedFootPlan, applyBedFootPlan, footGeometry, flankFitLines, BED_GRID_DEFAULTS } from './bedGrid.js';
 
 // Zone geometry lives in chunking.js — it is what defines the chunks — but the
 // planner has always exported normalizeZone, so callers keep working.
@@ -242,6 +243,12 @@ export const DEFAULTS = {
   fanAnchorWeight: 0.6,   // how hard each chunk's grid tries to line up with the fans
   preferLongAxis: true,
   uniformOrientation: true, // pair every cell the same way when it costs nothing
+  // THE BEDROOM RULE — see bedGrid.js. On by default and self-limiting: it does
+  // nothing at all unless the room has a detected bed AND the ordinary layout
+  // left the foot region's lights out of line with the ones either side of it.
+  // Set false to have this app lay bedrooms out exactly as it did before.
+  bedFootAlign: true,
+  ...BED_GRID_DEFAULTS,
 };
 
 // --- no-light zones ---------------------------------------------------------
@@ -732,7 +739,11 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   // handed in, which is what lets the app show the options and place lights
   // only afterwards.
   const chosen = resolveChunking(polygon, zones, opt, fans);
-  const chunks = chosen.chunks.map((c) => ({ ...c }));
+  // THE ONE EDIT ANYTHING IS ALLOWED TO MAKE TO A CHOSEN DECOMPOSITION, and it
+  // is made only on the second pass — `opt.bedFoot` is absent on the first, so
+  // this is the identity function for every room and every first look at one.
+  // See bedGrid.js for what carries it here and why.
+  const chunks = applyBedFootPlan(chosen.chunks.map((c) => ({ ...c })), opt.bedFoot, opt);
   const omitted = chosen.omitted.map((c) => ({ ...c }));
   if (!chunks.length) {
     const reason = zones.length
@@ -765,11 +776,38 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   const cells = [];
   const byId = new Map();
   const darkCells = new Set();
-  chunks.forEach((ch, ci) => {
-    ch.id = ci;
+  // EVERY CHUNK'S GRID BEFORE ANY CHUNK'S CELLS, and in two phases, because one
+  // chunk's grid can now depend on another's. The foot of a bed COPIES the cut
+  // lines of the chunks beside it (see bedGrid.js), so those have to be settled
+  // first — and they are not the rectangles the previous pass gridded, since the
+  // carve stopped them at the foot line. This was one loop while every chunk was
+  // an island.
+  chunks.forEach((ch, ci) => { ch.id = ci; });
+  for (const ch of chunks) {
+    if (ch.bedFoot) continue;
     const grid = chooseChunkGrid(ch, softX, softY, fans, opt);
     ch.xLines = grid.xLines;
     ch.yLines = grid.yLines;
+  }
+  for (const ch of chunks) {
+    if (!ch.bedFoot) continue;
+    // The ordinary grid first: the run axis keeps whatever the chooser decided,
+    // because nothing about the flanks says anything about it.
+    const grid = chooseChunkGrid(ch, softX, softY, fans, opt);
+    ch.xLines = grid.xLines;
+    ch.yLines = grid.yLines;
+    const geo = footGeometry({ polygon, zones, chunks, opt });
+    const lines = geo ? flankFitLines(geo, opt) : null;
+    if (lines) {
+      if (ch.bedFoot.fit === 'x') ch.xLines = lines; else ch.yLines = lines;
+    } else {
+      // Nothing to copy after the carve. The chunk keeps the grid it was just
+      // given, which is a legitimate layout — but it is not THIS rule's layout,
+      // so it must not be reported as one.
+      ch.bedFoot = null;
+    }
+  }
+  chunks.forEach((ch, ci) => {
     ch.cellAt = new Map(); // "i,j" -> cell, local to this chunk
     for (let i = 0; i < ch.xLines.length - 1; i++) {
       for (let j = 0; j < ch.yLines.length - 1; j++) {
@@ -1258,6 +1296,37 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   // wherever that is still a legal position.
   reseatOnCellAxis(lights, polygon, fans, zones, opt);
 
+  // --- 8. THE BEDROOM SECOND LOOK ------------------------------------------
+  //
+  // Everything above has run: the grid, the matching, the alignment pass and
+  // the re-seat. If the lights beyond the foot of the bed still do not line up
+  // with the ones either side of it, they never will by sliding — the two
+  // regions are running different numbers of rows, and only a different grid
+  // fixes that. See bedGrid.js.
+  //
+  // A WHOLE SECOND LAYOUT, AND THAT IS THE POINT. Deciding up front whether a
+  // bedroom needs this would mean predicting the outcome of the pass that is
+  // supposed to prevent it; running the room normally and then LOOKING is both
+  // simpler and honest — a bedroom that comes out aligned on its own is never
+  // re-cut, and cannot be made worse by a rule it does not need.
+  //
+  // `bedFoot` on the options is what stops it recursing: the second call has it
+  // set, so `bedFootPlan` is never reached again.
+  let bedFootWhy = opt.bedFootAlign ? null : 'the bedroom rule is switched off';
+  if (opt.bedFootAlign && !opt.bedFoot) {
+    const { plan, why } = bedFootPlan({ polygon, zones, chunks, lights, opt });
+    bedFootWhy = why;
+    if (plan) {
+      const retry = planLights(polygon, fixtures, { ...options, bedFoot: plan }, noLightZones);
+      // ...AND ONLY IF IT WORKED. The merge can be refused as unsafe and the
+      // derived cells can break the side bounds, both silently and both leaving
+      // a layout no better than this one. `bedFootApplied` is the second pass
+      // saying it actually did the thing.
+      if (retry.ok && retry.stats?.bedFootApplied) return retry;
+      bedFootWhy = 'the foot region could not be cut out without leaving a sliver';
+    }
+  }
+
   const served = new Set();
   for (const l of lights) for (const cid of l.cells) served.add(cid);
   const stats = {
@@ -1291,6 +1360,16 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     fans: fans.length,
     avgCell: cells.reduce((s, c) => s + (c.w + c.h) / 2, 0) / cells.length,
     areaSqft: Math.abs(polygonArea(polygon)),
+    // Did the bedroom rule actually take? Set only on the second pass, and only
+    // when the merge and the derived cells both survived. Read by the first
+    // pass to decide whether the second one was worth keeping, and by the audit
+    // panel, which is where "why does this bedroom look different" is asked.
+    bedFootApplied: chunks.some((c) => c.bedFoot),
+    // ...AND WHEN IT DID NOT, THE SENTENCE SAYING WHY. Null on the pass that
+    // applied it. See bedFootPlan: declining is this rule's ordinary behaviour,
+    // so it has to be able to tell a room it left alone on purpose from one it
+    // never looked at. Only ever read by the admin panel.
+    bedFootWhy: chunks.some((c) => c.bedFoot) ? null : bedFootWhy,
   };
   return { ok: true, chunks, omittedChunks: omitted, zones, cells, lights,
            cededCells: ceded, awkwardCells: [...awkward], stats, opt,

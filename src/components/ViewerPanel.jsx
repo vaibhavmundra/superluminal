@@ -42,10 +42,24 @@ const SEC_H3 = 'm-0 mb-2.5 text-[10px] tracking-[0.11em] uppercase text-subtle';
 const NOTE = 'text-[11.5px] text-muted leading-[1.5] mt-2';
 const BTN = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
 
+/* THE UPLOAD'S OWN KIND, from its own name — DXF, PDF, JPG, whatever they
+   brought. Said rather than assumed, because "the original" is a different file
+   on every plan and which one it is decides whether it is worth downloading. */
+const extOf = (name) => (String(name).split('.').pop() || '').toUpperCase().slice(0, 4);
+
 export default function ViewerPanel({
   rooms = [], totals, boq, layers, onToggleLayer,
   focusId = null, onFocus, surfaceCount = 0, accentCount = 0, spotCount = 0,
   isVector = false, onExport, onOpenBOQ,
+  /* THE TWO OPERATOR-ONLY CONTROLS, and they are gated on the role rather than
+     on the screen. This panel serves BOTH read-only routes — an operator on
+     /admin and a client on a share link — and only the first passes `isAdmin`.
+     That distinction is the whole safety of the download: the original is
+     somebody's own uploaded CAD file, and a share link must not become a way to
+     take it. */
+  isAdmin = false,
+  showGrid = false, onToggleGrid = null,
+  originalName = null, onDownloadOriginal = null,
 }) {
   const laid = rooms.filter((r) => r.plan?.ok);
 
@@ -127,6 +141,18 @@ export default function ViewerPanel({
               {label}
             </label>
           ))}
+          {/* THE PLANNER'S SCAFFOLDING. Same switch as the editor's admin
+              section, in the list this screen actually has — a viewer looks for
+              what is drawn under Layers, and there is no admin section here to
+              put it in. */}
+          {isAdmin && onToggleGrid && (
+            <label className="flex items-center gap-2 mb-[7px] text-[#C026D3] cursor-pointer"
+              title="The chunks each space was split into, and the cell lines the fittings were laid on">
+              <input type="checkbox" className="lp-check" checked={showGrid}
+                onChange={onToggleGrid} />
+              Planning grid
+            </label>
+          )}
         </div>
       </div>
 
@@ -163,6 +189,20 @@ export default function ViewerPanel({
             ? 'in the original drawing’s own units and origin.'
             : 'in feet, since this plan came from an image.'}
         </p>
+        {/* THE FILE THE USER UPLOADED, UNTOUCHED. Every export above is a
+            drawing this app MADE; this is the one they brought. Reproducing a
+            layout problem, or handing the CAD file to somebody who can open it
+            properly, both start here — and neither is possible from a PNG of
+            the plan with our fittings on top of it.
+            OPERATOR ONLY. It is their file, not ours to redistribute down a
+            share link. */}
+        {isAdmin && onDownloadOriginal && (
+          <button className={BTN + ' w-full mt-2.5'}
+            title={originalName || 'The file this plan was made from'}
+            onClick={onDownloadOriginal}>
+            Download the original{originalName ? ` (${extOf(originalName)})` : ''}
+          </button>
+        )}
       </div>
     </>
   );
