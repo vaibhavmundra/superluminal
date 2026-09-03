@@ -97,6 +97,28 @@ export function resolveOptions(o) {
   };
 }
 
+/**
+ * THE SAME OPTIONS WITH A DIFFERENT CELL, AND THE SIDES RE-DERIVED WITH IT.
+ *
+ * `{ ...opt, targetArea: 25 }` IS NOT ENOUGH, and this helper exists because
+ * that is what the app was doing. `resolveOptions` MATERIALISES targetCell,
+ * minCell and maxCell — PLAN_OPTIONS is a resolved object, so those three keys
+ * are present and hold the 50 sqft answer. Spreading a new `targetArea` over it
+ * changes the area band in `bestGrid` and leaves every SIDE dial pointing at a
+ * 7.07 ft cell: `partitionAxis`, `sidesFor` and `evenCounts` all score against
+ * targetCell/minCell/maxCell, so the grid went on being pulled towards the
+ * cell it was told not to use. Kitchens have been half-overridden the whole
+ * time — the band said 25 and the sides said 50 — and the same trap would have
+ * swallowed the office override.
+ *
+ * So the three derived keys are dropped and re-derived. Anything a caller
+ * pinned by hand is pinned deliberately and would survive; nothing does.
+ */
+export function withTargetArea(o, area) {
+  const { targetCell: _tc, minCell: _mn, maxCell: _mx, ...rest } = o;
+  return resolveOptions({ ...rest, targetArea: area });
+}
+
 export const DEFAULTS = {
   // targetCell / minCell / maxCell are DERIVED from targetArea — see
   // resolveOptions. They are absent here on purpose: pinning them in the

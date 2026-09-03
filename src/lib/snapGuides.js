@@ -46,6 +46,16 @@ const bboxOf = (poly) => {
  * moment it started.
  */
 export function collectTargets({ rooms = [], objects = [], exclude = null } = {}) {
+  /* `exclude` TAKES ONE ID, A LIST OF THEM, OR A SET. It was a single id
+     compared with `===`, which was right while only one object could ever be
+     dragged. A multi-selection moves as a group, and a group that can snap to
+     its OWN members is a group that collapses on itself the moment two of them
+     come within tolerance — every object in the drag has to be off the target
+     list, not just the one under the pointer. Normalised here rather than at the
+     call site so every caller keeps working unchanged. */
+  const skip = exclude == null ? null
+    : exclude instanceof Set ? exclude
+    : new Set(Array.isArray(exclude) ? exclude : [exclude]);
   const out = [];
 
   for (const r of rooms) {
@@ -61,7 +71,7 @@ export function collectTargets({ rooms = [], objects = [], exclude = null } = {}
   }
 
   for (const o of objects) {
-    if (!o || o.id === exclude) continue;
+    if (!o || (skip && skip.has(o.id))) continue;
     const r = o.r || 0;
     out.push({ axis: 'x', value: o.x, span: [o.y - r, o.y + r], kind: 'object-centre',
                label: 'aligned' });

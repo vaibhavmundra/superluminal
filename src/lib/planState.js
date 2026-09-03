@@ -153,6 +153,22 @@ export function serialiseEditor(s) {
     // shelf strip that a person chose rather than a rule derived — which is
     // exactly the test for what belongs in this column. See trimWallRun.
     runTrims: s.runTrims,
+    /* THE REVERSE COVES SET OUT BY HAND.
+       A SEPARATE COLUMN FROM `runTrims`, AND NOT A FLAG ON ANYTHING. The same
+       split this file already makes twice — `accentDismissed` beside
+       `accentResults`, `manualAccents` beside them both — and for the same
+       reason: everything in `wallResults` is a record of what the render pass
+       SAW, and re-running that pass must be free to replace all of it. A slot
+       somebody drew on a wall is not the pass's to overwrite, so it is stored
+       where the pass cannot reach.
+       IT CARRIES ITS OWN GEOMETRY, unlike a detected cove. A detected one is
+       re-derived from the wall finding on every open and needs only its trim
+       kept; a hand-placed one has no finding behind it, so the band, the run and
+       the wall it was set out on are the record. That is also why it survives a
+       plan being reopened with the render pass never re-run.
+       Optional on read — see applyEditor — because every plan saved before this
+       existed has no key here, and an empty list is the honest reading. */
+    manualCoves: s.manualCoves,
     // ...and where the views went.
     //
     // A PATH AND ITS DIMENSIONS, which is about ninety bytes per render, and it
@@ -240,6 +256,7 @@ export function applyEditor(p, set) {
   set.setArtDismissed?.(p.artDismissed ?? []);
   set.setWallResults?.(p.wallResults ?? {});
   set.setRunTrims?.(p.runTrims ?? {});
+  set.setManualCoves?.(p.manualCoves ?? []);
   // THE POINTERS, NOT THE PIXELS. App fetches the bytes back from the bucket
   // afterwards and only for the space that is open — see the rehydrate effect.
   set.setRenderRefs?.(p.renderRefs ?? {});

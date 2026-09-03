@@ -30,6 +30,22 @@ import React from 'react';
 // zones tab draws, and it is rendered at 72x46 where hairlines are fine.
 // ---------------------------------------------------------------------------
 
+/**
+ * `arms` IS WHICH MACHINE A BUTTON TALKS TO, and it exists because this row is
+ * no longer one machine's palette.
+ *
+ * Four of these arm `addTool` — the hand-placing tools whose gestures produce
+ * accent zones and task surfaces. The chandelier arms `armed`, the ceiling
+ * OBJECT one-shot, because that is what a chandelier is to this app's geometry:
+ * a thing with a diameter that reserves clearance and that the grid keeps off.
+ * It moved here from CeilingPalette because it is a LIGHT — chosen, specified
+ * and paid for with the strips and the sconces — and the row of obstacles was
+ * never where anybody would look for one. See the note in CeilingPalette.
+ *
+ * `arms: 'object'` rather than a hard-coded `id === 'chandelier'` test at the
+ * call site: the next decorative fitting to move across should be a line in
+ * this table and nothing else.
+ */
 export const LIGHT_TOOLS = [
   { id: 'strip',  label: 'LED strip',
     hint: 'Click the two ends of the run.' },
@@ -48,6 +64,15 @@ export const LIGHT_TOOLS = [
     // fourth line in a card whose drawing already shows the fitting standing off
     // to the side; the sentence only has to name the surprise, not describe it.
     consequence: 'The spot lands nearby, aimed at it.' },
+  { id: 'chandelier', label: 'Chandelier', arms: 'object',
+    hint: 'Click the ceiling to drop it.',
+    // WHY IT IS NOT SIMPLY "click to place". A chandelier reserves clearance
+    // like a fan does, so the grid moves out of its way — which looks like the
+    // lights having been deleted if you did not know it was coming.
+    consequence: 'The ambient grid keeps clear of it.' },
+  { id: 'cove',   label: 'Reverse cove',
+    hint: 'Select a start and end point on a wall to span a reverse cove.',
+    consequence: 'It follows the wall you started on.' },
 ];
 
 /**
@@ -59,6 +84,8 @@ const ICON = {
   strip:  '/icons/led_strip.png',
   sconce: '/icons/sconce.png',
   spot:   '/icons/directional.png',
+  chandelier: '/icons/chandelier.png',
+  cove:   '/icons/reverse_cove.png',
 };
 
 /**
@@ -110,12 +137,61 @@ const GESTURE = {
       </g>
     </svg>
   ),
+  /* THE COVE'S GESTURE, AND IT EARNS A PICTURE FOR THE REASON THE SPOT DOES:
+     the thing that is hard to guess is not where you click, it is what the
+     SECOND click is allowed to be. The slot is locked to the wall the first
+     point landed on, so the second point only ever slides along that wall —
+     drag the pointer out into the room and the end stays on the line. A sentence
+     has to say that in a clause nobody reads; two dots on one wall with the band
+     between them and the pointer off the wall but the end still on it says it at
+     a glance.
+
+     THE WALL IS THE HEAVY LINE ALONG THE TOP and the band hangs INSIDE it, which
+     is where a reverse cove actually sits — eight inches of ceiling at the wall,
+     washing down it. Drawn in the accent because the tape is the thing being
+     placed; the wall is the drawing's own ink. */
+  cove: (
+    <svg viewBox="0 0 72 46" className="w-[72px] h-[46px] block overflow-visible" aria-hidden="true">
+      {/* The room, and the wall being coved along its top edge. */}
+      <rect x="6" y="9" width="60" height="30" rx="1.5"
+        fill="none" stroke="var(--text-subtle)" strokeWidth="1" strokeOpacity="0.45" />
+      <line x1="6" y1="9" x2="66" y2="9" stroke="var(--text-subtle)" strokeWidth="2.2" />
+      {/* The slot: the band, its inner lip, and the tape down the middle. */}
+      <rect x="17" y="9" width="34" height="6" fill="var(--accent)" fillOpacity="0.18" />
+      <line x1="17" y1="15" x2="51" y2="15" stroke="var(--accent)" strokeWidth="1.2" />
+      <line x1="17" y1="12" x2="51" y2="12" stroke="var(--accent)" strokeWidth="1.6"
+        strokeLinecap="round" />
+      {/* Where it started, and where it ends — both ON the wall. */}
+      <circle cx="17" cy="9" r="2.1" fill="var(--accent)" />
+      <circle cx="51" cy="9" r="2.1" fill="#fff" stroke="var(--accent)" strokeWidth="1.5" />
+      {/* ...and the pointer OFF the wall, out in the room, with the end left
+          behind on the line. That gap is the whole instruction. */}
+      <line x1="51" y1="9" x2="57" y2="27" stroke="var(--text-subtle)" strokeWidth="1"
+        strokeDasharray="2 2.5" />
+      <g transform="translate(55 26)">
+        <path d="M0,0 L0,15 L4,11.2 L6.8,17.6 L9.6,16.4 L6.8,10.2 L12,10 Z"
+          fill="var(--accent)" stroke="#fff" strokeWidth="1.1" strokeLinejoin="round" />
+      </g>
+    </svg>
+  ),
 };
 
-export default function LightPalette({ tool, onPick, disabled = false }) {
-  const live = LIGHT_TOOLS.find((t) => t.id === tool);
+/**
+ * `objArmed` IS THE CEILING-OBJECT ONE-SHOT, alongside `tool` which is the
+ * hand-placing one. Two pieces of state rather than one because they are two
+ * different machines with two different lifetimes — see `arms` above — and this
+ * row is the one place both are on screen, so it is the one place that has to
+ * ask which of them a button is lit by.
+ */
+export default function LightPalette({ tool, objArmed = null, onPick, disabled = false }) {
+  const isOn = (t) => (t.arms === 'object' ? objArmed === t.id : tool === t.id);
+  const live = LIGHT_TOOLS.find(isOn);
   return (
     <>
+      {/* FIVE IN A THREE-WIDE GRID, so the second row carries two and a gap.
+          The alternative was five columns, which shrinks every button to fit the
+          narrowest panel and makes the artwork — the whole point of a palette
+          whose symbols are its names — too small to recognise. */}
       <div className="grid grid-cols-3 gap-[5px] mt-2">
         {LIGHT_TOOLS.map((t) => (
           <button key={t.id} type="button" disabled={disabled}
@@ -136,12 +212,12 @@ export default function LightPalette({ tool, onPick, disabled = false }) {
                  and the armed suffix added `bg-input-bg` on top — two utilities
                  on one property, which is the ordering trap this codebase warns
                  about at the top of App.jsx. Each state now names its own. */
-              + (tool === t.id
+              + (isOn(t)
                 ? 'border-transparent bg-input-bg gradient-ring'
                 : 'border-border/10 bg-surface enabled:hover:bg-input-bg')}
             title={`${t.label} — ${t.hint}`}
-            aria-pressed={tool === t.id}
-            onClick={() => onPick(tool === t.id ? null : t.id)}>
+            aria-pressed={isOn(t)}
+            onClick={() => onPick(isOn(t) ? null : t.id, t.arms ?? 'tool')}>
             {/* alt="" ON PURPOSE, same as the ceiling palette: the label below
                 is the accessible name, and a screen reader saying "sconce"
                 twice is worse than not describing the picture at all.
@@ -157,7 +233,7 @@ export default function LightPalette({ tool, onPick, disabled = false }) {
                  tool's name vanish rather than stand out. Two palettes side by
                  side that answer "which one is armed" differently would be worse
                  than either answer. */
-              (tool === t.id ? 'text-white' : 'text-subtle')}>{t.label}</span>
+              (isOn(t) ? 'text-white' : 'text-subtle')}>{t.label}</span>
           </button>
         ))}
       </div>

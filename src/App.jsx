@@ -8,7 +8,7 @@ import { makeOutline, nextOutlineName, regionFromOutline, outlineStats } from '.
 import { PLAN_OPTIONS, FITTING_LUMENS, WALL_WEIGHT_IN, OTHER_STROKE_PX,
          SIMPLIFY_ROOM_TO_RECTANGLE, lumenCriteriaFor,
          THROW_STYLE } from './lib/settings.js';
-import { planLights } from './lib/planner.js';
+import { planLights, withTargetArea } from './lib/planner.js';
 import { enumerateChunkings, findChunking } from './lib/chunking.js';
 import { designChunking, planCeilingDesign } from './lib/ceilingDesign.js';
 import { absorbPoints, SPOT_LEN_FT, DODGE_FT } from './lib/track.js';
@@ -45,13 +45,15 @@ import { fitAll, RENDER_DEFAULTS, renderBlob, renderRef, fetchRender }
 import { sliceRect, artWidthFt, spotCountFor, litByArtSpots, planArtSpots,
          ART_SPOT } from './lib/artSpots.js';
 import { reverseCovesFor, mergeReverseCoves, trimWallRun,
-         RUN_TRIM } from './lib/reverseCove.js';
+         manualReverseCove, RUN_TRIM } from './lib/reverseCove.js';
 import { shelfStripsFor } from './lib/shelfStrip.js';
 import RenderPassPanel from './components/RenderPassPanel.jsx';
-import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone, RUN_EDIT } from './lib/accentPlace.js';
+import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone,
+         nearestWall, alongWallAt, RUN_EDIT } from './lib/accentPlace.js';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
          sizeLabel, radiusFt, clampFt, resizeFromCorner, rotateTo, isRect,
-         halfExtents, isUniform, applyResize, FAN_SWEEPS, sweepMm, withSweep }
+         halfExtents, isUniform, applyResize, FAN_SWEEPS, sweepMm, withSweep,
+         newCeilingObjectId }
          from './lib/ceilingObjects.js';
 import { collectTargets, snapPoint, SNAP_DEFAULTS } from './lib/snapGuides.js';
 import { buildSnapIndex, snapAt } from './lib/snap.js';
@@ -567,6 +569,20 @@ export default function App({
      would quietly put the bill back up. */
   const [dirtyIds, setDirtyIds] = useState([]);
   const [focusId, setFocusId] = useState(null);       // which room the panel is editing
+  /* THE OPEN SPACE'S ROW, SO THE CAPPED LIST CAN SCROLL TO IT. The Spaces list
+     is a 340px scroller past five rooms (60vh with one open) and the room that
+     gets opened is very often one the canvas was clicked on rather than one the
+     list was scrolled to — so without this, picking the ninth space of twelve
+     highlights a row nobody can see and reveals a workspace below the fold of a
+     box the user did not know had a fold. See the long note at the list. */
+  const openRowRef = useRef(null);
+  useEffect(() => {
+    if (!focusId) return;
+    // `nearest` MOVES THE MINIMUM. A row already on screen stays put, so opening
+    // one space after another does not throw the panel about; only a row that is
+    // actually out of view is brought in, and only just.
+    openRowRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [focusId]);
 
 
   const [busy, setBusy] = useState('');
@@ -586,7 +602,28 @@ export default function App({
   const [ceilingObjs, setCeilingObjs] = useState([]);
   const [objType, setObjType] = useState('fan');
   const [fanSweepMm, setFanSweepMm] = useState(1200);
-  const [selObjId, setSelObjId] = useState(null);
+  /* THE SELECTION IS A LIST NOW, because Shift-clicking builds one.
+     `selObjIds` is the truth; the two things beside it are conveniences that
+     stop fifteen call sites having to care.
+
+     `selObjId` IS THE PRIMARY — the most recently added — and it is what the
+     property panels read. "What sweep is this fan?" and "is this an AC or a
+     trapdoor?" are questions about ONE object, and with three selected the
+     honest answer is the one you touched last; the CHANGE those panels make is
+     applied to everything selected of the right kind, which is what a
+     properties panel does everywhere else.
+
+     `setSelObjId` REPLACES THE WHOLE SELECTION with one id, or clears it for
+     null. Every place that used to select exactly one thing — placing a new
+     object, clicking a row, Escape, a click on empty ceiling — means precisely
+     that and still says it in one call. */
+  const [selObjIds, setSelObjIds] = useState([]);
+  const selObjId = selObjIds.length ? selObjIds[selObjIds.length - 1] : null;
+  const setSelObjId = useCallback(
+    (id) => setSelObjIds(id == null ? [] : [id]), []);
+  /** Add an object to the selection, or take it out if it is already in. */
+  const toggleSelObj = useCallback((id) => setSelObjIds(
+    (ids) => (ids.includes(id) ? ids.filter((q) => q !== id) : [...ids, id])), []);
   const [objDrag, setObjDrag] = useState(null);   // {id, mode, ...} while dragging
 
   // TWO SEPARATE THINGS, and conflating them was half of why this felt wrong.
@@ -624,6 +661,20 @@ export default function App({
   const [addAt, setAddAt] = useState(null);          // the cursor, for the rubber band
   const [addSnap, setAddSnap] = useState(null);      // what the cursor caught on
   const [addGhost, setAddGhost] = useState(null);    // the sconce, before it is placed
+  /* THE HALF-MADE REVERSE COVE, and the ones that got finished.
+     `coveFrom` is the first point plus THE WALL IT LANDED ON — both endpoints
+     and the inward normal, resolved once at the press and then never asked
+     again. That is what makes the second point stick: the pointer is projected
+     onto this stored wall rather than re-tested against the polygon, so sliding
+     out into the room slides the end ALONG the wall instead of hopping to
+     whichever wall happens to be nearest now. Re-resolving per frame is the
+     obvious implementation and it is the wrong one — a slot would jump walls
+     mid-gesture. */
+  const [coveFrom, setCoveFrom] = useState(null);
+  const [manualCoves, setManualCoves] = useState([]);
+  /* Why a click was refused, said where the gesture is rather than in a banner.
+     Only ever set by the cove tool, and cleared by the next thing that happens. */
+  const [coveNote, setCoveNote] = useState('');
   const [manualAccents, setManualAccents] = useState([]);
   const [manualSurfaces, setManualSurfaces] = useState([]);
   const [objMode, setObjMode] = useState(false);
@@ -944,6 +995,12 @@ export default function App({
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
     setRenders({}); setRenderRefs({});
     setWallResults({}); setWallTranscripts({}); setRunTrims({});
+    // The hand-placed coves go with the trims, because they are the same
+    // subject: a slot is set out against ONE plan's walls and means nothing
+    // against another's. `runTrims` was already cleared here and leaving the
+    // coves behind would have carried a previous drawing's slots onto a fresh
+    // sheet, where they would sit at whatever plan pixels they were drawn at.
+    setManualCoves([]); setCoveFrom(null); setCoveNote('');
     setWallState({ status: 'idle', roomId: null }); setWallShot(null);
     setSelAccId(null); setAccDrag(null);
     // BACK TO THE PROJECT'S ANSWER, NOT TO NULL. This runs on every file load,
@@ -961,7 +1018,7 @@ export default function App({
     setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
     setOutlinesOpen(false); setDirtyIds([]);
     setUnitId(null);
-  }, [initialProjectType]);
+  }, [initialProjectType, setSelObjId]);
 
   /**
    * Render one page of an open PDF and become a raster plan.
@@ -1202,7 +1259,7 @@ export default function App({
     setWallResults,
     // ...and the lengths somebody dragged. Two numbers per run, and the only
     // thing about these derived fittings a person actually chose.
-    setRunTrims,
+    setRunTrims, setManualCoves,
     // ...and where the views themselves are. The bytes are fetched back out
     // of the bucket by the effect below, lazily and per space.
     setRenderRefs,
@@ -1697,8 +1754,52 @@ export default function App({
         out.push(trimWallRun(c, runTrims[c.id], { pxPerFt }));
       }
     }
+    /* THE HAND-PLACED ONES JOIN HERE, AFTER THE MERGE AND THROUGH THE SAME TRIM.
+       After the merge on purpose: `mergeReverseCoves` decides which detected
+       coves exist and what they are called, and feeding a manual slot into it
+       would let a detection absorb something a person set out by hand — the id
+       would vanish and with it their edit. Through `trimWallRun` because that is
+       what gives a run its draggable ends, and a hand-placed cove wanting the
+       same grips as a detected one is the whole reason its shape matches.
+
+       ONLY IN ROOMS THAT STILL EXIST. A cove is placed against a room's own
+       wall; delete or re-trace the room and the slot has nothing to be on. It is
+       filtered rather than deleted, so re-lighting the space brings it back. */
+    const live = new Set(litOutlines.map((o) => o.id));
+    for (const c of manualCoves) {
+      if (!live.has(c.roomId)) continue;
+      out.push(trimWallRun(c, runTrims[c.id], { pxPerFt }));
+    }
     return out;
-  }, [source, pxPerFt, litOutlines, wallResults, useBoundingRect, doors, runTrims]);
+  }, [source, pxPerFt, litOutlines, wallResults, useBoundingRect, doors, runTrims,
+      manualCoves]);
+
+  /**
+   * THE SLOT AS IT WOULD BE IF THE SECOND CLICK LANDED NOW.
+   *
+   * Built by the same function that builds the real one, from the stored wall
+   * and the pointer projected onto it — so what is on screen while you aim is
+   * the thing you get, down to the eight inches of band and which side of the
+   * wall line it sits on. A preview drawn by separate code is a preview that
+   * eventually disagrees with the placement.
+   *
+   * IT IS HANDED TO THE CANVAS APPENDED TO THE REAL LIST rather than as its own
+   * prop with its own drawing. The canvas already knows how to draw a reverse
+   * cove — band, inner lip, tape, the ramp along its length — and a draft that
+   * is drawn by that code cannot look like anything other than what it will
+   * become. It goes no further than the canvas: it is not in `reverseCoves`, so
+   * it is not a no-light zone, not an accent run, not a line in the schedule and
+   * not in the DXF. Nothing downstream can see a slot that does not exist yet.
+   */
+  const draftCove = useMemo(() => {
+    if (addTool !== 'cove' || !coveFrom || !addAt || !(pxPerFt > 0)) return null;
+    const { t } = alongWallAt({ a: coveFrom.a, b: coveFrom.b }, addAt);
+    return manualReverseCove({
+      a: coveFrom.a, b: coveFrom.b, t0: coveFrom.t,
+      t1: Math.max(0, Math.min(coveFrom.L, t)),
+      roomId: coveFrom.roomId, inward: coveFrom.inward, pxPerFt, id: 'mcove-draft',
+    });
+  }, [addTool, coveFrom, addAt, pxPerFt]);
 
   /**
    * ...and as no-light zones, which is how "a reverse cove is a no-draw area"
@@ -1898,8 +1999,10 @@ export default function App({
         }),
       };
 
-      // A KITCHEN IS LIT HARDER THAN A LIVING ROOM, and the only lever this
-      // engine has for that is the size of a cell. See TARGET_AREA_BY_TYPE.
+      // A KITCHEN IS LIT HARDER THAN A LIVING ROOM, AND AN OFFICE HARDER THAN
+      // A HOUSE, and the only lever this engine has for either is the size of a
+      // cell. See TARGET_AREA_BY_TYPE and TARGET_AREA_BY_PROJECT — the room's
+      // own opinion and the building's, resolved to the denser of the two.
       //
       // IT HAS TO REACH THE CHUNKER TOO, not just the grid. The decompositions
       // are enumerated and scored against the cell they are expected to carry;
@@ -1910,8 +2013,16 @@ export default function App({
       // dependency of this memo. A chunking the user had picked by hand is
       // resolved afresh below and falls back to the recommendation if the
       // denser reading no longer offers it.
-      const cellArea = targetAreaFor(roomTypes[o.id]?.type);
-      const roomOpt = cellArea ? { ...opt, targetArea: cellArea } : opt;
+      // `withTargetArea` RATHER THAN A SPREAD, and the difference is not
+      // cosmetic. `opt` is a RESOLVED options object: targetCell, minCell and
+      // maxCell are already materialised from the 50 sqft default, so
+      // `{ ...opt, targetArea: 25 }` moved the area band and left all three
+      // side dials describing a 7.07 ft cell — and the side dials are what
+      // partitionAxis and evenCounts actually score. The helper drops them and
+      // re-derives. `chunkOpt` needs no such care: it carries no side keys and
+      // enumerateChunkings derives its own from whatever area it is handed.
+      const cellArea = targetAreaFor(projectId, roomTypes[o.id]?.type);
+      const roomOpt = cellArea ? withTargetArea(opt, cellArea) : opt;
       const roomChunkOpt = cellArea ? { ...chunkOpt, targetArea: cellArea } : chunkOpt;
 
       const chunking = enumerateChunkings(geo.polygonFt, geo.zonesFt, roomChunkOpt, geo.fixturesFt);
@@ -3614,23 +3725,10 @@ export default function App({
     if (ids && !ids.length) return;
     const inRun = (id) => !ids || ids.includes(id);
 
-    // THE GATE, AT THE VERY TOP, BEFORE THE LOADING SCREEN.
-    //
-    // Everything below this line spends something: three detectors, a room
-    // classifier and an accent pass, two model calls at a time, across every
-    // space on the sheet. So the claim comes first — before `cancelPrep` is
-    // reset, before a single step is painted — and a refusal leaves the tracer
-    // exactly as it was rather than showing a progress dialog that dies on its
-    // first step.
-    //
-    // ONLY WHEN THE LAYOUT IS ACTUALLY BEING (RE)BUILT. `runPipeline({ relight:
-    // false })` is how the accent and surface passes are re-run over a layout
-    // that already exists — the spaces were paid for when they were lit and
-    // asking again would charge a second time for one dismissed accent.
-    if (relight && !await claimSpaces(ids ?? outlines.map((o) => o.id))) return;
-
-    cancelPrep.current = false;
-
+    /* THE STEP LIST AND THE ROOM STATES ARE BUILT BEFORE THE GATE, and they are
+       up here rather than below it for one reason: the loading screen needs them
+       and the loading screen now goes up first. Both are pure and cost nothing —
+       a filter over a constant and a loop over the outlines already in hand. */
     const wanted = PREP_STEPS.filter((st) =>
       st.key === 'beds' ? (beds && !!bedSets)
       // The re-check needs the classification to know which spaces are bedrooms,
@@ -3640,6 +3738,61 @@ export default function App({
       : st.key === 'types' ? classify
       : st.key === 'accents' ? accents
       : surfaces);
+    const roomState = {};
+    for (const o of outlines) if (inRun(o.id)) roomState[o.id] = 'idle';
+
+    /* THE LOADING SCREEN GOES UP FIRST, AND THEN THE GATE. THIS IS A REVERSAL.
+       The claim used to be the very first statement in this function, on the
+       argument that everything below it spends money and a refusal should leave
+       the tracer exactly as it was rather than show a progress dialog that dies
+       on its first step. That is still the right instinct about the REFUSAL, and
+       it is still honoured — the screen is torn down again below. What it got
+       wrong is the WAIT.
+
+       `claimSpaces` is a network round trip: the plan row has to have landed
+       (`whenRowReady`) and then the till is asked over HTTP. That is a few
+       hundred milliseconds on a warm function and a second or more on a cold
+       one, and for the whole of it the old code painted nothing at all. The user
+       had pressed the one button this screen exists for and the app looked
+       broken — no press, no spinner, no dialog, just the tracer sitting there —
+       so the honest reading of a second of silence is "it did not take the
+       click", and the honest response to that is to press it again.
+
+       IT IS NOT A FAKE STEP. Nothing in `wanted` is marked busy: every step is
+       idle, the bar is at zero, and the phase says what is actually happening,
+       which is that the spaces are being counted. The first real `paint()` below
+       is what lights step one, so the checklist never claims work that has not
+       started.
+
+       `cancelPrep` IS RESET BEFORE THE SCREEN, not after the claim. The panel
+       beside the loader offers "Stop and start over" the moment `prep` is
+       truthy, so the flag it clears has to already be live by then; and a stale
+       `true` left by a previous abandoned run would otherwise make step one bail
+       on a run that was never cancelled. */
+    cancelPrep.current = false;
+    setPrep({
+      phase: relight ? 'Checking your spaces' : 'Getting ready',
+      detail: relight ? 'Counting what this run covers' : '',
+      steps: wanted.map((st) => ({ ...st, state: 'idle' })),
+      roomState, done: 0, total: 0,
+    });
+
+    // THE GATE. Everything past it spends something: three detectors, a room
+    // classifier and an accent pass, two model calls at a time, across every
+    // space on the sheet.
+    //
+    // ONLY WHEN THE LAYOUT IS ACTUALLY BEING (RE)BUILT. `runPipeline({ relight:
+    // false })` is how the accent and surface passes are re-run over a layout
+    // that already exists — the spaces were paid for when they were lit and
+    // asking again would charge a second time for one dismissed accent.
+    //
+    // A REFUSAL PUTS THE SCREEN BACK DOWN. The paywall the claim raises is its
+    // own dialog; leaving the loader up behind it would be a progress screen for
+    // a run that is not going to happen.
+    if (relight && !await claimSpaces(ids ?? outlines.map((o) => o.id))) {
+      setPrep(null);
+      return;
+    }
     // A room that fails is skipped, not fatal — but a silent skip is how six
     // rooms quietly become four. Counted here and reported in the step's own
     // note, so a partial run says it was partial.
@@ -3650,13 +3803,28 @@ export default function App({
     // the other's setState — a React update is not visible until the next render
     // and this function does not get one.
     let bedsNow = detections;
-    const roomState = {};
-    for (const o of outlines) if (inRun(o.id)) roomState[o.id] = 'idle';
     let steps = wanted.map((st, i) => ({ ...st, state: i === 0 ? 'busy' : 'idle' }));
     let done = 0, total = relight ? (ids ?? outlines).length : 0;
+    /* `phase` AFTER `...prev`, AND `detail` BEFORE IT. The two are spread on
+       opposite sides on purpose and the difference is which one is allowed to
+       persist.
+
+       `detail` is the sub-line, and most `paint()` calls do not pass one — a
+       room going busy, a room going done. Defaulting it ahead of `...prev` means
+       those calls keep whatever the last detail said instead of blanking the
+       line under the heading on every tick.
+
+       `phase` is the heading, and it is DERIVED: whichever step is busy. Spread
+       ahead of `...prev` (which is where it was) the derivation ran and was then
+       immediately overwritten by the previous render's value, so the heading
+       froze on the first step of the run and stayed there while the checklist
+       below it advanced — "Reading your geometry" over a plan three steps into
+       its accents. Recomputed after `...prev` it tracks `stepTo`, and `...patch`
+       still comes last so the final paint's explicit 'Ready' wins. */
     const paint = (patch = {}) => setPrep((prev) => ({
+      detail: '', ...prev,
       phase: steps.find((x) => x.state === 'busy')?.label ?? 'Finishing',
-      detail: '', ...prev, ...patch, steps: [...steps], roomState: { ...roomState },
+      ...patch, steps: [...steps], roomState: { ...roomState },
       done, total,
     }));
     const stepTo = (key) => {
@@ -4223,10 +4391,67 @@ export default function App({
     return poly && pointInPolygon(p, poly);
   }) || null, [rooms]);
 
+  /**
+   * WHICH WALL A COVE CLICK LANDED ON, and everything the rest of the gesture
+   * needs to stay on it.
+   *
+   * `nearestWall` is the same function the sconce uses to seat itself, asked of
+   * a degenerate one-pixel box round the click — a point, expressed the way that
+   * function wants it. What comes back is a polygon EDGE, which is the unit that
+   * matters here: "stick to that wall segment only" means this edge and not the
+   * wall it is part of, so a room whose north side is drawn as two edges either
+   * side of a recess gives two separate walls to cove along, which is correct —
+   * the ceiling does not run straight across the recess.
+   *
+   * AXIS-ALIGNED ONLY, AND IT SAYS SO RATHER THAN COPING. Every rectangle in
+   * this feature is `{x0,y0,x1,y1}` — the band, and the no-light zone taken from
+   * it — so a slot on a diagonal wall has nowhere to be STORED, never mind
+   * drawn. The detector never meets the case because it works off an
+   * axis-aligned wall grid. A hand tool pointing at a real polygon does, and the
+   * honest answer is to refuse the click with a reason.
+   *
+   * THE INWARD NORMAL IS DECIDED BY THE POLYGON, not by which side of a
+   * bounding box the edge sits on. Probing a hair off the wall's midpoint and
+   * asking `pointInPolygon` works on an L-shaped room, where an inner edge's
+   * "inside" is not the side a bounding rect would guess.
+   */
+  const coveWallAt = useCallback((pt, poly) => {
+    if (!poly?.length || !(pxPerFt > 0)) return null;
+    const w = nearestWall({ x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y }, poly);
+    if (!w) return null;
+    const dx = w.b.x - w.a.x, dy = w.b.y - w.a.y;
+    const L = Math.hypot(dx, dy);
+    if (!(L > 1e-9)) return null;
+    const horizontal = Math.abs(dy) <= Math.abs(dx) * 1e-6;
+    const vertical = Math.abs(dx) <= Math.abs(dy) * 1e-6;
+    if (!horizontal && !vertical) {
+      return { angled: true, reason: 'That wall runs at an angle. A reverse cove '
+        + 'is set out square to the ceiling, so it can only go on a wall that runs '
+        + 'straight across or straight down the sheet.' };
+    }
+    // A hair off the midpoint, on both sides: whichever is in the room is in.
+    const mid = { x: (w.a.x + w.b.x) / 2, y: (w.a.y + w.b.y) / 2 };
+    const n = { x: -dy / L, y: dx / L };
+    const eps = Math.max(1, pxPerFt * 0.08);
+    const inward = pointInPolygon({ x: mid.x + n.x * eps, y: mid.y + n.y * eps }, poly)
+      ? n : { x: -n.x, y: -n.y };
+    const { t } = alongWallAt(w, pt);
+    return { a: { ...w.a }, b: { ...w.b }, wallIndex: w.index, inward,
+             t: Math.max(0, Math.min(L, t)), L };
+  }, [pxPerFt]);
+
+  /** Where along the stored wall the pointer is, clamped to that wall's ends. */
+  const coveTAt = useCallback((pt) => {
+    if (!coveFrom) return 0;
+    const { t } = alongWallAt({ a: coveFrom.a, b: coveFrom.b }, pt);
+    return Math.max(0, Math.min(coveFrom.L, t));
+  }, [coveFrom]);
+
   /** Put the tool away and forget any half-made gesture. */
   const disarmAdd = useCallback(() => {
     setAddTool(null); setStripFrom(null); setAddAt(null);
     setAddSnap(null); setAddGhost(null);
+    setCoveFrom(null); setCoveNote('');
   }, []);
 
   const snapTargets = useCallback((excludeId) => collectTargets({
@@ -4300,10 +4525,57 @@ export default function App({
     return z?.point ? z : null;
   }, [roomAt, pxPerFt]);
 
-  const applySnap = (ptPx, excludeId) => {
+  /**
+   * Snap a point, publish the guides for it, and hand back where it landed.
+   *
+   * `lock` IS THE COORDINATE A SHIFT-DRAG HAS FROZEN — 'x' or 'y', or null for
+   * an unconstrained drag. Two things follow from it and both matter.
+   *
+   * THE FROZEN COORDINATE SURVIVES THE SNAP. Snapping is free to pull a point
+   * anywhere within tolerance, so without this a straight drag would come off
+   * its line the moment it passed something worth aligning to — Shift promises a
+   * straight line and the snap does not get to break that promise. The other
+   * axis is snapped as usual, which is the combination actually wanted: slide
+   * along the row, catch the next cassette's centre, stay exactly on the line.
+   *
+   * AND NO GUIDE IS DRAWN FOR IT. A guide is a claim that the drag has taken an
+   * alignment; drawing one for an axis we are about to override would be a line
+   * that lies about where the object is going.
+   */
+  const applySnap = (ptPx, excludeId, lock = null) => {
     const r = snapPoint(ptPx, snapTargets(excludeId), { tol: snapTol() });
-    setGuides(r.guides);
-    return r;
+    setGuides(r.guides.filter((g) => g.axis !== lock));
+    return { x: lock === 'x' ? ptPx.x : r.x, y: lock === 'y' ? ptPx.y : r.y };
+  };
+
+  /**
+   * WHERE A DRAGGED OBJECT WANTS TO BE, in plan pixels, with Shift holding it to
+   * one axis. Shared by the ordinary move and by the first move of an
+   * Option-drag copy, because "hold Shift to go straight" has to mean the same
+   * thing whichever of the two you are doing — and holding both modifiers at
+   * once (copy, in a straight line) is the gesture that lays out a row.
+   *
+   * THE LINE IS MEASURED FROM WHERE THE PRESS WAS, `drag.start`, not from the
+   * last frame. Frame-to-frame would let the constraint creep: each frame is
+   * straight relative to the one before it and the path as a whole bends. From
+   * the anchor, a locked drag is on the same line however long it goes on, and
+   * for a copy that anchor is the ORIGINAL — so Option+Shift leaves the twin
+   * exactly level with the object it came from, which is the whole point.
+   *
+   * WHICHEVER AXIS HAS TRAVELLED FURTHER WINS, re-decided every frame. It is not
+   * latched on the first pixel: a drag that starts off sideways and turns into a
+   * vertical one switches over as it crosses the diagonal, which is what every
+   * other tool with this modifier does and what the hand expects.
+   */
+  const moveTargetPx = (ft, drag, shift, excludeId) => {
+    const ax = drag.start.x * pxPerFt, ay = drag.start.y * pxPerFt;
+    const want = { x: (ft.x - drag.grabFt.x) * pxPerFt,
+                   y: (ft.y - drag.grabFt.y) * pxPerFt };
+    if (!shift) return applySnap(want, excludeId);
+    // Travelled further across than down: it is a row, so `y` is what freezes.
+    const row = Math.abs(want.x - ax) >= Math.abs(want.y - ay);
+    return applySnap(row ? { x: want.x, y: ay } : { x: ax, y: want.y },
+                     excludeId, row ? 'y' : 'x');
   };
 
   const objPointerDown = (e, id, mode, corner = null) => {
@@ -4311,13 +4583,42 @@ export default function App({
     if (!pxPerFt) return;
     e.stopPropagation();
     e.preventDefault();
+
+    /* SHIFT-CLICK BUILDS THE SELECTION AND STARTS NO DRAG, and that separation
+       is what lets one modifier do two jobs without either being ambiguous.
+       Shift on a PRESS adds or removes an object; Shift during a DRAG holds it
+       to one axis. A press cannot yet know whether it will become a drag, so
+       guessing here would mean either a click that sometimes nudged the object
+       or an axis lock you could not engage without first deselecting something.
+       Split by gesture instead: Shift-click to gather them up, then press
+       WITHOUT Shift on any member to drag the group, adding Shift mid-drag for
+       the straight line. Both modifiers are still available for the group. */
+    if (mode === 'move' && e.shiftKey) {
+      setObjMode(true); setArmed(null); setGuides([]); setGhost(null);
+      toggleSelObj(id);
+      return;
+    }
+
     const svg = svgRef.current;
     svg?.setPointerCapture?.(e.pointerId);
     const o = ceilingObjs.find((q) => q.id === id);
     if (!o) return;
     setObjMode(true);
     setArmed(null); setGuides([]); setGhost(null);
-    setSelObjId(id);
+
+    /* PRESSING A MEMBER OF THE SELECTION DRAGS ALL OF IT; pressing anything
+       else makes that one thing the selection. This is the rule that makes a
+       multi-selection worth having — gather four cassettes, then move them as
+       one — and it is also what stops a stale selection biting: a press on an
+       object that is not in the group replaces the group rather than dragging a
+       set the user has stopped thinking about.
+
+       A HANDLE IS ALWAYS SINGULAR. Resize and rotate act on one object's own
+       frame, and the handles are only drawn when exactly one thing is selected
+       (see PlanCanvas), so a resize press can only ever mean `[id]`. */
+    const group = mode === 'move' && selObjIds.includes(id) ? selObjIds : [id];
+    setSelObjIds(group);
+
     const p = svgPoint(e);
     const ft = { x: p.x / pxPerFt, y: p.y / pxPerFt };
     setObjDrag({
@@ -4326,7 +4627,22 @@ export default function App({
       startRot: o.rot || 0,
       startAngle: Math.atan2(ft.y - o.y, ft.x - o.x),
       start: { ...o },
+      /* WHO IS MOVING, AND WHERE THEY ALL WERE WHEN IT STARTED. The group is
+         moved by applying ONE delta to each member's snapshot rather than by
+         accumulating per-frame offsets: accumulation drifts, and a set of
+         cassettes that no longer line up with each other after a long drag is a
+         set somebody has to fix by hand. `startAll` is also what the Option copy
+         restores the originals from. */
+      group,
+      startAll: Object.fromEntries(ceilingObjs
+        .filter((q) => group.includes(q.id))
+        .map((q) => [q.id, { ...q }])),
       moved: false,
+      /* HAS THIS DRAG ALREADY LEFT A COPY BEHIND? Nothing about the modifier is
+         recorded here — see the note in `objPointerMove`, which reads Option
+         live off every move event. This flag exists only so the twin is made
+         once and not once per frame. */
+      copied: false,
     });
   };
 
@@ -4334,19 +4650,117 @@ export default function App({
     if (!objDrag || !pxPerFt) return;
     const p = svgPoint(e);
     const ft = { x: p.x / pxPerFt, y: p.y / pxPerFt };
+
+    /* OPTION-DRAG LEAVES A COPY BEHIND — a fan, a cassette, a chandelier, any of
+       them, because they are one collection with a type on each row and nothing
+       in here reads the type.
+
+       THE MODIFIER IS READ LIVE, OFF EVERY MOVE EVENT, AND THE ORDER OF THE TWO
+       DOES NOT MATTER. It was latched at the press — `e.altKey` recorded in
+       `objPointerDown` — which meant Option had to be down BEFORE the object was
+       even touched, and that is not how anyone reaches for it: you pick the
+       thing up, you see it move, and then you decide you wanted a copy. Read
+       here, "Option then drag" and "drag then Option" are the same gesture, and
+       it sits with every other modifier on this canvas rather than being the one
+       exception — Shift locks a ratio, Alt resizes from the centre, all read
+       from the move event that uses them.
+
+       THE ORIGINAL IS PUT BACK WHERE IT WAS PICKED UP. This is what reading the
+       modifier late actually costs, and it has to be paid: by the time Option
+       arrives the original may have been dragged half way across the room, and
+       leaving it there would mean one gesture both moved a thing and copied it —
+       two edits, one of which nobody asked for. `objDrag.start` is the object as
+       it was at the press, so restoring from it returns the position AND any
+       rotation the drag had touched. When Option was already down at the press
+       the original never moved and this is a no-op.
+
+       THE TWIN IS WHAT KEEPS MOVING, which is the convention everywhere this
+       gesture exists and the one that makes a row of cassettes possible: drag,
+       Option, release — and the thing you just positioned is the one still
+       selected, ready to be dragged again.
+
+       ONCE MADE, IT STAYS MADE. `copied` latches, so letting go of Option
+       mid-drag does not un-create the twin or hand the drag back to the
+       original; it simply carries on moving what is now under the pointer. A
+       modifier that can undo a thing it already did is a modifier you cannot
+       let go of.
+
+       AND NOTHING HAPPENS WITHOUT MOVEMENT. Pressing a key fires no
+       `pointermove`, so Option on a held-still object mints nothing: no
+       invisible duplicate stacked exactly on its original, doubling a schedule
+       line where nobody can see it.
+
+       ONE `setCeilingObjs` DOING THE RESTORE AND THE CLONE TOGETHER, then a
+       return. `objDrag` in this closure is the value from the render that
+       installed this handler, so the retarget below cannot be seen by the code
+       after it — a second `setCeilingObjs` here would move the ORIGINAL. Every
+       later move event sees the new id and takes the ordinary path.
+
+       THE TWIN MAY SNAP TO THE OBJECT IT CAME FROM. `applySnap` is told to
+       exclude the TWIN's id, which is not in the list yet, so nothing is
+       excluded and the original is a live snap target — which is exactly what
+       lining a second cassette up with the first wants. */
+    if (objDrag.mode === 'move' && !objDrag.copied && e.altKey) {
+      /* THE IDS ARE MINTED BEFORE THE SNAP so the snapper can be told to ignore
+         them — they are not in the list yet, so nothing is actually excluded and
+         the ORIGINALS stay live targets. That is the alignment worth having: the
+         copy catches the centre of the thing it came from. */
+      const pairs = objDrag.group.map((gid) => (
+        { gid, twinId: newCeilingObjectId(), base: objDrag.startAll[gid] }
+      )).filter((q) => q.base);
+      if (!pairs.length) return;
+      const at = moveTargetPx(ft, objDrag, e.shiftKey, pairs.map((q) => q.twinId));
+      const dx = at.x / pxPerFt - objDrag.start.x;
+      const dy = at.y / pxPerFt - objDrag.start.y;
+      const twins = pairs.map(({ twinId, base }) => (
+        { ...base, id: twinId, x: base.x + dx, y: base.y + dy }
+      ));
+      setCeilingObjs((os) => [
+        // Every original straight back to where it was picked up.
+        ...os.map((o) => (objDrag.startAll[o.id] ? { ...objDrag.startAll[o.id] } : o)),
+        ...twins,
+      ]);
+      setSelObjIds(twins.map((t) => t.id));
+      setObjDrag((d) => (d ? {
+        ...d,
+        // The drag transfers to the twin of the object under the pointer, and the
+        // anchor is untouched: `start` is still the ORIGINAL's position, so later
+        // frames go on computing one delta from the press and applying it to
+        // these snapshots exactly as a plain group move does.
+        id: pairs.find((q) => q.gid === d.id)?.twinId ?? twins[0].id,
+        group: twins.map((t) => t.id),
+        startAll: Object.fromEntries(pairs.map(({ twinId, base }) => [twinId, { ...base, id: twinId }])),
+        copied: true, moved: true,
+      } : d));
+      return;
+    }
+
     if (!objDrag.moved) setObjDrag((d) => (d ? { ...d, moved: true } : d));
+
+    /* THE MOVE IS THE ONE GESTURE THAT CAN TOUCH MORE THAN ONE OBJECT, so it is
+       lifted out of the per-object map below rather than living inside it.
+       Resize and rotate stay in there and stay singular: their handles are only
+       drawn when exactly one thing is selected.
+       THE OBJECT UNDER THE POINTER IS WHAT SNAPS, and everything else follows by
+       the same delta. Snapping each member independently would pull the group
+       apart — four cassettes would each find their own nearest alignment and
+       arrive no longer in a row. And it is the CENTRE that snaps, not the
+       pointer: aligning on wherever inside the object you happened to grab it
+       would make the same drag land differently each time.
+       Shift holds the delta to one axis — see `moveTargetPx`. */
+    if (objDrag.mode === 'move') {
+      const at = moveTargetPx(ft, objDrag, e.shiftKey, objDrag.group);
+      const dx = at.x / pxPerFt - objDrag.start.x;
+      const dy = at.y / pxPerFt - objDrag.start.y;
+      setCeilingObjs((os) => os.map((o) => {
+        const base = objDrag.startAll[o.id];
+        return base ? { ...o, x: base.x + dx, y: base.y + dy } : o;
+      }));
+      return;
+    }
+
     setCeilingObjs((os) => os.map((o) => {
       if (o.id !== objDrag.id) return o;
-      if (objDrag.mode === 'move') {
-        // The OBJECT'S CENTRE is what snaps, not the pointer. Snapping the
-        // pointer would align wherever inside the object you happened to grab
-        // it, so the same drag would land differently depending on where you
-        // picked it up.
-        const want = { x: (ft.x - objDrag.grabFt.x) * pxPerFt,
-                       y: (ft.y - objDrag.grabFt.y) * pxPerFt };
-        const snapped = applySnap(want, o.id);
-        return { ...o, x: snapped.x / pxPerFt, y: snapped.y / pxPerFt };
-      }
       if (objDrag.mode === 'resize') {
         if (guides.length) setGuides([]);
         const base = objDrag.start;
@@ -4714,10 +5128,14 @@ export default function App({
         setSelAccId(null);
         return;
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selObjId && !objDrag) {
+      // THE WHOLE SELECTION, not just the primary. Deleting one of four
+      // selected objects and silently leaving the other three is the reading
+      // nobody expects, and it is the one a single-id delete gives.
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selObjIds.length && !objDrag) {
         e.preventDefault();
-        setCeilingObjs((os) => os.filter((q) => q.id !== selObjId));
-        setSelObjId(null);
+        const doomed = new Set(selObjIds);
+        setCeilingObjs((os) => os.filter((q) => !doomed.has(q.id)));
+        setSelObjIds([]);
         return;
       }
       // A SELECTED SPACE, AND THIS IS LAST ON PURPOSE. A fitting or a ceiling
@@ -4742,7 +5160,7 @@ export default function App({
     if (readOnly) return undefined;
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [objMode, armed, selObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
+  }, [objMode, armed, selObjId, selObjIds, setSelObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
       manualAccents, focusId, readOnly, selSpotId, deleteSpot]);
 
   /**
@@ -4822,7 +5240,21 @@ export default function App({
   const onCanvasClick = (e) => {
     // Ceiling objects are handled entirely in the pointer events — see the note
     // on objPointerDown. Nothing about them may happen on a click.
-    if (zoneMode || !source || objMode || armed || addTool) return;
+    //
+    // `objMode` WAS IN THIS GUARD AND IT HAD TO COME OUT. It is sticky, not a
+    // gesture in flight: grabbing one fan turns it on and nothing turns it off,
+    // so every later click on the ceiling hit this early return and the whole
+    // canvas went quiet — no space could be selected, the options pill could not
+    // be dismissed, and the two lines at the bottom of this function that are
+    // the ONLY way to clear a selected object never ran. You could select a fan
+    // and then not let go of it.
+    //
+    // IT WAS ALSO ALREADY REDUNDANT, which is the tell. The note below says it:
+    // everything interactive on the plan calls `stopPropagation` on pointerdown,
+    // `objPointerDown` included, so a click on an object cannot arrive here in
+    // the first place. `armed` and `addTool` stay — those really are gestures
+    // waiting to happen, and they own the next click.
+    if (zoneMode || !source || armed || addTool) return;
     // THE SCALE IS SETTLED BY THE TIME WE ARE HERE. Measuring belongs to the
     // tracer screen, where the scale is actually being decided; leaving the
     // click live on this screen meant a stray click could redefine px-per-foot
@@ -5045,11 +5477,59 @@ export default function App({
         ? (() => { const sn = snapPlacing(raw, { last: stripFrom, ortho: !e.shiftKey });
                    return { x: sn.x, y: sn.y }; })()
         : raw;
+      /* THE COVE'S SECOND CLICK IS TAKEN BEFORE THE OUT-OF-ROOM GUARD, and that
+         ordering is load-bearing rather than tidy. The wall IS the room's
+         boundary, so a click aimed at it lands within a pixel or two of being
+         outside the polygon — and `roomAt` would then read a perfectly good
+         second point as "off the ceiling" and throw the whole gesture away. It
+         does not need the room anyway: the wall was resolved and stored at the
+         FIRST click, and the second is projected onto that stored wall wherever
+         the pointer happens to be. Being outside the room is not merely
+         tolerated here, it is the normal way to finish: you drag past the end
+         of the wall and the end clamps to it. */
+      if (addTool === 'cove' && coveFrom) {
+        e.preventDefault();
+        const t1 = coveTAt(raw);
+        const c = manualReverseCove({
+          a: coveFrom.a, b: coveFrom.b, t0: coveFrom.t, t1,
+          roomId: coveFrom.roomId, inward: coveFrom.inward, pxPerFt,
+          id: `mcove-${Date.now().toString(36)}-${Math.round(Math.random() * 1e4).toString(36)}`,
+        });
+        // A SLOT SHORTER THAN A FOOT IS A DOUBLE-CLICK, NOT A COVE. Same
+        // threshold and same reasoning as the strip's: the gesture is abandoned
+        // rather than half-committed, and the tool stays armed so the next click
+        // starts a new one.
+        if (!c || c.runLength < Math.max(8, pxPerFt)) {
+          setCoveFrom(null); setAddAt(null);
+          setCoveNote('That is too short to be a slot — click the two ends further apart.');
+          return;
+        }
+        setManualCoves((l) => [...l, c]);
+        disarmAdd();
+        return;
+      }
+
       const room = roomAt(p);
       // Off the ceiling: put the tool away rather than place a fitting in a
       // space that does not exist. Same rule the ceiling palette follows.
       if (!room) { disarmAdd(); return; }
       e.preventDefault();
+
+      /* ...AND THE FIRST CLICK DOES need a room, because the wall it seats on
+         comes out of that room's polygon. */
+      if (addTool === 'cove') {
+        const poly = room.plan?.polygonPx || room.geo?.polygonPx;
+        const seat = coveWallAt(raw, poly);
+        if (!seat) { setCoveNote('That space has no wall to cove along.'); return; }
+        if (seat.angled) { setCoveNote(seat.reason); return; }
+        setCoveNote('');
+        setCoveFrom({ ...seat, roomId: room.id });
+        // THE BAND IS UP THE INSTANT THE FIRST POINT LANDS, at zero length,
+        // rather than waiting for the pointer to move. A tool that shows nothing
+        // until you happen to move is a tool that looks like it missed the click.
+        setAddAt(raw);
+        return;
+      }
 
       if (addTool === 'sconce') {
         // ONE CLICK, AND THE WALL DOES THE REST. The click says WHICH wall and
@@ -5182,6 +5662,15 @@ export default function App({
       }
       if (addTool === 'sconce') {
         setAddGhost(sconceGhostAt(raw));
+        setAddAt(raw);
+        return;
+      }
+      /* THE COVE FOLLOWS THE POINTER BUT STAYS ON ITS WALL. `addAt` is the raw
+         pointer and the DRAFT is what is projected — the two are deliberately
+         different, because the preview is built from the projection while
+         `addAt` is only what re-renders it. Before the first click there is no
+         wall to project onto and nothing to draw. */
+      if (addTool === 'cove') {
         setAddAt(raw);
         return;
       }
@@ -5732,7 +6221,7 @@ export default function App({
     ceilingObjs, chunkPicks, designPicks, ceilingKinds,
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-    wallResults, runTrims, renderRefs,
+    wallResults, runTrims, manualCoves, renderRefs,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
@@ -5740,7 +6229,7 @@ export default function App({
        ceilingObjs, chunkPicks, designPicks, ceilingKinds,
        accentResults, accentDismissed, manualAccents,
        surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-       wallResults, runTrims, renderRefs,
+       wallResults, runTrims, manualCoves, renderRefs,
        layers, zoom, view]);
 
   // --- UNDO, THE HALF THAT NEEDS THE DOCUMENT -------------------------------
@@ -5808,7 +6297,7 @@ export default function App({
     // whatever was picked, the picture just changed under it.
     setSelSpotId(null); setSelAccId(null); setSelObjId(null);
     setUndoDepth(historyDepth(history.current));
-  }, [stateSetters]);
+  }, [stateSetters, setSelObjId]);
 
   const undo = useCallback(() => {
     // THE IN-FLIGHT BURST IS CLOSED FIRST, so a change made half a second ago is
@@ -6361,7 +6850,13 @@ export default function App({
                  is not a mutation and it is the entire reason to open this
                  screen, so `onFixture` is untouched. */
               objMode={!readOnly && objMode}
-              selObjId={readOnly ? null : selObjId}
+              /* WHILE A TOOL IS ARMED THE NEXT CLICK IS A PLACEMENT, so the
+                 ceiling objects' move targets stand down for it — otherwise a
+                 sconce aimed just inside a fan's footprint would grab the fan
+                 instead of landing. It is the only thing that suppresses them
+                 now; see the long note at the move target in PlanCanvas. */
+              placing={!readOnly && !!(armed || addTool)}
+              selObjIds={readOnly ? [] : selObjIds}
               onObjPointerDown={readOnly ? null : objPointerDown}
               objDragMode={objDrag?.moved ? objDrag.mode : null}
               guides={readOnly ? [] : guides} ghost={readOnly ? null : ghost}
@@ -6384,7 +6879,9 @@ export default function App({
                  Same switch as the bed boxes and the task surfaces — "Show what
                  was identified" under Admin. */
               wallCells={isAdmin && audit ? wallCellsPx : []}
-              reverseCoves={reverseCoves}
+              /* The draft rides in with the real ones — see `draftCove`. The
+                 canvas draws it identically, which is the point. */
+              reverseCoves={draftCove ? [...reverseCoves, draftCove] : reverseCoves}
               measure={null} onCanvasClick={readOnly ? null : onCanvasClick}
               /* Crosshair only where a click would actually do something. Off
                  the ceiling it reverts to a pointer, which is the cursor's job:
@@ -6645,26 +7142,42 @@ export default function App({
                 inside a 340px window is no worse than hunting down the page —
                 while everything below stays where you left it.
 
-                THE CAP LIFTS WHILE A SPACE IS OPEN, and that is the judgment
-                call in here. Opening a row reveals its wall pass, its render
-                pass and its controls — a workspace, not a list item — and
-                nesting that inside a 340px scroller means two scrollbars and a
-                cramped one. An accordion growing to fit what you just opened is
-                ordinary; the cap is there for the COLLAPSED list, which is what
-                was eating the panel.
+                THE CAP USED TO LIFT WHILE A SPACE WAS OPEN — `&& !focusId` —
+                AND THAT IS THE BUG THIS BLOCK IS NOW THE FIX FOR. The reasoning
+                was sound as far as it went: opening a row reveals its wall pass,
+                its render pass and its controls, which is a workspace rather
+                than a list item, and nesting that in a 340px box means two
+                scrollbars and a cramped one. What it missed is that selecting a
+                space is the NORMAL state of this screen, not an exception —
+                clicking a space on the canvas sets `focusId` too — so on any
+                plan where somebody had touched a room the cap was simply not
+                there, and the list ate the panel exactly as before. A cap that
+                is off whenever the screen is in use is not a cap.
+
+                SO IT IS UNCONDITIONAL PAST FIVE, and the OPEN case gets a taller
+                box instead of no box. 60vh is enough for a row's whole workspace
+                on any ordinary window while still leaving Edit, Result, View and
+                Export reachable below it, which was the entire point.
+
+                AND THE OPEN ROW IS SCROLLED INTO VIEW, because a cap that can
+                hide what you just clicked is worse than no cap. `block:
+                'nearest'` scrolls the minimum distance — it leaves a row that is
+                already visible exactly where it is, so opening the second space
+                in a list does not jerk the panel.
 
                 `.lp-scroll` carries the thin visible scrollbar — see styles.css
                 for why the bar is deliberately not hidden. The negative margin
                 and matching padding give the bar a gutter without insetting the
                 rows from the panel's edge. */}
-            <div className={rooms.length > 5 && !focusId
-              ? 'lp-scroll max-h-[340px] -mr-1.5 pr-1.5' : undefined}>
+            <div className={rooms.length > 5
+              ? `lp-scroll -mr-1.5 pr-1.5 ${focusId ? 'max-h-[60vh]' : 'max-h-[340px]'}`
+              : undefined}>
             {rooms.map((r) => {
               const on = r.id === focusId;
               const chunked = r.chunking?.needsChoice;
               const coved = (r.coves?.length ?? 0) > 0;
               return (
-                <div key={r.id}
+                <div key={r.id} ref={on ? openRowRef : null}
                   className={`group ${ROW_FLUSH} ${on ? ROW_ON : ROW_OFF}`}>
                   {/* THE HEAD IS THE CONTROL; THE BODY IS NOT. They were one
                       element, and nesting a file input and four buttons inside
@@ -6910,8 +7423,19 @@ export default function App({
                         className={current === mm ? PROP_ON : PROP_OFF}
                         onClick={() => {
                           setFanSweepMm(mm);
-                          if (sel?.kind === 'fan') setCeilingObjs((os) =>
-                            os.map((o) => (o.id === sel.id ? withSweep(o, mm) : o)));
+                          /* EVERY SELECTED FAN, NOT JUST THE PRIMARY. The chip
+                             above it reads the primary's sweep, because with
+                             three fans selected the only honest "current" value
+                             is the one you touched last — but the ACT is what a
+                             properties panel does, and that is to apply the
+                             chosen value to everything selected it makes sense
+                             for. Non-fans in the selection are left alone rather
+                             than refused: selecting two fans and a cassette and
+                             setting a sweep is a perfectly clear instruction
+                             about the fans. */
+                          const picked = new Set(selObjIds);
+                          setCeilingObjs((os) => os.map((o) => (
+                            picked.has(o.id) && o.kind === 'fan' ? withSweep(o, mm) : o)));
                         }}>{mm} sweep</button>
                     ))}
                   </div>
@@ -6942,8 +7466,13 @@ export default function App({
                           // rotation and position alone: it is the same hole in
                           // the same ceiling, called what it actually is.
                           if (RECTS.includes(armed)) { setArmed(id); setObjType(id); }
-                          if (isRect(sel)) setCeilingObjs((os) => os.map((o) => (o.id === sel.id
-                            ? { ...o, typeId: id, kind: id } : o)));
+                          // ...and it retypes EVERY selected rectangle, for the
+                          // reason the sweep chips apply to every selected fan.
+                          // Round objects in the selection are untouched: an
+                          // "AC or trapdoor" question has no answer for a fan.
+                          const picked = new Set(selObjIds);
+                          setCeilingObjs((os) => os.map((o) => (
+                            picked.has(o.id) && isRect(o) ? { ...o, typeId: id, kind: id } : o)));
                         }}>{CEILING_BY_ID[id]?.label}</button>
                     ))}
                   </div>
@@ -6956,13 +7485,42 @@ export default function App({
                   {' '}{CEILING_BY_ID[armed]?.label.toLowerCase()}.</p>
               )}
 
+              {/* HOW TO GET A SECOND ONE, SAID ONCE AND ONLY WHEN IT APPLIES.
+                  Option-drag is invisible: nothing on the drawing suggests a
+                  modifier exists, and a gesture nobody can discover is a gesture
+                  nobody has. It appears only once something is actually placed —
+                  before that there is nothing to copy and the line would be a
+                  rule about a thing that does not exist yet. */}
+              {ceilingObjs.length > 0 && (
+                <p className={NOTE}>Drag one with Option held — Alt on Windows,
+                  before or during the drag — to leave a copy behind. Add Shift
+                  to keep it exactly level with the original.</p>
+              )}
+
               {/* AIR BETWEEN THE PALETTE AND WHAT IT HAS PLACED. The list ran
                   straight on from the buttons — and from the sweep chips and the
                   place-it note between them — so a row of placed objects read as
                   a fourth line of the palette rather than as its result. */}
-              <div className="mt-4">
+              {/* CAPPED AT 150px AND SCROLLED, AND THE CAP IS UNCONDITIONAL —
+                  which is the difference between this list and the Spaces list
+                  above it. There, the scroller is switched on past a row count,
+                  and getting that threshold to agree with a pixel height is what
+                  went wrong once already. Here `max-height` does the deciding on
+                  its own: shorter content simply never reaches 150px, and
+                  `overflow-y:auto` draws no bar until there is something to
+                  scroll. No count to keep in step with a height.
+
+                  150px IS ABOUT FIVE OF THESE ROWS — `ROW_TIGHT`, one line each.
+                  Option-drag makes long lists ordinary rather than exceptional:
+                  a row of ten cassettes down a corridor is now three seconds of
+                  work, and this list was the thing that would have buried the
+                  palette above it and the controls below.
+
+                  `.lp-scroll` is the thin visible bar; the negative margin and
+                  matching padding give it a gutter without insetting the rows. */}
+              <div className="mt-4 lp-scroll max-h-[150px] -mr-1.5 pr-1.5">
               {ceilingObjs.map((o) => {
-                const on = o.id === selObjId;
+                const on = selObjIds.includes(o.id);
                 return (
                   /* SLIMMER: `ROW_TIGHT`, not `ROW`. With the delete button gone
                      there is one line in here, and a row padded for two sat with
@@ -6980,8 +7538,17 @@ export default function App({
                         It also removes the trap that button was: a × one pixel
                         from the row that selects, both live, with no undo behind
                         either. */}
+                    {/* SHIFT-CLICK HERE TOO, for the same reason it works on the
+                        drawing: the list and the plan are two views of one
+                        selection, and a gesture that builds it in one place and
+                        not the other is a gesture you have to remember the
+                        location of. Picking four cassettes out of a list by name
+                        is easier than finding them on a busy ceiling. */}
                     <button className={PICK_BTN}
-                      onClick={() => { setSelObjId(o.id); setObjMode(true); setArmed(null); }}>
+                      onClick={(e) => {
+                        setObjMode(true); setArmed(null);
+                        if (e.shiftKey) toggleSelObj(o.id); else setSelObjId(o.id);
+                      }}>
                       <span className={NAME}>{CEILING_BY_ID[o.typeId]?.label ?? o.kind}</span>
                       {/* THE SIZE, ON THE FAR SIDE AND IN CAPS. `PICK_BTN` is
                           already `justify-between`, so the two ends of the row
@@ -7109,12 +7676,46 @@ export default function App({
             </>}
 
             {editTab === 'lighting' && <>
-              <LightPalette tool={addTool} disabled={!pxPerFt || !rooms.length}
-                onPick={(t) => {
-                  setAddTool(t); setStripFrom(null); setAddAt(null);
-                  setArmed(null); setGhost(null);
+              <LightPalette tool={addTool} objArmed={armed}
+                disabled={!pxPerFt || !rooms.length}
+                onPick={(t, arms) => {
+                  /* TWO MACHINES BEHIND ONE ROW. Four of these buttons arm
+                     `addTool`, the hand-placing tools; the chandelier arms
+                     `armed`, the ceiling-object one-shot, because that is what a
+                     chandelier is to the geometry — a thing with a diameter that
+                     reserves clearance. The palette says which it wants rather
+                     than this branch testing for an id, so moving the next
+                     decorative fitting across is a line in LIGHT_TOOLS.
+                     EITHER WAY THE OTHER MACHINE IS DISARMED. Two armed tools
+                     is a click with two meanings. */
                   setZoneMode(false); setDraftZone(null);
+                  if (arms === 'object') {
+                    disarmAdd();
+                    setArmed(t); setGhost(null);
+                    if (t) setObjType(t);
+                    return;
+                  }
+                  setAddTool(t); setStripFrom(null); setAddAt(null);
+                  setCoveFrom(null); setCoveNote('');
+                  setArmed(null); setGhost(null);
                 }} />
+              {/* WHY A CLICK WAS REFUSED, said under the palette that asked for
+                  it. A diagonal wall and a slot an inch long are both things a
+                  person can reasonably try, and both have real reasons they
+                  cannot be done — a banner at the top of the screen would be
+                  read as an error rather than as an answer. */}
+              {coveNote && <p className={NOTE_WARN}>{coveNote}</p>}
+              {/* WHAT HAS BEEN SET OUT BY HAND, with a way back. The detected
+                  coves are counted in the Result panel; these are the ones
+                  somebody drew, and they are the only ones that can be undone
+                  wholesale. */}
+              {manualCoves.length > 0 && (
+                <button className={`${BTN_FULL} mt-2`}
+                  onClick={() => { setManualCoves([]); disarmAdd(); }}>
+                  Clear the {manualCoves.length} reverse cove
+                  {manualCoves.length === 1 ? '' : 's'} placed by hand
+                </button>
+              )}
               {!rooms.length && (
                 <p className={NOTE_WARN}>
                   Light a space first — a fitting has to belong to one.

@@ -241,8 +241,51 @@ export const expectsBed = (projectId, typeId) => !!roomTypeIn(projectId, typeId)
  */
 export const TARGET_AREA_BY_TYPE = { kitchen: 25, toilet: 18 };
 
-/** The override for a type, or null for "lit like anywhere else". */
-export const targetAreaFor = (typeId) => TARGET_AREA_BY_TYPE[typeId] ?? null;
+/**
+ * ...AND WHERE A WHOLE BUILDING IS LIT HARDER THAN THE DEFAULT.
+ *
+ * An office is not a house with different furniture. The commercial standard is
+ * task light across the entire floor rather than comfortable light in the rooms
+ * people relax in, and it applies to the office chamber, the open workspace,
+ * the conference room and the reception alike — every space on the sheet, not a
+ * named few. So the lever is the same one a kitchen pulls, pulled at the level
+ * the difference actually lives at: the project.
+ *
+ * WHAT 25 DELIVERS, STATED PLAINLY: a 900 lm small over a 25 sqft cell is
+ * 36 lm/sqft, and a 1600 lm large — which sits on the line two cells share, so
+ * it answers for 50 sqft — is 32. It is NOT the 50 lm/sqft the commercial
+ * standard asks for; reaching that honestly needs an 18 sqft cell, whose 4.2 ft
+ * side is close enough to `minLightSpacing` (3.9 ft) that ordinary rooms would
+ * start refusing to divide. 25 is the cell a kitchen already proves out, and
+ * `LUMEN_CRITERIA.office` in settings.js has been brought down to the 36 this
+ * actually provides rather than left at a figure the engine has no lever to
+ * reach. That is a decision about what this app claims, and it is written down
+ * in both places so the two cannot drift.
+ *
+ * THE DENSER OF THE TWO WINS, IT DOES NOT COMPOUND — see `targetAreaFor`.
+ */
+export const TARGET_AREA_BY_PROJECT = { office: 25 };
+
+/**
+ * The override for a space, or null for "lit like anywhere else".
+ *
+ * THE DENSER READING WINS, AND THE TWO ARE NOT MULTIPLIED. A toilet in an
+ * office is the case that decides this. Its 18 sqft cell is ALREADY denser than
+ * the office's 25 — it is small because a toilet is small and because it is lit
+ * by the 5 W narrow lamp — so halving it again for being in an office would
+ * give a 9 sqft cell, a 3 ft side, under the 3.9 ft `minLightSpacing`. Every
+ * toilet on every office plan would refuse to lay out. Taking the minimum is
+ * also the only reading that is coherent: both numbers are answers to "how much
+ * floor should one fitting cover here", and the smaller answer is the one that
+ * already accounts for whatever made it small.
+ */
+export const targetAreaFor = (projectId, typeId) => {
+  const byType = TARGET_AREA_BY_TYPE[typeId];
+  const byProject = TARGET_AREA_BY_PROJECT[projectId];
+  if (byType == null) return byProject ?? null;
+  if (byProject == null) return byType;
+  return Math.min(byType, byProject);
+};
 
 /**
  * WHICH CATALOGUE LINE A ROOM'S GRID LIGHTS ARE BOUGHT AS.

@@ -1386,7 +1386,38 @@ export default function OutlineTracer({
                 )
               )}
               {stats.length > 0 && (
-                <div className="mt-2.5 mb-2 flex flex-col gap-0.5">
+                /* --- CAPPED AND SCROLLED PAST FIVE, like the design panel's
+                    own list of the same spaces (see the long note by `Spaces ·
+                    N` in App.jsx). This list had no cap, and on a floor plan
+                    with twenty rooms it was the entire panel: the trace
+                    controls, the layer list and the checkboxes below it were all
+                    pushed off the bottom, and the foot's own buttons are the
+                    only reason the screen was still usable.
+
+                    FIVE FOR THE SAME REASON IT IS FIVE THERE. Under five you
+                    take the list in at a glance and a scroll box is a frame
+                    round nothing; past it you are hunting a name, and hunting
+                    inside a scroller beats hunting down a page that has moved
+                    everything else out of reach.
+
+                    AND THE CAP DOES NOT LIFT ON SELECTION, which is where it
+                    differs from the design panel's. Opening a space THERE
+                    reveals a workspace — a wall pass, a render pass, controls —
+                    and nesting that in a 340px box would mean two scrollbars.
+                    Selecting a space HERE only ever adds a line of note text to
+                    a row that is otherwise the same size, so there is nothing to
+                    make room for.
+
+                    260px IS ABOUT FIVE OF THESE ROWS, which are tighter than the
+                    design panel's: name and area, dimensions and corners, at 11
+                    and 10 px. A row carrying a note is taller and fewer will
+                    show, which is the right way round — a note is worth reading.
+
+                    `.lp-scroll` is the thin visible bar (styles.css). The
+                    negative margin and matching padding give it a gutter without
+                    insetting the rows from the panel's edge. */
+                <div className={'mt-2.5 mb-2 flex flex-col gap-0.5'
+                  + (stats.length > 5 ? ' lp-scroll max-h-[260px] -mr-1.5 pr-1.5' : '')}>
                 {/* THE WHOLE ROW IS THE TARGET, same as the layout screen's
                     list. It was the name-plus-area button only, with the
                     dimensions, the square toggle and the controls outside it, so

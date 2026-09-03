@@ -63,12 +63,38 @@ export const FITTING_LUMENS = {
  * 20 is a little above what the ordinary 50 sqft cell delivers (18), which is
  * the right way round: the criterion is the target and the grid is what tries
  * to meet it.
+ *
+ * AND OFFICE IS 36, NOT THE 50 THE STANDARD SAYS. THIS IS A CLIMBDOWN AND IS
+ * WORTH READING AS ONE.
+ *
+ * Offices were never getting close. Every office space except a toilet was
+ * gridded at the ordinary 50 sqft cell, which is 18 lm/sqft, against a criterion
+ * of 50 — so the Result panel reported a shortfall of nearly three to one on
+ * every plan, on every room, permanently. A criterion that is never once met is
+ * not a standard being enforced, it is a number being ignored.
+ *
+ * The cell for an office is now 25 sqft (TARGET_AREA_BY_PROJECT in
+ * roomTypes.js), which is the densest grid this engine lays without running into
+ * `minLightSpacing`, and 36 is what that delivers: 900 lm over 25 sqft. Reaching
+ * a true 50 needs an 18 sqft cell — a 4.2 ft side against a 3.9 ft minimum
+ * spacing — at which point ordinary rooms start refusing to divide at all.
+ *
+ * SO THE HONEST STATEMENT IS THIS: 36 lm/sqft is what the app provides for an
+ * office and now also what it claims, and it is below the commercial figure it
+ * was taken from. The 50 is not wrong about offices; this engine cannot reach it
+ * with a grid of 900 lm downlights, and the way to reach it is more lumens per
+ * fitting or lumens as an INPUT to the layout — not a target left standing that
+ * nothing can satisfy. `educational` is left at 50 deliberately: it has had no
+ * such review, and quietly halving a figure nobody has looked at would be the
+ * same mistake in the other direction.
  */
 export const LUMEN_CRITERIA = {
   residential: 20,
   hotel: 20,        // hospitality
   restaurant: 20,   // hospitality
-  office: 50,       // commercial
+  // 900 lm over the 25 sqft office cell. DERIVED — see the long note above and
+  // TARGET_AREA_BY_PROJECT in roomTypes.js. Change one, change the other.
+  office: 36,       // commercial
   educational: 50,  // institutional
 };
 

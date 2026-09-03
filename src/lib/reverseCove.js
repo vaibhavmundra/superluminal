@@ -296,6 +296,127 @@ export function reverseCovesFor(element, grid,
 }
 
 /**
+ * A REVERSE COVE SET OUT BY HAND, from two points on one wall.
+ *
+ * The detector's cove starts from a WALL FINDING — panelling, wallpaper — and
+ * the rule then decides how much of the wall it takes. This one starts from a
+ * person pointing at two places, and there is no rule to apply: they have said
+ * where it begins and where it ends. So `fullWallAt` and `minRunFt` do not
+ * appear here and neither does a door: an opening cannot be coved over by the
+ * DETECTOR because the detector is inferring intent from a wall finding and
+ * would be guessing, while somebody dragging a slot across a door head is
+ * telling you they want it there — the ceiling does run over a door.
+ *
+ * IT RETURNS THE SAME SHAPE `reverseCovesFor` DOES, field for field, and that
+ * is the whole reason it lives in this file rather than in the component that
+ * calls it. Downstream there is a memo that turns these into no-light zones, a
+ * pass that turns them into accent runs for the schedule and the DXF, a canvas
+ * that draws the band and its lip from `wall`, and a trim that edits the ends.
+ * None of them may need to know which of the two routes made the cove, and the
+ * only way to keep that true is for the two builders to sit where a change to
+ * one is read next to the other.
+ *
+ * AXIS-ALIGNED WALLS ONLY, and the caller must have checked. Every rect in this
+ * feature is `{x0,y0,x1,y1}` — the band, and the no-light zone derived from it —
+ * so a slot on a diagonal wall has nowhere to be stored, not merely nowhere to
+ * be drawn. The detector never meets the case because it works off an
+ * axis-aligned wall grid; a hand tool pointing at a real polygon can, so it is
+ * refused there rather than mis-stored here.
+ *
+ * `inward` IS THE NORMAL POINTING INTO THE ROOM, and it is the caller's to
+ * supply because only the caller has the polygon. It decides two things that
+ * have to agree: which side of the wall line the eight inches of band occupy,
+ * and which of `top`/`bottom`/`left`/`right` this wall is called — and the
+ * canvas draws the inner lip from that name, so a wrong answer is a lip on the
+ * wall side and a band hanging outside the room.
+ */
+export function manualReverseCove({
+  a, b, t0, t1, roomId, id, pxPerFt, inward, type = 'manual', opt = REVERSE_COVE,
+} = {}) {
+  if (!a || !b || !(pxPerFt > 0) || !inward) return null;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const L = Math.hypot(dx, dy);
+  if (!(L > 1e-9)) return null;
+  const horizontal = Math.abs(dy) <= Math.abs(dx) * 1e-6;
+  const vertical = Math.abs(dx) <= Math.abs(dy) * 1e-6;
+  if (!horizontal && !vertical) return null;
+
+  const depth = (opt.widthIn / 12) * pxPerFt;
+  // Clamped to the wall and ordered, so a drag that ran backwards or off the end
+  // is the same cove as one that did not.
+  const lo = Math.max(0, Math.min(L, Math.min(t0, t1)));
+  const hi = Math.max(0, Math.min(L, Math.max(t0, t1)));
+  const runPx = hi - lo;
+  if (!(runPx > 0)) return null;
+
+  const u = { x: dx / L, y: dy / L };
+  const p0 = { x: a.x + u.x * lo, y: a.y + u.y * lo };
+  const p1 = { x: a.x + u.x * hi, y: a.y + u.y * hi };
+
+  // The wall's own extent in the axis the band is measured along: x for a wall
+  // that runs across the sheet, y for one that runs down it. This is the space
+  // every rect, base and bound in this feature lives in — see `seg` below.
+  const axisLo = horizontal ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
+  const axisHi = horizontal ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
+
+  const side = horizontal ? (inward.y > 0 ? 'top' : 'bottom')
+                          : (inward.x > 0 ? 'left' : 'right');
+  const rect = horizontal
+    ? { x0: Math.min(p0.x, p1.x), x1: Math.max(p0.x, p1.x),
+        ...(side === 'top' ? { y0: a.y, y1: a.y + depth }
+                           : { y0: a.y - depth, y1: a.y }) }
+    : { y0: Math.min(p0.y, p1.y), y1: Math.max(p0.y, p1.y),
+        ...(side === 'left' ? { x0: a.x, x1: a.x + depth }
+                            : { x0: a.x - depth, x1: a.x }) };
+
+  // The tape down the middle of the slot — one straight run, two ends, no
+  // corners. Same construction as the detector's, for the same reason.
+  const midAcross = horizontal ? (rect.y0 + rect.y1) / 2 : (rect.x0 + rect.x1) / 2;
+  const run = horizontal
+    ? [{ x: rect.x0, y: midAcross }, { x: rect.x1, y: midAcross }]
+    : [{ x: midAcross, y: rect.y0 }, { x: midAcross, y: rect.y1 }];
+
+  return {
+    id, roomId, rect, run, along: null,
+    wall: side, horizontal,
+    type,
+    runLength: runPx,
+    lengthFt: runPx / pxPerFt,
+    widthFt: opt.widthIn / 12,
+    spanFt: runPx / pxPerFt,
+    // THE WALL IT WAS SET OUT ON is the whole wall, and `fraction` is therefore
+    // honest rather than flattering: a hand-placed slot down half a wall says
+    // 0.5 and is not promoted to a full-wall run, because `fullWallAt` is a rule
+    // about reading a DETECTION and there is nothing to infer here.
+    wallFt: L / pxPerFt,
+    fraction: runPx / L,
+    full: false,
+    segment: 1, ofSegments: 1, split: false,
+    /* HOW FAR THE ENDS MAY BE DRAGGED — AND THESE ARE PLAN-PIXEL POSITIONS
+       ALONG THE WALL'S AXIS, NOT DISTANCES FROM THE WALL'S START.
+       I had them as `{ lo: 0, hi: L }`, which reads as the obvious thing and is
+       the wrong space entirely. `trimWallRun` compares them directly against
+       `rect.x0`/`rect.x1` (or y, on a vertical wall) — the same numbers the band
+       is drawn at — and the grip's drag writes its offset from the pointer's own
+       plan x. So on a wall out at x = 500..800 a cove whose band sat at 560..740
+       was being clamped into 0..300: the first nudge of a grip threw the slot
+       several rooms to the left and collapsed it to the minimum length, which on
+       screen is a cove that vanishes.
+       `seg` and `bounds` ARE THE SAME HERE and different for a detected cove.
+       There, `seg` is the piece of wall between doors that the 70% rule was
+       measured against and `bounds` is the whole wall, because the ceiling runs
+       over a door head. A hand-placed slot was never measured against anything
+       and its whole wall is fair game, so both are the wall. */
+    seg: { lo: axisLo, hi: axisHi },
+    bounds: { lo: axisLo, hi: axisHi },
+    // The wall, kept, because a manual cove's ends are edited in ITS frame and
+    // there is no wall grid to look the geometry up in later.
+    wallLine: { a: { ...a }, b: { ...b } },
+    source: 'placed',
+  };
+}
+
+/**
  * Two coves on one wall are one cove.
  *
  * A wall can come back both `panelling` and `wallpaper` — the model saw fluted

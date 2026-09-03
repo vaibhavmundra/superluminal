@@ -26,9 +26,24 @@ import { CEILING_BY_ID } from '../lib/ceilingObjects.js';
 // row under the palette, where a property belongs.
 // ---------------------------------------------------------------------------
 
+// THE CHANDELIER LEFT THIS ROW, and it is worth saying where it went and why,
+// because it is still a ceiling OBJECT in every other respect — it has a
+// diameter, it reserves clearance, the grid keeps off it, it is `armed` and
+// dropped by the same one-shot as a fan.
+//
+// What it is NOT is somebody else's item. Everything else in this palette is a
+// thing the ceiling has to accommodate: a fan, a cassette, a hatch — placed by
+// another trade, and this app's interest in them is entirely negative, which is
+// to keep light off them. A chandelier is a LIGHT. It is chosen, specified and
+// paid for as part of the same scheme as the strips and the sconces, and it was
+// sitting in the row for obstacles because the geometry of dropping it happened
+// to match. It is in LightPalette now, where somebody looking for a decorative
+// fitting would go to find one.
+//
+// TWO BUTTONS, SO TWO COLUMNS. A three-column grid with two items leaves a slot
+// of dead air that reads as a missing tool.
 const GROUPS = [
   { key: 'fan',        ids: ['fan'],                icon: '/icons/fan.png' },
-  { key: 'chandelier', ids: ['chandelier'],         icon: '/icons/chandelier.png' },
   // The crossed square is the hatch, which is the half of this pair that has a
   // mark everyone already knows. A cassette is the other half and does not get
   // its grille here — see the note above about one button and two types.
@@ -38,7 +53,7 @@ const GROUPS = [
 
 export default function CeilingPalette({ armed, onArm, disabled = false }) {
   return (
-    <div className="grid grid-cols-3 gap-[5px] mt-2">
+    <div className="grid grid-cols-2 gap-[5px] mt-2">
       {GROUPS.map((g) => {
         // Armed if ANY of the group's types is, so choosing "trap door" in the
         // row below keeps this button lit rather than appearing to disarm it.

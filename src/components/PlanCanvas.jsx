@@ -117,7 +117,19 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     width, height, plans = [], focusId = null, selectedId = null,
     fansPx = [], pxPerFt, layers, zoom, measure, onCanvasClick, toPx,
     zones = [], draftZone = null, zoneMode = false, onZoneDown, onZoneMove, onZoneUp,
-    accents = [], objMode = false, selObjId = null, onObjPointerDown,
+    accents = [], objMode = false, onObjPointerDown,
+    /* EVERY SELECTED CEILING OBJECT, because Shift-click builds a set of them.
+       This was `selObjId`, one id. The frame is drawn on all of them; the resize
+       and rotate HANDLES only appear when there is exactly one — see the note by
+       them — so a canvas handed several selected objects shows several framed
+       objects and no grips, which is the honest picture of what can be done to a
+       group here. */
+    selObjIds = [],
+    /* IS A FITTING TOOL ARMED? Only the ceiling objects' move target reads it,
+       and only to get out of the way — see the long note there. Default false,
+       so a canvas that does not pass it is one whose objects are always
+       grabbable, which is the right default for a canvas with no tools. */
+    placing = false,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [],
     // WHICH SPOT IS PICKED, AND HOW ONE GETS PICKED. Optional like every other
@@ -264,13 +276,28 @@ const PlanCanvas = forwardRef(function PlanCanvas(
   /**
    * IS A CLICK ON A FITTING A CHOICE ABOUT THE CEILING RIGHT NOW?
    *
-   * Not while something else owns the click. Boxing a no-light zone, dragging a
-   * ceiling object or placing an armed fitting all mean the pointer is spoken
-   * for, and a click that both places a fan and reopens a chunk's options is a
-   * click nobody asked for. The caller withholds the handler in those modes —
-   * see the PlanCanvas call site — and this is only the local reading of that.
+   * Not while something else owns the click. Boxing a no-light zone or placing
+   * an armed fitting means the pointer is spoken for, and a click that both
+   * drops a sconce and reopens a chunk's options is a click nobody asked for.
+   * The caller withholds the handler while a tool is armed — see the PlanCanvas
+   * call site — and this is only the local reading of that.
+   *
+   * `!objMode` WAS IN HERE AND IT WAS A BUG. `objMode` is not a gesture in
+   * flight, it is a sticky context: once anything turned it on it stayed on, so
+   * after touching a single fan EVERY downlight on the plan quietly stopped
+   * offering its options pill — the click landed, `pickable` was false, and no
+   * handler was attached to fire. Nothing about a fan being selected makes a
+   * question about a chunk's ceiling invalid.
+   *
+   * AND THE TWO CANNOT COMPETE FOR THE CLICK ANYWAY, which is why removing it
+   * costs nothing. A light's pill and an object's grab are two different `.hit`
+   * shapes, and where they overlap the answer is paint order, not a mode: the
+   * objects layer is drawn after the grid, so a click inside a fan's footprint
+   * goes to the fan and a click outside it goes to the lamp. A dragged object
+   * is separately safe — `objPointerDown` calls `stopPropagation`, so the drag
+   * never reaches a light underneath it.
    */
-  const pickable = !!onPickChunk && !zoneMode && !objMode;
+  const pickable = !!onPickChunk && !zoneMode;
 
   // each chunk draws its own outline plus its own interior grid lines —
   // no line ever crosses a no-light zone, because the zones aren't in any chunk
@@ -982,294 +1009,6 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         </g>
       ))}
 
-      {/* --- what is already on the ceiling ---------------------------------
-          A fan, a chandelier and an AC cassette are three drawings of one
-          thing: a centre, a radius and the clearance the planner keeps round
-          it. The dashed circle is that clearance and it is drawn for all three
-          identically, because it IS identical — the difference between them is
-          entirely in the solid symbol inside it.
-
-          On a rectangular object the dashed circle is visibly bigger than the
-          body. That is not a drawing error, it is the circumscribed radius the
-          planner actually reserves, and showing it is the only way anyone would
-          know. See ceilingObjects.js. */}
-      {layers.fan && fansPx.map((f, i) => {
-        const sel = f.id != null && f.id === selObjId;
-        // HANDLES ARE A CONSTANT SIZE ON SCREEN — divided by the zoom — and that
-        // is most of why this reads as an editor rather than a drawing. The plan
-        // scales with the zoom; a grab target must not, or it is unusably small
-        // at 40% and a dinner plate at 300%.
-        const HS = (Math.max(width, height) / 145) / (zoom || 1);
-        const FW = (Math.max(width, height) / 1500) / (zoom || 1);
-        // `.hit` is what makes an element a CONTROL rather than drawing — see
-        // the hit-test rule in styles.css. Without it the element is inert and
-        // the click falls through to the canvas.
-        const grab = (mode) => (f.source === 'placed' && onObjPointerDown
-          ? { className: 'hit',
-              onPointerDown: (e) => onObjPointerDown(e, f.id, mode),
-              style: { cursor: mode === 'move' ? 'move' : 'grab' } }
-          : {});
-        // ALL ONE INK. A fan is a blade circle, a chandelier is a rosette, an
-        // AC unit is a louvred rectangle and a trap door is a hatched square —
-        // four unmistakable symbols that were also being given four hues.
-        // THE ACCENT, HELD BACK. A fan, a cassette and a trap door are things
-        // in this ceiling that are not ours, and they used to be drawn in a
-        // dark grey that competed with the fittings for attention. They belong
-        // to the same family as the lights — objects on the ceiling plane — so
-        // they take the same hue, and then they are pulled back with opacity so
-        // a downlight sitting near a fan still reads as the brighter mark. The
-        // group's own opacity does it rather than a lighter colour, because a
-        // washed-out blue on a white plan and a washed-out blue over the fan's
-        // dashed clearance circle are two different colours if you fake it.
-        // WHITE FOR A FAN AND A CHANDELIER, AND WHY THEY WERE INVISIBLE.
-        //
-        // Everything above chose the accent, on the reasoning quoted in the note
-        // over this line: a fan and a cassette are objects on the ceiling plane
-        // like the fittings, so they took the fittings' hue and were then pulled
-        // back with opacity so a downlight still read as the brighter mark.
-        //
-        // THAT ARGUMENT DIED WHEN THE FITTINGS MOVED ONTO THE ACCENT RAMP. The
-        // sheet is now covered in warm cream — six-foot throw pools at a tenth
-        // opacity, lit fitting bodies, graded strips — and an amber fan at 55%
-        // over a cream pool is not a quiet mark, it is a missing one. The
-        // multiplication is the other half: unselected and in object mode it was
-        // 0.75 x 0.55 = 0.41.
-        //
-        // So the two ROUND objects go white, which is the one thing the ramp
-        // never is, and they read against the pools and against the plan's own
-        // grey line work at the same time. The rectangles keep the accent: a
-        // cassette and a hatch are drawn as filled shapes with hatching inside
-        // them, and white-on-white would erase the marks that tell those two
-        // apart.
-        //
-        // WHITE ASSUMES A DARK GROUND, WHICH IS ONLY HALF THE TIME — so the ink
-        // follows the ground rather than being fixed. That is not a preference;
-        // white on the as-scanned plan is a white mark on white paper, which is
-        // the same bug as the amber one it replaced, pointing the other way.
-        //
-        //   night mode (`layers.invert`)  the scan is a negative, so the ground
-        //                                 is black and WHITE is the mark that
-        //                                 carries furthest from the accent ramp
-        //   day mode                      the ground is the paper, so the object
-        //                                 takes the accent, which is what it
-        //                                 always was and what reads on white
-        //
-        // THE DXF EXCEPTION THAT USED TO BE HERE IS GONE. It read: a vector
-        // plan has no bitmap to invert, draws on the page's own black, and so is
-        // a dark ground whatever this flag says while reporting `invert: false`
-        // — meaning an object on a DXF took the accent rather than white, the
-        // one case this got slightly wrong. A DXF has a real night mode now (see
-        // the `vector` branch, which picks its greys from the ground) and in day
-        // mode it sits on an opaque white sheet, so the flag is true of a DXF as
-        // much as of a scan and the rule above applies unaltered.
-        //
-        // THE RECTANGLES KEEP THE ACCENT IN BOTH MODES. A cassette and a hatch
-        // are filled shapes with hatching inside them, and white-on-white would
-        // erase the marks that tell those two apart.
-        const round = f.kind === 'fan' || f.kind === 'chandelier';
-        const col = round && layers.invert ? C.object : C.lit;
-        // THE CHANDELIER'S SIX LAMPS SIT ON ITS RING, so they have to be the
-        // opposite of it or they stop being lamps and become part of the
-        // rosette. White on the accent ring in day mode — which is what they
-        // always were and why they worked — and the ramp's rim tone on the white
-        // ring at night, since white on white is nothing at all.
-        const lamp = layers.invert ? rim : '#fff';
-        const R = f.r || 0;
-        // The BODY's radius, which is NOT the clearance radius: on a rectangle
-        // the clearance circle is circumscribed and larger. The selection frame
-        // has to fit the body, because the body is what a resize changes.
-        const rect = f.kind === 'ac' || f.kind === 'trapdoor';
-        // The clearance, in plan pixels. Drawn as the offset of the body, so a
-        // circle keeps a ring and a rectangle keeps a rounded rectangle.
-        const CL = clearanceFt * (pxPerFt || 0);
-        const R0 = rect ? 0 : R;
-        return (
-          <g key={f.id ?? 'fan' + i}
-            /* 0.82 RESTING, NOT 0.55. The old figure was set when these were
-               the only warm marks on a white sheet and it made them polite;
-               against the accent pools it made them vanish. They are still
-               pulled back — a placed object is somebody else's item and should
-               not out-shout a fitting — just not to the point of disappearing.
-               The objMode factor stays: while you are dragging one, the ones you
-               are NOT dragging step back, which is what makes the gesture
-               readable. */
-            opacity={(objMode && !sel && f.source === 'placed' ? 0.8 : 1) * (sel ? 1 : 0.82)}>
-            {/* WHAT IS ACTUALLY RESERVED, and it is not always a circle.
-                Clearance is measured to the object's own FACE, so the set of
-                points exactly `fanClearance` away from a rectangle is that
-                rectangle grown by the clearance with its corners rounded to
-                that same radius. Drawing the true offset rather than a circle
-                round everything is the only way the reserved area on screen is
-                the reserved area in the layout — and drawing a big circle round
-                a small cassette was how it came to be reserving one. */}
-            {rect ? (
-              <rect transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}
-                x={f.x - f.w / 2 - CL} y={f.y - f.h / 2 - CL}
-                width={f.w + CL * 2} height={f.h + CL * 2} rx={CL} ry={CL}
-                fill="none" stroke={col} strokeWidth={lw * 1.4}
-                strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
-            ) : (
-              <circle cx={f.x} cy={f.y} r={R + CL} fill="none" stroke={col}
-                strokeWidth={lw * 1.4} strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
-            )}
-
-            {f.kind === 'chandelier' ? (
-              /* THE LAMPS TAKE `lamp`, NOT THE GROUP'S STROKE. They were
-                 `fill="#fff"` with the group's own stroke round them, which read
-                 as six lamps while that stroke was amber and became six
-                 invisible dots the moment the ring could be white too. See
-                 `lamp` above: it is whichever of the two contrasts with the ring
-                 this mode is drawing. The stroke is set explicitly for the same
-                 reason — inheriting `col` would put a white rim on a white dot
-                 in day mode's inverse case. */
-              <g stroke={col} strokeWidth={lw * 1.8} fill="none">
-                <circle cx={f.x} cy={f.y} r={R0 * 0.68} fill={col} fillOpacity="0.1" />
-                {[0, 1, 2, 3, 4, 5].map((k) => {
-                  const a = (k * Math.PI) / 3;
-                  return <circle key={k} cx={f.x + Math.cos(a) * R0 * 0.68}
-                    cy={f.y + Math.sin(a) * R0 * 0.68} r={lw * 2.4}
-                    fill={lamp} stroke={lamp} />;
-                })}
-                <circle cx={f.x} cy={f.y} r={lw * 2.2} fill={lamp} stroke="none" />
-              </g>
-            ) : (f.kind === 'ac' || f.kind === 'trapdoor') ? (
-              <g transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}>
-                <rect x={f.x - f.w / 2} y={f.y - f.h / 2} width={f.w} height={f.h}
-                  fill={col} fillOpacity="0.12" stroke={col} strokeWidth={lw * 2} />
-                <rect x={f.x - f.w / 2 + lw * 3} y={f.y - f.h / 2 + lw * 3}
-                  width={Math.max(0, f.w - lw * 6)} height={Math.max(0, f.h - lw * 6)}
-                  fill="none" stroke={col} strokeWidth={lw} opacity="0.6" />
-                {/* A trap door is crossed; a cassette gets a grille tick to say
-                    which way is up, so a rotation is legible at all. Two marks
-                    rather than one symbol at two sizes: on a printed sheet
-                    "small square" and "slightly smaller square" is not a
-                    distinction anyone can make. */}
-                {f.kind === 'trapdoor' ? (
-                  <g stroke={col} strokeWidth={lw * 1.2} opacity="0.7">
-                    <line x1={f.x - f.w / 2} y1={f.y - f.h / 2} x2={f.x + f.w / 2} y2={f.y + f.h / 2} />
-                    <line x1={f.x + f.w / 2} y1={f.y - f.h / 2} x2={f.x - f.w / 2} y2={f.y + f.h / 2} />
-                  </g>
-                ) : (
-                  <line x1={f.x} y1={f.y - f.h / 2} x2={f.x} y2={f.y - f.h / 2 + Math.min(f.w, f.h) * 0.28}
-                    stroke={col} strokeWidth={lw * 1.8} />
-                )}
-              </g>
-            ) : (
-              <g>
-                <circle cx={f.x} cy={f.y} r={lw * 3} fill={col} />
-                {[0, 1, 2].map((k) => {
-                  const a = (k * 2 * Math.PI) / 3 + Math.PI / 6;
-                  return <line key={k} x1={f.x} y1={f.y}
-                    x2={f.x + Math.cos(a) * R0 * 0.94} y2={f.y + Math.sin(a) * R0 * 0.94}
-                    stroke={col} strokeWidth={lw * 2.2} strokeLinecap="round" opacity="0.75" />;
-                })}
-              </g>
-            )}
-
-            {/* THE BODY IS THE MOVE TARGET. A filled hit area over the whole
-                footprint, not a ring round the middle: an object you can only
-                grab near its centre feels like it is dodging you. */}
-            {objMode && f.source === 'placed' && (
-              rect
-                ? <rect transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}
-                    x={f.x - f.w / 2} y={f.y - f.h / 2} width={f.w} height={f.h}
-                    fill="transparent" {...grab('move')} />
-                : <circle cx={f.x} cy={f.y} r={Math.max(R0, HS * 1.4)}
-                    fill="transparent" {...grab('move')} />
-            )}
-
-            {/* --- the selection frame ------------------------------------
-                Drawn in the object's OWN rotated frame, so it turns with the
-                thing rather than staying square to the page. The frame is
-                telling you what a resize will change; on a rotated object an
-                axis-aligned box would be lying about that. */}
-            {sel && (() => {
-              const hw = rect ? f.w / 2 : R0;
-              const hh = rect ? f.h / 2 : R0;
-              const deg = ((f.rot || 0) * 180) / Math.PI;
-              const stem = -hh - HS * 3.2;
-              return (
-                <g transform={`rotate(${deg} ${f.x} ${f.y})`}>
-                  {/* THE FRAME IS THE ACCENT RAMP, AND THE GRIPS ARE NOT.
-                      The border that appears on select now grades like
-                      everything else this app owns — `lp-sel-ramp`, the same
-                      paint the selected room's outline takes, and for the same
-                      reason it is that ramp rather than `lp-lit`: a frame is a
-                      LINE, and the fill ramp's near-white middle would drop out
-                      of the middle of each side. See the note in the defs.
-                      objectBoundingBox is safe on a frame — it is a rectangle
-                      with real extent both ways.
-
-                      THE FOUR CORNER GRIPS AND THE ROTATE STEM STAY BLUE, which
-                      is a deliberate split and the one thing to look at on
-                      screen. #0070F3 means "you can grab this" everywhere on
-                      this canvas, and a resize handle is the most literal case
-                      of it there is. The frame says WHICH object is selected;
-                      the squares say what you can do to it. If the mix reads as
-                      a mistake rather than as two statements, the grips are one
-                      edit away.
-
-                      AND IT IS AS SLIM AS THIS SHEET DRAWS. `FW` is the
-                      drawing's own line weight divided by the zoom, so it is one
-                      pixel on screen at every magnification — there is nothing
-                      thinner here to make it. Where it READS thick is on a
-                      rectangular object, because the frame sits exactly on the
-                      body's edge (`hw = f.w / 2`) and the body carries its own
-                      `lw * 2` outline underneath: two strokes on one line. That
-                      coincidence is on purpose — the frame has to show what a
-                      resize will change — so the fix, if it wants one, is to
-                      thin the BODY rather than the frame. */}
-                  <rect x={f.x - hw} y={f.y - hh} width={hw * 2} height={hh * 2}
-                    fill="none" stroke="url(#lp-sel-ramp)" strokeWidth={FW} />
-
-                  {/* Rotate: a stem above the frame. Figma's invisible
-                      just-outside-the-corner region is undiscoverable without a
-                      hover cursor to teach it, so this one is drawn. */}
-                  {rect && (
-                    <g {...grab('rotate')}>
-                      <line x1={f.x} y1={f.y - hh} x2={f.x} y2={f.y + stem}
-                        stroke={C.grip} strokeWidth={FW} />
-                      <circle cx={f.x} cy={f.y + stem} r={HS * 0.55} fill="#fff"
-                        stroke={C.grip} strokeWidth={FW * 1.6} />
-                    </g>
-                  )}
-
-                  {[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy], k) => (
-                    <rect key={k}
-                      x={f.x + sx * hw - HS / 2} y={f.y + sy * hh - HS / 2}
-                      width={HS} height={HS} rx={HS * 0.18} className="hit"
-                      fill="#fff" stroke={C.grip} strokeWidth={FW * 1.6}
-                      style={{ cursor: sx * sy > 0 ? 'nwse-resize' : 'nesw-resize' }}
-                      onPointerDown={(e) => onObjPointerDown?.(e, f.id, 'resize', { sx, sy })} />
-                  ))}
-                </g>
-              );
-            })()}
-
-            {/* The readout, only while the gesture is running: the number you
-                are actually setting, next to where you are looking. */}
-            {sel && objDragMode && (
-              <text x={f.x} y={f.y - (rect ? f.h / 2 : R0) - HS * 5}
-                textAnchor="middle" fontSize={HS * 1.1}
-                fontFamily="The Neue Montreal, sans-serif" fill={C.grip}>
-                {objDragMode === 'rotate'
-                  ? `${Math.round(((f.rot || 0) * 180) / Math.PI)}\u00B0`
-                  : rect
-                    ? `${Math.round((f.w / (pxPerFt || 1)) * 304.8)} \u00D7 ${Math.round((f.h / (pxPerFt || 1)) * 304.8)}`
-                    : `${Math.round((R0 * 2 / (pxPerFt || 1)) * 304.8)} \u2300`}
-              </text>
-            )}
-
-            {fansPx.length > 1 && layers.labels && (
-              <text x={f.x + (rect ? f.w / 2 : R0) + CL + lw * 3} y={f.y - (rect ? f.h / 2 : R0) * 0.6} fontSize={(pxPerFt || 12) * 0.5}
-                fontFamily="The Neue Montreal, sans-serif" fill={col} opacity="0.8">
-                {(f.kind || 'fan').slice(0, 1).toUpperCase()}{i + 1}
-              </text>
-            )}
-          </g>
-        );
-      })}
-
       {/* --- WHAT EACH FITTING COVERS ---------------------------------------
           A circle of accent at a tenth opacity under every lamp the catalogue
           gives a wattage this app has a pool for: 5 ft at 5 W, 6 ft at 7 W,
@@ -1567,6 +1306,360 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           })}
         </g>
       ))}
+
+      {/* --- WHAT IS ALREADY ON THE CEILING, AND IT IS PAINTED AFTER THE
+          LIGHTS ON PURPOSE ------------------------------------------------
+          This block used to sit ABOVE the grid, between the wall findings and
+          the throws, and that made a placed fan nearly impossible to pick up
+          again. SVG has no z-index: paint order IS hit order, so whatever is
+          drawn later takes the pointer. Every light carries a `.hit` target
+          deliberately WIDER than its own symbol — `max(rw / 2, lw * 5)`, an
+          inch of pointer being no target at all — and a grid of them blankets
+          the whole ceiling. Drawn afterwards, those invisible pads lay over
+          the fan you had just placed and swallowed the drag.
+
+          IT IS ALSO THE HONEST STACKING. A downlight is IN the ceiling and a
+          fan or a cassette hangs BELOW it, so the fan is what you would see
+          over the lamp if you stood underneath. The drawing said the opposite.
+
+          STILL BELOW THE ACCENTS AND THE TASK SPOTS, which are painted later
+          again and carry their own drag handles. That is a deliberate stop
+          rather than an oversight: an accent is a band round the perimeter and
+          a spot sits on a worktop, so neither blankets the ceiling the way the
+          grid does, and putting objects over them would shadow THEIR handles
+          to fix a problem they were not causing. If a fan under an accent band
+          turns out to be just as hard to grab, this block moves once more —
+          past the spots and below the alignment guides.
+
+          A fan, a chandelier and an AC cassette are three drawings of one
+          thing: a centre, a radius and the clearance the planner keeps round
+          it. The dashed circle is that clearance and it is drawn for all three
+          identically, because it IS identical — the difference between them is
+          entirely in the solid symbol inside it.
+
+          On a rectangular object the dashed circle is visibly bigger than the
+          body. That is not a drawing error, it is the circumscribed radius the
+          planner actually reserves, and showing it is the only way anyone would
+          know. See ceilingObjects.js. */}
+      {layers.fan && fansPx.map((f, i) => {
+        const sel = f.id != null && selObjIds.includes(f.id);
+        /* THE HANDLES ARE FOR ONE OBJECT ONLY. A resize works from a corner of
+           the object's OWN rotated frame and a rotate works about its own
+           centre; neither has a meaning for a set of four, which would want a
+           group bounding box and a scale applied through it — a different
+           feature, not a loop over this one. So a multi-selection shows the
+           frames and no grips, and stays fully movable, copyable and
+           deletable, which is what it is for. */
+        const only = sel && selObjIds.length === 1;
+        // HANDLES ARE A CONSTANT SIZE ON SCREEN — divided by the zoom — and that
+        // is most of why this reads as an editor rather than a drawing. The plan
+        // scales with the zoom; a grab target must not, or it is unusably small
+        // at 40% and a dinner plate at 300%.
+        const HS = (Math.max(width, height) / 145) / (zoom || 1);
+        const FW = (Math.max(width, height) / 1500) / (zoom || 1);
+        // `.hit` is what makes an element a CONTROL rather than drawing — see
+        // the hit-test rule in styles.css. Without it the element is inert and
+        // the click falls through to the canvas.
+        const grab = (mode) => (f.source === 'placed' && onObjPointerDown
+          ? { className: 'hit',
+              onPointerDown: (e) => onObjPointerDown(e, f.id, mode),
+              style: { cursor: mode === 'move' ? 'move' : 'grab' } }
+          : {});
+        // ALL ONE INK. A fan is a blade circle, a chandelier is a rosette, an
+        // AC unit is a louvred rectangle and a trap door is a hatched square —
+        // four unmistakable symbols that were also being given four hues.
+        // THE ACCENT, HELD BACK. A fan, a cassette and a trap door are things
+        // in this ceiling that are not ours, and they used to be drawn in a
+        // dark grey that competed with the fittings for attention. They belong
+        // to the same family as the lights — objects on the ceiling plane — so
+        // they take the same hue, and then they are pulled back with opacity so
+        // a downlight sitting near a fan still reads as the brighter mark. The
+        // group's own opacity does it rather than a lighter colour, because a
+        // washed-out blue on a white plan and a washed-out blue over the fan's
+        // dashed clearance circle are two different colours if you fake it.
+        // WHITE FOR A FAN AND A CHANDELIER, AND WHY THEY WERE INVISIBLE.
+        //
+        // Everything above chose the accent, on the reasoning quoted in the note
+        // over this line: a fan and a cassette are objects on the ceiling plane
+        // like the fittings, so they took the fittings' hue and were then pulled
+        // back with opacity so a downlight still read as the brighter mark.
+        //
+        // THAT ARGUMENT DIED WHEN THE FITTINGS MOVED ONTO THE ACCENT RAMP. The
+        // sheet is now covered in warm cream — six-foot throw pools at a tenth
+        // opacity, lit fitting bodies, graded strips — and an amber fan at 55%
+        // over a cream pool is not a quiet mark, it is a missing one. The
+        // multiplication is the other half: unselected and in object mode it was
+        // 0.75 x 0.55 = 0.41.
+        //
+        // So the two ROUND objects go white, which is the one thing the ramp
+        // never is, and they read against the pools and against the plan's own
+        // grey line work at the same time. The rectangles keep the accent: a
+        // cassette and a hatch are drawn as filled shapes with hatching inside
+        // them, and white-on-white would erase the marks that tell those two
+        // apart.
+        //
+        // WHITE ASSUMES A DARK GROUND, WHICH IS ONLY HALF THE TIME — so the ink
+        // follows the ground rather than being fixed. That is not a preference;
+        // white on the as-scanned plan is a white mark on white paper, which is
+        // the same bug as the amber one it replaced, pointing the other way.
+        //
+        //   night mode (`layers.invert`)  the scan is a negative, so the ground
+        //                                 is black and WHITE is the mark that
+        //                                 carries furthest from the accent ramp
+        //   day mode                      the ground is the paper, so the object
+        //                                 takes the accent, which is what it
+        //                                 always was and what reads on white
+        //
+        // THE DXF EXCEPTION THAT USED TO BE HERE IS GONE. It read: a vector
+        // plan has no bitmap to invert, draws on the page's own black, and so is
+        // a dark ground whatever this flag says while reporting `invert: false`
+        // — meaning an object on a DXF took the accent rather than white, the
+        // one case this got slightly wrong. A DXF has a real night mode now (see
+        // the `vector` branch, which picks its greys from the ground) and in day
+        // mode it sits on an opaque white sheet, so the flag is true of a DXF as
+        // much as of a scan and the rule above applies unaltered.
+        //
+        // THE RECTANGLES KEEP THE ACCENT IN BOTH MODES. A cassette and a hatch
+        // are filled shapes with hatching inside them, and white-on-white would
+        // erase the marks that tell those two apart.
+        const round = f.kind === 'fan' || f.kind === 'chandelier';
+        const col = round && layers.invert ? C.object : C.lit;
+        // THE CHANDELIER'S SIX LAMPS SIT ON ITS RING, so they have to be the
+        // opposite of it or they stop being lamps and become part of the
+        // rosette. White on the accent ring in day mode — which is what they
+        // always were and why they worked — and the ramp's rim tone on the white
+        // ring at night, since white on white is nothing at all.
+        const lamp = layers.invert ? rim : '#fff';
+        const R = f.r || 0;
+        // The BODY's radius, which is NOT the clearance radius: on a rectangle
+        // the clearance circle is circumscribed and larger. The selection frame
+        // has to fit the body, because the body is what a resize changes.
+        const rect = f.kind === 'ac' || f.kind === 'trapdoor';
+        // The clearance, in plan pixels. Drawn as the offset of the body, so a
+        // circle keeps a ring and a rectangle keeps a rounded rectangle.
+        const CL = clearanceFt * (pxPerFt || 0);
+        const R0 = rect ? 0 : R;
+        return (
+          <g key={f.id ?? 'fan' + i}
+            /* 0.82 RESTING, NOT 0.55. The old figure was set when these were
+               the only warm marks on a white sheet and it made them polite;
+               against the accent pools it made them vanish. They are still
+               pulled back — a placed object is somebody else's item and should
+               not out-shout a fitting — just not to the point of disappearing.
+               The objMode factor stays: while you are dragging one, the ones you
+               are NOT dragging step back, which is what makes the gesture
+               readable. */
+            opacity={(objMode && !sel && f.source === 'placed' ? 0.8 : 1) * (sel ? 1 : 0.82)}>
+            {/* WHAT IS ACTUALLY RESERVED, and it is not always a circle.
+                Clearance is measured to the object's own FACE, so the set of
+                points exactly `fanClearance` away from a rectangle is that
+                rectangle grown by the clearance with its corners rounded to
+                that same radius. Drawing the true offset rather than a circle
+                round everything is the only way the reserved area on screen is
+                the reserved area in the layout — and drawing a big circle round
+                a small cassette was how it came to be reserving one. */}
+            {rect ? (
+              <rect transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}
+                x={f.x - f.w / 2 - CL} y={f.y - f.h / 2 - CL}
+                width={f.w + CL * 2} height={f.h + CL * 2} rx={CL} ry={CL}
+                fill="none" stroke={col} strokeWidth={lw * 1.4}
+                strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
+            ) : (
+              <circle cx={f.x} cy={f.y} r={R + CL} fill="none" stroke={col}
+                strokeWidth={lw * 1.4} strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
+            )}
+
+            {f.kind === 'chandelier' ? (
+              /* THE LAMPS TAKE `lamp`, NOT THE GROUP'S STROKE. They were
+                 `fill="#fff"` with the group's own stroke round them, which read
+                 as six lamps while that stroke was amber and became six
+                 invisible dots the moment the ring could be white too. See
+                 `lamp` above: it is whichever of the two contrasts with the ring
+                 this mode is drawing. The stroke is set explicitly for the same
+                 reason — inheriting `col` would put a white rim on a white dot
+                 in day mode's inverse case. */
+              <g stroke={col} strokeWidth={lw * 1.8} fill="none">
+                <circle cx={f.x} cy={f.y} r={R0 * 0.68} fill={col} fillOpacity="0.1" />
+                {[0, 1, 2, 3, 4, 5].map((k) => {
+                  const a = (k * Math.PI) / 3;
+                  return <circle key={k} cx={f.x + Math.cos(a) * R0 * 0.68}
+                    cy={f.y + Math.sin(a) * R0 * 0.68} r={lw * 2.4}
+                    fill={lamp} stroke={lamp} />;
+                })}
+                <circle cx={f.x} cy={f.y} r={lw * 2.2} fill={lamp} stroke="none" />
+              </g>
+            ) : (f.kind === 'ac' || f.kind === 'trapdoor') ? (
+              <g transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}>
+                <rect x={f.x - f.w / 2} y={f.y - f.h / 2} width={f.w} height={f.h}
+                  fill={col} fillOpacity="0.12" stroke={col} strokeWidth={lw * 2} />
+                <rect x={f.x - f.w / 2 + lw * 3} y={f.y - f.h / 2 + lw * 3}
+                  width={Math.max(0, f.w - lw * 6)} height={Math.max(0, f.h - lw * 6)}
+                  fill="none" stroke={col} strokeWidth={lw} opacity="0.6" />
+                {/* A trap door is crossed; a cassette gets a grille tick to say
+                    which way is up, so a rotation is legible at all. Two marks
+                    rather than one symbol at two sizes: on a printed sheet
+                    "small square" and "slightly smaller square" is not a
+                    distinction anyone can make. */}
+                {f.kind === 'trapdoor' ? (
+                  <g stroke={col} strokeWidth={lw * 1.2} opacity="0.7">
+                    <line x1={f.x - f.w / 2} y1={f.y - f.h / 2} x2={f.x + f.w / 2} y2={f.y + f.h / 2} />
+                    <line x1={f.x + f.w / 2} y1={f.y - f.h / 2} x2={f.x - f.w / 2} y2={f.y + f.h / 2} />
+                  </g>
+                ) : (
+                  <line x1={f.x} y1={f.y - f.h / 2} x2={f.x} y2={f.y - f.h / 2 + Math.min(f.w, f.h) * 0.28}
+                    stroke={col} strokeWidth={lw * 1.8} />
+                )}
+              </g>
+            ) : (
+              <g>
+                <circle cx={f.x} cy={f.y} r={lw * 3} fill={col} />
+                {[0, 1, 2].map((k) => {
+                  const a = (k * 2 * Math.PI) / 3 + Math.PI / 6;
+                  return <line key={k} x1={f.x} y1={f.y}
+                    x2={f.x + Math.cos(a) * R0 * 0.94} y2={f.y + Math.sin(a) * R0 * 0.94}
+                    stroke={col} strokeWidth={lw * 2.2} strokeLinecap="round" opacity="0.75" />;
+                })}
+              </g>
+            )}
+
+            {/* THE BODY IS THE MOVE TARGET. A filled hit area over the whole
+                footprint, not a ring round the middle: an object you can only
+                grab near its centre feels like it is dodging you.
+
+                AND IT IS NOT GATED ON `objMode` ANY MORE. THIS WAS THE BUG.
+                The target only existed once object mode was already on, and
+                object mode is turned on by a button in the right-hand panel —
+                so the only way to pick up a fan you had just placed was to go
+                and arm the tool for it first. That is backwards twice over: the
+                object is RIGHT THERE under the pointer, and `objPointerDown`
+                turns object mode on by itself the moment anything is grabbed
+                (see App.jsx), so the flag was a precondition for the very
+                gesture that sets it. A placed object is now always grabbable,
+                which is what "selectable" has to mean.
+
+                `placing` IS THE ONE THING THAT STILL SUPPRESSES IT, and it is
+                not the same kind of flag. While a fitting tool is armed the
+                next click is a PLACEMENT — drop a sconce, start a strip, drag a
+                spot — and those are gestures aimed at the ceiling that happen to
+                land inside a fan's footprint. Letting the fan eat them would
+                trade one stolen click for another. Nothing else suppresses it:
+                `zoneMode` is handled by the zone layer's own surface, which is
+                painted over this one. */}
+            {f.source === 'placed' && !placing && (
+              rect
+                ? <rect transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}
+                    x={f.x - f.w / 2} y={f.y - f.h / 2} width={f.w} height={f.h}
+                    fill="transparent" {...grab('move')} />
+                : <circle cx={f.x} cy={f.y} r={Math.max(R0, HS * 1.4)}
+                    fill="transparent" {...grab('move')} />
+            )}
+
+            {/* --- the selection frame ------------------------------------
+                Drawn in the object's OWN rotated frame, so it turns with the
+                thing rather than staying square to the page. The frame is
+                telling you what a resize will change; on a rotated object an
+                axis-aligned box would be lying about that. */}
+            {sel && (() => {
+              const hw = rect ? f.w / 2 : R0;
+              const hh = rect ? f.h / 2 : R0;
+              const deg = ((f.rot || 0) * 180) / Math.PI;
+              const stem = -hh - HS * 3.2;
+              return (
+                <g transform={`rotate(${deg} ${f.x} ${f.y})`}>
+                  {/* THE FRAME IS THE ACCENT RAMP, AND THE GRIPS ARE NOT.
+                      The border that appears on select now grades like
+                      everything else this app owns — `lp-sel-ramp`, the same
+                      paint the selected room's outline takes, and for the same
+                      reason it is that ramp rather than `lp-lit`: a frame is a
+                      LINE, and the fill ramp's near-white middle would drop out
+                      of the middle of each side. See the note in the defs.
+                      objectBoundingBox is safe on a frame — it is a rectangle
+                      with real extent both ways.
+
+                      THE FOUR CORNER GRIPS AND THE ROTATE STEM STAY BLUE, which
+                      is a deliberate split and the one thing to look at on
+                      screen. #0070F3 means "you can grab this" everywhere on
+                      this canvas, and a resize handle is the most literal case
+                      of it there is. The frame says WHICH object is selected;
+                      the squares say what you can do to it. If the mix reads as
+                      a mistake rather than as two statements, the grips are one
+                      edit away.
+
+                      AND IT IS AS SLIM AS THIS SHEET DRAWS. `FW` is the
+                      drawing's own line weight divided by the zoom, so it is one
+                      pixel on screen at every magnification — there is nothing
+                      thinner here to make it. Where it READS thick is on a
+                      rectangular object, because the frame sits exactly on the
+                      body's edge (`hw = f.w / 2`) and the body carries its own
+                      `lw * 2` outline underneath: two strokes on one line. That
+                      coincidence is on purpose — the frame has to show what a
+                      resize will change — so the fix, if it wants one, is to
+                      thin the BODY rather than the frame. */}
+                  <rect x={f.x - hw} y={f.y - hh} width={hw * 2} height={hh * 2}
+                    fill="none" stroke="url(#lp-sel-ramp)" strokeWidth={FW} />
+
+                  {/* Rotate: a stem above the frame. Figma's invisible
+                      just-outside-the-corner region is undiscoverable without a
+                      hover cursor to teach it, so this one is drawn. */}
+                  {/* `.hit` ON THE SHAPES, NOT ON THIS GROUP — the same trap
+                      the grid light's own note describes, and the rotate stem
+                      had walked straight into it. `.plan .hit{pointer-events:
+                      all}` scores (0,2,0); `.plan circle{pointer-events:none}`
+                      scores (0,1,1) but it matches the CIRCLE DIRECTLY, and a
+                      direct match beats a value inherited from an ancestor
+                      however specific that ancestor's rule was. So a `.hit`
+                      group full of bare shapes is a group whose every child is
+                      inert: the stem was drawn, it showed the grab cursor, and
+                      it could not be grabbed. `grab()` supplies the class, so
+                      each shape takes the spread itself.
+
+                      THE STEM IS A LINE AND NEEDS `pointerEvents="stroke"`. An
+                      unfilled line has no interior to hit; without this only
+                      the knob at the end would answer, which is most of the
+                      target thrown away. */}
+                  {rect && only && (<>
+                    <line x1={f.x} y1={f.y - hh} x2={f.x} y2={f.y + stem}
+                      stroke={C.grip} strokeWidth={FW} strokeLinecap="round"
+                      style={{ pointerEvents: 'stroke' }} {...grab('rotate')} />
+                    <circle cx={f.x} cy={f.y + stem} r={HS * 0.55} fill="#fff"
+                      stroke={C.grip} strokeWidth={FW * 1.6} {...grab('rotate')} />
+                  </>)}
+
+                  {only && [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy], k) => (
+                    <rect key={k}
+                      x={f.x + sx * hw - HS / 2} y={f.y + sy * hh - HS / 2}
+                      width={HS} height={HS} rx={HS * 0.18} className="hit"
+                      fill="#fff" stroke={C.grip} strokeWidth={FW * 1.6}
+                      style={{ cursor: sx * sy > 0 ? 'nwse-resize' : 'nesw-resize' }}
+                      onPointerDown={(e) => onObjPointerDown?.(e, f.id, 'resize', { sx, sy })} />
+                  ))}
+                </g>
+              );
+            })()}
+
+            {/* The readout, only while the gesture is running: the number you
+                are actually setting, next to where you are looking. */}
+            {sel && objDragMode && (
+              <text x={f.x} y={f.y - (rect ? f.h / 2 : R0) - HS * 5}
+                textAnchor="middle" fontSize={HS * 1.1}
+                fontFamily="The Neue Montreal, sans-serif" fill={C.grip}>
+                {objDragMode === 'rotate'
+                  ? `${Math.round(((f.rot || 0) * 180) / Math.PI)}\u00B0`
+                  : rect
+                    ? `${Math.round((f.w / (pxPerFt || 1)) * 304.8)} \u00D7 ${Math.round((f.h / (pxPerFt || 1)) * 304.8)}`
+                    : `${Math.round((R0 * 2 / (pxPerFt || 1)) * 304.8)} \u2300`}
+              </text>
+            )}
+
+            {fansPx.length > 1 && layers.labels && (
+              <text x={f.x + (rect ? f.w / 2 : R0) + CL + lw * 3} y={f.y - (rect ? f.h / 2 : R0) * 0.6} fontSize={(pxPerFt || 12) * 0.5}
+                fontFamily="The Neue Montreal, sans-serif" fill={col} opacity="0.8">
+                {(f.kind || 'fan').slice(0, 1).toUpperCase()}{i + 1}
+              </text>
+            )}
+          </g>
+        );
+      })}
 
       {/* --- the reverse coves ----------------------------------------------
           THE SLOT ITSELF, and the tape inside it is drawn by the accents layer

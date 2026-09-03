@@ -64,10 +64,26 @@ export const sweepMm = (o) => Math.round((o.diaFt || 0) / MM);
 export const withSweep = (o, mm) => ({ ...o, diaFt: mm * MM });
 
 /** A new object of a catalogue type, at a point in FEET. */
+/**
+ * A FRESH ID FOR A CEILING OBJECT, and it is its own export because there are
+ * now two ways to bring one into existence: placing it from the palette, and
+ * Option-dragging an existing one to leave a copy behind. A duplicate cannot
+ * reuse `makeCeilingObject` — that builds a DEFAULT object of a type, and a copy
+ * has to carry the size and rotation the original was edited to — but it must
+ * mint its id exactly the same way, or the two routes drift and the day one of
+ * them collides is the day two objects share a React key and a BOQ line.
+ *
+ * TIME PLUS A RANDOM TAIL. The timestamp alone is not enough: duplicating twice
+ * inside one millisecond is a keyboard repeat away, and `Date.now()` has nothing
+ * to say about it.
+ */
+export const newCeilingObjectId = () =>
+  `co-${Date.now().toString(36)}-${Math.round(Math.random() * 1e6).toString(36)}`;
+
 export function makeCeilingObject(typeId, atFt) {
   const t = CEILING_BY_ID[typeId] || CEILING_TYPES[0];
   return {
-    id: `co-${Date.now().toString(36)}-${Math.round(Math.random() * 1e6).toString(36)}`,
+    id: newCeilingObjectId(),
     typeId: t.id,
     kind: t.kind,
     x: atFt.x, y: atFt.y,          // FEET, plan space
