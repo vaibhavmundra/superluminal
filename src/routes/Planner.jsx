@@ -8,6 +8,8 @@ import { getJob, subscribeJob, whenRowReady, retryUpload, releaseJob, provisiona
 import { useAuth } from '../lib/auth.jsx';
 import { useBilling } from '../lib/billing.jsx';
 import Paywall from '../components/Paywall.jsx';
+import ShareDialog from '../components/ShareDialog.jsx';
+import { myAccess } from '../lib/sharing.js';
 import { readDraft, saveDraft, clearDraft, pickRestore } from '../lib/draft.js';
 
 // ---------------------------------------------------------------------------
@@ -73,7 +75,7 @@ export default function Planner() {
   const { planId } = useParams();
   const nav = useNavigate();
   const loc = useLocation();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const { claimLayout, claimPass, releasePass } = useBilling();
   // The server's refusal, held so the paywall can say what was short by how
   // much. Null the rest of the time, which is nearly always.
@@ -89,9 +91,36 @@ export default function Planner() {
   const [upload, setUpload] = useState(() => (job ? job.status : null));
   const [err, setErr] = useState('');
   const [saveState, setSaveState] = useState('idle');   // idle | dirty | saving | saved | error
-  // THE PROJECT'S CATEGORY, AS A FALLBACK FOR THE PLAN'S. See the note by the
-  // effect that fetches it.
+  // THE PROJECT'S CATEGORY, AS A FALLBACK FOR THE PLAN'S, and the project row
+  // it came out of — which the share dialog needs for its name. See the note by
+  // the effect that fetches them.
   const [projectType, setProjectType] = useState(null);
+  const [project, setProject] = useState(null);
+
+  // --- WHOSE PLAN IS THIS, AND WHAT MAY I DO TO IT -------------------------
+  //
+  // 'owner' | 'edit' | 'view' | null, and undefined while we do not yet know.
+  //
+  // THE UNDEFINED STATE IS THE POINT. A plan reached from "Shared with me" is
+  // fetched by exactly the same select as your own — RLS lets both through, and
+  // the row does not say which one it was. So there is a window between the row
+  // arriving and the access being known, and the editor must not be writable
+  // during it: a viewer whose autosave armed for half a second would fire one
+  // update the policies refuse, and the screen would open with a red "save
+  // failed" on a plan they were only ever going to look at.
+  //
+  // A `null` answer on somebody else's plan is not "no access" — the select
+  // already proved otherwise — it is a share that was revoked between the two
+  // queries. It reads as view, which is the safe way to be wrong.
+  //
+  // SEEDED SYNCHRONOUSLY FOR A DROP, and that is not a micro-optimisation — it
+  // is the rule this whole file is built on. `job`, `plan` and `file` are all
+  // read with `useState(fn)` rather than in an effect precisely so a dropped
+  // drawing paints the editor on the first frame; letting the access arrive one
+  // effect later would put a spinner in front of every upload for no reason at
+  // all, since a drop is your own drawing by construction.
+  const [access, setAccess] = useState(() => (job ? 'owner' : undefined));
+  const [shareOpen, setShareOpen] = useState(false);
 
   // READ ONCE, AT MOUNT, and before anything can overwrite it. A draft is only
   // ever interesting in comparison with the row that is about to arrive.
@@ -127,16 +156,23 @@ export default function Planner() {
         if (!alive) return;
         setPlan(row);
         touchPlanOpened(planId);
-        // THE CATEGORY IS ASKED ONCE PER BUILDING, so a plan that does not carry
-        // one is not a question — it is a plan that was added before its
-        // project was classified. `project_type` is stamped onto a plan row at
-        // INSERT and never revisited, so the chooser on the project screen
-        // leaves every existing plan's copy null. Reading the project's answer
-        // here is what stops the editor asking again.
-        if (!row.project_type && row.project_id) {
+        // THE PROJECT, AND IT IS FETCHED UNCONDITIONALLY NOW.
+        //
+        // It used to be read only when the plan carried no `project_type`, for
+        // the reason still worth keeping: the category is asked once per
+        // BUILDING, so a plan without one is not a question — it is a plan that
+        // was added before its project was classified, and reading the
+        // project's answer here is what stops the editor asking again.
+        //
+        // What changed is that the share dialog needs the project's NAME to say
+        // what it is about to share, and "this project" is a poor thing to read
+        // in a dialog that grants somebody access to a building. It is one more
+        // select of four small columns against a primary key, on a screen that
+        // is already fetching a multi-megabyte drawing.
+        if (row.project_id) {
           try {
             const proj = await getProject(row.project_id);
-            if (alive) setProjectType(proj?.project_type ?? null);
+            if (alive) { setProject(proj ?? null); setProjectType(proj?.project_type ?? null); }
           } catch { /* the dialog is the fallback, and it still works */ }
         }
         if (!loc.state?.file) {
@@ -150,6 +186,44 @@ export default function Planner() {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planId, job]);
+
+  // --- and what may I do to it ---------------------------------------------
+  //
+  // TWO CHEAP ANSWERS BEFORE THE QUERY. A drop is your own drawing by
+  // construction — the row does not exist yet and you are the one uploading it —
+  // and a plan whose `owner` is you needs no lookup either. Only the third case,
+  // a row that came back through a share, costs a round trip, and it is the rare
+  // one.
+  useEffect(() => {
+    if (job) { setAccess('owner'); return undefined; }
+    const me = user?.id ?? null;
+    if (!plan || !me) return undefined;
+    if (plan.owner && plan.owner === me) { setAccess('owner'); return undefined; }
+    // The standalone case: no project to hang a share on, so there is nothing
+    // this could be but your own.
+    if (!plan.project_id) { setAccess('owner'); return undefined; }
+
+    let alive = true;
+    setAccess(undefined);
+    (async () => {
+      try {
+        const a = await myAccess(plan.project_id, plan.owner ?? null);
+        // See the note on the state: a missing row here means the share went
+        // away underneath us, and view is the safe way to be wrong.
+        if (alive) setAccess(a ?? 'view');
+      } catch (e) {
+        console.warn('[planner] could not read the share role — opening read only', e);
+        if (alive) setAccess('view');
+      }
+    })();
+    return () => { alive = false; };
+    // THE THREE FIELDS, NOT THE ROW. `plan` is replaced whenever a milestone
+    // patches it or the name is edited, and depending on the object would
+    // re-run this on every save — which for a shared editor means a query per
+    // milestone AND a flash back through `undefined`, unmounting the editor
+    // mid-write. Nothing but these three can change the answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job, plan?.id, plan?.owner, plan?.project_id, user?.id]);
 
   // --- the debounce ---------------------------------------------------------
   const pending = useRef(null);
@@ -395,7 +469,12 @@ export default function Planner() {
     );
   }
 
-  if (!plan || !file) {
+  // AND THE ACCESS IS A THIRD THING TO WAIT FOR, alongside the row and the
+  // drawing. Rendering the editor before it is known would open a shared plan
+  // writable for one frame — see the note on the state. In the overwhelmingly
+  // common case (your own plan, or a drop) it is settled without a query and
+  // this branch is never seen.
+  if (!plan || !file || access === undefined) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
         <div className="lp-spin w-[26px] h-[26px]" aria-label="Loading the drawing" />
@@ -415,9 +494,32 @@ export default function Planner() {
       aheadMs: chosen.aheadMs, savedAt: chosen.state?.savedAt });
   }
 
+  // --- WHAT THIS SESSION MAY DO -------------------------------------------
+  //
+  // ONE BOOLEAN, AND EVERY WRITE HANGS OFF IT. A 'view' share gets the editor
+  // with the writers simply not passed — the same subtraction routes/
+  // AdminPlanViewer.jsx makes, and for the same reason: App guards all of them
+  // with `if (!fn) return`, so the autosave never arms and no revision is ever
+  // appended. `readOnly` on top of that is what stops it ACTING as well as
+  // saving — the detectors, the tracer, Delete — see the prop's note in App.jsx.
+  //
+  // AN EDITOR GETS EVERYTHING AN OWNER GETS except the share button. Managing
+  // who else can see a project is an act of ownership, the RLS says so, and a
+  // button that opens a dialog whose every write will be refused is worse than
+  // no button.
+  const canEdit = access === 'owner' || access === 'edit';
+  const isOwner = access === 'owner';
+
   return (
     <>
     {refusal && <Paywall refusal={refusal} onClose={() => setRefusal(null)} />}
+    {/* OVER THE EDITOR, EXACTLY AS THE PAYWALL IS. Sending somebody to a
+        settings screen to share the thing they are looking at would unmount the
+        drawing; the dialog closes and the plan is still there, untouched. */}
+    {shareOpen && plan.project_id && (
+      <ShareDialog projectId={plan.project_id} projectName={project?.name ?? ''}
+        onClose={() => setShareOpen(false)} />
+    )}
     <App
       key={plan.id}
       planName={plan.name}
@@ -425,17 +527,19 @@ export default function Planner() {
       initialProjectType={plan.project_type ?? projectType}
       initialPdfPage={chosen.state?.pdfPage ?? null}
       restore={chosen.state}
-      saveState={saveState}
+      saveState={canEdit ? saveState : 'idle'}
       uploadState={upload}
       isAdmin={isAdmin}
+      readOnly={!canEdit}
       onRetryUpload={() => retryUpload(planId)}
-      onRename={rename}
-      renderStore={renderStore}
-      onClaimLayout={onClaimLayout}
-      onClaimPass={onClaimPass}
-      onReleasePass={releasePass}
-      onPersist={onPersist}
-      onMilestone={onMilestone}
+      onRename={canEdit ? rename : null}
+      renderStore={canEdit ? renderStore : null}
+      onClaimLayout={canEdit ? onClaimLayout : null}
+      onClaimPass={canEdit ? onClaimPass : null}
+      onReleasePass={canEdit ? releasePass : null}
+      onPersist={canEdit ? onPersist : null}
+      onMilestone={canEdit ? onMilestone : null}
+      onShare={isOwner && plan.project_id ? () => setShareOpen(true) : null}
       onBack={() => nav(plan.project_id ? `/projects/${plan.project_id}` : '/dashboard')}
     />
     </>

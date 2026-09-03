@@ -10,6 +10,8 @@ import Pricing from './routes/Pricing.jsx';
 import Dashboard from './routes/Dashboard.jsx';
 import ProjectDetail from './routes/ProjectDetail.jsx';
 import Planner from './routes/Planner.jsx';
+import SharedProject from './routes/SharedProject.jsx';
+import SharedPlanViewer from './routes/SharedPlanViewer.jsx';
 import AdminUsers from './routes/AdminUsers.jsx';
 import AdminUserView from './routes/AdminUserView.jsx';
 import AdminUserProject from './routes/AdminUserProject.jsx';
@@ -22,9 +24,15 @@ import './styles.css';
 //   /                 the promise, and the upload that starts everything
 //   /login            an email and a six-digit code
 //   /pricing          the three tiers, and instant checkout
-//   /dashboard        every project
+//   /dashboard        every project — yours, and the ones shared with you
 //   /projects/:id     every plan in one project
 //   /plans/:id        the editor — what used to be the whole app
+//
+// AND TWO FOR A VIEW LINK, which are the middle two again with a token where the
+// id would be:
+//
+//   /shared/:token                    the project a link points at, read only
+//   /shared/:token/plans/:planId      one of its plans, on the real canvas
 //
 // AND FOUR MORE FOR THE OPERATOR, which are a mirror of the middle three plus a
 // list at the top:
@@ -74,6 +82,30 @@ createRoot(document.getElementById('root')).render(
           <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
           <Route path="/projects/:projectId" element={<RequireAuth><ProjectDetail /></RequireAuth>} />
           <Route path="/plans/:planId" element={<RequireAuth><Planner /></RequireAuth>} />
+
+          {/* A VIEW LINK, REDEEMED. Two screens, mirroring /projects/:id and
+              /plans/:id, and the token stands where the ids would.
+
+              BEHIND RequireAuth LIKE EVERYTHING ELSE, which is the whole reason
+              the flow works with no extra code: an anonymous visitor is sent to
+              /login with this path remembered, and Login navigates back to it
+              the moment a session appears. "Sign in first, then see the plan" is
+              the guard's existing behaviour, not a special case.
+
+              NOTE THE TWO PATHS. The address people are GIVEN is /s/<token>,
+              which is not a route at all — it is rewritten to api/share.js so a
+              scraper gets an Open Graph card with the layout in it, and a person
+              is redirected here. See the endpoint's header.
+
+              AND THAT REWRITE MUST STAY ABOVE THE CATCH-ALL IN vercel.json,
+              where JSON gives it nowhere to say so itself. The catch-all matches
+              everything that is not /api/ — /s/ included — so if the two ever
+              swap places every share link is handed index.html and every preview
+              in every chat window falls back to the generic site card, silently
+              and only in production. */}
+          <Route path="/shared/:token" element={<RequireAuth><SharedProject /></RequireAuth>} />
+          <Route path="/shared/:token/plans/:planId"
+            element={<RequireAuth><SharedPlanViewer /></RequireAuth>} />
 
           <Route path="/admin/users" element={<RequireAuth><AdminUsers /></RequireAuth>} />
           <Route path="/admin/users/:userId" element={<RequireAuth><AdminUserView /></RequireAuth>} />

@@ -470,6 +470,21 @@ export default function App({
   onClaimPass = null,
   onReleasePass = null,
   // ---------------------------------------------------------------------
+  // SHARING — A CALLBACK, AND NOT A DIALOG.
+  //
+  // This component does not know Supabase exists (see the header of
+  // routes/Planner.jsx) and sharing is entirely a database act: a row per
+  // invitee, a token per link, and RLS policies deciding what either one buys.
+  // Importing the dialog here would put all of that one import away from an
+  // 8,000-line editor that has stayed a pure function of a File.
+  //
+  // So the editor owns the BUTTON — it is a piece of this panel's chrome and it
+  // has to sit where the panel says it sits — and the route owns everything
+  // behind it. Null in the standalone editor and in every test, where the
+  // button simply is not drawn, which is also what makes it absent on the
+  // read-only sheet without a second guard: no route passes it there.
+  onShare = null,
+  // ---------------------------------------------------------------------
   // READ-ONLY MODE — the viewer an admin gets on somebody else's plan.
   //
   // ONE PROP, AND IT WAS THE RIGHT UNIT OF CHANGE. The alternative was a
@@ -6927,6 +6942,53 @@ export default function App({
           different glass read as a mistake. */}
       <div className="bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px]
         border-l border-border/10 overflow-y-auto pt-4 px-4 pb-10 flex flex-col gap-1.5">
+        {/* --- SHARE, ABOVE THE STEPS ---------------------------------------
+            ABOVE THE STRIP AND NOT IN IT. The three tabs under this are a
+            question about where you are in one piece of work; sharing is a
+            question about who else is in it. Putting a fourth tab beside
+            Outlines / Design / BOQ would have said that "Share" is a fourth
+            place to be, and clicking it would then have failed to move you
+            anywhere — which is exactly the kind of tab that teaches people not
+            to trust a tab strip.
+
+            WHITE, AND IT IS THE ONLY WHITE BUTTON ON THIS PANEL. Everything
+            else here is glass on a dark ground, deliberately quiet, because the
+            panel is fourteen sections of controls over the drawing and a column
+            of solid buttons would be a wall. This is not a control over the
+            drawing — it is the one act on this screen that reaches somebody
+            else — so it gets the same treatment "New Project" and "Add a plan"
+            get on the screens above: a solid white pill that reads as the
+            primary act of the surface it is on.
+
+            FULL WIDTH, because the panel is a 340px column and a small button
+            floated in it has to be aimed at. There is nothing to sit beside it.
+
+            THE ICON IS DRAWN, not loaded — the same decision as undo/redo and
+            the rail's house. Heroicons' `share`, outline, at this chrome's own
+            1.7 stroke rather than their 1.5, for the reason given by the
+            history pair: at 15px a 1.5 stroke reads thinner than the type next
+            to it. */}
+        {/* `!prep` FOR THE SAME REASON THE STRIP HAS IT: while the pipeline runs
+            the panel is a wait with one way out, and a button that opens a modal
+            over it is an invitation to walk away from a thing that is happening. */}
+        {source && onShare && !readOnly && !prep && (
+          <button type="button" onClick={onShare}
+            title="Share this project with somebody"
+            className="w-full mb-3 text-[12.5px] px-3 py-[8px] rounded border border-white
+              bg-white text-black cursor-pointer inline-flex items-center justify-center gap-[7px]
+              transition-colors duration-[120ms] hover:bg-text hover:border-text
+              focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+              stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+              strokeLinejoin="round" aria-hidden="true">
+              <path d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283
+                1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25
+                2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0
+                3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
+            </svg>
+            Share
+          </button>
+        )}
         {/* --- WHERE YOU ARE, AND IT IS THE FIRST THING IN THE PANEL --------
             THREE STEPS, AS THREE TABS. Tracing the outlines, laying out the
             design, and reading the schedule are the three things this app does,

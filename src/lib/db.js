@@ -22,7 +22,11 @@ const PLAN_CARD_COLS =
   'id, project_id, name, status, source_kind, file_name, storage_path, snapshot_path,'
   + ' width, height, px_per_ft, project_type, stats, created_at, updated_at, last_opened_at';
 
-const PROJECT_COLS = 'id, name, project_type, created_at, updated_at';
+// `owner` IS IN THE LIST NOW, AND SHARING IS WHY. Since migration 0006 a select
+// on `projects` can return rows the caller does not own — that is the whole
+// point of a share — so every screen that draws a project has to be able to ask
+// whose it is. It is one uuid per card.
+const PROJECT_COLS = 'id, owner, name, project_type, created_at, updated_at';
 
 const must = () => {
   if (!supabase) throw new Error('Supabase is not configured');
@@ -54,10 +58,24 @@ const unwrap = ({ data, error }) => { if (error) throw error; return data; };
 
 // --- projects --------------------------------------------------------------
 
+/**
+ * THE CALLER'S OWN PROJECTS — and the `eq('owner', …)` is not belt and braces,
+ * it is a correction that migration 0006 made necessary.
+ *
+ * Every other query in this file leans on RLS for its scoping, and that was
+ * exact while "readable" and "mine" were the same set. Sharing separated them:
+ * the select policy now also passes projects somebody else shared with me, so an
+ * unfiltered read would quietly file a client's building under "All projects" on
+ * my dashboard, with a Delete link next to it that the policies would refuse.
+ * The shared ones are a different list with a different heading — see
+ * listSharedWithMe() in lib/sharing.js.
+ */
 export async function listProjects() {
+  const me = await uid();
   const rows = unwrap(await must()
     .from('projects')
     .select(`${PROJECT_COLS}, plans(count)`)
+    .eq('owner', me)
     .order('updated_at', { ascending: false }));
   // Supabase returns an aggregate as a one-element array of {count}. Flattened
   // here so no card has to know that.
@@ -100,10 +118,20 @@ export async function listPlans(projectId) {
     .order('updated_at', { ascending: false })) || [];
 }
 
-/** The dashboard's "recently worked on" strip. Across all projects. */
+/**
+ * The dashboard's "recently worked on" strip. Across all projects.
+ *
+ * OWNED ONLY, for the same reason listProjects() is scoped — see the note there.
+ * Since 0006 an unfiltered read of `plans` also returns everything shared with
+ * the caller, and a strip called "recently worked on" that quietly includes
+ * drawings somebody else is working on is a strip that lies about whose work it
+ * is showing.
+ */
 export async function recentPlans(limit = 6) {
+  const me = await uid();
   return unwrap(await must().from('plans')
     .select(`${PLAN_CARD_COLS}, projects(name)`)
+    .eq('owner', me)
     .order('updated_at', { ascending: false })
     .limit(limit)) || [];
 }

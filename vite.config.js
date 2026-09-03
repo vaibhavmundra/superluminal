@@ -17,9 +17,17 @@ function apiRoutes(env) {
   // two credentials. In dev it is reachable at /api/razorpay-webhook the same as
   // in production, which is what makes `stripe`-style local replay possible with
   // a tunnel.
+  // `/s` IS IN THIS LIST AND IS NOT AN API PATH, which is the one entry worth a
+  // second look. In production vercel.json rewrites /s/:token to
+  // /api/share?token=:token; there is no Vercel here, so the same handler is
+  // mounted at both paths and reads the token from the query string OR from what
+  // is left of the URL. Without the second mount a share link would 404 on
+  // localhost while working perfectly in production, which is the worst possible
+  // place for that asymmetry to live.
   const ROUTES = [['/api/detect', '/api/detect.js'], ['/api/accents', '/api/accents.js'],
                   ['/api/admin', '/api/admin.js'], ['/api/billing', '/api/billing.js'],
-                  ['/api/razorpay-webhook', '/api/razorpay-webhook.js']];
+                  ['/api/razorpay-webhook', '/api/razorpay-webhook.js'],
+                  ['/api/share', '/api/share.js'], ['/s', '/api/share.js']];
   return {
     name: 'api-routes',
     configureServer(server) {
@@ -48,7 +56,14 @@ function apiRoutes(env) {
                        'RZP_KEY', 'RZP_SECRET', 'RZP_MODE', 'RZP_CURRENCY',
                        'RZP_PLAN_STUDIO', 'RZP_PLAN_PRO',
                        'RZP_AMOUNT_STUDIO', 'RZP_AMOUNT_PRO',
-                       'RZP_WEBHOOK_SECRET']) {
+                       'RZP_WEBHOOK_SECRET',
+                       // Where the app lives, for the ABSOLUTE urls a scraper
+                       // needs in an Open Graph card — a relative og:image is a
+                       // card with no picture on every platform, silently.
+                       // api/share.js defaults it to the production host, so
+                       // this is only ever set locally or on a preview
+                       // deployment.
+                       'PUBLIC_SITE_URL']) {
         if (env[k] && !process.env[k]) process.env[k] = env[k];
       }
       for (const [route, file] of ROUTES) {

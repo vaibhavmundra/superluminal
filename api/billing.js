@@ -690,15 +690,43 @@ async function consumeAction(user, body) {
   const kind = body.kind === 'render_pass' ? 'render_pass' : 'layout';
   const planId = uuid(body.planId);
 
-  // THE PLAN MUST BE THEIRS. Read with the service key, filtered on owner, so
-  // this is a fact rather than a claim. A plan id that is not theirs — or not a
+  // THE PLAN MUST BE ONE THEY MAY EDIT. Read with the service key, so this is a
+  // fact rather than a claim. A plan id they cannot edit — or one that is not a
   // uuid — spends nothing.
+  //
+  // "THEIRS" USED TO BE THE WHOLE TEST, and migration 0006 broke that reading.
+  // A project shared with `role = 'edit'` gives somebody the real editor on
+  // somebody else's plans, and `plans.owner` on those rows is the PROJECT's
+  // owner — so a filter on owner refused every claim an invited editor made,
+  // with "No such plan", which looks exactly like a billing bug and is actually
+  // a permissions one. The second query below is only reached when the caller is
+  // not the owner, which is the rare case.
+  //
+  // AND THE EDITOR PAYS, NOT THE OWNER. `balanceOf(user)` is the caller's
+  // balance and stays that way. The alternative — spending the owner's credits
+  // because it is the owner's project — means an edit grant is also a grant to
+  // empty somebody's account, which is not a thing anybody would offer twice.
+  // Whoever lays out the lighting buys the layout.
   let planStats = null;
   if (planId) {
-    const rows = await rest(`plans?id=eq.${enc(planId)}&owner=eq.${enc(user.id)}`
-      + '&select=id,stats&limit=1');
+    const rows = await rest(`plans?id=eq.${enc(planId)}`
+      + '&select=id,owner,project_id,stats&limit=1');
     if (!rows.length) { const e = new Error('No such plan'); e.status = 403; throw e; }
-    planStats = rows[0].stats ?? null;
+    const plan = rows[0];
+    if (plan.owner !== user.id) {
+      // The same test share_role() makes in the database: the invite is keyed on
+      // the ADDRESS, and `invited_user` is a convenience a trigger fills in once
+      // that address has an account. Either match is the grant.
+      const addr = String(user.email || '').trim().toLowerCase();
+      const clauses = [`invited_user.eq.${enc(user.id)}`];
+      if (addr) clauses.push(`email.eq.${enc(addr)}`);
+      const shares = plan.project_id
+        ? await rest(`project_shares?project_id=eq.${enc(plan.project_id)}&role=eq.edit`
+            + `&or=(${clauses.join(',')})&select=id&limit=1`)
+        : [];
+      if (!shares.length) { const e = new Error('No such plan'); e.status = 403; throw e; }
+    }
+    planStats = plan.stats ?? null;
   }
 
   const { sub, balance } = await balanceOf(user);
