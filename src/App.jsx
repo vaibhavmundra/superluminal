@@ -165,6 +165,15 @@ const KV_SHAPE = 'flex justify-between text-[11.5px] py-[3px] '
   + '[&>b]:text-ink [&>b]:tabular-nums';
 const KV = `${KV_SHAPE} text-muted`;
 const KV_HEAD = `${KV_SHAPE} text-subtle`;
+/* THE SAME ROW ON NO GROUND AT ALL. The admin ledger used to sit in a #F2F2F2
+   card, which is where `KV`'s dark label and near-black `<b>` were legible; the
+   card is gone, so both halves of the row are white on the panel's own dark
+   ground. It restates the shape rather than appending overrides to `KV`,
+   because `[&>b]:text-ink` and `[&>b]:text-white` in one class list are decided
+   by the order Tailwind emits them in, not the order they are written. */
+const KV_ADMIN = 'flex justify-between text-[11.5px] py-[3px] text-white '
+  + '[&>b]:text-white [&>b]:tabular-nums';
+const N_ADMIN = 'text-[11.5px] text-white leading-[1.5]';
 const BTNROW = 'flex gap-1.5 flex-wrap';
 
 /* --- a section and its heading. `first-of-type:` carries the rule that the
@@ -179,6 +188,22 @@ const H3_SHAPE = 'mt-0 mx-0 text-[10px] tracking-[0.11em] uppercase';
 const H3 = `${H3_SHAPE} mb-2.5 text-subtle`;
 const H3_FLUSH = `${H3_SHAPE} mb-0 text-subtle`;
 const H3_ADMIN = `${H3_SHAPE} mb-2.5 text-[#C026D3]`;
+/* A DISCLOSURE, IN THE OPERATOR HUE. Same construction as the View section's —
+   the browser owns open/closed, keyboard and screen reader, and the chevron is
+   an `::after` rotated on `[open]` — but sized and coloured for a sub-block
+   inside a section rather than for a section heading of its own. */
+const DISCLOSE_ADMIN = `[&>summary]:cursor-pointer [&>summary]:list-none
+  [&>summary]:flex [&>summary]:items-center [&>summary]:gap-1.5
+  [&>summary]:text-[11px] [&>summary]:tracking-[0.08em] [&>summary]:uppercase
+  [&>summary]:text-[#C026D3] [&>summary]:select-none
+  [&>summary::-webkit-details-marker]:hidden
+  [&>summary]:after:content-[''] [&>summary]:after:ml-auto
+  [&>summary]:after:w-1.5 [&>summary]:after:h-1.5
+  [&>summary]:after:border-r-[1.5px] [&>summary]:after:border-b-[1.5px]
+  [&>summary]:after:border-[#C026D3] [&>summary]:after:transition-transform
+  [&>summary]:after:duration-[120ms]
+  [&>summary]:after:[transform:rotate(45deg)_translate(-2px,-2px)]
+  [&[open]>summary]:after:[transform:rotate(225deg)_translate(-1px,-1px)]`;
 /* `accent-white` AND NOT `accent-accent`. `accent-color` is the one property a
    native checkbox exposes, and it sets the BOX — the tick is then drawn by the
    browser in whatever contrasts with it. So a white box gets a near-black tick
@@ -1132,20 +1157,27 @@ export default function App({
   // found, the render pass's wall cells. Invisible to everyone but an owner
   // either way: every use of it downstream is gated `isAdmin && audit`.
   //
-  // ON BY DEFAULT, and that is a deliberate change from off. It draws the
-  // READINGS rather than the design — see the note in PlanCanvas about why they
-  // came off the drawing proper, which this still does not undo — and the person
-  // who has this switch is the person tuning the models, for whom the readings
-  // are the point of opening the plan at all. Defaulting it off meant two clicks
-  // into a panel before the drawing showed the thing being debugged.
+  // OFF BY DEFAULT, and back to off after a spell on. The argument for on was
+  // that an owner opens a plan in order to look at the readings, so a default
+  // of off cost two clicks before the drawing showed the thing being debugged.
+  // Two clicks is the cheaper mistake.
   //
-  // THE COST IS REAL AND IT IS THE EXPORTS. Nothing filters the overlay out of
-  // the PNG and SVG — they serialise the live canvas — so an owner who exports
-  // a sheet without turning this off puts magenta boxes labelled "bed" and
-  // "surface" on it. That was true before; what has changed is that it is now
-  // the default state rather than one somebody opted into and can be expected to
-  // remember. See the note beside the checkbox.
-  const [audit, setAudit] = useState(true);
+  // BECAUSE THE COST OF ON IS THE EXPORTS, and nothing filters this overlay out
+  // of them — the PNG and the SVG serialise the live canvas. On by default meant
+  // every owner who exported a sheet without first remembering a switch they
+  // never touched put lit, captioned boxes on a client's drawing. A default is
+  // exactly the setting nobody remembers, which is the wrong place to put a
+  // thing that has to be turned off before the work leaves the building.
+  const [audit, setAudit] = useState(false);
+  /* THE PLANNER'S GRID, ON THE DRAWING, ON REQUEST — the chunk boxes and the
+     cell lines the downlights were laid on. Separate state from `audit` and not
+     a layer, on purpose: `audit` is what the MODELS read off the plan, and this
+     is what OUR OWN code did with it afterwards. They are debugged at different
+     moments and by different people, and folding the grid into `audit` would
+     mean nobody can look at a chunk split without also lighting up every task
+     surface on the sheet. Admin-only, and it carries the same export caveat the
+     audit overlay does. */
+  const [showGrid, setShowGrid] = useState(false);
   const svgRef = useRef(null);
 
   useEffect(() => {
@@ -7223,6 +7255,11 @@ export default function App({
                  `detectedZones` still feeds `zoneList`, so the planner obeys
                  them exactly as before; only the box round them is gone. */
               audit={isAdmin && audit}
+              /* THE SCAFFOLDING UNDER THE LAYOUT. Same gate as the audit
+                 overlay and for the same reason — it is working, not drawing —
+                 but its own switch, because "why did this chunk split here" and
+                 "what did the model see" are two different questions. */
+              showGrid={isAdmin && showGrid}
               draftRun={!readOnly && addTool === 'strip' && stripFrom && addAt
                 ? [stripFrom, addAt] : null}
               placeSnap={!readOnly && addTool === 'strip' ? addSnap : null}
@@ -8446,13 +8483,30 @@ export default function App({
                     onChange={(e) => setAudit(e.target.checked)} />
                   Show what was identified
                 </label>
-                <p className={`${N} mt-0.5`}>
-                  Task surfaces, the beds the detector found, and the render
-                  pass&apos;s wall cells, drawn over the plan. Working, not
-                  product — and now ON by default, so <b>turn it off before you
-                  export a sheet</b>: nothing else keeps it out of the PNG and
-                  SVG.
-                </p>
+                
+
+                {/* THE GRID, ON THE DRAWING. Its own switch and not part of the
+                    overlay above: that one is what the MODELS read off the
+                    plan, this is what our own chunker and planner did with it
+                    afterwards. A light that lands somewhere odd is almost
+                    always a chunk that split somewhere odd, and the split is
+                    the one thing on this drawing with no visible trace at all —
+                    `gridPath` has been in PlanCanvas the whole time with
+                    nothing calling it.
+                    A BUTTON RATHER THAN A CHECKBOX, and it says which way it is
+                    about to go. It is an act — put the scaffolding on the
+                    drawing, take it off again — rather than a standing
+                    preference like the layers list, and it is the one control
+                    in here somebody toggles repeatedly while looking at the
+                    canvas rather than at this panel. */}
+                <div className={`${BTNROW} mt-2.5`}>
+                  <button className={BTN_SECOND} disabled={!totals.rooms}
+                    aria-pressed={showGrid}
+                    title="Draw the chunk boxes and the cell lines the lights were laid on"
+                    onClick={() => setShowGrid((v) => !v)}>
+                    {showGrid ? 'Hide the planning grid' : 'Show the planning grid'}
+                  </button>
+                </div>
                 {/* LOOK AGAIN — the manual bedroom pass. Admin-only because it
                     spends a model call per room and because the person who
                     wants it is the person tuning the detectors: on a plan where
@@ -8473,10 +8527,29 @@ export default function App({
                   <p className={`${N} mt-1.5`}>{bedLook}</p>
                 )}
 
-                {audit && (
-                  <div className="mt-2.5 px-2.5 py-[9px] rounded bg-surface-3
-                    border border-border flex flex-col gap-[5px]">
-                    <div className={KV}><span>Task surfaces</span><b>{surfacesPx.length}</b></div>
+                {/* --- THE LEDGER, CLOSED, AND NO LONGER TIED TO THE OVERLAY.
+                    It was an always-open card that appeared with the checkbox
+                    above, on a #F2F2F2 ground with near-black type — a white
+                    slab two thirds of the way down a dark panel, and fifteen
+                    rows of counts permanently occupying the space between the
+                    switch and the bottom of the panel.
+                    IT IS A DISCLOSURE NOW, and shut: these are numbers you go
+                    and look up when something on the drawing surprises you, not
+                    numbers you read while working. `<details>` rather than a
+                    state flag for the same reason the View section is one — the
+                    browser already owns the open/closed, the keyboard and the
+                    screen reader.
+                    AND IT IS NO LONGER BEHIND `audit`. That checkbox draws
+                    marks on the CANVAS, which is the thing you have to remember
+                    to turn off before exporting; these are counts in a panel,
+                    which cost an export nothing. Tying them together meant the
+                    only way to read the ledger was to first put magenta on a
+                    sheet — so they are two switches now, and each one governs
+                    the surface it actually changes. */}
+                <details className={`${DISCLOSE_ADMIN} mt-3`}>
+                  <summary>What was identified</summary>
+                  <div className="mt-2 flex flex-col gap-[5px]">
+                    <div className={KV_ADMIN}><span>Task surfaces</span><b>{surfacesPx.length}</b></div>
                     {/* WHAT THE RENDER PASS READ, and what it turned into. The
                         cells are the working; the three fittings under them are
                         the product, and they stay on the drawing whether or not
@@ -8491,16 +8564,16 @@ export default function App({
                         and "it saw it and could not place it" are completely
                         different problems — and it left the render-pass panel
                         along with the rest of the reporting. */}
-                    <div className={KV}><span>Wall features seen</span>
+                    <div className={KV_ADMIN}><span>Wall features seen</span>
                       <b>{Object.values(wallResults)
                         .reduce((n, w) => n + (w.elements?.length ?? 0), 0)}</b></div>
-                    <div className={KV}><span>&nbsp;&nbsp;· placed on the plan</span>
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· placed on the plan</span>
                       <b>{wallCellsPx.length}</b></div>
-                    <div className={KV}><span>&nbsp;&nbsp;· reverse coves</span>
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· reverse coves</span>
                       <b>{reverseCoves.length}</b></div>
-                    <div className={KV}><span>&nbsp;&nbsp;· shelf strips</span>
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· shelf strips</span>
                       <b>{shelfStrips.length}</b></div>
-                    <div className={KV}><span>&nbsp;&nbsp;· art spots</span>
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· art spots</span>
                       <b>{taskSpotsPx.filter((sp) => sp.art && !sp.rejected).length}
                         {taskSpotsPx.some((sp) => sp.art && sp.rejected)
                           ? ` (${taskSpotsPx.filter((sp) => sp.art && sp.rejected)
@@ -8510,10 +8583,10 @@ export default function App({
                         thing on screen that knew. A split reads as a description
                         of the pipeline when it is right and as an obvious bug
                         when it is not. */}
-                    <div className={KV}><span>Bed zones</span><b>{detectedZones.length}</b></div>
-                    <div className={KV}><span>&nbsp;&nbsp;· bed-filter, whole plan</span>
+                    <div className={KV_ADMIN}><span>Bed zones</span><b>{detectedZones.length}</b></div>
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· bed-filter, whole plan</span>
                       <b>{detectedZones.filter((z) => !z.closeUp).length}</b></div>
-                    <div className={KV}><span>&nbsp;&nbsp;· GPT, one bedroom crop</span>
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· GPT, one bedroom crop</span>
                       <b>{detectedZones.filter((z) => z.judged).length}</b></div>
                     {/* AN EXCLUSION YOU CAN SEE. This used to be a third
                         SOURCE of bed geometry and is now none: the accent pass's
@@ -8521,13 +8594,13 @@ export default function App({
                         Counting them anyway is what stops "bed-filter found
                         nothing here" and "there is no bed here" looking the
                         same. */}
-                    <div className={KV}><span>&nbsp;&nbsp;· accent pass (excluded)</span>
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· accent pass (excluded)</span>
                       <b>{bedsPerRoom.length}</b></div>
                     {detectState.whyRejected && (
                       <>
-                        <div className={KV}><span>Bed boxes rejected</span>
+                        <div className={KV_ADMIN}><span>Bed boxes rejected</span>
                           <b>{detectState.whyRejected.n}</b></div>
-                        <p className={`${NW} mt-1`}>
+                        <p className={`${N_ADMIN} border-l-2 border-[#C026D3] pl-[9px] mt-1`}>
                           Mostly: {detectState.whyRejected.top}
                           {detectState.whyRejected.topCount < detectState.whyRejected.n
                             ? ` (${detectState.whyRejected.topCount} of ${detectState.whyRejected.n})` : ''}
@@ -8542,21 +8615,21 @@ export default function App({
                         re-asked only when the classifier called it a bedroom and
                         the whole-plan pass put no bed in it; the list below says
                         what came back for each one. */}
-                    <div className={KV}><span>Bedrooms GPT was asked about</span>
+                    <div className={KV_ADMIN}><span>Bedrooms GPT was asked about</span>
                       <b>{Object.values(bedVerdicts).filter((v) => v?.refound).length}</b></div>
-                    <div className={KV}><span>&nbsp;&nbsp;· of those, still empty</span>
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· of those, still empty</span>
                       <b>{Object.values(bedVerdicts).filter((v) => v?.refound && v.kind === 'none').length}</b></div>
                     {!!Object.keys(bedVerdicts).length && (
-                      <details className="mt-1 border-t border-border pt-1.5
+                      <details className="mt-1 border-t border-border/20 pt-1.5
                         [&>summary]:cursor-pointer [&>summary]:text-[11.5px]
-                        [&>summary]:text-subtle [&>summary]:list-none
-                        [&>summary]:select-none [&>summary]:hover:text-muted
+                        [&>summary]:text-white [&>summary]:list-none
+                        [&>summary]:select-none [&>summary]:hover:text-[#C026D3]
                         [&>summary::-webkit-details-marker]:hidden
                         [&>summary]:before:content-['▸_'] [&>summary]:before:text-[9px]
                         [&[open]>summary]:before:content-['▾_']">
                         <summary>What came back for each bedroom</summary>
                         {Object.entries(bedVerdicts).map(([id, v]) => (
-                          <p key={id} className="text-[11px] text-muted leading-[1.5] mt-1.5">
+                          <p key={id} className="text-[11px] text-white leading-[1.5] mt-1.5">
                             <b>{outlines.find((o) => o.id === id)?.name || id}</b>
                             {' — '}{judgeNote(v)}
                           </p>
@@ -8564,7 +8637,7 @@ export default function App({
                       </details>
                     )}
                   </div>
-                )}
+                </details>
               </div>
             )}
 

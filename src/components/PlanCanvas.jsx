@@ -57,6 +57,10 @@ const C = {
   large: '#ffb900',
   small: '#ffb900',
   grid: '#C8C8C8',        // the grid is scaffolding, not drawing
+  /* THE OPERATOR HUE. #C026D3 appears nowhere in the drawing and that is its
+     whole job — see the note on the audit layer. Named here because the grid
+     overlay now uses it too, and two literals of the same intent drift. */
+  audit: '#C026D3',
   cell: '#D8D8D8',
   /* THE TWO ROUND CEILING OBJECTS. White, because it is the one thing the
      accent ramp is not — see the long note by `col` in the fansPx block for why
@@ -144,6 +148,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     // block near the bottom of this file for what it draws and why the marks it
     // restores were removed from the drawing proper.
     audit = false,
+    /* THE PLANNER'S OWN SCAFFOLDING, ON REQUEST.
+       The chunk boxes and the 
+       cell lines every downlight was laid on. It came off the drawing because
+       it is not the design — a sheet with the working still on it is a sheet
+       nobody can read — and `gridPath` has sat here unused ever since.
+       It comes back as an explicit, admin-only switch, because the one question
+       this drawing genuinely cannot answer without it is "why did the layout
+       come out like that": a light sitting oddly is a chunk that split oddly,
+       and the split is invisible unless it is drawn. Gated `isAdmin && showGrid`
+       upstream, and defaulted false here so every other caller — the read-only
+       sheet, the thumbnail, the tests — is exactly as it was. */
+    showGrid = false,
     onFixture = null, draftRun = null,
     // WHICH PIECE OF CEILING IS BEING DECIDED, and the two things that can be
     // done about it. `optionPick` is { roomId, key }; `plans[i].design` carries
@@ -301,13 +317,25 @@ const PlanCanvas = forwardRef(function PlanCanvas(
 
   // each chunk draws its own outline plus its own interior grid lines —
   // no line ever crosses a no-light zone, because the zones aren't in any chunk
+  //
+  // IN THE OPERATOR HUE, NOT THE GREY IT USED TO BE. `C.grid` is #C8C8C8, which
+  // was right when this was a layer of the drawing and had to sit under the ink
+  // without competing with it. It is not a layer of the drawing any more — it
+  // only appears when an owner asks for it — so it takes the same magenta as
+  // the audit marks, meaning the same thing they mean: you are looking at the
+  // working, not at the sheet. It also has to be legible on a night plan, where
+  // a pale grey line over an inverted scan is very nearly nothing.
+  //
+  // `chunksPx` GUARDED, because a plan that laid no chunks is a real state —
+  // see the same `?? []` on the coves below — and this now renders on demand
+  // rather than only where the caller already knew there was a grid.
   const gridPath = (plan) => (
-    <g>
-      {plan.chunksPx.map((ch, k) => (
+    <g pointerEvents="none">
+      {(plan.chunksPx ?? []).map((ch, k) => (
         <g key={k}>
           <rect x={ch.x0} y={ch.y0} width={ch.x1 - ch.x0} height={ch.y1 - ch.y0}
-            fill="none" stroke={C.grid} strokeWidth={lw * 1.8} opacity="0.55" />
-          <g stroke={C.grid} strokeWidth={lw} opacity="0.42" strokeDasharray={`${lw * 6} ${lw * 4}`}>
+            fill="none" stroke={C.audit} strokeWidth={lw * 1.8} opacity="0.75" />
+          <g stroke={C.audit} strokeWidth={lw} opacity="0.5" strokeDasharray={`${lw * 6} ${lw * 4}`}>
             {ch.xLines.slice(1, -1).map((x, i) => <line key={'x' + i} x1={x} y1={ch.y0} x2={x} y2={ch.y1} />)}
             {ch.yLines.slice(1, -1).map((y, i) => <line key={'y' + i} x1={ch.x0} y1={y} x2={ch.x1} y2={y} />)}
           </g>
@@ -580,6 +608,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   fill={C.cell} opacity={(c.i + c.j) % 2 ? 0.05 : 0.015} />
               ))}
             </g>
+          )}
+          {/* THE GRID, WHEN AN OWNER ASKED FOR IT. Clipped to the room like
+              the cells above it and under everything else in this group, so it
+              can never obscure a fitting — the whole point of it is to be read
+              UNDERNEATH the layout it produced. */}
+          {showGrid && (
+            <g clipPath={`url(#roomclip-${i})`}>{gridPath(r.plan)}</g>
           )}
           {layers.region && (
             <polygon points={points(r.plan.polygonPx)}
