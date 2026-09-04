@@ -257,6 +257,23 @@ const PlanCanvas = forwardRef(function PlanCanvas(
   const RAMP = layers.invert ? THROW_STYLE : THROW_STYLE.day;
   const rim = RAMP.rim;
 
+  /**
+   * A NO-LIGHT ZONE IS INK, SO IT FOLLOWS THE GROUND.
+   *
+   * `C.zone` is #737373 — somebody else's object, deliberately quieter than our
+   * own line work, and correct on white paper. On the inverted plan the ground
+   * is black and a mid-grey hatch at 45% is very nearly nothing: you draw a box
+   * over a bed, the marquee lets go, and the thing you just drew is gone. The
+   * zone is not a fitting and has no ramp to take, so it goes the way the
+   * ceiling objects went — white, which is the one tone that is legible on
+   * black and is not the accent (see `C.object`).
+   *
+   * ONE TONE FOR THE HATCH, THE BORDER AND THE DRAFT, because they are one
+   * mark: the pattern in `defs` is what fills the rect it is stroked around,
+   * and the draft is that same rect mid-drag.
+   */
+  const zoneInk = layers.invert ? C.object : C.zone;
+
   const s = pxPerFt || 1;
   /**
    * INCHES, IN THE DRAWING'S OWN UNITS.
@@ -408,7 +425,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         ))}
         <pattern id="nlz" width={lw * 9} height={lw * 9} patternUnits="userSpaceOnUse"
           patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2={lw * 9} stroke={C.zone} strokeWidth={lw * 1.6} opacity="0.45" />
+          <line x1="0" y1="0" x2="0" y2={lw * 9} stroke={zoneInk} strokeWidth={lw * 1.6}
+            opacity={layers.invert ? 0.6 : 0.45} />
         </pattern>
 
         {/* THE GLOW UNDER A FITTING, AS A GRADIENT AND NOT A BLUR.
@@ -1054,13 +1072,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         <g>
           {zones.map((z) => (
             <rect key={z.id} x={z.x0} y={z.y0} width={z.x1 - z.x0} height={z.y1 - z.y0}
-              fill="url(#nlz)" stroke={C.zone} strokeWidth={lw * 1.8}
+              fill="url(#nlz)" stroke={zoneInk} strokeWidth={lw * 1.8}
               strokeDasharray={`${lw * 5} ${lw * 3.5}`} opacity="0.9" />
           ))}
           {draftZone && (
             <rect x={Math.min(draftZone.x0, draftZone.x1)} y={Math.min(draftZone.y0, draftZone.y1)}
               width={Math.abs(draftZone.x1 - draftZone.x0)} height={Math.abs(draftZone.y1 - draftZone.y0)}
-              fill={C.zone} fillOpacity="0.12" stroke={C.zone} strokeWidth={lw * 2} />
+              fill={zoneInk} fillOpacity="0.12" stroke={zoneInk} strokeWidth={lw * 2} />
           )}
         </g>
       )}

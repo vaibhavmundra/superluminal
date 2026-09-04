@@ -6,7 +6,8 @@ import React from 'react';
 // THE SAME ARGUMENT AS CeilingPalette, and deliberately the same component
 // shape: the symbol is the name. What differs is that these three do not share
 // a gesture. A sconce is one click on a wall, a strip is two clicks that span a
-// run, a spot is a drag that encloses the thing being lit — so the button has
+// run, a spot is a drag that encloses the thing being lit, a cove is a drag
+// along the wall it sits on — so the button has
 // to say what it will ASK OF YOU as well as what it will place, which is what
 // the line under the row is for. A palette whose buttons all look alike and
 // behave differently is a palette that gets clicked once and abandoned.
@@ -53,6 +54,12 @@ export const LIGHT_TOOLS = [
     hint: 'Click a wall — the fitting seats itself on it.' },
   { id: 'spot',   label: 'Directional spot',
     hint: 'Drag a box round what it should light.',
+    /* THE STEP'S HEADING. Only the two tools with a `GESTURE` carry one, and
+       that is not a coincidence — arming either of them empties the panel down
+       to a step (see the branch in App.jsx), and a step needs a line at the top
+       saying what is being asked. It is an IMPERATIVE where `hint` is a
+       description: the heading asks, the card under it explains. */
+    stepTitle: 'Box what the spot should light',
     // WHAT HAPPENS NEXT, WHICH IS THE HALF NOBODY GUESSES. The other two tools
     // put a fitting where you click. This one does not put a fitting anywhere
     // you point: the box says what is being lit, and the placer then stands the
@@ -71,7 +78,8 @@ export const LIGHT_TOOLS = [
     // lights having been deleted if you did not know it was coming.
     consequence: 'The ambient grid keeps clear of it.' },
   { id: 'cove',   label: 'Reverse cove',
-    hint: 'Select a start and end point on a wall to span a reverse cove.',
+    stepTitle: 'Span the wall the cove runs along',
+    hint: 'Press at one end and drag along the wall.',
     consequence: 'It follows the wall you started on.' },
 ];
 
@@ -110,7 +118,13 @@ const ICON = {
  * different drags. What is added is the consequence, in the accent, drawn as
  * PlanCanvas draws a spot: a ring with a filled pupil and an arrow off its rim.
  */
-const GESTURE = {
+/* EXPORTED, because the spot's card is now drawn in two places and must not
+   become two drawings. Arming the spot from this palette empties the panel down
+   to a step — the no-light zone's shape, see the branch in App.jsx — and that
+   step shows this same picture at the same size. A copy over there would drift
+   the first time the marquee or the stand-off fitting was retouched here, and
+   the two would then disagree about what the gesture is. */
+export const GESTURE = {
   spot: (
     <svg viewBox="0 0 72 46" className="w-[72px] h-[46px] block overflow-visible" aria-hidden="true">
       {/* What is being lit: the box, and the corner the drag started from. */}
@@ -138,13 +152,12 @@ const GESTURE = {
     </svg>
   ),
   /* THE COVE'S GESTURE, AND IT EARNS A PICTURE FOR THE REASON THE SPOT DOES:
-     the thing that is hard to guess is not where you click, it is what the
-     SECOND click is allowed to be. The slot is locked to the wall the first
-     point landed on, so the second point only ever slides along that wall —
-     drag the pointer out into the room and the end stays on the line. A sentence
-     has to say that in a clause nobody reads; two dots on one wall with the band
-     between them and the pointer off the wall but the end still on it says it at
-     a glance.
+     the thing that is hard to guess is not where you press, it is where the
+     drag is ALLOWED to go. The slot is locked to the wall the press landed on,
+     so the end only ever slides along that wall — pull the pointer out into the
+     room and the end stays on the line. A sentence has to say that in a clause
+     nobody reads; two dots on one wall with the band between them and the
+     pointer off the wall but the end still on it says it at a glance.
 
      THE WALL IS THE HEAVY LINE ALONG THE TOP and the band hangs INSIDE it, which
      is where a reverse cove actually sits — eight inches of ceiling at the wall,
@@ -161,7 +174,8 @@ const GESTURE = {
       <line x1="17" y1="15" x2="51" y2="15" stroke="var(--accent)" strokeWidth="1.2" />
       <line x1="17" y1="12" x2="51" y2="12" stroke="var(--accent)" strokeWidth="1.6"
         strokeLinecap="round" />
-      {/* Where it started, and where it ends — both ON the wall. */}
+      {/* Where the press landed, and where the drag has got to — both ON the
+          wall, whatever the pointer is doing. */}
       <circle cx="17" cy="9" r="2.1" fill="var(--accent)" />
       <circle cx="51" cy="9" r="2.1" fill="#fff" stroke="var(--accent)" strokeWidth="1.5" />
       {/* ...and the pointer OFF the wall, out in the room, with the end left
@@ -183,15 +197,41 @@ const GESTURE = {
  * row is the one place both are on screen, so it is the one place that has to
  * ask which of them a button is lit by.
  */
-export default function LightPalette({ tool, objArmed = null, onPick, disabled = false }) {
+/**
+ * `zoneOn` / `onZones` ARE THE SIXTH CELL, AND IT IS NOT A FITTING.
+ *
+ * The grid is three wide and the table above it holds five tools, so the second
+ * row has always carried two buttons and a hole. What belongs in that hole is
+ * the one thing on this panel that is about the ABSENCE of light: a no-light
+ * zone. It used to be the middle tab of an "Edit" toolbox — Ceiling objects /
+ * No-light zones / Lighting — which put "keep the light off this" two clicks
+ * away from every control that puts light on something.
+ *
+ * IT IS NOT A ROW IN `LIGHT_TOOLS`, and that is the whole reason it arrives as
+ * its own pair of props. Every entry in that table arms a tool and then waits
+ * for a gesture on the canvas with the panel still standing; this one opens a
+ * STEP — the panel empties down to the instruction and the list of zones, the
+ * way confirming the doors does. Folding it into the table would have meant a
+ * `kind` field on five rows that do not need one, and an `onPick` that
+ * sometimes arms and sometimes navigates.
+ *
+ * It renders only when it is wired. The read-only panel does not pass it, and a
+ * palette with a dead sixth button would be a claim that an operator can draw
+ * on somebody else's plan.
+ */
+export default function LightPalette({ tool, objArmed = null, onPick, disabled = false,
+                                       zoneOn = false, onZones = null }) {
   const isOn = (t) => (t.arms === 'object' ? objArmed === t.id : tool === t.id);
   const live = LIGHT_TOOLS.find(isOn);
   return (
     <>
-      {/* FIVE IN A THREE-WIDE GRID, so the second row carries two and a gap.
-          The alternative was five columns, which shrinks every button to fit the
-          narrowest panel and makes the artwork — the whole point of a palette
-          whose symbols are its names — too small to recognise. */}
+      {/* SIX IN A THREE-WIDE GRID, WHICH IS TWO FULL ROWS. It was five and a
+          gap; the sixth is the No Light Zone button — see the note on `onZones`
+          for why it is not a row in `LIGHT_TOOLS`. Three columns and not six,
+          for the reason the gap was tolerated in the first place: six columns
+          shrinks every button to fit the narrowest panel and makes the artwork
+          — the whole point of a palette whose symbols are its names — too small
+          to recognise. */}
       <div className="grid grid-cols-3 gap-[5px] mt-2">
         {LIGHT_TOOLS.map((t) => (
           <button key={t.id} type="button" disabled={disabled}
@@ -236,6 +276,30 @@ export default function LightPalette({ tool, objArmed = null, onPick, disabled =
               (isOn(t) ? 'text-white' : 'text-subtle')}>{t.label}</span>
           </button>
         ))}
+        {/* THE SIXTH CELL. Deliberately the same button — same size, same
+            artwork slot, same armed ring — because it is the same question the
+            other five answer: what do I put on this drawing by hand. A zone is
+            one of the things you put on it; that it is drawn as a hole rather
+            than as a fitting is what the picture is for.
+
+            `aria-pressed` AND THE RING WHILE THE STEP IS OPEN, so the button
+            says where you are. It is not `disabled` with the rest: the five
+            tools need a scale and a lit space before they can place anything at
+            real size, and a zone is a box over the drawing — it needs neither. */}
+        {onZones && (
+          <button type="button" onClick={onZones} aria-pressed={zoneOn}
+            title="No Light Zone — box out anything the light should keep off."
+            className={'flex flex-col items-center gap-[3px] pt-[7px] px-[2px] pb-[5px] '
+              + 'rounded-[8px] border cursor-pointer transition-colors duration-[120ms] '
+              + (zoneOn
+                ? 'border-transparent bg-input-bg gradient-ring'
+                : 'border-border/10 bg-surface hover:bg-input-bg')}>
+            <img src="/icons/no_light_zone.png" alt="" width="40" height="40"
+              className="w-10 h-10 object-contain select-none" draggable="false" />
+            <span className={'text-[9.5px] leading-[1.15] text-center tracking-[0.01em] '
+              + (zoneOn ? 'text-white' : 'text-subtle')}>No Light Zone</span>
+          </button>
+        )}
       </div>
       {/* WHAT THE ARMED TOOL WANTS FROM YOU. Only while one is armed: three
           gesture descriptions on screen at rest is a manual, and one at the
@@ -248,6 +312,15 @@ export default function LightPalette({ tool, objArmed = null, onPick, disabled =
           tool's NAME, which the sentence version needs and it does not: the
           button directly above it is visibly pressed, and its own label is
           two lines up. */}
+      {/* THE CARD BRANCH IS ALL BUT UNREACHABLE NOW, AND IT STAYS. Arming a
+          tool that HAS a gesture is what opens the step in App.jsx — same test,
+          `GESTURE[id]` — and that step replaces this panel, palette and all. So
+          in practice the sentence below is what renders (strip, sconce,
+          chandelier) and the card is what the step draws. It is kept because
+          the two tests are one decision recorded in two places rather than one:
+          the day a gesture tool is deliberately left out of the step, this is
+          the explanation it falls back to, and a palette that then said nothing
+          about the hardest gesture on it would be the worse failure. */}
       {live && (GESTURE[live.id] ? (
         <div className="flex flex-col items-center gap-2 pt-3.5 px-4 pb-3 rounded-lg border border-border bg-input-bg text-center mt-2">
           {GESTURE[live.id]}

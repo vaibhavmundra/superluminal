@@ -21,7 +21,7 @@ import { proposeOutlines } from './lib/outlineSources.js';
 import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, plausibleBed, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER, wireProvider } from './lib/furniture.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
-import LightPalette from './components/LightPalette.jsx';
+import LightPalette, { LIGHT_TOOLS, GESTURE } from './components/LightPalette.jsx';
 import ChunkIcon from './components/ChunkIcon.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
@@ -63,7 +63,7 @@ import { planSwitchboards, planChunkBoards, markClashes, asDrawn, slideBoardTo,
 import { bedZoneIn } from './lib/bedGrid.js';
 import { planFlows } from './lib/flows.js';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
-         sizeLabel, radiusFt, clampFt, resizeFromCorner, rotateTo, isRect,
+         radiusFt, resizeFromCorner, rotateTo, isRect,
          halfExtents, isUniform, applyResize, FAN_SWEEPS, sweepMm, withSweep,
          newCeilingObjectId }
          from './lib/ceilingObjects.js';
@@ -107,17 +107,37 @@ const BTN_QUIET = 'bg-surface text-white border-border/10 hover:bg-surface-2 hov
    stopped saying that. */
 const BTN_CTA = 'bg-cta text-white border-cta hover:bg-cta-hover hover:border-cta-hover';
 
+/* WHITE FILL, BLACK TEXT — the loudest answer a panel on a black ground can
+   give, and the same colourway Share wears in the header. It is for a STEP'S
+   WAY OUT: a screen that has taken the whole panel over has exactly one thing
+   to press when you are done with it, and the `cta` blue is a shade of the
+   ground it sits on rather than a break from it. Hover goes to `text` (the
+   off-white) so the press is felt without the label ever leaving black. */
+const BTN_WHITE = 'bg-white text-black border-white '
+  + 'hover:bg-text hover:border-text active:bg-text';
+
 const BTN = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_QUIET}`;
 const BTN_FULL = `${BTN} w-full`;
 const BTN_PRIMARY = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_CTA}`;
-const BTN_ACCENT = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} bg-accent text-white `
-  + 'border-accent hover:bg-accent-hover hover:border-accent-hover';
+const BTN_EXIT = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_WHITE}`;
+/* `BTN_ACCENT` WAS HERE — the accent-filled button. Its only user was the
+   "+ Add a No Light Zone" toggle in the old zones tab, and that tab is a step
+   now: the button that starts it is a cell in the light palette (which latches
+   with the palette's own gradient ring), and the way out of it is `BTN_PRIMARY`
+   like every other step's answer. Nothing else on this screen ever wanted a
+   filled accent — the accent means "this is the live thing", and a panel with
+   three of them has stopped saying that. */
 const BTN_SECOND = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} bg-surface text-white `
   + 'border-border-strong hover:bg-surface-2 hover:border-ink active:bg-surface-3 hover:text-black';
 /* The wider one, which is the loading panel's; and the two small ones. */
 const BTN_MID = `text-[12px] px-3.5 py-[7px] ${BTN_SHAPE} ${BTN_QUIET}`;
 const BTN_TINY = `text-[11px] px-[5px] py-0 ${BTN_SHAPE} ${BTN_QUIET}`;
 const BTN_NUDGE = `text-[11px] px-[7px] py-px ml-2 ${BTN_SHAPE} ${BTN_QUIET}`;
+/* THE THREE EXPORTS, AS CHIPS IN THE PANEL'S HEADER. They were `BTN` in a
+   section of their own; three format names beside a Share button want the
+   smaller shape, and `BTN_TINY`'s `py-0` is a chip for sitting inside a table
+   row rather than for standing next to one. */
+const BTN_EXPORT = `text-[11px] px-2 py-[4px] ${BTN_SHAPE} ${BTN_QUIET}`;
 /* The schedule's three exports: a block, its label above its explanation. */
 const BOQ_SHAPE = `text-[12px] w-full text-left px-2.5 py-2 block ${BTN_SHAPE} `
   + '[&>b]:block [&>b]:text-[12px] [&>span]:block [&>span]:text-[10px] '
@@ -188,7 +208,14 @@ const BTNROW = 'flex gap-1.5 flex-wrap';
    its own edge and margin, as its own rule always did. */
 const SEC = 'border-t border-border/10 pt-3.5 mt-2.5 '
   + 'first-of-type:border-t-0 first-of-type:mt-0 first-of-type:pt-0';
-const SEC_ADMIN = 'border-t border-border-strong pt-3.5 mt-5';
+/* IT IS THE FIRST THING IN THE ADMIN TAB NOW, and it used to be the last thing
+   in the Export section — a magenta-ruled footnote hung below three file-format
+   buttons. The rule and the 20px above it were the separation that nesting
+   needed; at the top of a tab of its own they are a hairline under nothing and
+   a gap over nothing. `first-of-type` cancels all three, exactly as `SEC` does,
+   so the block still states its own edge wherever it is not first. */
+const SEC_ADMIN = 'border-t border-border-strong pt-3.5 mt-5 '
+  + 'first-of-type:border-t-0 first-of-type:mt-0 first-of-type:pt-0';
 /* `mt-0 mx-0 mb-*` and not `m-0 mb-*`: the shorthand and the longhand touch
    the same property, which is the ordering trap described at the top. */
 const H3_SHAPE = 'mt-0 mx-0 text-[10px] tracking-[0.11em] uppercase';
@@ -284,15 +311,11 @@ const ROW_OFF = 'border-transparent hover:bg-white/5 hover:border-border/10 '
   + 'hover:backdrop-blur-md';
 /* Open: the tile stays put, and it wraps the render-pass block with it. */
 const ROW_ON = ROW_TILE;
-/* `ROW` WAS HERE — `px-1.5 py-2` on ROW_EDGE — and the ceiling-object list was
-   its only caller. It went with the delete button: those rows carry one line
-   now, and a row padded for two sat with visible air under its own text.
-   ROW_TIGHT does not build on ROW_EDGE, and that is the one thing to notice:
-   the tighter bottom margin (`mb-1.5` against `mb-3`) is most of what makes a
-   list of one-line rows read as a list rather than as a stack of cards, and it
-   is the property ROW_EDGE fixes. Sharing the constant would have meant
-   overriding the half of it that matters. */
-const ROW_TIGHT = 'px-1.5 py-[5px] rounded mb-1.5 border';
+/* `ROW` AND THEN `ROW_TIGHT` WERE HERE, and the ceiling-object list was the
+   only caller either of them ever had. `ROW` went when those rows lost their
+   delete button and carried one line; `ROW_TIGHT` went with the list itself.
+   Nothing else in this panel is a one-line row: the Spaces list is an accordion
+   on `ROW_FLUSH`, and the chips below are chips. */
 const ROW_FLUSH = `p-0 overflow-hidden ${ROW_EDGE}`;
 /* THE HEAD PAINTS NOTHING. It is the click target inside the tile; a background
    of its own would cover the tile it sits in and leave the blur nothing to
@@ -323,7 +346,10 @@ const PROP_ON = `${PROP_SHAPE} text-text ${ROW_TILE}`;
 const PICK_SHAPE = 'grid grid-cols-[minmax(0,1fr)_auto] gap-[7px] items-center w-full '
   + 'border-0 bg-none p-0 text-left';
 const PICK = `${PICK_SHAPE} cursor-[inherit]`;
-const PICK_BTN = `${PICK_SHAPE} cursor-pointer`;
+/* `PICK_BTN` — the same grid with its own pointer — WENT WITH THE
+   CEILING-OBJECT LIST. It was the shape for a row that is ITSELF the button;
+   every remaining user of this grid sits inside a row that handles the click,
+   which is what `cursor-[inherit]` above is for. */
 const NAME = 'font-sans text-[11px] text-text overflow-hidden text-ellipsis whitespace-nowrap';
 const META = 'flex justify-between items-center gap-1.5 text-[10px] text-subtle mt-[3px] '
   + 'tabular-nums [&>span]:flex [&>span]:items-center [&>span]:gap-[5px]';
@@ -740,12 +766,12 @@ export default function App({
      would quietly put the bill back up. */
   const [dirtyIds, setDirtyIds] = useState([]);
   const [focusId, setFocusId] = useState(null);       // which room the panel is editing
-  /* THE OPEN SPACE'S ROW, SO THE CAPPED LIST CAN SCROLL TO IT. The Spaces list
-     is a 340px scroller past five rooms (60vh with one open) and the room that
-     gets opened is very often one the canvas was clicked on rather than one the
-     list was scrolled to — so without this, picking the ninth space of twelve
-     highlights a row nobody can see and reveals a workspace below the fold of a
-     box the user did not know had a fold. See the long note at the list. */
+  /* THE OPEN SPACE'S ROW, SO THE PANEL CAN SCROLL TO IT. The list has no box
+     of its own any more — see the note at it — but the panel column is still a
+     scroller, and the room that gets opened is very often one the canvas was
+     clicked on rather than one the panel was scrolled to. Without this, picking
+     the ninth space of twelve highlights a row nobody can see and reveals a
+     workspace below the fold. */
   const openRowRef = useRef(null);
   useEffect(() => {
     if (!focusId) return;
@@ -832,19 +858,23 @@ export default function App({
   const [addAt, setAddAt] = useState(null);          // the cursor, for the rubber band
   const [addSnap, setAddSnap] = useState(null);      // what the cursor caught on
   const [addGhost, setAddGhost] = useState(null);    // the sconce, before it is placed
-  /* THE HALF-MADE REVERSE COVE, and the ones that got finished.
-     `coveFrom` is the first point plus THE WALL IT LANDED ON — both endpoints
-     and the inward normal, resolved once at the press and then never asked
-     again. That is what makes the second point stick: the pointer is projected
-     onto this stored wall rather than re-tested against the polygon, so sliding
+  /* THE COVE BEING DRAGGED, and the ones that got finished.
+     `coveFrom` is where the press landed plus THE WALL IT LANDED ON — both
+     endpoints and the inward normal, resolved once at the press and then never
+     asked again. That is what makes the far end stick: the pointer is projected
+     onto this stored wall rather than re-tested against the polygon, so pulling
      out into the room slides the end ALONG the wall instead of hopping to
      whichever wall happens to be nearest now. Re-resolving per frame is the
      obvious implementation and it is the wrong one — a slot would jump walls
-     mid-gesture. */
+     mid-drag.
+     IT LIVES ONLY FOR THE LENGTH OF ONE DRAG. It used to survive between two
+     clicks, which is what made it possible to be holding half a cove while
+     doing something else entirely. */
   const [coveFrom, setCoveFrom] = useState(null);
   const [manualCoves, setManualCoves] = useState([]);
-  /* Why a click was refused, said where the gesture is rather than in a banner.
-     Only ever set by the cove tool, and cleared by the next thing that happens. */
+  /* Why a press or a drag was refused, said where the gesture is rather than in
+     a banner. Only ever set by the cove tool, and cleared by the next thing that
+     happens. */
   const [coveNote, setCoveNote] = useState('');
   const [manualAccents, setManualAccents] = useState([]);
   const [manualSurfaces, setManualSurfaces] = useState([]);
@@ -1078,7 +1108,6 @@ export default function App({
    * reopening it with a tool armed under a tab you cannot see would be a bug,
    * and the two arrive together the moment this is persisted.
    */
-  const [editTab, setEditTab] = useState('objects');
 
   // Editing what the model proposed. A fitting is a starting point, not a
   // verdict — see the note in accentPlace.js.
@@ -1192,6 +1221,13 @@ export default function App({
   // is part of the design — but it must not reopen mid-edit either.
   const [doorsOk, setDoorsOk] = useState(false);
   const [doorEdit, setDoorEdit] = useState(false);
+  /* `zoneEdit` IS THE DOOR EDITOR'S TWIN, and it is a screen rather than a
+     decision, so like `doorEdit` it is not saved. `zoneMode` is the older flag
+     and it stays: that one says the canvas's pointer is boxing out a zone, and
+     it is read by six handlers. This one says the PANEL has been taken over to
+     ask for one. They are set and cleared together by `openZoneEdit` /
+     `closeZoneEdit` and nowhere else, which is what keeps them honest. */
+  const [zoneEdit, setZoneEdit] = useState(false);
   const [selDoorId, setSelDoorId] = useState(null);
   const [doorDraft, setDoorDraft] = useState(null);  // the rubber band, in plan px
   // A MOVE IN FLIGHT, HELD OUTSIDE `doors` ON PURPOSE. Writing the rect on every
@@ -1269,7 +1305,7 @@ export default function App({
   // --- load -----------------------------------------------------------------
   const resetForNewPlan = useCallback(() => {
     setMeasure({ a: null, b: null }); setZoom(1);
-    setZones([]); setZoneMode(false); setDraftZone(null);
+    setZones([]); setZoneMode(false); setDraftZone(null); setZoneEdit(false);
     setChunkPicks({}); setPickingId(null);
     setCeilingKinds({}); setDesignPicks({}); setOptionPick(null);
     setDetections([]); setDetectState({ status: 'idle' }); setDismissed([]);
@@ -1466,10 +1502,28 @@ export default function App({
   }, [layers.invert, isVector, source]);
 
   /* INVERTED MEANS THE PLAN AND WHAT IS ON THE CEILING, AND NOTHING ELSE. Cell
-     shading, the grid, space outlines, no-light boxes and tags are all our
-     WORKING drawn over somebody's plan, and on a black ground they are what
-     stops it reading as the drawing. The fade goes too: it exists to keep black
-     ink legible over a black scan, which is the opposite problem.
+     shading, the grid, space outlines and tags are all our WORKING drawn over
+     somebody's plan, and on a black ground they are what stops it reading as
+     the drawing. The fade goes too: it exists to keep black ink legible over a
+     black scan, which is the opposite problem.
+
+     `zones: false` WAS IN THIS LIST AND IS THE SAME MISTAKE AS `fan: false`
+     BELOW, ONE ITEM ALONG. It filed the no-light boxes with the scaffolding on
+     the reading that they are working marks — but a hand-drawn zone is not
+     working, it is an INSTRUCTION somebody gave with a marquee, and the only
+     evidence it landed is the box on the drawing. This ground is not the
+     presentation ground either: night mode arms itself the moment a plan gets
+     its first lights (see `hadLights`), so it is where the design is DONE. The
+     result was that boxing out a wardrobe in the normal working view drew
+     nothing at all — press, drag, release, and the plan is exactly as it was —
+     which reads as the gesture having failed rather than as a layer being off.
+     Nothing in the panel says this override exists, and the zone list a few
+     inches away says the zone does.
+     Nor does it cost the sheet anything: the beds are already held out of
+     `drawnZones` for that reason, and the PDF plot has never drawn zones. What
+     DOES have to change with the ground is their ink — a #737373 hatch on black
+     is very nearly nothing — and that is handled in PlanCanvas, next to the
+     ceiling objects' own night tone, rather than here.
 
      `fan: false` WAS IN THIS LIST AND SHOULD NOT HAVE BEEN. It filed ceiling
      objects with the scaffolding, and they are not scaffolding: a fan, a
@@ -1489,8 +1543,7 @@ export default function App({
      itself is untouched, so nothing has to be put back. */
   const canvasLayers = useMemo(() => {
     const base = layers.invert
-      ? { ...layers, dim: false, cells: false, region: false, zones: false,
-          labels: false }
+      ? { ...layers, dim: false, cells: false, region: false, labels: false }
       : layers;
     return doorEdit ? { ...base, electrical: false } : base;
   }, [layers, doorEdit]);
@@ -4885,6 +4938,51 @@ export default function App({
   // is no layout.
   const showTrace = step === 'trace' && !readOnly;
 
+  /* --- TWO TOOLS ARE STEPS, AND THE OTHER THREE ARE NOT --------------------
+     THE TEST IS WHETHER THE TOOL HAS A `GESTURE`, and that is deliberately the
+     same test the palette already makes to decide between a picture card and a
+     one-line sentence. Written there: a card is worth its space "where the
+     gesture is hard to imagine or its result lands somewhere surprising, and
+     'click a wall' is neither". That is exactly the line between a tool that
+     can be explained beside a palette and one that deserves the panel, so it is
+     one criterion and not two that can disagree.
+
+     WHICH LEAVES THE SPOT AND THE COVE. Neither puts a fitting where you point.
+     The spot's box names what is being LIT and the fitting then stands off on
+     the ceiling grid, aimed back into it; the cove's drag is locked to the wall
+     the press landed on, so pulling out into the room does not do what it looks
+     like it does. Both are gestures somebody can perform
+     correctly and still read as a bug — and both were being explained by one
+     card under a six-cell palette, beside a spaces list and two more sections.
+
+     A SCONCE, A STRIP AND A CHANDELIER STAY AS THEY WERE: click a wall, click
+     two ends, drop it on the ceiling. The result is under the cursor, the
+     palette stays up, and emptying the panel for them would be ceremony.
+
+     `!readOnly` because an operator cannot place anything, and `!prep` for the
+     reason every other control on this screen carries it: while the pipeline
+     runs the layout is being replaced underneath. The door and zone editors
+     take precedence in the panel's own branch order — they own the canvas
+     outright, and `openZoneEdit`/`openDoorEdit` disarm the tools on the way in.
+
+     THE TOOL'S OWN ROW IS WHAT THE STEP RENDERS FROM, so the heading, the hint
+     and the consequence cannot drift from the palette button they came off. */
+  const stepTool = addTool && GESTURE[addTool] && !readOnly && !prep
+    ? LIGHT_TOOLS.find((t) => t.id === addTool) ?? null
+    : null;
+  /* WHAT THIS STEP HAS PUT ON THE PLAN, AND HOW TO TAKE IT BACK. Two tools, two
+     lists, one readout — kept as a table rather than as a pair of ternaries in
+     the markup, because the noun and the list it counts have to stay together:
+     a spot's drag makes a task SURFACE (the fitting is placed off it, see the
+     spot branch in `onZoneUp`) and a cove's drag makes a cove, and reading
+     the wrong one would report a plausible number that is about something
+     else. The next tool to earn a step adds a row here or renders no count. */
+  const placedHere = stepTool?.id === 'cove'
+    ? { n: manualCoves.length, one: 'cove', many: 'coves',
+        clear: () => setManualCoves([]) }
+    : { n: manualSurfaces.length, one: 'spot', many: 'spots',
+        clear: () => setManualSurfaces([]) };
+
   /* --- ARRIVING AT THE DESIGN SCREEN TURNS THE PLAN DARK -------------------
      THE TWO STEPS WANT OPPOSITE GROUNDS AND THAT IS NOT AN INCONSISTENCY.
      Tracing is done ON somebody else's drawing: you are reading their line
@@ -4936,6 +5034,13 @@ export default function App({
   // so that a stale `view` cannot survive a Clear and render a schedule of a
   // plan that is no longer loaded.
   const boqOpen = view === 'boq' && !!source;
+  /* WHICH TAB THE PANEL IS ON, WITH ONE FALLBACK. `view` is what somebody
+     clicked; this is what can actually be rendered. Admin is scoped to role 1,
+     and a role can go away underneath a stale tab — a session that loses it, or
+     an operator's own plan opened from the ordinary route — so an admin `view`
+     without `isAdmin` reads as Design rather than as an empty column. Nothing
+     resets `view` for it: the tab comes back if the role does. */
+  const panelView = view === 'admin' && !isAdmin ? 'design' : view;
   const picking = pickingId ? rooms.find((r) => r.id === pickingId) : null;
   // `!doorEdit` FOR THE SAME REASON `!zoneMode` IS HERE: the picker replaces
   // the canvas, and a gesture that needs the drawing under it cannot be asked
@@ -4966,11 +5071,16 @@ export default function App({
     setPickingId(null);
     setOutlinesOpen(true);
     // AND THE BOQ TAB HAS TO LET GO OF THE STAGE. `boqOpen` is checked BEFORE
-    // `showTrace` in the stage's branch list, so clicking Outlines while the
-    // schedule is up would leave the schedule on screen with the tracer's panel
-    // beside it — the one combination of view and step that renders neither
-    // screen properly.
-    setView('design');
+    // `showTrace` in the stage's branch list, so coming here while the schedule
+    // is up would leave the schedule on screen with the tracer's panel beside
+    // it — the one combination of view and step that renders neither screen
+    // properly.
+    // ONLY THAT ONE, AND IT USED TO BE UNCONDITIONAL. This is reached from a
+    // button in the Spaces list's heading now rather than from a tab of its
+    // own, so forcing 'design' meant a trip to straighten one wall put you back
+    // on a tab you had deliberately left. The schedule is the only view that
+    // cannot survive the crossing.
+    setView((v) => (v === 'boq' ? 'design' : v));
     return true;
   };
 
@@ -5146,6 +5256,7 @@ export default function App({
    */
   const openDoorEdit = useCallback(() => {
     setDoorEdit(true);
+    setZoneEdit(false);
     setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
     setZoneMode(false); setDraftZone(null);
     setArmed(null); setGhost(null); setGuides([]);
@@ -5232,7 +5343,14 @@ export default function App({
    * length: a board with no entry in this map is a board the rules own, and one
    * carrying its own rule position as a hand position would be marked "moved by
    * hand" for ever and would stop following the door it was placed off.
+   *
+   * NO CALLER AT THE MOMENT, DELIBERATELY KEPT. The way back used to be a "put
+   * back" button in the Spaces list, and that list is a list of rooms again —
+   * see the note where the switchboard readout was. The undo itself is a rule
+   * about `boardMoves`, not about that button, so it stays here for whatever
+   * offers it next; deleting it would mean rediscovering the paragraph above.
    */
+  // eslint-disable-next-line no-unused-vars
   const resetBoard = useCallback((id) => {
     setBoardMoves((m) => {
       if (!(id in m)) return m;
@@ -5247,6 +5365,34 @@ export default function App({
 
   const closeDoorEdit = useCallback(() => {
     setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+  }, []);
+
+  /* --- THE NO-LIGHT ZONE, AS A STEP RATHER THAN A TAB ----------------------
+     THE SAME SHAPE AS THE DOOR EDITOR ABOVE, FOR THE SAME REASON. What is being
+     asked for is a GESTURE ON THE DRAWING, and the panel's job while it is being
+     made is to say what the gesture is and then get out of the way. As a tab in
+     the toolbox it competed with two palettes and a readout; as a step it is the
+     only thing on screen, which is what makes a marquee over somebody's
+     furniture read as the thing to do next.
+
+     IT ARMS THE CANVAS ON THE WAY IN. The old tab needed a second press — the
+     tab, then “+ Add a No Light Zone” — which is a click spent on getting
+     ready. Pressing the button in the palette IS asking to draw one, so the band
+     is live the moment the panel changes, and it stays live after a box lands
+     because somebody drawing one zone is usually drawing two.
+
+     AND IT PUTS EVERY OTHER GESTURE AWAY, exactly as `openDoorEdit` does: one
+     pointer pipeline, one owner. */
+  const openZoneEdit = useCallback(() => {
+    setZoneEdit(true);
+    setZoneMode(true); setDraftZone(null);
+    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setArmed(null); setGhost(null); setGuides([]);
+    disarmAdd();
+  }, [disarmAdd]);
+
+  const closeZoneEdit = useCallback(() => {
+    setZoneEdit(false); setZoneMode(false); setDraftZone(null);
   }, []);
 
   /**
@@ -5923,6 +6069,18 @@ export default function App({
          with the very same keypress. Escape drops the selection if there is one
          and closes the editor if there is not, which is the two-stage back-out
          every other selection on this canvas has. */
+      /* THE ZONE STEP ANSWERS ESCAPE FIRST, AND IT RETURNS. Same argument as
+         the door editor below it: the panel holds one question, and Escape means
+         “I am done drawing zones” — it cannot also be allowed to mean “drop
+         whatever was selected before I got here”, which is what the branch at
+         the foot of this handler would do with the same keypress. Delete is
+         deliberately NOT answered: a zone is removed from its own row in the
+         panel, and there is no zone selection on this canvas for a key to act
+         on. */
+      if (zoneEdit) {
+        if (e.key === 'Escape') { e.preventDefault(); closeZoneEdit(); return; }
+        return;
+      }
       if (doorEdit) {
         if (e.key === 'Escape') {
           e.preventDefault();
@@ -6026,7 +6184,8 @@ export default function App({
   }, [objMode, armed, selObjId, selObjIds, setSelObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
       manualAccents, focusId, readOnly, selSpotId, deleteSpot,
       selBoardId, deleteBoard,
-      doorEdit, selDoorId, doorDrag, deleteDoor, closeDoorEdit]);
+      doorEdit, selDoorId, doorDrag, deleteDoor, closeDoorEdit,
+      zoneEdit, closeZoneEdit]);
 
   /**
    * OPEN A CHUNK'S OPTIONS. Called by a click on any ambient light — the light
@@ -6484,46 +6643,42 @@ export default function App({
         ? (() => { const sn = snapPlacing(raw, { last: stripFrom, ortho: !e.shiftKey });
                    return { x: sn.x, y: sn.y }; })()
         : raw;
-      /* THE COVE'S SECOND CLICK IS TAKEN BEFORE THE OUT-OF-ROOM GUARD, and that
-         ordering is load-bearing rather than tidy. The wall IS the room's
-         boundary, so a click aimed at it lands within a pixel or two of being
-         outside the polygon — and `roomAt` would then read a perfectly good
-         second point as "off the ceiling" and throw the whole gesture away. It
-         does not need the room anyway: the wall was resolved and stored at the
-         FIRST click, and the second is projected onto that stored wall wherever
-         the pointer happens to be. Being outside the room is not merely
-         tolerated here, it is the normal way to finish: you drag past the end
-         of the wall and the end clamps to it. */
-      if (addTool === 'cove' && coveFrom) {
-        e.preventDefault();
-        const t1 = coveTAt(raw);
-        const c = manualReverseCove({
-          a: coveFrom.a, b: coveFrom.b, t0: coveFrom.t, t1,
-          roomId: coveFrom.roomId, inward: coveFrom.inward, pxPerFt,
-          id: `mcove-${Date.now().toString(36)}-${Math.round(Math.random() * 1e4).toString(36)}`,
-        });
-        // A SLOT SHORTER THAN A FOOT IS A DOUBLE-CLICK, NOT A COVE. Same
-        // threshold and same reasoning as the strip's: the gesture is abandoned
-        // rather than half-committed, and the tool stays armed so the next click
-        // starts a new one.
-        if (!c || c.runLength < Math.max(8, pxPerFt)) {
-          setCoveFrom(null); setAddAt(null);
-          setCoveNote('That is too short to be a slot — click the two ends further apart.');
-          return;
-        }
-        setManualCoves((l) => [...l, c]);
-        disarmAdd();
-        return;
-      }
+      /* THE COVE'S SECOND CLICK WAS TAKEN HERE, ahead of the out-of-room guard,
+         and it is a RELEASE now — see `onZoneUp`. The gesture is one press, a
+         drag along the wall, and a let-go, which is what the other two marquee
+         tools on this canvas already are. Two clicks made it the odd one out in
+         a panel whose every other box is dragged, and it had the failure mode
+         every click-click tool has: a half-made slot that lives between two
+         separate events, so anything that happens in between — a stray click on
+         the plan, a nudge of the panel — is holding a gesture nobody can see the
+         state of. A drag cannot get stuck half-made; the pointer is either down
+         or it is not.
+         What has NOT changed is why the end point is not re-tested against the
+         room: the wall IS the polygon's boundary, so an end aimed at it lands
+         within a pixel or two of being outside, and `roomAt` would read a
+         perfectly good end as "off the ceiling". The wall is resolved once, at
+         the press, and every later position is projected onto that stored wall.
+         Dragging past the end of it clamps rather than cancels. */
 
       const room = roomAt(p);
-      // Off the ceiling: put the tool away rather than place a fitting in a
-      // space that does not exist. Same rule the ceiling palette follows.
-      if (!room) { disarmAdd(); return; }
+      /* Off the ceiling: put the tool away rather than place a fitting in a
+         space that does not exist. Same rule the ceiling palette follows.
+
+         EXCEPT FOR THE STEP TOOLS, WHICH IS THE ONE EXCEPTION AND IT IS ABOUT
+         THE WAY OUT. For a tool armed from a palette that is still on screen,
+         disarming on a stray click is cheap — the button is right there to arm
+         it again. The spot and the cove have emptied the panel down to a step
+         (see `stepTool`), so the same stray click would close the screen
+         somebody is working on, take away the picture they were following, and
+         do it for a click that placed nothing. A step ends at its Done button
+         or at Escape. The click still does nothing, which is correct: there is
+         no ceiling out here to put a fitting on. */
+      if (!room) { if (!GESTURE[addTool]) disarmAdd(); return; }
       e.preventDefault();
 
-      /* ...AND THE FIRST CLICK DOES need a room, because the wall it seats on
-         comes out of that room's polygon. */
+      /* ...AND THE PRESS DOES need a room, because the wall it seats on comes
+         out of that room's polygon. This is the whole of the cove's press: it
+         resolves the wall, and the drag and the release do the rest. */
       if (addTool === 'cove') {
         const poly = room.plan?.polygonPx || room.geo?.polygonPx;
         const seat = coveWallAt(raw, poly);
@@ -6531,9 +6686,17 @@ export default function App({
         if (seat.angled) { setCoveNote(seat.reason); return; }
         setCoveNote('');
         setCoveFrom({ ...seat, roomId: room.id });
-        // THE BAND IS UP THE INSTANT THE FIRST POINT LANDS, at zero length,
-        // rather than waiting for the pointer to move. A tool that shows nothing
-        // until you happen to move is a tool that looks like it missed the click.
+        /* THE POINTER IS CAPTURED, exactly as the spot's marquee captures it.
+           The end of a run is very often PAST the end of the wall — that is the
+           normal way to reach a corner, and the projection clamps it — so the
+           release routinely happens outside the element the press landed on.
+           Without capture that release is somebody else's event and the slot is
+           never committed: the band would simply hang there, following a
+           pointer that is no longer dragging anything. */
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        // THE BAND IS UP THE INSTANT THE PRESS LANDS, at zero length, rather
+        // than waiting for the pointer to move. A tool that shows nothing until
+        // you happen to move is a tool that looks like it missed the press.
         setAddAt(raw);
         return;
       }
@@ -6703,8 +6866,8 @@ export default function App({
       /* THE COVE FOLLOWS THE POINTER BUT STAYS ON ITS WALL. `addAt` is the raw
          pointer and the DRAFT is what is projected — the two are deliberately
          different, because the preview is built from the projection while
-         `addAt` is only what re-renders it. Before the first click there is no
-         wall to project onto and nothing to draw. */
+         `addAt` is only what re-renders it. Before the press there is no wall to
+         project onto and nothing to draw. */
       if (addTool === 'cove') {
         setAddAt(raw);
         return;
@@ -6765,6 +6928,46 @@ export default function App({
     if (objDrag) { objPointerUp(); return; }
     if (accDrag) { accPointerUp(); return; }
     if (boardDrag) { boardPointerUp(); return; }
+    /* A COVE IS A DRAG TOO, AND THIS IS WHERE IT LANDS. Press seats the wall,
+       the move projects onto it, and the let-go is the commit — one gesture,
+       with no state left over between two events. It reads the LAST TRACKED
+       POINT rather than an event position for the reason `draftCove` does: that
+       point is what has been drawn on the plan all the way through the drag, so
+       the slot that lands is the band that was on screen when the finger came
+       up. Taking the release coordinate instead would be a second source of
+       truth for one number, and the two would differ by exactly the pixel of
+       movement that arrives with the pointerup.
+       AHEAD OF THE SPOT because the two are mutually exclusive — `addTool` is
+       one tool — so the order is only about reading, not about precedence. */
+    if (addTool === 'cove' && coveFrom) {
+      // No movement at all is t1 === t0, a zero-length slot, which the length
+      // floor below then refuses in the ordinary way. A press with no drag in
+      // it should say what is wrong, not silently do nothing.
+      const t1 = addAt ? coveTAt(addAt) : coveFrom.t;
+      const c = manualReverseCove({
+        a: coveFrom.a, b: coveFrom.b, t0: coveFrom.t, t1,
+        roomId: coveFrom.roomId, inward: coveFrom.inward, pxPerFt,
+        id: `mcove-${Date.now().toString(36)}-${Math.round(Math.random() * 1e4).toString(36)}`,
+      });
+      // A SLOT SHORTER THAN A FOOT IS A CLICK, NOT A COVE. Same threshold and
+      // same reasoning as the strip's: the gesture is abandoned rather than
+      // half-committed, and the tool stays armed so the next press starts a new
+      // one.
+      if (!c || c.runLength < Math.max(8, pxPerFt)) {
+        setCoveFrom(null); setAddAt(null);
+        setCoveNote('That is too short to be a slot — press at one end and drag to the other.');
+        return;
+      }
+      setManualCoves((l) => [...l, c]);
+      /* ARMED FOR THE NEXT RUN, FOR THE REASON THE SPOT IS — see the note in
+         the spot's branch below. Arming the cove empties the panel to a step,
+         and a tool that puts itself away after one slot would close that step
+         from under somebody who is coving four walls of a room. Only the
+         half-made gesture is cleared: the press is spent, the band goes with
+         it. */
+      setCoveFrom(null); setAddAt(null); setCoveNote('');
+      return;
+    }
     // A spot's drag makes a SURFACE, not a no-light zone — same gesture, same
     // rubber band, different destination.
     if (draftZone?.forSpot) {
@@ -6781,7 +6984,18 @@ export default function App({
           kind: 'custom', label: 'Task area', confidence: 1, source: 'placed',
         }]);
       }
-      disarmAdd();
+      /* THE TOOL STAYS ARMED, AND THIS IS THE HALF THAT MAKES THE STEP WORK.
+         It called `disarmAdd()` here — the one-shot every other hand tool has,
+         which is right while the palette it was armed from is still on screen
+         to arm it again. Arming the spot now EMPTIES the panel down to a step
+         (see `stepTool`), so putting the tool away after one box would close
+         that step from underneath somebody halfway through a room: the panel
+         would fill back in, the picture they were following would go, and the
+         Done button would never once be reachable. A step ends when its Done is
+         pressed — or Escape, which still calls `disarmAdd` — exactly as the
+         no-light zone's does. The half-made gesture is cleared either way;
+         `draftZone` went to null above. */
+      setAddAt(null); setAddSnap(null); setAddGhost(null);
       return;
     }
     if (!zoneMode || !draftZone) return;
@@ -7802,128 +8016,26 @@ export default function App({
         </div>
       )}
 
-      {/* --- SHOW ELECTRICAL LINES ------------------------------------------
-          THE LOWER LEFT, opposite the appearance switch in the lower right, and
-          pinned the same way: outside the stage, so it does not scroll away
-          with the plan.
+      {/* --- THE ELECTRICAL SWITCH AND THE DOOR BUTTON WERE HERE ------------
+          A WHITE PLATE IN THE LOWER LEFT, opposite the appearance switch in the
+          lower right. They are the right panel's FOOTER now — see the block at
+          the end of the panel — and the move is not a tidy-up.
 
-          IT IS A SWITCH AND NOT A SEGMENTED PILL. The appearance control on the
-          other side has two states that are both a way of looking at the same
-          sheet, so it shows both and marks which one you are in. This has one
-          thing to say — the wiring is on, or it is not — and a two-button pill
-          for a boolean is a control that makes you read it before you can press
-          it. Same white plate, same hairline, same lift, for the same reason:
-          it floats over a black page and over a white plan and has to be
-          findable on both.
+          THE PLATE WAS BUILT FOR A PROBLEM IT NO LONGER HAS TO SOLVE. Floating
+          over the drawing it had to be findable against a black page AND against
+          a white scan, which is what bought it the opaque ground, the hairline
+          and the drop shadow, and what kept its label down to a single word:
+          "Electrical". On a known ground it can say the whole sentence.
 
-          THE WORD IS ON IT. Every other layer in this app is a checkbox in the
-          panel and can be, because nobody goes looking for them; this one was
-          asked for by name and is the only piece of the drawing that is a
-          different TRADE. An unlabelled icon would be a guess. */}
-      {/* THE TWO OF THEM SHARE A ROW, and the row is why this is a flex
-          container rather than two absolutely-positioned buttons. The door
-          button is about the wiring — it is the way back to the boxes every
-          plate on the sheet was derived from — so it belongs beside the switch
-          that shows it, at its own edge, and not floating at some second
-          offset that has to be kept in step with this one's width.
+          AND IT WAS THE WRONG CORNER FOR THE PAIRING. The switch's honesty
+          depends entirely on the door boxes — every switchboard on the sheet is
+          placed beside a door, see electrical.js — and the count of those boxes
+          was nowhere near it. Footer, one under the other: the act, then the
+          thing it rests on.
 
-          `!prep` LIKE EVERY OTHER CONTROL ON THIS SCREEN. While the pipeline
-          runs the layout is being replaced under the drawing; a switch that
-          reveals wiring derived from it, or a step that empties the panel the
-          wait is being reported in, are both controls that cannot do what they
-          claim. */}
-      {source && !boqOpen && !showTrace && !prep && (
-        <div className="absolute bottom-6 left-6 z-[5] flex items-center gap-2">
-        <button type="button"
-          className={'appearance-none cursor-pointer '
-            + 'inline-flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-lg bg-white '
-            + 'border border-border shadow-[0_2px_10px_rgba(0,0,0,0.35)] '
-            + 'text-[12px] tracking-[-0.01em] leading-none '
-            + 'transition-colors duration-[120ms] '
-            + 'focus-visible:outline-2 focus-visible:outline-accent '
-            + 'focus-visible:outline-offset-1 '
-            + (layers.electrical && !doorEdit ? 'text-ink' : 'text-subtle hover:text-ink')}
-          aria-pressed={layers.electrical && !doorEdit}
-          /* --- THE FIRST PRESS ASKS ABOUT THE DOORS -----------------------
-             A switchboard is placed beside a door, so this switch cannot honestly
-             turn the wiring on until somebody has said the door boxes are
-             right — see the note by `doorsOk`. It is the same control either
-             way rather than a second button that appears once and then never
-             again: what this button means is "show me the electricals", and
-             the first time that is asked the honest answer is a question. */
-          title={!doorsOk && !readOnly
-            ? 'Confirm the doors, then the wiring'
-            : layers.electrical
-              ? 'Hide the looping and the bay boards'
-              : 'Loop every fitting back to its switchboard'}
-          onClick={() => {
-            /* IN THE VIEWER IT IS A LAYER SWITCH AND NOTHING MORE. An operator
-               looking at somebody else's plan is not the person who can answer
-               whether the doors are right, and this panel writes nothing — see
-               ViewerPanel. They see the wiring the owner confirmed. */
-            if (readOnly) { setLayers((l) => ({ ...l, electrical: !l.electrical })); return; }
-            if (doorEdit) { closeDoorEdit(); return; }
-            if (!doorsOk) { openDoorEdit(); return; }
-            setLayers((l) => ({ ...l, electrical: !l.electrical }));
-          }}>
-          {/* The wire itself: two arcs and a plate, which is exactly what the
-              layer draws. Live in the board's blue and grey when it is off, so
-              the icon carries the state as well as the label. */}
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
-            stroke={layers.electrical && !doorEdit ? SB_COLOUR : 'currentColor'}
-            strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
-            aria-hidden="true">
-            <path d="M3 16c2.5-3 4.5-3 7 0M10 16c2.5-3 4.5-3 7 0" />
-            <rect x="18.5" y="5" width="3.5" height="6" rx="1" />
-            <path d="M20.25 11v2c0 1.5-1 2-2.25 2.6" />
-          </svg>
-          Electrical
-        </button>
-
-        {/* --- BACK TO THE DOORS ------------------------------------------
-            ICON ONLY, AND THE ONE UNLABELLED CONTROL IN THIS ROW. The note on
-            the switch beside it says why that one carries its word: it is the
-            only piece of the drawing that is a different TRADE and it was asked
-            for by name. This is not a layer at all — it reopens a step — and it
-            sits immediately beside the thing it is a step for, in a row of two.
-            A second word here would read as a second layer.
-
-            IT ONLY EXISTS ONCE THE QUESTION HAS BEEN ASKED. Before that the
-            Electrical switch is the way in, and a door button beside it would be
-            two controls doing one thing. `doorEdit` keeps it on screen while the
-            editor is open, pressed, so the way in is also the way out. */}
-        {!readOnly && (doorsOk || doorEdit) && (
-          <button type="button"
-            className={'appearance-none cursor-pointer '
-              + 'inline-flex items-center justify-center w-[34px] h-[31px] rounded-lg bg-white '
-              + 'border shadow-[0_2px_10px_rgba(0,0,0,0.35)] '
-              + 'transition-colors duration-[120ms] '
-              + 'focus-visible:outline-2 focus-visible:outline-accent '
-              + 'focus-visible:outline-offset-1 '
-              + (doorEdit ? 'border-accent text-ink' : 'border-border text-subtle hover:text-ink')}
-            aria-pressed={doorEdit}
-            title={doorEdit ? 'Done with the doors' : 'Check the doors again'}
-            onClick={() => (doorEdit ? closeDoorEdit() : openDoorEdit())}>
-            {/* A DOOR IN PLAN, WHICH IS WHAT THE BOXES ARE DRAWN AROUND. A leaf
-                and its swing — the same object doors.js describes in its header
-                — rather than an elevation of a door with a handle on it. The
-                icon has to name the marks on the drawing, and the marks on the
-                drawing are quarter-circles. */}
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
-              stroke={doorEdit ? SB_COLOUR : 'currentColor'}
-              strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
-              aria-hidden="true">
-              {/* the wall either side of the opening */}
-              <path d="M3 19h3M18 19h3" />
-              {/* the leaf, hinged at the left jamb... */}
-              <path d="M6 19V5" />
-              {/* ...and the arc it sweeps */}
-              <path d="M6 5a14 14 0 0 1 12 14" />
-            </svg>
-          </button>
-        )}
-        </div>
-      )}
+          THE APPEARANCE SWITCH STAYS WHERE IT IS, and that is not an
+          inconsistency. It is a control over the DRAWING'S OWN INK, so it
+          belongs over the drawing. */}
 
       <div ref={stageRef}
         className={'relative overflow-auto '
@@ -8203,93 +8315,204 @@ export default function App({
           grid lines, not the plan. Same three declarations as the top bar, for
           the obvious reason: two pieces of chrome on one screen made of
           different glass read as a mistake. */}
+      {/* --- A COLUMN IN THREE PARTS, AND IT USED TO BE ONE SCROLLER ------
+          The panel was a single `overflow-y-auto` box: Share at the top, the
+          tab strip under it, then however many sections the current step
+          carries. Everything scrolled, which was fine while everything in here
+          was a control over the drawing.
+
+          IT IS NOT FINE FOR THE ELECTRICALS. That switch is the one control on
+          this panel that is a different TRADE, and it is the last thing anybody
+          does with a plan — so it has to be reachable from wherever the scroll
+          happens to be, on a plan with twenty spaces as much as on one with
+          two. A footer is what "always reachable" looks like in a column.
+
+          SO: `min-h-0` AND `overflow-hidden` ON THE COLUMN, and the scroll moves
+          inside it. `min-h-0` is the load-bearing one — a flex child's default
+          `min-height:auto` refuses to shrink below its content, so without it
+          the column grows past the grid row and the footer walks off the bottom
+          of the screen instead of pinning to it.
+
+          THE HEADER AND THE STRIP LEFT THE SCROLLER TOO, and that is a second
+          gain rather than a side effect: Share and the exports used to scroll
+          away behind the spaces list, and "where am I" is not a question a tab
+          strip should answer only near the top of the page.
+
+          AND THE PADDING SPLIT UP WITH THEM. It was `pt-4 px-4 pb-10` on the
+          one box; each part now states its own, because a footer with the
+          scroller's 40px foot on it would be a footer with a hole under it. */}
       <div className="bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px]
-        border-l border-border/10 overflow-y-auto pt-4 px-4 pb-10 flex flex-col gap-1.5">
-        {/* --- SHARE, ABOVE THE STEPS ---------------------------------------
-            ABOVE THE STRIP AND NOT IN IT. The three tabs under this are a
-            question about where you are in one piece of work; sharing is a
-            question about who else is in it. Putting a fourth tab beside
-            Outlines / Design / BOQ would have said that "Share" is a fourth
-            place to be, and clicking it would then have failed to move you
-            anywhere — which is exactly the kind of tab that teaches people not
-            to trust a tab strip.
+        border-l border-border/10 flex flex-col min-h-0 overflow-hidden">
+        {/* --- THE HEADER: THE EXPORTS, THEN SHARE -------------------------
+            TWO ACTS THAT ARE NOT CONTROLS OVER THE DRAWING, in one row above
+            the tabs. Everything below this changes what is on the sheet; these
+            two take the sheet somewhere — to a file, or to somebody else. That
+            is what they have in common, and it is why they read as a masthead
+            rather than as the first and last sections of a list.
 
-            WHITE, AND IT IS THE ONLY WHITE BUTTON ON THIS PANEL. Everything
-            else here is glass on a dark ground, deliberately quiet, because the
-            panel is fourteen sections of controls over the drawing and a column
-            of solid buttons would be a wall. This is not a control over the
-            drawing — it is the one act on this screen that reaches somebody
-            else — so it gets the same treatment "New Project" and "Add a plan"
-            get on the screens above: a solid white pill that reads as the
-            primary act of the surface it is on.
+            EXPORT WAS A SECTION AT THE FOOT OF THE DESIGN TAB, three `BTN`s and
+            a paragraph about DXF layers, below the View disclosure. Nothing was
+            wrong with it except where it was: exporting is not a design
+            decision, so it sat under a fold, after every control that is one,
+            in a panel you had to scroll to the end of to find it. The note went
+            with the section — it is on the DXF button's own `title` now, which
+            is where a sentence about a file format is read anyway.
 
-            FULL WIDTH, because the panel is a 340px column and a small button
-            floated in it has to be aimed at. There is nothing to sit beside it.
+            SHARE STAYS THE ONLY WHITE BUTTON ON THIS PANEL. Everything else in
+            here is glass on a dark ground, deliberately quiet, because the
+            panel is a column of controls and a stack of solid buttons would be
+            a wall. This is the one act on this screen that reaches somebody
+            else, so it gets the treatment "New Project" and "Add a plan" get on
+            the screens above. It is no longer FULL WIDTH, and that reasoning has
+            simply expired: full width was because a small button floated in a
+            340px column has to be aimed at, and there was nothing to sit beside
+            it. There is now.
 
-            THE ICON IS DRAWN, not loaded — the same decision as undo/redo and
-            the rail's house. Heroicons' `share`, outline, at this chrome's own
-            1.7 stroke rather than their 1.5, for the reason given by the
-            history pair: at 15px a 1.5 stroke reads thinner than the type next
-            to it. */}
-        {/* `!prep` FOR THE SAME REASON THE STRIP HAS IT: while the pipeline runs
-            the panel is a wait with one way out, and a button that opens a modal
-            over it is an invitation to walk away from a thing that is happening. */}
-        {/* `!doorEdit` FOR THE SAME REASON `!prep` IS HERE, said in the note on
-            that flag below: while the doors are being confirmed the panel is
-            one question, and the one act on this screen that reaches somebody
-            else is the loudest possible way to be taken off it. */}
-        {source && onShare && !readOnly && !prep && !doorEdit && (
-          <button type="button" onClick={onShare}
-            title="Share this project with somebody"
-            className="w-full mb-3 text-[12.5px] px-3 py-[8px] rounded border border-white
-              bg-white text-black cursor-pointer inline-flex items-center justify-center gap-[7px]
-              transition-colors duration-[120ms] hover:bg-text hover:border-text
-              focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-              stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
-              strokeLinejoin="round" aria-hidden="true">
-              <path d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283
-                1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25
-                2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0
-                3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
-            </svg>
-            Share
-          </button>
+            AND IT IS A `<header>`, NOT A `<div>`. `SEC` cancels its own top
+            border with `first-of-type:border-t-0`, and `first-of-type` counts
+            siblings of the SAME TAG — the trap the tab strip's `<nav>` note
+            below tells the whole story of. This row is outside the scroller, so
+            it could not take that slot anyway; it is a `<header>` because that
+            is the honest element.
+
+            `!prep` AND `!doorEdit` AND `!zoneEdit` FOR ONE REASON, SAID THREE
+            TIMES: each of those is a panel that holds a single question — a
+            wait with one way out, or a gesture being asked for — and a row of
+            file formats and a modal invite over the top of one is an invitation
+            to walk away from a thing that is happening. */}
+        {source && !readOnly && !prep && !doorEdit && !zoneEdit && !stepTool && !boqOpen && (
+          <header className="flex-none flex items-center justify-between gap-2
+            pt-4 px-4 pb-3">
+            {/* NOTHING TO EXPORT ON THE TRACER. There is no layout yet, so all
+                three would be dead buttons — and a dead button is a claim that
+                something is available. The empty span holds Share at its end. */}
+            {step !== 'trace' ? (
+              <div className="flex gap-1.5">
+                <button className={BTN_EXPORT} disabled={!totals.rooms}
+                  /* THE PARAGRAPH THIS SECTION USED TO CARRY, AS A TOOLTIP.
+                     "Everything is on a superluminal_ layer, split by trade" is
+                     a sentence about a file format, read once by the one person
+                     who opens the file in CAD — it does not need permanent
+                     space in a panel, and it has none to spend in a header. */
+                  title={'One DXF, everything on a superluminal_ layer, split by'
+                    + ' trade. ' + (isVector
+                      ? 'In this drawing\u2019s own units and origin, so it lands'
+                        + ' straight on top of the original.'
+                      : 'In feet.')}
+                  onClick={async () => {
+                    if (!await gateExport()) return;
+                    download(`${exportBase}-lights.dxf`, toSuperluminalDXF({
+                      source, pxPerFt, heightPx: source.h,
+                      rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
+                      objects: obstaclesPx,
+                      accents: accentZonesPx,
+                      spots: taskSpotsPx,
+                    }), 'application/dxf');
+                    milestone.current?.('export');
+                  }}>DXF</button>
+                {/* SVG WENT. It was the only export nobody could open in the
+                    thing they were going to open it in: a consultant gets a DXF,
+                    a client gets a PDF or a PNG, and an SVG is a file for a
+                    browser or a designer's editor — neither of which is on the
+                    path this drawing takes. It also carried the whole plan
+                    base64'd into it, so it was the largest file on the row and the
+                    least useful. PDF is the vector export now, which is what the
+                    SVG was really being asked for. */}
+                {/* PNG AND PDF FOLLOW THE VIEW. Night view is a deliverable in its
+                    own right — a dark sheet with the fittings glowing on it is how
+                    a scheme gets presented — so an export that quietly handed back
+                    the day version would be overruling a choice that is visibly
+                    on screen. `layers.invert` is that choice, and it decides the
+                    plan's polarity AND the ground together: either alone is the
+                    wrong sheet. The thumbnail does NOT follow it — see
+                    `getSnapshot` — because a card picture should look the same
+                    whichever view somebody left the plan in. */}
+                <button className={BTN_EXPORT} disabled={!source} onClick={async () => {
+                  if (!await gateExport()) return;
+                  download(`${exportBase}-lights.png`,
+                    await svgToPNG(svgRef.current, source.w,
+                      { asScanned: !layers.invert, ground: layers.invert ? '#000000' : '#fff' }));
+                }}>PNG</button>
+                {/* PDF IS PLOTTED FROM THE GEOMETRY, NOT PRINTED FROM THE SCREEN.
+                    It went through the browser's print dialog for one revision and
+                    the output was a photograph of a user interface: haloes, hover
+                    states and selection frames all landed as ink, up to 1.1mm on
+                    an A4. See pdfPlot.js — same inputs as the DXF, three line
+                    weights, and the imported page embedded as vector so the plan
+                    stays sharp at any zoom on its own sheet size.
+                    AND IT FOLLOWS THE VIEW: day view gives the line plot, night
+                    view the presentation sheet — black paper, the plan inverted,
+                    the fittings glowing as real PDF gradients. */}
+                <button className={BTN_EXPORT} disabled={!source} onClick={async () => {
+                  if (!await gateExport()) return;
+                  try {
+                    /* THE SHEET FOLLOWS THE VIEW. Night view is the
+                       presentation drawing — black paper, the plan inverted
+                       under it, the fittings glowing as the accent ramp — and
+                       day view is the line plot. The base is re-rendered from
+                       the original file at the sheet's own resolution rather
+                       than reusing the editor's 2400px copy; that is the whole
+                       reason it is awaited separately. */
+                    const base = layers.invert
+                      ? await nightBase(openPdf, initialFile, pdfPage).catch(() => null)
+                      : null;
+                    const out = await plotToPDF({
+                      source, pxPerFt, rooms, objects: obstaclesPx,
+                      accents: accentZonesPx, spots: taskSpotsPx, coves: reverseCoves,
+                      file: initialFile, pageNo: pdfPage, title: exportBase,
+                      night: layers.invert, base,
+                    });
+                    download(`${exportBase}-lights.pdf`, out.bytes, 'application/pdf');
+                    milestone.current?.('export');
+                  } catch (err) { console.error('[export] the plot failed', err); }
+                }}>PDF</button>
+              </div>
+            ) : <span />}
+            {/* THE ICON IS DRAWN, not loaded — the same decision as the top
+                bar's undo/redo pair and the rail's house. Heroicons' `share`,
+                outline, at this chrome's own 1.7 stroke rather than their 1.5,
+                and at 13px to sit with the smaller type. */}
+            {onShare && (
+              <button type="button" onClick={onShare}
+                title="Share this project with somebody"
+                className="flex-none text-[11.5px] leading-none px-2.5 py-[6px] rounded
+                  border border-white bg-white text-black cursor-pointer inline-flex
+                  items-center justify-center gap-[6px]
+                  transition-colors duration-[120ms] hover:bg-text hover:border-text
+                  focus-visible:outline-2 focus-visible:outline-accent
+                  focus-visible:outline-offset-2">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                  stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+                  strokeLinejoin="round" aria-hidden="true">
+                  <path d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283
+                    1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25
+                    2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0
+                    3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
+                </svg>
+                Share
+              </button>
+            )}
+          </header>
         )}
-        {/* --- THE WALKTHROUGH, UNDER IT ------------------------------------
-            ONLY ON THE OUTLINES STEP, AND THAT IS THE WHOLE PLACEMENT. On this
-            step the panel holds the Share button and nothing else — everything
-            below is gated on `step !== 'trace'` because every one of those
-            sections is a control over a LAYOUT, and there is no layout yet. So
-            this column is 340px of empty glass beside the one screen that asks
-            somebody to do something with a mouse they have not done before.
-            Past this step the panel has fourteen sections to hold, and a video
-            at the top of it would push the spaces list off the fold to explain
-            a screen you have already got through.
-
-            UNDER SHARE RATHER THAN OVER IT, because Share is the primary act of
-            this surface — the one white button on the panel — and the thing that
-            reads as "press me first" should not be a video. It is also where the
-            tab strip sits on the other two steps: the slot under the button is
-            already the panel's "about this screen" slot.
-
-            `!prep` FOR THE SAME REASON THE BUTTON ABOVE HAS IT: while the
-            pipeline runs the panel collapses to the wait and its one way out,
-            and a walkthrough over that is an invitation to walk away from a
-            thing that is happening. */}
-        {showTrace && !prep && <HowToVideo className="flex-none mb-3" />}
-        {/* --- WHERE YOU ARE, AND IT IS THE FIRST THING IN THE PANEL --------
-            THREE STEPS, AS THREE TABS. Tracing the outlines, laying out the
-            design, and reading the schedule are the three things this app does,
-            and until now they were navigated three different ways: a button at
-            the foot of the panel, an implicit "you are here", and a pill in the
-            top bar. One strip, one idiom, one answer to "where am I".
+        {/* --- WHERE YOU ARE, AND IT IS ABOVE EVERYTHING IT NAVIGATES ------
+            FOUR PLACES, AS FOUR TABS. The spaces on the plan, the design laid
+            out on them, the schedule that falls out of it, and — for role 1 —
+            the model readings behind all three. They used to be navigated three
+            different ways: a button at the foot of the panel, an implicit "you
+            are here", and a pill in the top bar. One strip, one idiom, one
+            answer to "where am I".
 
             ABOVE THE PANEL'S OWN BRANCHING, which is what the hoist buys and
             the reason this is not inside the design branch with the rest of it.
             The panel swaps its whole contents when the schedule is open — see
             the note below — so a strip further down would VANISH exactly when
             you needed it to get back. It is the frame, not one of the views.
+
+            AND OUTSIDE THE SCROLLER NOW, with the header above it. It was the
+            first thing IN the scroller, which meant the answer to "where am I"
+            scrolled away the moment somebody opened a space — on a plan with
+            twenty of them the strip was several screens behind. See the note on
+            the column.
 
             NOT IN THE VIEWER AND NOT WHILE THE PIPELINE RUNS. `readOnly` has no
             step to move between, and `prep` is a wait with one way out that the
@@ -8302,7 +8525,8 @@ export default function App({
             screen is an invitation to a blank page — but a plan with outlines
             and no layout is the same blank page, and this strip only exists past
             `step !== 'trace'`, which is exactly "there is a layout". */}
-        {source && step !== 'trace' && !readOnly && !prep && !doorEdit && (
+        {source && step !== 'trace' && !readOnly && !prep && !doorEdit && !zoneEdit
+          && !stepTool && (
           /* NO RULE UNDER THE STRIP. It carried `border-b border-border/10` — a
              full-width hairline, the convention for a tab strip on a light
              ground where the tabs are cards sitting on a sheet. These are not
@@ -8328,22 +8552,55 @@ export default function App({
              It is also the honest element: this is navigation between the three
              things the app does. `role="tablist"` overrides nav's implicit
              `navigation` role, which is what we want it announced as. */
-          <nav className="flex mb-3" role="tablist" aria-label="Plan step">
-            {/* THE OUTLINES TAB CAN REFUSE TO SWITCH. Going back discards the
-                layout, so `backToOutlines` asks first and returns false on a
-                "no" — which leaves you where you were rather than
-                half-navigating. */}
-            <button role="tab" aria-selected="false" className={PTAB}
-              onClick={backToOutlines}>Outlines</button>
-            <button role="tab" aria-selected={view === 'design'}
-              className={view === 'design' ? PTAB_ON : PTAB}
-              onClick={() => setView('design')}>Design</button>
-            <button role="tab" aria-selected={view === 'boq'}
-              className={view === 'boq' ? PTAB_ON : PTAB}
-              onClick={() => setView('boq')}>BOQ</button>
+          <nav className="flex px-4 mb-3" role="tablist" aria-label="Plan view">
+            {/* --- FOUR TABS, AND TWO OF THEM ARE NEW WORK -----------------
+                “OUTLINES” IS “SPACES” AND IT IS NO LONGER A TRIP. The old tab
+                did not select a view at all: it called `backToOutlines`, which
+                shows the tracer — so one of the three tabs in a strip about
+                where you are in the panel actually replaced the CANVAS, and it
+                was `aria-selected="false"` for ever because there was no state
+                for it to be selected in. It is an ordinary tab now, holding the
+                list it is named after, and the route to the tracer is a button
+                in that list's heading where it belongs.
+
+                AND ADMIN IS THE FOURTH, for the audience it is for rather than
+                for the step it is in — see the note over its section. It is the
+                one tab that is not offered to everybody, so it is the one tab
+                whose absence has to leave the other three looking deliberate:
+                three words instead of four, no gap, no disabled stub. */}
+            {[['spaces', 'Spaces'], ['design', 'Design'], ['boq', 'BOQ'],
+              ...(isAdmin ? [['admin', 'Admin']] : [])].map(([k, label]) => (
+              <button key={k} role="tab" aria-selected={panelView === k}
+                className={panelView === k ? PTAB_ON : PTAB}
+                onClick={() => setView(k)}>{label}</button>
+            ))}
           </nav>
         )}
-        {/* THE BOQ PANEL HAS ONE JOB. Every other section here is a control over
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-10
+          flex flex-col gap-1.5">
+        {/* --- THE WALKTHROUGH, UNDER IT ------------------------------------
+            ONLY ON THE OUTLINES STEP, AND THAT IS THE WHOLE PLACEMENT. On this
+            step the panel holds the Share button and nothing else — everything
+            below is gated on `step !== 'trace'` because every one of those
+            sections is a control over a LAYOUT, and there is no layout yet. So
+            this column is 340px of empty glass beside the one screen that asks
+            somebody to do something with a mouse they have not done before.
+            Past this step the panel has fourteen sections to hold, and a video
+            at the top of it would push the spaces list off the fold to explain
+            a screen you have already got through.
+
+            UNDER SHARE RATHER THAN OVER IT, because Share is the primary act of
+            this surface — the one white button on the panel — and the thing that
+            reads as "press me first" should not be a video. It is also where the
+            tab strip sits on the other two steps: the slot under the button is
+            already the panel's "about this screen" slot.
+
+            `!prep` FOR THE SAME REASON THE BUTTON ABOVE HAS IT: while the
+            pipeline runs the panel collapses to the wait and its one way out,
+            and a walkthrough over that is an invitation to walk away from a
+            thing that is happening. */}
+        {showTrace && !prep && <HowToVideo className="flex-none mb-3" />}
+        {/* THE BOQ PANEL HAS ONE JOB.        {/* THE BOQ PANEL HAS ONE JOB. Every other section here is a control over
             the drawing — arm a fan, recompute the accents, toggle a layer — and
             not one of them means anything while a schedule is on screen. A panel
             full of controls that act on something you cannot see is worse than
@@ -8576,582 +8833,33 @@ export default function App({
               </button>
             </div>
           </div>
-        ) : <>
-        {source && step !== 'trace' && <>
-          {/* --- EVERY SPACE, AND EVERYTHING ABOUT ONE ------------------------
-              THIS LIST IS THE PANEL'S SPINE NOW. It used to be a selector with
-              four sections underneath it — Ceiling, Coves, Render pass — each
-              silently describing whichever space happened to be selected. That
-              is four places to look for one room's answer, and three of them
-              had a heading that named the room again so you could tell.
+        ) : zoneEdit ? (
+          /* --- BOX OUT WHAT THE LIGHT KEEPS OFF, AND NOTHING ELSE ----------
+             THE DOOR STEP'S OWN SHAPE, AND DELIBERATELY SO. Both are a question
+             about the DRAWING answered with a marquee, and both used to be
+             something else: the doors were a floating icon button, and this was
+             the middle tab of a three-tab toolbox. A tab put the instruction
+             beside two palettes and a readout — nine other things to click while
+             being told to drag one box — and the instruction lost.
 
-              So the sections came INSIDE the row. Clicking a space opens it and
-              closes every other one, and everything that is a decision about
-              THAT space is in the space: what the ceiling is, which rectangle
-              the cove is set out in, and the renders it was lit from. Nothing
-              below this section is per-space any more.
+             WHAT IT IS NOT is a section that appears at the top of a full panel.
+             That is a notice. A panel with one thing in the middle of it is a
+             place you have been taken to, which is what a step has to feel like
+             if the way out is going to be obvious.
 
-              THE ACCORDION IS `focusId` AND NOT A SECOND PIECE OF STATE. The
-              app already had exactly one selected space and the canvas already
-              outlines it in blue; a separate `expandedId` would be a second
-              answer to "which room are we talking about" and the two would
-              disagree the first time anything else set the focus. */}
-          <div className={SEC}>
-            <h3 className={H3}>Spaces · {rooms.length}</h3>
-            {/* --- CAPPED AND SCROLLED, ONCE THERE ARE MORE THAN FIVE ---------
-                This list is the panel's spine and on a big plan it was the whole
-                panel: twenty spaces pushed Edit, Result, View and Export off the
-                bottom, so the controls that act on a layout were unreachable
-                without scrolling past every room in it.
+             THE PICTURE IS THE INSTRUCTION and the sentence only names the
+             subject. "Draw a box" is a sentence about a GESTURE, and a sentence
+             is a poor way to describe one: it has to be read, and then imagined.
+             A marquee being dragged is the gesture itself, at a glance. It is the
+             same drawing the door step uses — same 72x46 box, same live corner,
+             same pointer — because it is the same drag; what differs is the
+             hue and what is under it. */
+          <div className={`${SEC} flex-1 flex flex-col min-h-0`}>
+            <div className="flex-1 flex flex-col items-center justify-center gap-4
+              text-center px-1 py-6">
+              <p className="m-0 text-[17px] leading-[1.35] tracking-[-0.02em] text-white
+                max-w-[22ch]">Box out anything the light should keep off</p>
 
-                FIVE, BECAUSE THAT IS WHERE A LIST STOPS BEING SCANNABLE. Under
-                five you take it in at a glance and a scroll box would be a
-                frame round nothing; past it you are hunting a name, and hunting
-                inside a 340px window is no worse than hunting down the page —
-                while everything below stays where you left it.
-
-                THE CAP USED TO LIFT WHILE A SPACE WAS OPEN — `&& !focusId` —
-                AND THAT IS THE BUG THIS BLOCK IS NOW THE FIX FOR. The reasoning
-                was sound as far as it went: opening a row reveals its wall pass,
-                its render pass and its controls, which is a workspace rather
-                than a list item, and nesting that in a 340px box means two
-                scrollbars and a cramped one. What it missed is that selecting a
-                space is the NORMAL state of this screen, not an exception —
-                clicking a space on the canvas sets `focusId` too — so on any
-                plan where somebody had touched a room the cap was simply not
-                there, and the list ate the panel exactly as before. A cap that
-                is off whenever the screen is in use is not a cap.
-
-                SO IT IS UNCONDITIONAL PAST FIVE, and the OPEN case gets a taller
-                box instead of no box. 60vh is enough for a row's whole workspace
-                on any ordinary window while still leaving Edit, Result, View and
-                Export reachable below it, which was the entire point.
-
-                AND THE OPEN ROW IS SCROLLED INTO VIEW, because a cap that can
-                hide what you just clicked is worse than no cap. `block:
-                'nearest'` scrolls the minimum distance — it leaves a row that is
-                already visible exactly where it is, so opening the second space
-                in a list does not jerk the panel.
-
-                `.lp-scroll` carries the thin visible scrollbar — see styles.css
-                for why the bar is deliberately not hidden. The negative margin
-                and matching padding give the bar a gutter without insetting the
-                rows from the panel's edge. */}
-            <div className={rooms.length > 5
-              ? `lp-scroll -mr-1.5 pr-1.5 ${focusId ? 'max-h-[60vh]' : 'max-h-[340px]'}`
-              : undefined}>
-            {rooms.map((r) => {
-              const on = r.id === focusId;
-              const chunked = r.chunking?.needsChoice;
-              const coved = (r.coves?.length ?? 0) > 0;
-              /* THE BOLT WAS HERE, AND SO WAS `electric` — the flag that decided
-                 whether a row got one. It ran the pass for one space; there is
-                 no pass to run. What this row needs from the electricals now is
-                 the same thing every other line in it needs: an account of what
-                 is drawn. See the Electricals block further down the open row. */
-              const wired = boardResults[r.id];
-              return (
-                <div key={r.id} ref={on ? openRowRef : null}
-                  className={`group ${ROW_FLUSH} ${on ? ROW_ON : ROW_OFF}`}>
-                  {/* THE HEAD IS THE CONTROL; THE BODY IS NOT. They were one
-                      element, and nesting a file input and four buttons inside
-                      a div whose own click selects the row is how a click on
-                      "Cove" also re-selects the room it is already in. */}
-                  {/* ONE HANDLER FOR THE POINTER AND THE KEYBOARD. They were
-                      two copies of the same expression, which is how they would
-                      have drifted the moment selecting a space did anything more
-                      than set the focus — and it now does. See `pickSpace`. */}
-                  <div role="button" tabIndex={0} className={ROW_PICK}
-                    onClick={() => pickSpace(r.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault(); pickSpace(r.id);
-                      }
-                    }}>
-                    <div className="flex items-center gap-[9px]">
-                      <div className="flex-auto min-w-0">
-                        <div className={PICK}>
-                          <span className={NAME}>{r.outline.name || 'Space'}</span>
-                        </div>
-                        <div className={META}>
-                          <span>
-                            {/* The classification, where it exists. It is the
-                                reason a room did or did not get accents, so it
-                                belongs next to the room rather than buried in a
-                                console log. */}
-                            {roomTypes[r.id] && (
-                              <b className={RTYPE} title={roomTypes[r.id].why}>
-                                {roomTypeIn(projectId, roomTypes[r.id].type)?.label ?? 'Other'}
-                              </b>
-                            )}
-                            {ftin(r.stats.widthFt)} × {ftin(r.stats.heightFt)}
-                            {' '}· {Math.round(r.stats.areaSqft)} sqft
-                            {coved && <b className={RTYPE}>Cove</b>}
-                          </span>
-                        </div>
-                      </div>
-                      {chunked && (
-                        <button className={on ? ICON_ON : ICON}
-                          title={r.chunkingChosenBy === 'user'
-                            ? 'Change how this space is cut up'
-                            : `${r.chunking.options.length} ways to cut this space up — the recommended one is in use`}
-                          onClick={(e) => {
-                            // The row opens; this does something else entirely.
-                            e.stopPropagation();
-                            setPickingId(r.id); setFocusId(r.id); setZoneMode(false);
-                          }}>
-                          {/* `uid` KEEPS THE GRADIENTS APART — one icon per
-                              row, each with its own paint server, and duplicate
-                              ids in a document resolve to the first. The ramp is
-                              handed in rather than imported by the icon: see
-                              ChunkIcon. */}
-                          <ChunkIcon uid={r.id} ramp={THROW_STYLE.stops}
-                            title={r.chunkingChosenBy === 'user'
-                            ? 'Chunking — chosen by hand' : 'Chunking'} />
-                        </button>
-                      )}
-                    </div>
-                    {r.outline.enclosingPx?.length > 0 && (
-                      <p className={`${NW} mt-0.5`}>
-                        {r.outline.enclosingPx.length} space
-                        {r.outline.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly inside this
-                        one, so {r.outline.enclosingPx.length > 1 ? 'they are' : 'it is'} held out
-                        of the ceiling as a no-light zone. Drag a corner out to a wall and it
-                        will be subtracted properly instead.
-                      </p>
-                    )}
-                    {r.region?.warning && <p className={`${NW} mt-0.5`}>{r.region.warning}</p>}
-                  </div>
-
-                  {on && (
-                    <div className="px-[7px] pt-0.5 pb-2 border-t border-border/10 mt-1">
-                      {/* --- WHAT IS ON ITS WALLS, and now the only thing in
-                          here. The ceiling design used to be reported above
-                          this — each chunk, its size, what it came out as — and
-                          it was a paragraph of text restating what the drawing
-                          already shows, in the one place you cannot see the
-                          drawing while reading it. The decision is made on the
-                          plan (click a light) and its consequence is drawn on
-                          the plan; a second account of it in the panel is not
-                          reassurance, it is something else to reconcile.
-                          Independent of the ceiling either way: panelling,
-                          shelving and art are there whether the slab is flat or
-                          coved, which is why this was never gated on it. */}
-                      {/* `wallGrid`, `wallShot`, `wallState` and the two
-                          handlers below are all computed from `focus`, and this
-                          body only renders when `on` — that is, when `focus` IS
-                          `r`. One selected space and one open body is the same
-                          fact, which is the reason the accordion is `focusId`
-                          rather than state of its own. */}
-                      <RenderPassPanel
-                        room={r} grid={wallGrid} pxPerFt={pxPerFt}
-                        renders={renders[r.id] ?? []}
-                        stored={(renderRefs[r.id] ?? []).length}
-                        onAddFiles={addRenders}
-                        /* REMOVING A VIEW DROPS THE REFERENCE, NOT THE OBJECT.
-                           The bucket copy stays where it is, deliberately: it
-                           was one of the images a pass was actually run on, and
-                           the answer that pass produced is still on this plan
-                           and still in its revisions. Deleting the pixels would
-                           leave a wall element whose evidence no longer exists
-                           — a training row with a hole in it — to save a few
-                           hundred kilobytes. What the person meant by the × is
-                           "not this one, next time", and that is exactly what
-                           removing it from the list does. */
-                        onRemoveRender={(i) => {
-                          setRenders((m) => ({
-                            ...m, [r.id]: (m[r.id] ?? []).filter((_, k) => k !== i) }));
-                          setRenderRefs((m) => ({
-                            ...m, [r.id]: (m[r.id] ?? []).filter((_, k) => k !== i) }));
-                        }}
-                        onClearRenders={() => {
-                          setRenders((m) => { const n = { ...m }; delete n[r.id]; return n; });
-                          setRenderRefs((m) => { const n = { ...m }; delete n[r.id]; return n; });
-                        }}
-                        /* THE SHOT IS SHOWN ONLY FOR THE ROOM IT IS OF. It is
-                           rebuilt asynchronously when the selection changes, so
-                           for a beat after a click it is still the last room's,
-                           and a thumbnail of the wrong room inside this row is
-                           worse than no thumbnail. */
-                        shot={wallShot?.roomId === r.id ? wallShot : null}
-                        state={wallState.roomId === r.id ? wallState : { status: 'idle' }}
-                        result={wallResults[r.id] ?? null}
-                        transcript={wallTranscripts[r.id] ?? null}
-                        runCount={[...reverseCoves, ...shelfStrips]
-                          .filter((x) => x.roomId === r.id).length}
-                        trimmedRuns={[...reverseCoves, ...shelfStrips]
-                          .filter((x) => x.roomId === r.id && x.trimmed).map((x) => x.id)}
-                        onResetLengths={() => {
-                          const ids = new Set([...reverseCoves, ...shelfStrips]
-                            .filter((x) => x.roomId === r.id).map((x) => x.id));
-                          setRunTrims((m) => Object.fromEntries(
-                            Object.entries(m).filter(([k]) => !ids.has(k))));
-                        }}
-                        onRun={runWallPass}
-                        onClear={() => {
-                          setWallResults((m) => { const n = { ...m }; delete n[r.id]; return n; });
-                          // The transcript goes with the result: a dialog
-                          // offering the reasoning behind marks somebody has
-                          // just cleared is a way to make them doubt what they
-                          // are looking at.
-                          setWallTranscripts((m) => { const n = { ...m }; delete n[r.id]; return n; });
-                        }} />
-                    </div>
-                  )}
-                  {/* WHAT THE RULES DID, AND WHAT THEY COULD NOT DO.
-                      A board that was REFUSED — no wall long enough beside the
-                      door, a bed that nearly fills the wall it faces — is the
-                      one thing this pass has to report that is not visible on
-                      the drawing, because the drawing shows what it placed.
-
-                      THE COUNT COMES THROUGH `boardsFor` AND THE SENTENCES DO
-                      NOT, and the split is the point. The count is "what is on
-                      the sheet", so it has to obey the plates somebody deleted;
-                      a refusal is "why there is nothing here", and a person
-                      removing one plate has not answered that about another. */}
-                  {wired && (() => {
-                    const live = boardsFor(r);
-                    /* PLATES AND NOT BOARDS, because plates are what get
-                       ordered. They are the same number everywhere except the
-                       television wall, whose board is two of them stacked in
-                       elevation at one point in plan — see FACING_PLATES. The
-                       drawing shows positions; this line is the count. */
-                    const n = live.reduce((t, b) => t + (b.plates ?? 1), 0);
-                    /* BAY PLATES COUNT AS MOVED TOO. They are draggable for
-                       the same reason they are deletable — on the drawing they
-                       are switchboards — so the way back has to reach them, or a
-                       dragged bay plate is stuck where it was dropped. They are
-                       deliberately NOT in `n` above: that is the count of the
-                       plates the RULES place in this space, and a bay plate is a
-                       consequence of the ceiling being cut up. */
-                    const hand = [...live, ...bayBoardsFor(r)].filter((b) => b.moved);
-                    return (
-                      <p className={`${N} mt-0.5`}>
-                        {n} switchboard{n === 1 ? '' : 's'}
-                        {n !== live.length
-                          ? ` at ${live.length} position${live.length === 1 ? '' : 's'}` : ''}
-                        {live.some((b) => b.clash)
-                          ? ' · two of them want the same piece of wall' : ''}
-                        {[...wired.boards.filter((b) => b.rejected).map((b) => b.rejected),
-                          ...wired.notes].map((t, i) => <span key={i}> · {t}</span>)}
-                        {/* THE WAY BACK FROM A DRAG, and the only place there can
-                            be one. The hover card cannot carry a button — it is
-                            `pointer-events: none`, so a plate's own card is
-                            unclickable by design — and a plate somebody has
-                            slid across the room is exactly the thing they may
-                            want to undo without hunting for where the rule had
-                            it. Same shape and same argument as the coves'
-                            "Reset lengths": a hand edit on a derived fitting
-                            needs a stated way of being given back. */}
-                        {!readOnly && hand.length > 0 && (
-                          <>
-                            {' · '}
-                            <button className={BTN_TINY}
-                              title={hand.length === 1
-                                ? 'Put it back where the rule put it'
-                                : 'Put them back where the rules put them'}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                hand.forEach((b) => resetBoard(b.id));
-                              }}>
-                              {hand.length} moved by hand — put back
-                            </button>
-                          </>
-                        )}
-                      </p>
-                    );
-                  })()}
-                </div>
-              );
-            })}
-            </div>
-            {/* "BACK TO THE OUTLINES" WAS HERE and is now the Outlines tab at
-                the top of this panel — see the strip above and
-                `backToOutlines`, which still carries the confirm. It sat under
-                this list because it is what you do when you are done with it,
-                which is the wrong reason to put a way OUT of a screen at the
-                bottom of that screen. */}
-            {outlinesPx.length > rooms.length && (
-              <button className={`${BTN_FULL} mt-1.5`}
-                onClick={lightWholePlan}>
-                Light all {outlinesPx.length} outlines
-              </button>
-            )}
-          </div>
-
-          {step !== 'chunks' && step !== 'trace' && <>
-          {/* --- EDIT: ONE TOOLBOX, THREE CATEGORIES -------------------------
-              Three sections became one. They were Ceiling objects, No-light
-              zones and Additional lighting, stacked, each with a palette and a
-              list — three headings and a scroll for three answers to the same
-              question, which is "what do I put on this drawing by hand".
-
-              They are one box with three tabs now, and the tabs are the honest
-              shape: the three are mutually exclusive in USE as well as in
-              layout, because each arms a tool and this canvas takes one armed
-              tool at a time. Switching tab disarms whatever the last one armed,
-              which is the behaviour the old stacked version had to fake by
-              having every palette clear the other two. */}
-          <div className={SEC}>
-            <h3 className={H3}>Edit</h3>
-            {/* TABS AND NOT A ROW OF BUTTONS, and the difference is what they
-                CLAIM. Three buttons side by side say "three things you can do",
-                and one of them being filled in reads as a thing already done. A
-                tab strip says "one panel, three views of it" — which is what
-                this is — and the underline says which view you are looking at
-                without spending a fill on it. `role="tablist"` and the aria
-                wiring, because a control that looks like tabs and does not
-                answer to a screen reader as tabs is worse than one that looks
-                like buttons. */}
-            <div className="flex border-b border-border mb-3" role="tablist" aria-label="Edit">
-              {[['objects', 'Ceiling objects'], ['zones', 'No-light zones'],
-                ['lighting', 'Lighting']].map(([k, label]) => (
-                <button key={k} role="tab" id={`edit-tab-${k}`}
-                  aria-selected={editTab === k} aria-controls="edit-panel"
-                  className={'appearance-none border-0 bg-transparent cursor-pointer '
-                    + 'text-[11px] px-0 py-[5px] mr-4 last:mr-0 border-b-2 -mb-px '
-                    + 'whitespace-nowrap transition-[color,border-color] duration-[120ms] '
-                    + 'focus-visible:outline-2 focus-visible:outline-accent '
-                    + 'focus-visible:outline-offset-2 focus-visible:rounded-[3px] '
-                    /* WHITE, matching the Outlines/Design strip above it. Two
-                       tab strips in one panel picking their current tab out in
-                       two different colours would read as two unrelated
-                       controls. `text-ink` was black-on-glass and barely a
-                       state at all on this ground. */
-                    + (editTab === k
-                      ? 'text-white border-b-white'
-                      : 'text-subtle border-transparent hover:text-text')}
-                  onClick={() => {
-                    setEditTab(k);
-                    // ONE ARMED TOOL ON THIS CANVAS AT A TIME, and leaving a
-                    // tool armed under a tab you cannot see is the worst version
-                    // of that: the next click on the plan does something the
-                    // panel is no longer showing you.
-                    setArmed(null); setGhost(null); setGuides([]);
-                    disarmAdd();
-                    if (k !== 'zones') { setZoneMode(false); setDraftZone(null); }
-                  }}>{label}</button>
-              ))}
-            </div>
-            <div id="edit-panel" role="tabpanel" aria-labelledby={`edit-tab-${editTab}`}>
-
-            {editTab === 'objects' && <>
-              {/* Four symbols, and clicking one arms it. There is no separate
-                  "place" button: picking the thing IS asking to place it, and a
-                  picker that then needs confirming was a click spent on nothing. */}
-              <CeilingPalette armed={armed} disabled={!pxPerFt}
-                onArm={(id) => {
-                  setArmed(id);
-                  if (id) { setObjType(id); setObjMode(true); setZoneMode(false); }
-                  setGuides([]); setGhost(null);
-                }} />
-
-              {/* A fan's sweep, offered only when a fan is in play — armed, or
-                  selected. It is the one property of the four that is a standard
-                  size rather than something to drag to. */}
-              {(() => {
-                const sel = ceilingObjs.find((o) => o.id === selObjId);
-                if (armed !== 'fan' && sel?.kind !== 'fan') return null;
-                const current = sel?.kind === 'fan' ? sweepMm(sel) : fanSweepMm;
-                return (
-                  <div className="flex gap-1 mt-[7px]">
-                    {FAN_SWEEPS.map((mm) => (
-                      <button key={mm} type="button"
-                        className={current === mm ? PROP_ON : PROP_OFF}
-                        onClick={() => {
-                          setFanSweepMm(mm);
-                          /* EVERY SELECTED FAN, NOT JUST THE PRIMARY. The chip
-                             above it reads the primary's sweep, because with
-                             three fans selected the only honest "current" value
-                             is the one you touched last — but the ACT is what a
-                             properties panel does, and that is to apply the
-                             chosen value to everything selected it makes sense
-                             for. Non-fans in the selection are left alone rather
-                             than refused: selecting two fans and a cassette and
-                             setting a sweep is a perfectly clear instruction
-                             about the fans. */
-                          const picked = new Set(selObjIds);
-                          setCeilingObjs((os) => os.map((o) => (
-                            picked.has(o.id) && o.kind === 'fan' ? withSweep(o, mm) : o)));
-                        }}>{mm} sweep</button>
-                    ))}
-                  </div>
-                );
-              })()}
-
-              {/* WHICH RECTANGLE, asked in the same place and the same shape as
-                  a fan's sweep — because after the palette merged the cassette
-                  and the hatch into one button, this is the only thing left to
-                  say about the object, and it is a property rather than a
-                  gesture. It still matters: the two carry different marks on
-                  the drawing and different lines in the schedule, so the choice
-                  could not simply be dropped along with the second button. */}
-              {(() => {
-                const sel = ceilingObjs.find((o) => o.id === selObjId);
-                const RECTS = ['ac', 'trapdoor'];
-                if (!RECTS.includes(armed) && !isRect(sel)) return null;
-                const current = isRect(sel) ? sel.typeId : armed;
-                return (
-                  <div className="flex gap-1 mt-[7px]">
-                    {RECTS.map((id) => (
-                      <button key={id} type="button"
-                        className={current === id ? PROP_ON : PROP_OFF}
-                        onClick={() => {
-                          // Arming follows the pick, so the next click on the
-                          // plan places what the row says. Changing a SELECTED
-                          // object retypes it in place and leaves its size,
-                          // rotation and position alone: it is the same hole in
-                          // the same ceiling, called what it actually is.
-                          if (RECTS.includes(armed)) { setArmed(id); setObjType(id); }
-                          // ...and it retypes EVERY selected rectangle, for the
-                          // reason the sweep chips apply to every selected fan.
-                          // Round objects in the selection are untouched: an
-                          // "AC or trapdoor" question has no answer for a fan.
-                          const picked = new Set(selObjIds);
-                          setCeilingObjs((os) => os.map((o) => (
-                            picked.has(o.id) && isRect(o) ? { ...o, typeId: id, kind: id } : o)));
-                        }}>{CEILING_BY_ID[id]?.label}</button>
-                    ))}
-                  </div>
-                );
-              })()}
-
-              {!pxPerFt && <p className={NOTE_WARN}>Set the scale first — these are placed at a real size.</p>}
-              {armed && (
-                <p className={NOTE}>Click on the plan to place the
-                  {' '}{CEILING_BY_ID[armed]?.label.toLowerCase()}.</p>
-              )}
-
-              {/* HOW TO GET A SECOND ONE, SAID ONCE AND ONLY WHEN IT APPLIES.
-                  Option-drag is invisible: nothing on the drawing suggests a
-                  modifier exists, and a gesture nobody can discover is a gesture
-                  nobody has. It appears only once something is actually placed —
-                  before that there is nothing to copy and the line would be a
-                  rule about a thing that does not exist yet. */}
-              {ceilingObjs.length > 0 && (
-                <p className={NOTE}>Drag one with Option held — Alt on Windows,
-                  before or during the drag — to leave a copy behind. Add Shift
-                  to keep it exactly level with the original.</p>
-              )}
-
-              {/* AIR BETWEEN THE PALETTE AND WHAT IT HAS PLACED. The list ran
-                  straight on from the buttons — and from the sweep chips and the
-                  place-it note between them — so a row of placed objects read as
-                  a fourth line of the palette rather than as its result. */}
-              {/* CAPPED AT 150px AND SCROLLED, AND THE CAP IS UNCONDITIONAL —
-                  which is the difference between this list and the Spaces list
-                  above it. There, the scroller is switched on past a row count,
-                  and getting that threshold to agree with a pixel height is what
-                  went wrong once already. Here `max-height` does the deciding on
-                  its own: shorter content simply never reaches 150px, and
-                  `overflow-y:auto` draws no bar until there is something to
-                  scroll. No count to keep in step with a height.
-
-                  150px IS ABOUT FIVE OF THESE ROWS — `ROW_TIGHT`, one line each.
-                  Option-drag makes long lists ordinary rather than exceptional:
-                  a row of ten cassettes down a corridor is now three seconds of
-                  work, and this list was the thing that would have buried the
-                  palette above it and the controls below.
-
-                  `.lp-scroll` is the thin visible bar; the negative margin and
-                  matching padding give it a gutter without insetting the rows. */}
-              <div className="mt-4 lp-scroll max-h-[150px] -mr-1.5 pr-1.5">
-              {ceilingObjs.map((o) => {
-                const on = selObjIds.includes(o.id);
-                return (
-                  /* SLIMMER: `ROW_TIGHT`, not `ROW`. With the delete button gone
-                     there is one line in here, and a row padded for two sat with
-                     visible air under its own text. */
-                  <div key={o.id} className={`${ROW_TIGHT} ${on ? ROW_ON : ROW_OFF}`}>
-                    {/* THE WHOLE ROW SELECTS, and selecting is the whole of what
-                        this row does now.
-                        NO × ANY MORE. Delete does it — see the keyboard handler,
-                        which removes `selObjId` on Delete or Backspace — and
-                        clicking the row is what selects. A per-row destructive
-                        button beside a one-line label was the widest thing in
-                        here and the least used: you have to select the object to
-                        know which one you are deleting anyway, and once it is
-                        selected the key is already under your hand.
-                        It also removes the trap that button was: a × one pixel
-                        from the row that selects, both live, with no undo behind
-                        either. */}
-                    {/* SHIFT-CLICK HERE TOO, for the same reason it works on the
-                        drawing: the list and the plan are two views of one
-                        selection, and a gesture that builds it in one place and
-                        not the other is a gesture you have to remember the
-                        location of. Picking four cassettes out of a list by name
-                        is easier than finding them on a busy ceiling. */}
-                    <button className={PICK_BTN}
-                      onClick={(e) => {
-                        setObjMode(true); setArmed(null);
-                        if (e.shiftKey) toggleSelObj(o.id); else setSelObjId(o.id);
-                      }}>
-                      <span className={NAME}>{CEILING_BY_ID[o.typeId]?.label ?? o.kind}</span>
-                      {/* THE SIZE, ON THE FAR SIDE AND IN CAPS. `PICK_BTN` is
-                          already `justify-between`, so the two ends of the row
-                          are the name and the number with the gap between them
-                          doing the work — the alignment a spec sheet uses.
-                          `uppercase` in the class rather than in `sizeLabel`:
-                          the string is DATA (it is a length in millimetres, and
-                          the ⌀ says which length), and shouting is a property of
-                          this row rather than of the value. */}
-                      <span className="font-sans text-[10px] text-subtle uppercase
-                        tracking-[0.04em] tabular-nums whitespace-nowrap">{sizeLabel(o)}</span>
-                    </button>
-                    {/* THE RECT INPUTS ONLY, AND ONLY WHEN THERE ARE ANY. This
-                        block used to hold the × as well, so it rendered for
-                        every object; on a fan it is now empty, and an empty
-                        flex row still spends its margin. */}
-                    {isRect(o) && (
-                    <div className={META}>
-                      <span>
-                        <input type="number" min="100" max="3600" step="50"
-                          value={Math.round(o.wFt * 304.8)}
-                          className="w-[46px] px-[3px] py-px text-[10px] font-sans text-right"
-                          onChange={(e) => setCeilingObjs((os) => os.map((q) => q.id === o.id
-                            ? { ...q, wFt: clampFt(Number(e.target.value) / 304.8) } : q))} />
-                        <span>×</span>
-                        <input type="number" min="100" max="3600" step="50"
-                          value={Math.round(o.hFt * 304.8)}
-                          className="w-[46px] px-[3px] py-px text-[10px] font-sans text-right"
-                          onChange={(e) => setCeilingObjs((os) => os.map((q) => q.id === o.id
-                            ? { ...q, hFt: clampFt(Number(e.target.value) / 304.8) } : q))} />
-                        <span>mm · {Math.round(((o.rot || 0) * 180) / Math.PI)}°</span>
-                      </span>
-                    </div>
-                    )}
-                  </div>
-                );
-              })}
-              </div>
-
-              {/* "IN <SPACE> — 2 OF 5" WAS HERE, and it counted how many of the
-                  placed ceiling objects fell inside the selected space. It was
-                  worth having when an object was a grey mark you could lose on
-                  the plan and the list above did not exist: it was the only way
-                  to check that the fan you just dropped landed in the room you
-                  meant. Both halves of that have gone — the list names every
-                  object and selecting one frames it on the canvas, and the
-                  objects are legible in both plan modes now — so it was a third
-                  account of something two better ones already give, and the only
-                  one of the three phrased as a fraction nobody asked for. */}
-            </>}
-
-            {editTab === 'zones' && <>
-              {/* DRAW ONE, AND SEE THE ONES THAT ARE THERE. That is the whole
-                  category. It used to also carry the bed detector's tally, a
-                  picker for which detector to use and a line per space about
-                  which model won the judge's vote — all real while the bed
-                  pipeline was being built, and none of it the user's business:
-                  the beds are found, judged and kept out of the light before
-                  the plan is handed over.
-
-                  THE PICTURE IS THE INSTRUCTION. "Draw a box" is a sentence
-                  about a GESTURE, and a sentence is a poor way to describe one —
-                  it has to be read, and then imagined. A marquee being dragged
-                  is the gesture itself, at a glance, and it stays on screen
-                  after the first zone is drawn because the tab is also where
-                  somebody comes to draw the second. */}
               <div className="flex flex-col items-center gap-2 px-4 pt-3.5 pb-3
                 border border-border rounded-[10px] bg-input-bg text-center">
                 <svg viewBox="0 0 72 46" aria-hidden="true"
@@ -9172,13 +8880,19 @@ export default function App({
                   </g>
                 </svg>
                 <p className="m-0 text-[11px] leading-[1.5] text-subtle max-w-[30ch]">
-                  {zones.length === 0 ? 'None in the layout. ' : ''}
-                  Draw a box over anything the lights should keep off.
+                  Drag a box over a bed, a wardrobe, anything the fittings should
+                  stay clear of. Draw as many as you need.
                 </p>
               </div>
 
-              {zones.length > 0 && (
-                <div className="mt-3">
+              {/* WHAT IS ALREADY THERE, AND THE ONLY WAY TO TAKE ONE BACK. A
+                  zone has no selection on the canvas — nothing to click, so
+                  nothing for Delete to act on — which makes this list the whole
+                  of its editing. The door step's count is a plain sentence for
+                  the opposite reason: a door box IS selectable, so its list
+                  would have been a second way to do one thing. */}
+              {zones.length > 0 ? (
+                <div className="w-full text-left">
                   <div className={KV_HEAD}>
                     <span>{zones.length} zone{zones.length === 1 ? '' : 's'}</span>
                     <button className={BTN_TINY} onClick={() => setZones([])}>Clear all</button>
@@ -9190,668 +8904,1209 @@ export default function App({
                         {pxPerFt
                           ? `${((z.x1 - z.x0) / pxPerFt).toFixed(1)} × ${((z.y1 - z.y0) / pxPerFt).toFixed(1)} ft`
                           : `${Math.round(z.x1 - z.x0)} × ${Math.round(z.y1 - z.y0)} px`}
-                        <button className={BTN_NUDGE}
-                          title="Remove zone" onClick={() => setZones((zs) => zs.filter((q) => q.id !== z.id))}>×</button>
+                        <button className={BTN_NUDGE} title="Remove zone"
+                          onClick={() => setZones((zs) => zs.filter((q) => q.id !== z.id))}>×</button>
                       </b>
                     </div>
                   ))}
                 </div>
+              ) : (
+                <p className={`${N} m-0`}>None on the plan yet.</p>
               )}
 
-              {/* THE ACTION LAST, AND FULL WIDTH. It is the one thing this tab
-                  is for, so it is the one thing shaped like a target — and it
-                  sits under the list because a button above a list of what it
-                  has already made reads as a header for them. Still a toggle:
-                  the gesture has to be cancellable without drawing something. */}
-              <button className={(zoneMode ? BTN_ACCENT : BTN) + ' w-full mt-3'}
-                onClick={() => {
-                  setZoneMode((v) => !v); setDraftZone(null);
-                  setArmed(null); disarmAdd();
-                }}>
-                {zoneMode ? 'Done drawing' : '+ Add a No Light Zone'}
-              </button>
-            </>}
-
-            {editTab === 'lighting' && <>
-              <LightPalette tool={addTool} objArmed={armed}
-                disabled={!pxPerFt || !rooms.length}
-                onPick={(t, arms) => {
-                  /* TWO MACHINES BEHIND ONE ROW. Four of these buttons arm
-                     `addTool`, the hand-placing tools; the chandelier arms
-                     `armed`, the ceiling-object one-shot, because that is what a
-                     chandelier is to the geometry — a thing with a diameter that
-                     reserves clearance. The palette says which it wants rather
-                     than this branch testing for an id, so moving the next
-                     decorative fitting across is a line in LIGHT_TOOLS.
-                     EITHER WAY THE OTHER MACHINE IS DISARMED. Two armed tools
-                     is a click with two meanings. */
-                  setZoneMode(false); setDraftZone(null);
-                  if (arms === 'object') {
-                    disarmAdd();
-                    setArmed(t); setGhost(null);
-                    if (t) setObjType(t);
-                    return;
-                  }
-                  setAddTool(t); setStripFrom(null); setAddAt(null);
-                  setCoveFrom(null); setCoveNote('');
-                  setArmed(null); setGhost(null);
-                }} />
-              {/* WHY A CLICK WAS REFUSED, said under the palette that asked for
-                  it. A diagonal wall and a slot an inch long are both things a
-                  person can reasonably try, and both have real reasons they
-                  cannot be done — a banner at the top of the screen would be
-                  read as an error rather than as an answer. */}
-              {coveNote && <p className={NOTE_WARN}>{coveNote}</p>}
-              {/* WHAT HAS BEEN SET OUT BY HAND, with a way back. The detected
-                  coves are counted in the Result panel; these are the ones
-                  somebody drew, and they are the only ones that can be undone
-                  wholesale. */}
-              {manualCoves.length > 0 && (
-                <button className={`${BTN_FULL} mt-2`}
-                  onClick={() => { setManualCoves([]); disarmAdd(); }}>
-                  Clear the {manualCoves.length} reverse cove
-                  {manualCoves.length === 1 ? '' : 's'} placed by hand
-                </button>
-              )}
-              {!rooms.length && (
-                <p className={NOTE_WARN}>
-                  Light a space first — a fitting has to belong to one.
-                </p>
-              )}
-              {/* NO "ON THE PLAN" COUNT. It said how many strips, sconces and
-                  spots the drawing carries, three inches above a Result panel
-                  that says it again — two live readouts of one number, which is
-                  not twice the information: it is the same information asking
-                  to be reconciled. */}
-              {(manualAccents.length > 0 || manualSurfaces.length > 0) && (
-                <button className={`${BTN_FULL} mt-2`}
-                  onClick={() => { setManualAccents([]); setManualSurfaces([]); disarmAdd(); }}>
-                  Clear the {manualAccents.length + manualSurfaces.length} placed by hand
-                </button>
-              )}
-            </>}
+              {/* THE WAY OUT, FULL WIDTH AND THE PRIMARY ACT OF THE SURFACE —
+                  the same treatment the door step's answer gets, for the same
+                  reason: it is the one thing this screen is for once the boxes
+                  are drawn. Escape does it too; a step whose only exit is a
+                  keystroke is a step people get stuck in. */}
+              <button className={`${BTN_EXIT} w-full`} onClick={closeZoneEdit}>Done</button>
             </div>
           </div>
+        ) : stepTool ? (
+          /* --- ONE GESTURE, AND NOTHING ELSE ON THE PANEL -----------------
+             THE NO-LIGHT ZONE'S SHAPE, FOR THE NO-LIGHT ZONE'S REASON. All
+             three are a question about the DRAWING answered with a gesture, and
+             these two are the gestures people get wrong: the spot's box says
+             what is being LIT and the fitting then stands off on the ceiling
+             grid aimed back into it, and the cove's drag is locked to the wall
+             the press landed on. Told in a hint card under a
+             six-cell palette, beside a spaces list and two more sections, that
+             is one sentence competing with everything else this panel offers.
+             Told on an empty panel it is the screen. See `stepTool` for why
+             these two and not the other three.
 
-          {/* --- THE RESULT, DIRECTLY UNDER THE EDITING THAT MOVES IT.
-              It was below the View toggles, which put a list of checkboxes
-              between an action and its consequence. Every number here changes
-              when something above it is placed or removed, and a readout you
-              have to scroll past a settings panel to find is a readout nobody
-              watches. */}
-          {totals.rooms > 0 && (
-            <div className={SEC}>
-              <h3 className={H3}>Result</h3>
-              <div className="grid grid-cols-2 gap-2 backdrop-blur-md [&>div]:bg-white/5
-                [&>div]:border [&>div]:border-border/10 [&>div]:rounded [&>div]:px-[11px]
-                [&>div]:py-[9px] [&_b]:block [&_b]:text-[17px] [&_b]:tracking-[-0.03em]
-                [&_b]:tabular-nums [&_span]:text-[9.5px] [&_span]:text-subtle
-                [&_span]:uppercase [&_span]:tracking-[0.08em]">
-                <div><b>{totals.lights}</b><span>lights</span></div>
-                <div><b>{totals.perSqft.toFixed(0)}</b><span>lm / sq ft</span></div>
-                {/* THE AIMED SPOTS AND THE TAPE, WHICH THIS PANEL USED NOT TO
-                    COUNT. `totals.lights` is the ambient grid and the track
-                    heads — everything `plan.lights` holds — and it silently
-                    excluded the two things a person places by hand. A summary
-                    that omits half of what somebody just spent an afternoon
-                    putting on the drawing is a summary they learn not to read.
+             THE PICTURE IS THE INSTRUCTION, and it is the palette's own — see
+             the note over `GESTURE`, which is exported for exactly this. One
+             drawing per gesture, shown in both places, so the card and the step
+             cannot come to describe two different drags.
 
-                    REJECTED SPOTS ARE NOT COUNTED. The placer returns an entry
-                    for a surface it refused, carrying a reason and no geometry,
-                    so that the panel can explain itself; counting those would
-                    report fittings that are not on the plan.
+             AND THE TOOL STAYS ARMED UNTIL `Done`. Both used to put themselves
+             away after one placement, which is right for a tool armed from a
+             palette that is still on screen and wrong for a step: the panel
+             would empty, take one box, and fill itself back in — a screen that
+             closes itself while you are still using it, with a Done button
+             nobody could ever reach. See the spot branch in `onZoneUp` and the
+             cove's in the press handler. */
+          <div className={`${SEC} flex-1 flex flex-col min-h-0`}>
+            <div className="flex-1 flex flex-col items-center justify-center gap-4
+              text-center px-1 py-6">
+              <p className="m-0 text-[17px] leading-[1.35] tracking-[-0.02em] text-white
+                max-w-[22ch]">{stepTool.stepTitle}</p>
 
-                    THE STRIP COMES FROM THE BOQ, not from a length summed here.
-                    `boq.totals.stripMetres` is the figure the schedule and the
-                    exports use, and two places computing metres of tape is how
-                    the headline and the order end up disagreeing.
-
-                    HIDDEN AT ZERO, both of them, which is this panel's own rule
-                    — see the BOQ header, where a tile reading "0.00 m of strip"
-                    was judged to spend a third of the summary saying a thing is
-                    absent. */}
-                {spotsPlaced > 0 && (
-                  <div><b>{spotsPlaced}</b><span>spots</span></div>
-                )}
-                {boq.totals.stripMetres > 0 && (
-                  <div><b>{boq.totals.stripMetres.toFixed(1)}</b><span>m of strip</span></div>
-                )}
+              <div className="flex flex-col items-center gap-2 px-4 pt-3.5 pb-3
+                border border-border rounded-[10px] bg-input-bg text-center">
+                {GESTURE[stepTool.id]}
+                {/* THE PALETTE'S OWN WORDS TOO, read out of `LIGHT_TOOLS`
+                    rather than retyped: the hint and the consequence are what
+                    the button's card says, and two copies of a sentence about a
+                    gesture is how the panel ends up describing two gestures.
+                    `Esc` is dropped — down here the way out is a button. */}
+                <p className="m-0 text-[11px] leading-[1.5] text-muted max-w-[30ch]">
+                  {stepTool.hint} {stepTool.consequence}
+                </p>
               </div>
-              {/* --- IS IT ENOUGH LIGHT? -------------------------------------
-                  "OVER — 3 SPACES, 950 SQ FT" WAS HERE. It was the denominator
-                  of the lm/sqft tile above, stated as a fact with nothing to
-                  compare it to: a reader who does not already know what 18
-                  lm/sqft means learns nothing from being told the area it was
-                  divided by. This says the thing that number was for.
 
-                  THE VERDICT IS COMPUTED, NOT ASSERTED, and that is the one
-                  place this departs from what was asked. A white tick and "your
-                  project is well lit" printed unconditionally would be the app
-                  congratulating itself on plans that are short — and it is the
-                  same figure the cove ladder and every room's own criterion are
-                  judged against, so it is not a hard thing to check. Over the
-                  target it reads as asked; under it, it says by how much and
-                  drops the tick. The area moves into this sentence, so nothing
-                  that was on screen is lost.
+              {/* WHY A GESTURE WAS REFUSED, and it belongs to the cove. A diagonal
+                  wall and a slot an inch long are both things a person can
+                  reasonably try and both have real reasons they cannot be done.
+                  It used to sit under the palette; with the palette off screen
+                  while the step is open, the answer has to be here or the click
+                  simply does nothing and says nothing. */}
+              {coveNote && <p className={`${NW} m-0 text-left`}>{coveNote}</p>}
 
-                  ONE PROJECT-WIDE FIGURE, so `lumenCriteriaFor` is asked with no
-                  room type. Per-room criteria still differ — a kitchen wants 36
-                  and a toilet 25 — but this line is about the plan, and the
-                  place a room's own target is enforced is its layout. */}
-              {(() => {
-                const target = lumenCriteriaFor(projectId, null);
-                const got = totals.perSqft;
-                // THE VERDICT IS JUDGED ON THE ROUNDED FIGURE, so it can never
-                // contradict the number printed beside it. A raw `got >= target`
-                // reads 19.9 as short and then prints it as "20", which is the
-                // panel arguing with itself — and 19.9 against a round 20 is
-                // inside the error of the lumen figures anyway. The tile above
-                // rounds the same way, so all three agree.
-                const ok = Math.round(got) >= target;
-                const label = PROJECT_BY_ID[projectId]?.label;
+              {/* HOW MANY ARE ON THE PLAN, and the way to take them all back —
+                  the zone step's readout, in the zone step's words, because it
+                  is the same question.
+                  ONLY THE ONES PLACED BY HAND. The pass finds task surfaces and
+                  reverse coves of its own, and a count that mixed them in would
+                  be offering to clear work this screen did not do. */}
+              {placedHere.n > 0 && (
+                <div className="w-full text-left">
+                  <div className={KV_HEAD}>
+                    {/* ONE LINE, DELIBERATELY. A break between the noun and
+                        its plural is a SPACE once JSX has collapsed it — "4
+                        spot s placed" — which is the kind of thing that reads
+                        as a rendering fault rather than as a typo. */}
+                    <span>{placedHere.n} {placedHere.n === 1 ? placedHere.one : placedHere.many} placed</span>
+                    <button className={BTN_TINY} onClick={placedHere.clear}>Clear all</button>
+                  </div>
+                </div>
+              )}
+
+              <button className={`${BTN_EXIT} w-full`} onClick={disarmAdd}>Done</button>
+            </div>
+          </div>
+        ) : <>
+        {source && step !== 'trace' && <>
+          {/* --- SPACES, AND IT IS THE WHOLE OF THIS TAB --------------------
+              “OUTLINES” WAS THE TAB'S NAME AND “SPACES” IS WHAT IT HELD. The
+              strip said Outlines / Design / BOQ while the section under it said
+              Spaces, which is one thing called two names in two pieces of
+              chrome a dozen pixels apart — and “outline” is the geometry, the
+              polygon somebody traced, where “space” is the room it describes.
+              The rooms are what this list is of.
+
+              AND IT IS THE ONLY THING IN HERE NOW. The list is an accordion:
+              opening a space reveals its ceiling, its cove rectangle and its
+              render pass, which is a workspace rather than a list item. Sharing
+              a column with two palettes and a readout meant every one of those
+              pushed the others off the fold. One tab, one subject. */}
+          {panelView === 'spaces' && <>
+            {/* --- EVERY SPACE, AND EVERYTHING ABOUT ONE ------------------------
+                THIS LIST IS THE PANEL'S SPINE NOW. It used to be a selector with
+                four sections underneath it — Ceiling, Coves, Render pass — each
+                silently describing whichever space happened to be selected. That
+                is four places to look for one room's answer, and three of them
+                had a heading that named the room again so you could tell.
+
+                So the sections came INSIDE the row. Clicking a space opens it and
+                closes every other one, and everything that is a decision about
+                THAT space is in the space: what the ceiling is, which rectangle
+                the cove is set out in, and the renders it was lit from. Nothing
+                below this section is per-space any more.
+
+                THE ACCORDION IS `focusId` AND NOT A SECOND PIECE OF STATE. The
+                app already had exactly one selected space and the canvas already
+                outlines it in blue; a separate `expandedId` would be a second
+                answer to "which room are we talking about" and the two would
+                disagree the first time anything else set the focus. */}
+            <div className={SEC}>
+              {/* --- THE HEADING CARRIES THE WAY BACK TO THE TRACER -------
+                  THE TAB USED TO BE THAT ROUTE. “Outlines” sat where “Spaces”
+                  sits now and its whole job was `backToOutlines` — show the
+                  tracer, keep the lights. Renaming it to the thing this panel
+                  is actually a list OF would have quietly deleted the only way
+                  back to a mis-traced wall, so the route comes with the list:
+                  the list is what you have, and this is how you change it.
+                  A TINY BUTTON IN THE HEADING, NOT A SECTION OF ITS OWN. It is
+                  one act, it is about the whole list rather than about a row,
+                  and the heading is the only line in here that belongs to all
+                  of them. */}
+              <div className="flex items-baseline justify-between gap-2">
+                <h3 className={H3}>Spaces · {rooms.length}</h3>
+                <button className={`${BTN_TINY} mb-2.5`} onClick={backToOutlines}
+                  title="Go back to the outlines — nothing is discarded">Trace</button>
+              </div>
+              {/* --- NO CAP. THE TAB IS THE CAP NOW ---------------------------
+                  This list was a 340px scroller past five rooms (60vh with one
+                  open) for one reason: it shared the panel with Edit, Result,
+                  View and Export, and twenty spaces pushed all four off the
+                  bottom. So the list got a box of its own inside a column that
+                  was already a box — two scrollbars a few pixels apart, and the
+                  open room's whole workspace read through a letterbox.
+
+                  The Spaces TAB is what removed that reason. Nothing else lives
+                  in this view, so there is nothing below the list for it to
+                  push away; the panel's own scroller is the only one needed and
+                  the open row gets the full height of it. `openRowRef` still
+                  brings a row into view — that column scrolls whether or not
+                  this list has a frame round it. */}
+              {rooms.map((r) => {
+                const on = r.id === focusId;
+                const chunked = r.chunking?.needsChoice;
+                const coved = (r.coves?.length ?? 0) > 0;
+                /* NOTHING FROM THE ELECTRICALS IS READ HERE. The bolt, then
+                   `electric`, then a plate count off `boardResults` — three
+                   revisions of the same mistake, which is that a list of rooms
+                   is a place to report on the wiring. It is not; the wiring has
+                   a layer and a switch of its own. */
                 return (
-                  <div className="flex items-center gap-2 mt-2.5 mb-4">
-                    {ok ? (
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
-                        stroke="#FFFFFF" strokeWidth="2.6" strokeLinecap="round"
-                        strokeLinejoin="round" className="flex-none"
-                        aria-hidden="true"><path d="M4.5 12.75l5.25 5.25L19.5 6" /></svg>
-                    ) : (
-                      /* NOT A TICK, AND NOT A RED CROSS EITHER. A plan under its
-                         criterion is not broken — it may be exactly what the
-                         designer wants — so this is a statement, not an error.
-                         The dash is the same mark the schedule uses for "not
-                         specified". */
-                      <span className="flex-none mt-[1px] text-subtle leading-none"
-                        aria-hidden="true">—</span>
+                  <div key={r.id} ref={on ? openRowRef : null}
+                    className={`group ${ROW_FLUSH} ${on ? ROW_ON : ROW_OFF}`}>
+                    {/* THE HEAD IS THE CONTROL; THE BODY IS NOT. They were one
+                        element, and nesting a file input and four buttons inside
+                        a div whose own click selects the row is how a click on
+                        "Cove" also re-selects the room it is already in. */}
+                    {/* ONE HANDLER FOR THE POINTER AND THE KEYBOARD. They were
+                        two copies of the same expression, which is how they would
+                        have drifted the moment selecting a space did anything more
+                        than set the focus — and it now does. See `pickSpace`. */}
+                    <div role="button" tabIndex={0} className={ROW_PICK}
+                      onClick={() => pickSpace(r.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault(); pickSpace(r.id);
+                        }
+                      }}>
+                      <div className="flex items-center gap-[9px]">
+                        <div className="flex-auto min-w-0">
+                          <div className={PICK}>
+                            <span className={NAME}>{r.outline.name || 'Space'}</span>
+                          </div>
+                          <div className={META}>
+                            <span>
+                              {/* The classification, where it exists. It is the
+                                  reason a room did or did not get accents, so it
+                                  belongs next to the room rather than buried in a
+                                  console log. */}
+                              {roomTypes[r.id] && (
+                                <b className={RTYPE} title={roomTypes[r.id].why}>
+                                  {roomTypeIn(projectId, roomTypes[r.id].type)?.label ?? 'Other'}
+                                </b>
+                              )}
+                              {ftin(r.stats.widthFt)} × {ftin(r.stats.heightFt)}
+                              {' '}· {Math.round(r.stats.areaSqft)} sqft
+                              {coved && <b className={RTYPE}>Cove</b>}
+                            </span>
+                          </div>
+                        </div>
+                        {chunked && (
+                          <button className={on ? ICON_ON : ICON}
+                            title={r.chunkingChosenBy === 'user'
+                              ? 'Change how this space is cut up'
+                              : `${r.chunking.options.length} ways to cut this space up — the recommended one is in use`}
+                            onClick={(e) => {
+                              // The row opens; this does something else entirely.
+                              e.stopPropagation();
+                              setPickingId(r.id); setFocusId(r.id); setZoneMode(false);
+                            }}>
+                            {/* `uid` KEEPS THE GRADIENTS APART — one icon per
+                                row, each with its own paint server, and duplicate
+                                ids in a document resolve to the first. The ramp is
+                                handed in rather than imported by the icon: see
+                                ChunkIcon. */}
+                            <ChunkIcon uid={r.id} ramp={THROW_STYLE.stops}
+                              title={r.chunkingChosenBy === 'user'
+                              ? 'Chunking — chosen by hand' : 'Chunking'} />
+                          </button>
+                        )}
+                      </div>
+                      {r.outline.enclosingPx?.length > 0 && (
+                        <p className={`${NW} mt-0.5`}>
+                          {r.outline.enclosingPx.length} space
+                          {r.outline.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly inside this
+                          one, so {r.outline.enclosingPx.length > 1 ? 'they are' : 'it is'} held out
+                          of the ceiling as a no-light zone. Drag a corner out to a wall and it
+                          will be subtracted properly instead.
+                        </p>
+                      )}
+                      {r.region?.warning && <p className={`${NW} mt-0.5`}>{r.region.warning}</p>}
+                    </div>
+
+                    {on && (
+                      <div className="px-[7px] pt-0.5 pb-2 border-t border-border/10 mt-1">
+                        {/* --- WHAT IS ON ITS WALLS, and now the only thing in
+                            here. The ceiling design used to be reported above
+                            this — each chunk, its size, what it came out as — and
+                            it was a paragraph of text restating what the drawing
+                            already shows, in the one place you cannot see the
+                            drawing while reading it. The decision is made on the
+                            plan (click a light) and its consequence is drawn on
+                            the plan; a second account of it in the panel is not
+                            reassurance, it is something else to reconcile.
+                            Independent of the ceiling either way: panelling,
+                            shelving and art are there whether the slab is flat or
+                            coved, which is why this was never gated on it. */}
+                        {/* `wallGrid`, `wallShot`, `wallState` and the two
+                            handlers below are all computed from `focus`, and this
+                            body only renders when `on` — that is, when `focus` IS
+                            `r`. One selected space and one open body is the same
+                            fact, which is the reason the accordion is `focusId`
+                            rather than state of its own. */}
+                        <RenderPassPanel
+                          room={r} grid={wallGrid} pxPerFt={pxPerFt}
+                          renders={renders[r.id] ?? []}
+                          stored={(renderRefs[r.id] ?? []).length}
+                          onAddFiles={addRenders}
+                          /* REMOVING A VIEW DROPS THE REFERENCE, NOT THE OBJECT.
+                             The bucket copy stays where it is, deliberately: it
+                             was one of the images a pass was actually run on, and
+                             the answer that pass produced is still on this plan
+                             and still in its revisions. Deleting the pixels would
+                             leave a wall element whose evidence no longer exists
+                             — a training row with a hole in it — to save a few
+                             hundred kilobytes. What the person meant by the × is
+                             "not this one, next time", and that is exactly what
+                             removing it from the list does. */
+                          onRemoveRender={(i) => {
+                            setRenders((m) => ({
+                              ...m, [r.id]: (m[r.id] ?? []).filter((_, k) => k !== i) }));
+                            setRenderRefs((m) => ({
+                              ...m, [r.id]: (m[r.id] ?? []).filter((_, k) => k !== i) }));
+                          }}
+                          onClearRenders={() => {
+                            setRenders((m) => { const n = { ...m }; delete n[r.id]; return n; });
+                            setRenderRefs((m) => { const n = { ...m }; delete n[r.id]; return n; });
+                          }}
+                          /* THE SHOT IS SHOWN ONLY FOR THE ROOM IT IS OF. It is
+                             rebuilt asynchronously when the selection changes, so
+                             for a beat after a click it is still the last room's,
+                             and a thumbnail of the wrong room inside this row is
+                             worse than no thumbnail. */
+                          shot={wallShot?.roomId === r.id ? wallShot : null}
+                          state={wallState.roomId === r.id ? wallState : { status: 'idle' }}
+                          result={wallResults[r.id] ?? null}
+                          transcript={wallTranscripts[r.id] ?? null}
+                          runCount={[...reverseCoves, ...shelfStrips]
+                            .filter((x) => x.roomId === r.id).length}
+                          trimmedRuns={[...reverseCoves, ...shelfStrips]
+                            .filter((x) => x.roomId === r.id && x.trimmed).map((x) => x.id)}
+                          onResetLengths={() => {
+                            const ids = new Set([...reverseCoves, ...shelfStrips]
+                              .filter((x) => x.roomId === r.id).map((x) => x.id));
+                            setRunTrims((m) => Object.fromEntries(
+                              Object.entries(m).filter(([k]) => !ids.has(k))));
+                          }}
+                          onRun={runWallPass}
+                          onClear={() => {
+                            setWallResults((m) => { const n = { ...m }; delete n[r.id]; return n; });
+                            // The transcript goes with the result: a dialog
+                            // offering the reasoning behind marks somebody has
+                            // just cleared is a way to make them doubt what they
+                            // are looking at.
+                            setWallTranscripts((m) => { const n = { ...m }; delete n[r.id]; return n; });
+                          }} />
+                      </div>
                     )}
-                    {/* `min-w-0` IS THE GUARD, not decoration. A flex item gets
-                        `min-width: auto`, which refuses to shrink below its
-                        min-content width — so a long sentence beside an icon can
-                        push the row wider than the panel instead of wrapping
-                        inside it. This is the standard fix and it costs nothing
-                        when the text already fits. */}
-                    <p className="m-0 min-w-0 text-[11.5px] leading-[1.5] text-muted">
-                      Recommendation for{' '}
-                      <b className="text-subtle">{label ?? 'this project'}</b> is{' '}
-                      <b className="text-subtle">{target} lumens per sqft</b>.{' '}
-                    </p>
+                    {/* THE SWITCHBOARD ACCOUNT WAS HERE, and a list of
+                        spaces is not where it belongs. This row answers
+                        "which room is this and how big is it" — name,
+                        category, size — and a plate count, a refusal and a
+                        "put back" button under it were a second trade's
+                        readout wedged into that answer, on every row,
+                        whether or not the wiring was even being shown. The
+                        electricals are their own layer with their own
+                        switch in the footer; what is drawn is on the
+                        drawing. */}
                   </div>
                 );
-              })()}
-              {/* Named per room. A warning about a light off its cell centre is
-                  useless if you cannot tell which of eight rooms it is in. */}
-              {troubles.map((t, i) => (
-                <p className={NOTE_WARN} key={i}><b>{t.name}</b> — {t.msg}</p>
-              ))}
+              })}
+              {/* "BACK TO THE OUTLINES" WAS HERE and is now the Outlines tab at
+                  the top of this panel — see the strip above and
+                  `backToOutlines`, which still carries the confirm. It sat under
+                  this list because it is what you do when you are done with it,
+                  which is the wrong reason to put a way OUT of a screen at the
+                  bottom of that screen. */}
+              {outlinesPx.length > rooms.length && (
+                <button className={`${BTN_FULL} mt-1.5`}
+                  onClick={lightWholePlan}>
+                  Light all {outlinesPx.length} outlines
+                </button>
+              )}
             </div>
-          )}
-          {totals.rooms === 0 && rooms.length > 0 && (
-            <div className={SEC}><p className={NOTE_WARN}>
-              No space on this plan produced a layout. {troubles[0]?.msg || ''}
-            </p></div>
-          )}
+          </>}
 
-          {/* --- VIEW, CLOSED. Every control in here is a preference about the
-              picture rather than a decision about the design, and a preference
-              you set once and forget does not deserve permanent space above the
-              export button. `<details>` and not a state flag: the browser owns
-              the open/closed, keyboard and screen-reader behaviour of a
-              disclosure, and reimplementing it is how one gets it wrong. */}
-          {/* THE CHEVRON IS THE `::after` ON THE SUMMARY, rotated on [open] —
-              the same rule as before, now written as variants. The native marker
-              goes because it is the browser's triangle, not this one. */}
-          <details className={`${SEC} [&>summary]:cursor-pointer [&>summary]:list-none
-            [&>summary]:flex [&>summary]:items-center [&>summary]:gap-1.5
-            [&>summary::-webkit-details-marker]:hidden
-            [&>summary]:after:content-[''] [&>summary]:after:ml-auto
-            [&>summary]:after:w-1.5 [&>summary]:after:h-1.5
-            [&>summary]:after:border-r-[1.5px] [&>summary]:after:border-b-[1.5px]
-            [&>summary]:after:border-subtle [&>summary]:after:transition-transform
-            [&>summary]:after:duration-[120ms]
-            [&>summary]:after:[transform:rotate(45deg)_translate(-2px,-2px)]
-            [&[open]>summary]:mb-2.5
-            [&[open]>summary]:after:[transform:rotate(225deg)_translate(-1px,-1px)]`}>
-            <summary><h3 className={H3_FLUSH}>View</h3></summary>
-            {/* THE BUTTONS ZOOM ABOUT THE MIDDLE OF WHAT IS ON SCREEN, not
-                about the drawing's origin. Stepping the number alone kept the
-                top-left corner still, which means the thing you were looking at
-                slid off the bottom-right every time you pressed +. The wheel
-                anchors on the pointer for the same reason; there is no pointer
-                on a button, so the centre of the viewport is the honest
-                substitute. */}
-            <div className={`${BTNROW} mb-1.5`}>
-              <button className={BTN} title="Zoom out (−)"
-                onClick={() => zoomTo((z) => z / 1.2, stageCentre())}>−</button>
-              <button className={BTN} title="Actual size (0)"
-                onClick={() => zoomTo(1, stageCentre())}>{Math.round(zoom * 100)}%</button>
-              <button className={BTN} title="Zoom in (+)"
-                onClick={() => zoomTo((z) => z * 1.2, stageCentre())}>+</button>
-              <button className={BTN} title="Fit the plan to the window (F)"
-                onClick={() => setZoom(fitZoom())}>Fit</button>
-            </div>
-            <p className={`${N} mt-0 mb-2`}>
-              Scroll to zoom, middle-drag to pan. <b>F</b> fits, <b>0</b> is
-              actual size.
-            </p>
-            {/* NO TOGGLE FOR A THING THAT IS NO LONGER DRAWN. The ambient grid,
-                the task-surface boxes and the secondary grid came off the
-                canvas, and a checkbox that turns on nothing is worse than no
-                checkbox: it is a promise the drawing does not keep. `zones`
-                stays, because hand-drawn no-light zones are still on the plan
-                and are still worth being able to hide while looking at the
-                layout under one. */}
-            {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
-              ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
-              ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
-              ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
-              ['switchboards', 'Switchboards'],
-              ['electrical', 'Electrical lines']].map(([k, l]) => (
-              <label className={CHECK} key={k}>
-                <input className="lp-check" type="checkbox"
-                  checked={layers[k]} onChange={toggle(k)} />{l}</label>
-            ))}
-          </details>
+          {step !== 'chunks' && step !== 'trace' && <>
 
+          {/* --- DESIGN: SECTIONS, NOT TABS --------------------------------
+              “EDIT” WAS ONE BOX WITH THREE TABS — Ceiling objects, No-light
+              zones, Lighting — on the reasoning that the three are mutually
+              exclusive in USE as well as in layout: each arms a tool, and this
+              canvas takes one armed tool at a time.
+
+              WHAT THAT MISSED IS THAT A TAB STRIP HIDES TWO THIRDS OF A
+              TOOLBOX. The palette you are not looking at is not merely unarmed,
+              it is invisible — and this panel is where somebody finds out what
+              this app can put on a drawing at all. Exclusivity is a fact about
+              the CANVAS's pointer, and it is already enforced there: picking any
+              tool disarms every other. It was never a reason to hide the rest.
+
+              So the palettes are stacked and open, in the order the work
+              happens: the lights first, because they are what the plan is for,
+              and the ceiling objects under them, because they are the things the
+              light has to keep off.
+
+              AND THE ZONES TAB IS NOT A SECTION AT ALL. Boxing out a no-light
+              zone is a gesture on the DRAWING rather than a control in a panel
+              — the same thing confirming the doors is — so it takes the panel
+              over for as long as it lasts, and the button that starts it sits in
+              the palette with the fittings. See `zoneEdit`. */}
+          {panelView === 'design' && <>
           <div className={SEC}>
-            <h3 className={H3}>Export</h3>
-            {/* ONE DXF BUTTON, AND IT IS NOT GATED ON THE SOURCE ANY MORE.
-                There were two here: this row's DXF, and an "Export for CAD"
-                above it that only appeared on a vector plan. They produced
-                DIFFERENT DRAWINGS — different layers, different symbols, and one
-                of them carried the planner's grid onto the sheet — and the one
-                everybody actually clicked was the wrong one, because it was the
-                one that was always there.
-                The coordinate system is the only real difference between them and
-                it is not a decision a person should be making from a panel: the
-                exporter reads `source.kind` and overlays the original when there
-                IS an original. So the choice is gone and the note says what
-                happened instead. */}
-            <div className={BTNROW}>
-              <button className={BTN} disabled={!totals.rooms}
-                onClick={async () => {
-                  if (!await gateExport()) return;
-                  download(`${exportBase}-lights.dxf`, toSuperluminalDXF({
-                    source, pxPerFt, heightPx: source.h,
-                    rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                    objects: obstaclesPx,
-                    accents: accentZonesPx,
-                    spots: taskSpotsPx,
-                  }), 'application/dxf');
-                  milestone.current?.('export');
-                }}>DXF</button>
-              {/* SVG WENT. It was the only export nobody could open in the
-                  thing they were going to open it in: a consultant gets a DXF,
-                  a client gets a PDF or a PNG, and an SVG is a file for a
-                  browser or a designer's editor — neither of which is on the
-                  path this drawing takes. It also carried the whole plan
-                  base64'd into it, so it was the largest file on the row and the
-                  least useful. PDF is the vector export now, which is what the
-                  SVG was really being asked for. */}
-              {/* PNG AND PDF FOLLOW THE VIEW. Night view is a deliverable in its
-                  own right — a dark sheet with the fittings glowing on it is how
-                  a scheme gets presented — so an export that quietly handed back
-                  the day version would be overruling a choice that is visibly
-                  on screen. `layers.invert` is that choice, and it decides the
-                  plan's polarity AND the ground together: either alone is the
-                  wrong sheet. The thumbnail does NOT follow it — see
-                  `getSnapshot` — because a card picture should look the same
-                  whichever view somebody left the plan in. */}
-              <button className={BTN} disabled={!source} onClick={async () => {
-                if (!await gateExport()) return;
-                download(`${exportBase}-lights.png`,
-                  await svgToPNG(svgRef.current, source.w,
-                    { asScanned: !layers.invert, ground: layers.invert ? '#000000' : '#fff' }));
-              }}>PNG</button>
-              {/* PDF IS PLOTTED FROM THE GEOMETRY, NOT PRINTED FROM THE SCREEN.
-                  It went through the browser's print dialog for one revision and
-                  the output was a photograph of a user interface: haloes, hover
-                  states and selection frames all landed as ink, up to 1.1mm on
-                  an A4. See pdfPlot.js — same inputs as the DXF, three line
-                  weights, and the imported page embedded as vector so the plan
-                  stays sharp at any zoom on its own sheet size.
-                  AND IT FOLLOWS THE VIEW: day view gives the line plot, night
-                  view the presentation sheet — black paper, the plan inverted,
-                  the fittings glowing as real PDF gradients. */}
-              <button className={BTN} disabled={!source} onClick={async () => {
-                if (!await gateExport()) return;
-                try {
-                  /* THE SHEET FOLLOWS THE VIEW. Night view is the
-                     presentation drawing — black paper, the plan inverted
-                     under it, the fittings glowing as the accent ramp — and
-                     day view is the line plot. The base is re-rendered from
-                     the original file at the sheet's own resolution rather
-                     than reusing the editor's 2400px copy; that is the whole
-                     reason it is awaited separately. */
-                  const base = layers.invert
-                    ? await nightBase(openPdf, initialFile, pdfPage).catch(() => null)
-                    : null;
-                  const out = await plotToPDF({
-                    source, pxPerFt, rooms, objects: obstaclesPx,
-                    accents: accentZonesPx, spots: taskSpotsPx, coves: reverseCoves,
-                    file: initialFile, pageNo: pdfPage, title: exportBase,
-                    night: layers.invert, base,
-                  });
-                  download(`${exportBase}-lights.pdf`, out.bytes, 'application/pdf');
-                  milestone.current?.('export');
-                } catch (err) { console.error('[export] the plot failed', err); }
-              }}>PDF</button>
-            </div>
-            <p className={`${NOTE} mt-2`}>
-              When you export as DXF. Everything is on a{' '}
-              <code className={CODE}>superluminal_</code> layer, split by trade.
-              {isVector
-                ? ' In this drawing\u2019s own units and origin, so it lands straight on top of the original.'
-                : ' In feet.'}
-            </p>
+            <h3 className={H3}>Lighting</h3>
+            <LightPalette tool={addTool} objArmed={armed}
+              disabled={!pxPerFt || !rooms.length}
+              /* THE SIXTH CELL, AND IT IS NOT A FITTING. See the palette's own
+                 note: the row had five tools and a hole in the second line, and
+                 the thing that belongs in that hole is the ABSENCE of light. It
+                 opens a step rather than arming a tool, which is why it comes in
+                 as its own pair of props instead of a sixth row in
+                 `LIGHT_TOOLS`. */
+              zoneOn={zoneEdit} onZones={openZoneEdit}
+              onPick={(t, arms) => {
+                /* TWO MACHINES BEHIND ONE ROW. Four of these buttons arm
+                   `addTool`, the hand-placing tools; the chandelier arms
+                   `armed`, the ceiling-object one-shot, because that is what a
+                   chandelier is to the geometry — a thing with a diameter that
+                   reserves clearance. The palette says which it wants rather
+                   than this branch testing for an id, so moving the next
+                   decorative fitting across is a line in LIGHT_TOOLS.
+                   EITHER WAY THE OTHER MACHINE IS DISARMED. Two armed tools
+                   is a click with two meanings. */
+                setZoneMode(false); setDraftZone(null);
+                if (arms === 'object') {
+                  disarmAdd();
+                  setArmed(t); setGhost(null);
+                  if (t) setObjType(t);
+                  return;
+                }
+                setAddTool(t); setStripFrom(null); setAddAt(null);
+                setCoveFrom(null); setCoveNote('');
+                setArmed(null); setGhost(null);
+              }} />
+            {/* `coveNote` WAS RENDERED HERE and is now in the cove's step. It
+                is only ever set while the cove tool is armed — and arming it
+                replaces this whole panel — so a copy under the palette could
+                not fire: it would have been a refusal shown on a screen the
+                refusal cannot happen on. */}
+            {/* WHAT HAS BEEN SET OUT BY HAND, with a way back. The detected
+                coves are counted in the Result panel; these are the ones
+                somebody drew, and they are the only ones that can be undone
+                wholesale. */}
+            {manualCoves.length > 0 && (
+              <button className={`${BTN_FULL} mt-2`}
+                onClick={() => { setManualCoves([]); disarmAdd(); }}>
+                Clear the {manualCoves.length} reverse cove
+                {manualCoves.length === 1 ? '' : 's'} placed by hand
+              </button>
+            )}
+            {!rooms.length && (
+              <p className={NOTE_WARN}>
+                Light a space first — a fitting has to belong to one.
+              </p>
+            )}
+            {/* NO "ON THE PLAN" COUNT. It said how many strips, sconces and
+                spots the drawing carries, three inches above a Result panel
+                that says it again — two live readouts of one number, which is
+                not twice the information: it is the same information asking
+                to be reconciled. */}
+            {(manualAccents.length > 0 || manualSurfaces.length > 0) && (
+              <button className={`${BTN_FULL} mt-2`}
+                onClick={() => { setManualAccents([]); setManualSurfaces([]); disarmAdd(); }}>
+                Clear the {manualAccents.length + manualSurfaces.length} placed by hand
+              </button>
+            )}
+          </div>
 
-            {/* ----------------------------------------------------------------
-                ADMIN. Role 1 in `profiles` — an owner of this app, not a user of
-                it. At the foot of the panel and visibly separate, because it is
-                not part of anybody's workflow: it exposes what the models
-                DECIDED, which is the thing you need when a spot lands somewhere
-                surprising and the thing that must never appear on a sheet a
-                client sees.
-                ---------------------------------------------------------------- */}
-            {isAdmin && (
-              <div className={SEC_ADMIN}>
-                <h3 className={H3_ADMIN}>Admin · model readings</h3>
-                <label className={CHECK}>
-                  <input className="lp-check" type="checkbox" checked={audit}
-                    onChange={(e) => setAudit(e.target.checked)} />
-                  Show what was identified
-                </label>
-                {/* THE DOORS, SEPARATELY. Every dimension on the sheet hangs off
-                    one of these boxes, so "did it find the doors" is a different
-                    question from "why is the layout like this" and is asked at a
-                    different moment. */}
-                <label className={`${CHECK} mt-2`}>
-                  <input className="lp-check" type="checkbox" checked={auditDoors}
-                    onChange={(e) => setAuditDoors(e.target.checked)} />
-                  Show the doors it found
-                </label>
-                <p className={`${N_ADMIN} mt-0.5`}>
-                  Every candidate box, kept and rejected, with the opening it
-                  measured. The one the scale is taken from is drawn solid.
-                  {isVector && ' This plan is a drawing, so the detector never ran'
-                    + ' on it — a DXF states its own scale.'}
-                </p>
-                {/* THE COUNTS STAY WITH THEIR OWN SWITCH rather than joining the
-                    ledger below. That one answers "what did the models see on
-                    this plan"; these four numbers answer "is the scale right",
-                    and they are read while the boxes are on the canvas. */}
-                {auditDoors && (
-                  <div className="mt-2 flex flex-col gap-[5px]">
-                    <div className={KV_ADMIN}><span>Doors kept</span><b>{doors.length}</b></div>
-                    <div className={KV_ADMIN}><span>Boxes rejected</span>
-                      <b>{doorState.restored ? '—' : (doorState.rejected?.length ?? 0)}</b></div>
-                    {/* A REOPENED PLAN HAS NO REJECTS TO SHOW. The kept doors are
-                        saved with the plan; the refused boxes are not, so a
-                        restored plan would otherwise report a confident zero and
-                        read as "it refused nothing". */}
-                    {doorState.restored && (
-                      <p className={`${N_ADMIN} mt-1`}>
-                        Restored from the saved plan, which keeps the doors but not
-                        the boxes it turned down. Re-run the detection to see those.
-                      </p>
-                    )}
-                    <div className={KV_ADMIN}><span>Scale</span>
-                      <b>{pxPerFt ? `${pxPerFt.toFixed(2)} px/ft` : 'not set'}</b></div>
-                    {doorPick?.id && (
-                      <div className={KV_ADMIN}><span>&nbsp;&nbsp;· from a door called</span>
-                        <b>{doorPick.mm ? `${doorPick.mm}mm` : '—'}</b></div>
-                    )}
-                    {doorState.status === 'error' && (
-                      <p className={`${NE} mt-1`}>
-                        The detector failed: {doorState.error}
-                      </p>
-                    )}
-                    {!doorState.restored && doorState.rejected?.length > 0 && (
-                      <details className={`${DISCLOSE_ADMIN} mt-1`}>
-                        <summary>Why each box was turned down</summary>
-                        {doorState.rejected.map((d, i) => (
-                          <p key={i} className={`${N_ADMIN} mt-1`}>
-                            <b>{(d.cls || 'box')} {(d.conf ?? 0).toFixed(2)}</b>{' — '}{d.reason}
-                          </p>
-                        ))}
-                      </details>
-                    )}
-                    <p className={`${N_ADMIN} mt-1`}>
-                      The gates are <code className={CODE}>DOOR_DEFAULTS</code> in{' '}
-                      <code className={CODE}>doors.js</code>.
-                    </p>
-                  </div>
-                )}
-                
+          {/* --- WHAT THE LIGHT HAS TO KEEP OFF ---------------------------
+              UNDER THE LIGHTS AND NOT ABOVE THEM, which is a reversal of the
+              old tab order. A fan, a cassette and a trapdoor are not things
+              anybody came here to place: they are constraints — the grid moves
+              out of their way and the schedule counts around them — so they
+              belong after the thing they constrain. */}
+          <div className={SEC}>
+            <h3 className={H3}>Ceiling objects</h3>
+            {/* Four symbols, and clicking one arms it. There is no separate
+                "place" button: picking the thing IS asking to place it, and a
+                picker that then needs confirming was a click spent on nothing. */}
+            <CeilingPalette armed={armed} disabled={!pxPerFt}
+              onArm={(id) => {
+                setArmed(id);
+                if (id) { setObjType(id); setObjMode(true); setZoneMode(false); }
+                setGuides([]); setGhost(null);
+              }} />
 
-                {/* THE GRID, ON THE DRAWING. Its own switch and not part of the
-                    overlay above: that one is what the MODELS read off the
-                    plan, this is what our own chunker and planner did with it
-                    afterwards. A light that lands somewhere odd is almost
-                    always a chunk that split somewhere odd, and the split is
-                    the one thing on this drawing with no visible trace at all —
-                    `gridPath` has been in PlanCanvas the whole time with
-                    nothing calling it.
-                    A BUTTON RATHER THAN A CHECKBOX, and it says which way it is
-                    about to go. It is an act — put the scaffolding on the
-                    drawing, take it off again — rather than a standing
-                    preference like the layers list, and it is the one control
-                    in here somebody toggles repeatedly while looking at the
-                    canvas rather than at this panel. */}
-                <div className={`${BTNROW} mt-2.5`}>
-                  <button className={BTN_SECOND} disabled={!totals.rooms}
-                    aria-pressed={showGrid}
-                    title="Draw the chunk boxes and the cell lines the lights were laid on"
-                    onClick={() => setShowGrid((v) => !v)}>
-                    {showGrid ? 'Hide the planning grid' : 'Show the planning grid'}
-                  </button>
+            {/* A fan's sweep, offered only when a fan is in play — armed, or
+                selected. It is the one property of the four that is a standard
+                size rather than something to drag to. */}
+            {(() => {
+              const sel = ceilingObjs.find((o) => o.id === selObjId);
+              if (armed !== 'fan' && sel?.kind !== 'fan') return null;
+              const current = sel?.kind === 'fan' ? sweepMm(sel) : fanSweepMm;
+              return (
+                <div className="flex gap-1 mt-[7px]">
+                  {FAN_SWEEPS.map((mm) => (
+                    <button key={mm} type="button"
+                      className={current === mm ? PROP_ON : PROP_OFF}
+                      onClick={() => {
+                        setFanSweepMm(mm);
+                        /* EVERY SELECTED FAN, NOT JUST THE PRIMARY. The chip
+                           above it reads the primary's sweep, because with
+                           three fans selected the only honest "current" value
+                           is the one you touched last — but the ACT is what a
+                           properties panel does, and that is to apply the
+                           chosen value to everything selected it makes sense
+                           for. Non-fans in the selection are left alone rather
+                           than refused: selecting two fans and a cassette and
+                           setting a sweep is a perfectly clear instruction
+                           about the fans. */
+                        const picked = new Set(selObjIds);
+                        setCeilingObjs((os) => os.map((o) => (
+                          picked.has(o.id) && o.kind === 'fan' ? withSweep(o, mm) : o)));
+                      }}>{mm} sweep</button>
+                  ))}
                 </div>
-                {/* LOOK AGAIN — the manual bedroom pass. Admin-only because it
-                    spends a model call per room and because the person who
-                    wants it is the person tuning the detectors: on a plan where
-                    the first answer was wrong there is otherwise no way to ask
-                    twice without re-running the whole pipeline. */}
-                <div className={`${BTNROW} mt-2.5`}>
-                  <button className={BTN_SECOND} disabled={bedLook === 'busy' || !rooms.length}
-                    title={focus
-                      ? `Ask both detectors about ${focus.outline?.name || 'this space'} again`
-                      : 'Ask both detectors about every bedroom again'}
-                    onClick={lookAgainAtBeds}>
-                    {bedLook === 'busy' ? 'Looking…'
-                      : focus ? `Look again in ${focus.outline?.name || 'this space'}`
-                      : 'Look again at the beds'}
-                  </button>
+              );
+            })()}
+
+            {/* WHICH RECTANGLE, asked in the same place and the same shape as
+                a fan's sweep — because after the palette merged the cassette
+                and the hatch into one button, this is the only thing left to
+                say about the object, and it is a property rather than a
+                gesture. It still matters: the two carry different marks on
+                the drawing and different lines in the schedule, so the choice
+                could not simply be dropped along with the second button. */}
+            {(() => {
+              const sel = ceilingObjs.find((o) => o.id === selObjId);
+              const RECTS = ['ac', 'trapdoor'];
+              if (!RECTS.includes(armed) && !isRect(sel)) return null;
+              const current = isRect(sel) ? sel.typeId : armed;
+              return (
+                <div className="flex gap-1 mt-[7px]">
+                  {RECTS.map((id) => (
+                    <button key={id} type="button"
+                      className={current === id ? PROP_ON : PROP_OFF}
+                      onClick={() => {
+                        // Arming follows the pick, so the next click on the
+                        // plan places what the row says. Changing a SELECTED
+                        // object retypes it in place and leaves its size,
+                        // rotation and position alone: it is the same hole in
+                        // the same ceiling, called what it actually is.
+                        if (RECTS.includes(armed)) { setArmed(id); setObjType(id); }
+                        // ...and it retypes EVERY selected rectangle, for the
+                        // reason the sweep chips apply to every selected fan.
+                        // Round objects in the selection are untouched: an
+                        // "AC or trapdoor" question has no answer for a fan.
+                        const picked = new Set(selObjIds);
+                        setCeilingObjs((os) => os.map((o) => (
+                          picked.has(o.id) && isRect(o) ? { ...o, typeId: id, kind: id } : o)));
+                      }}>{CEILING_BY_ID[id]?.label}</button>
+                  ))}
                 </div>
-                {bedLook && bedLook !== 'busy' && (
-                  <p className={`${N} mt-1.5`}>{bedLook}</p>
-                )}
+              );
+            })()}
 
-                {/* --- THE LEDGER, CLOSED, AND NO LONGER TIED TO THE OVERLAY.
-                    It was an always-open card that appeared with the checkbox
-                    above, on a #F2F2F2 ground with near-black type — a white
-                    slab two thirds of the way down a dark panel, and fifteen
-                    rows of counts permanently occupying the space between the
-                    switch and the bottom of the panel.
-                    IT IS A DISCLOSURE NOW, and shut: these are numbers you go
-                    and look up when something on the drawing surprises you, not
-                    numbers you read while working. `<details>` rather than a
-                    state flag for the same reason the View section is one — the
-                    browser already owns the open/closed, the keyboard and the
-                    screen reader.
-                    AND IT IS NO LONGER BEHIND `audit`. That checkbox draws
-                    marks on the CANVAS, which is the thing you have to remember
-                    to turn off before exporting; these are counts in a panel,
-                    which cost an export nothing. Tying them together meant the
-                    only way to read the ledger was to first put magenta on a
-                    sheet — so they are two switches now, and each one governs
-                    the surface it actually changes. */}
-                <details className={`${DISCLOSE_ADMIN} mt-3`}>
-                  <summary>What was identified</summary>
-                  <div className="mt-2 flex flex-col gap-[5px]">
-                    <div className={KV_ADMIN}><span>Task surfaces</span><b>{surfacesPx.length}</b></div>
-                    {/* WHAT THE RENDER PASS READ, and what it turned into. The
-                        cells are the working; the three fittings under them are
-                        the product, and they stay on the drawing whether or not
-                        this box is ticked. Counted here so that "the cells look
-                        wrong" and "the cells are right and the rule did nothing"
-                        are two different readings rather than one shrug. */}
-                    {/* THE RENDER PASS'S WHOLE LEDGER, and this is now the only
-                        place it is written down. `seen` is what PROMPT 01 read
-                        off the photographs; `placed` is how many of those PROMPT
-                        02 could tie to a wall on this drawing. The two differing
-                        is the pass's most useful single fact — "it saw nothing"
-                        and "it saw it and could not place it" are completely
-                        different problems — and it left the render-pass panel
-                        along with the rest of the reporting. */}
-                    <div className={KV_ADMIN}><span>Wall features seen</span>
-                      <b>{Object.values(wallResults)
-                        .reduce((n, w) => n + (w.elements?.length ?? 0), 0)}</b></div>
-                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· placed on the plan</span>
-                      <b>{wallCellsPx.length}</b></div>
-                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· reverse coves</span>
-                      <b>{reverseCoves.length}</b></div>
-                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· shelf strips</span>
-                      <b>{shelfStrips.length}</b></div>
-                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· art spots</span>
-                      <b>{taskSpotsPx.filter((sp) => sp.art && !sp.rejected).length}
-                        {taskSpotsPx.some((sp) => sp.art && sp.rejected)
-                          ? ` (${taskSpotsPx.filter((sp) => sp.art && sp.rejected)
-                              .reduce((n, sp) => n + (sp.wanted ?? 1), 0)} dropped)` : ''}</b></div>
-                    {/* WHERE EACH ONE CAME FROM. Two sources feed this list and
-                        they can double up — they did, and the count was the only
-                        thing on screen that knew. A split reads as a description
-                        of the pipeline when it is right and as an obvious bug
-                        when it is not. */}
-                    {/* THE FOOT-OF-BED RE-CUT. Its ordinary answer is "no",
-                        so a count alone would be indistinguishable from the
-                        rule being off or broken — the sentence beside each
-                        space is the point. See bedGrid.js. */}
-                    {(() => {
-                      const bedrooms = rooms.filter((r) => r.plan?.ok
-                        && (r.plan.stats?.bedFootApplied || r.plan.stats?.bedFootWhy));
-                      if (!bedrooms.length) return null;
-                      const on = bedrooms.filter((r) => r.plan.stats.bedFootApplied);
-                      return (
-                        <>
-                          <div className={KV_ADMIN}><span>Foot-of-bed re-cut</span>
-                            <b>{on.length} of {bedrooms.length}</b></div>
-                          {bedrooms.filter((r) => r.plan.stats.bedFootWhy).map((r) => (
-                            <p key={r.id} className="text-[11px] text-white leading-[1.5] mt-1">
-                              <b>{r.outline?.name || 'Space'}</b>
-                              {' — '}{r.plan.stats.bedFootWhy}
-                            </p>
-                          ))}
-                        </>
-                      );
-                    })()}
-                    <div className={KV_ADMIN}><span>Bed zones</span><b>{detectedZones.length}</b></div>
-                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· bed-filter, whole plan</span>
-                      <b>{detectedZones.filter((z) => !z.closeUp).length}</b></div>
-                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· GPT, one bedroom crop</span>
-                      <b>{detectedZones.filter((z) => z.judged).length}</b></div>
-                    {/* AN EXCLUSION YOU CAN SEE. This used to be a third
-                        SOURCE of bed geometry and is now none: the accent pass's
-                        bed boxes never reach the chunking or the sconce rule.
-                        Counting them anyway is what stops "bed-filter found
-                        nothing here" and "there is no bed here" looking the
-                        same. */}
-                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· accent pass (excluded)</span>
-                      <b>{bedsPerRoom.length}</b></div>
-                    {detectState.whyRejected && (
-                      <>
-                        <div className={KV_ADMIN}><span>Bed boxes rejected</span>
-                          <b>{detectState.whyRejected.n}</b></div>
-                        <p className={`${N_ADMIN} border-l-2 border-[#C026D3] pl-[9px] mt-1`}>
-                          Mostly: {detectState.whyRejected.top}
-                          {detectState.whyRejected.topCount < detectState.whyRejected.n
-                            ? ` (${detectState.whyRejected.topCount} of ${detectState.whyRejected.n})` : ''}
-                          . The size gate is <code className={CODE}>BED_FT</code> in{' '}
-                          <code className={CODE}>furniture.js</code>.
-                        </p>
-                      </>
-                    )}
-                    {/* SPACES, NOT BEDS. The labels used to say neither, which
-                        is how "Beds re-asked 3 / Judged 1" read as three beds of
-                        which two were dropped. It was three SPACES. A space is
-                        re-asked only when the classifier called it a bedroom and
-                        the whole-plan pass put no bed in it; the list below says
-                        what came back for each one. */}
-                    <div className={KV_ADMIN}><span>Bedrooms GPT was asked about</span>
-                      <b>{Object.values(bedVerdicts).filter((v) => v?.refound).length}</b></div>
-                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· of those, still empty</span>
-                      <b>{Object.values(bedVerdicts).filter((v) => v?.refound && v.kind === 'none').length}</b></div>
-                    {!!Object.keys(bedVerdicts).length && (
-                      <details className="mt-1 border-t border-border/20 pt-1.5
-                        [&>summary]:cursor-pointer [&>summary]:text-[11.5px]
-                        [&>summary]:text-white [&>summary]:list-none
-                        [&>summary]:select-none [&>summary]:hover:text-[#C026D3]
-                        [&>summary::-webkit-details-marker]:hidden
-                        [&>summary]:before:content-['▸_'] [&>summary]:before:text-[9px]
-                        [&[open]>summary]:before:content-['▾_']">
-                        <summary>What came back for each bedroom</summary>
-                        {Object.entries(bedVerdicts).map(([id, v]) => (
-                          <p key={id} className="text-[11px] text-white leading-[1.5] mt-1.5">
-                            <b>{outlines.find((o) => o.id === id)?.name || id}</b>
-                            {' — '}{judgeNote(v)}
-                          </p>
-                        ))}
-                      </details>
-                    )}
-                  </div>
-                </details>
-
-                {/* --- THE FILE THEY UPLOADED -------------------------------
-                    LAST IN HERE, AND IT IS THE ONE THING IN THIS SECTION THAT
-                    IS NOT A READING. Everything above exposes what the models
-                    decided; this hands back what they were deciding ABOUT. It
-                    belongs together with them anyway, because it is the same
-                    job: a fitting lands somewhere surprising, the overlays say
-                    what was seen, and the next question is always "what does
-                    the drawing actually look like" — which needs the drawing,
-                    in the application that made it, not a PNG of it with our
-                    fittings on top.
-
-                    THE FILENAME IS THE LABEL. "The original" is a different
-                    file on every plan, and the extension is what says whether
-                    it is worth opening — a DXF opens in CAD, a phone photo of
-                    a printout does not.
-
-                    NOT BEHIND `gateExport`. That gate is the till and it asks
-                    the OWNER to pay for a drawing this app produced. This is
-                    the file they already own, handed to an operator looking at
-                    their plan; charging for it would be charging the wrong
-                    person for the wrong thing.
-
-                    AND NO `milestone`. Every export writes a revision row on
-                    the reasoning that somebody taking a file away is the
-                    strongest signal a design is finished. An operator
-                    downloading somebody else's upload is not that signal, and
-                    the row would put a fictional milestone in the corpus. Same
-                    argument as the read-only panel's copy of this button —
-                    see `onDownloadOriginal` in ViewerPanel. */}
-                <div className={`${BTNROW} mt-2.5`}>
-                  <button className={BTN_SECOND} disabled={!initialFile}
-                    title={initialFile
-                      ? `${initialFile.name || 'the uploaded file'} — the file this plan was made from`
-                      : 'This plan was not opened from a stored upload, so there is'
-                        + ' no original to hand back'}
-                    onClick={() => {
-                      if (!initialFile) return;
-                      download(initialFile.name || 'original', initialFile,
-                               initialFile.type || 'application/octet-stream');
-                    }}>
-                    {initialFile
-                      ? `Download the original (${uploadExt || 'file'})`
-                      : 'No original on this plan'}
-                  </button>
-                </div>
-              </div>
+            {!pxPerFt && <p className={NOTE_WARN}>Set the scale first — these are placed at a real size.</p>}
+            {armed && (
+              <p className={NOTE}>Click on the plan to place the
+                {' '}{CEILING_BY_ID[armed]?.label.toLowerCase()}.</p>
             )}
 
+            {/* HOW TO GET A SECOND ONE, SAID ONCE AND ONLY WHEN IT APPLIES.
+                Option-drag is invisible: nothing on the drawing suggests a
+                modifier exists, and a gesture nobody can discover is a gesture
+                nobody has. It appears only once something is actually placed —
+                before that there is nothing to copy and the line would be a
+                rule about a thing that does not exist yet. */}
+            
+
+            {/* THE LIST OF PLACED OBJECTS WAS HERE, AND SO WAS THE COUNT
+                BEFORE IT. Both were answers to "did that land, and where" —
+                and both were written when an object was a grey mark you could
+                lose on somebody else's line work. It is not one any more: a
+                fan, a cassette and a trapdoor are drawn in white in night mode
+                and in our own ink on paper, they carry a clearance ring, and
+                selecting one frames it with handles where it sits. So the list
+                restated the drawing in words, a scroll box away from it, and
+                the two ways of picking an object disagreed about which was
+                canonical.
+
+                WHAT WENT WITH IT, STATED SO IT IS A CHOICE AND NOT AN
+                ACCIDENT: picking an object by NAME (the canvas has the same
+                shift-click, on the thing itself), its size READOUT, and the mm
+                boxes for a rectangle. The last is the only one that was a
+                capability rather than a second view — a corner drag resizes an
+                AC or a trapdoor and reads its size out as you go, so what is
+                gone is typing an exact number, not setting an exact size. If
+                that comes back it belongs beside the sweep chips above, as a
+                property of the SELECTED object, rather than as a row in a list
+                of all of them. */}
           </div>
+
+            {/* --- THE RESULT, DIRECTLY UNDER THE EDITING THAT MOVES IT.
+                It was below the View toggles, which put a list of checkboxes
+                between an action and its consequence. Every number here changes
+                when something above it is placed or removed, and a readout you
+                have to scroll past a settings panel to find is a readout nobody
+                watches. */}
+            {totals.rooms > 0 && (
+              <div className={SEC}>
+                <h3 className={H3}>Result</h3>
+                <div className="grid grid-cols-2 gap-2 backdrop-blur-md [&>div]:bg-white/5
+                  [&>div]:border [&>div]:border-border/10 [&>div]:rounded [&>div]:px-[11px]
+                  [&>div]:py-[9px] [&_b]:block [&_b]:text-[17px] [&_b]:tracking-[-0.03em]
+                  [&_b]:tabular-nums [&_span]:text-[9.5px] [&_span]:text-subtle
+                  [&_span]:uppercase [&_span]:tracking-[0.08em]">
+                  <div><b>{totals.lights}</b><span>lights</span></div>
+                  <div><b>{totals.perSqft.toFixed(0)}</b><span>lm / sq ft</span></div>
+                  {/* THE AIMED SPOTS AND THE TAPE, WHICH THIS PANEL USED NOT TO
+                      COUNT. `totals.lights` is the ambient grid and the track
+                      heads — everything `plan.lights` holds — and it silently
+                      excluded the two things a person places by hand. A summary
+                      that omits half of what somebody just spent an afternoon
+                      putting on the drawing is a summary they learn not to read.
+
+                      REJECTED SPOTS ARE NOT COUNTED. The placer returns an entry
+                      for a surface it refused, carrying a reason and no geometry,
+                      so that the panel can explain itself; counting those would
+                      report fittings that are not on the plan.
+
+                      THE STRIP COMES FROM THE BOQ, not from a length summed here.
+                      `boq.totals.stripMetres` is the figure the schedule and the
+                      exports use, and two places computing metres of tape is how
+                      the headline and the order end up disagreeing.
+
+                      HIDDEN AT ZERO, both of them, which is this panel's own rule
+                      — see the BOQ header, where a tile reading "0.00 m of strip"
+                      was judged to spend a third of the summary saying a thing is
+                      absent. */}
+                  {spotsPlaced > 0 && (
+                    <div><b>{spotsPlaced}</b><span>spots</span></div>
+                  )}
+                  {boq.totals.stripMetres > 0 && (
+                    <div><b>{boq.totals.stripMetres.toFixed(1)}</b><span>m of strip</span></div>
+                  )}
+                </div>
+                {/* --- IS IT ENOUGH LIGHT? -------------------------------------
+                    "OVER — 3 SPACES, 950 SQ FT" WAS HERE. It was the denominator
+                    of the lm/sqft tile above, stated as a fact with nothing to
+                    compare it to: a reader who does not already know what 18
+                    lm/sqft means learns nothing from being told the area it was
+                    divided by. This says the thing that number was for.
+
+                    THE VERDICT IS COMPUTED, NOT ASSERTED, and that is the one
+                    place this departs from what was asked. A white tick and "your
+                    project is well lit" printed unconditionally would be the app
+                    congratulating itself on plans that are short — and it is the
+                    same figure the cove ladder and every room's own criterion are
+                    judged against, so it is not a hard thing to check. Over the
+                    target it reads as asked; under it, it says by how much and
+                    drops the tick. The area moves into this sentence, so nothing
+                    that was on screen is lost.
+
+                    ONE PROJECT-WIDE FIGURE, so `lumenCriteriaFor` is asked with no
+                    room type. Per-room criteria still differ — a kitchen wants 36
+                    and a toilet 25 — but this line is about the plan, and the
+                    place a room's own target is enforced is its layout. */}
+                {(() => {
+                  const target = lumenCriteriaFor(projectId, null);
+                  const got = totals.perSqft;
+                  // THE VERDICT IS JUDGED ON THE ROUNDED FIGURE, so it can never
+                  // contradict the number printed beside it. A raw `got >= target`
+                  // reads 19.9 as short and then prints it as "20", which is the
+                  // panel arguing with itself — and 19.9 against a round 20 is
+                  // inside the error of the lumen figures anyway. The tile above
+                  // rounds the same way, so all three agree.
+                  const ok = Math.round(got) >= target;
+                  const label = PROJECT_BY_ID[projectId]?.label;
+                  return (
+                    <div className="flex items-center gap-2 mt-2.5 mb-4">
+                      {ok ? (
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                          stroke="#FFFFFF" strokeWidth="2.6" strokeLinecap="round"
+                          strokeLinejoin="round" className="flex-none"
+                          aria-hidden="true"><path d="M4.5 12.75l5.25 5.25L19.5 6" /></svg>
+                      ) : (
+                        /* NOT A TICK, AND NOT A RED CROSS EITHER. A plan under its
+                           criterion is not broken — it may be exactly what the
+                           designer wants — so this is a statement, not an error.
+                           The dash is the same mark the schedule uses for "not
+                           specified". */
+                        <span className="flex-none mt-[1px] text-subtle leading-none"
+                          aria-hidden="true">—</span>
+                      )}
+                      {/* `min-w-0` IS THE GUARD, not decoration. A flex item gets
+                          `min-width: auto`, which refuses to shrink below its
+                          min-content width — so a long sentence beside an icon can
+                          push the row wider than the panel instead of wrapping
+                          inside it. This is the standard fix and it costs nothing
+                          when the text already fits. */}
+                      <p className="m-0 min-w-0 text-[11.5px] leading-[1.5] text-muted">
+                        Recommendation for{' '}
+                        <b className="text-subtle">{label ?? 'this project'}</b> is{' '}
+                        <b className="text-subtle">{target} lumens per sqft</b>.{' '}
+                      </p>
+                    </div>
+                  );
+                })()}
+                {/* Named per room. A warning about a light off its cell centre is
+                    useless if you cannot tell which of eight rooms it is in. */}
+                {troubles.map((t, i) => (
+                  <p className={NOTE_WARN} key={i}><b>{t.name}</b> — {t.msg}</p>
+                ))}
+              </div>
+            )}
+            {totals.rooms === 0 && rooms.length > 0 && (
+              <div className={SEC}><p className={NOTE_WARN}>
+                No space on this plan produced a layout. {troubles[0]?.msg || ''}
+              </p></div>
+            )}
+
+            {/* --- VIEW, CLOSED. Every control in here is a preference about the
+                picture rather than a decision about the design, and a preference
+                you set once and forget does not deserve permanent space above the
+                export button. `<details>` and not a state flag: the browser owns
+                the open/closed, keyboard and screen-reader behaviour of a
+                disclosure, and reimplementing it is how one gets it wrong. */}
+            {/* THE CHEVRON IS THE `::after` ON THE SUMMARY, rotated on [open] —
+                the same rule as before, now written as variants. The native marker
+                goes because it is the browser's triangle, not this one. */}
+            <details className={`${SEC} [&>summary]:cursor-pointer [&>summary]:list-none
+              [&>summary]:flex [&>summary]:items-center [&>summary]:gap-1.5
+              [&>summary::-webkit-details-marker]:hidden
+              [&>summary]:after:content-[''] [&>summary]:after:ml-auto
+              [&>summary]:after:w-1.5 [&>summary]:after:h-1.5
+              [&>summary]:after:border-r-[1.5px] [&>summary]:after:border-b-[1.5px]
+              [&>summary]:after:border-subtle [&>summary]:after:transition-transform
+              [&>summary]:after:duration-[120ms]
+              [&>summary]:after:[transform:rotate(45deg)_translate(-2px,-2px)]
+              [&[open]>summary]:mb-2.5
+              [&[open]>summary]:after:[transform:rotate(225deg)_translate(-1px,-1px)]`}>
+              <summary><h3 className={H3_FLUSH}>View</h3></summary>
+              {/* THE BUTTONS ZOOM ABOUT THE MIDDLE OF WHAT IS ON SCREEN, not
+                  about the drawing's origin. Stepping the number alone kept the
+                  top-left corner still, which means the thing you were looking at
+                  slid off the bottom-right every time you pressed +. The wheel
+                  anchors on the pointer for the same reason; there is no pointer
+                  on a button, so the centre of the viewport is the honest
+                  substitute. */}
+              <div className={`${BTNROW} mb-1.5`}>
+                <button className={BTN} title="Zoom out (−)"
+                  onClick={() => zoomTo((z) => z / 1.2, stageCentre())}>−</button>
+                <button className={BTN} title="Actual size (0)"
+                  onClick={() => zoomTo(1, stageCentre())}>{Math.round(zoom * 100)}%</button>
+                <button className={BTN} title="Zoom in (+)"
+                  onClick={() => zoomTo((z) => z * 1.2, stageCentre())}>+</button>
+                <button className={BTN} title="Fit the plan to the window (F)"
+                  onClick={() => setZoom(fitZoom())}>Fit</button>
+              </div>
+              <p className={`${N} mt-0 mb-2`}>
+                Scroll to zoom, middle-drag to pan. <b>F</b> fits, <b>0</b> is
+                actual size.
+              </p>
+              {/* NO TOGGLE FOR A THING THAT IS NO LONGER DRAWN. The ambient grid,
+                  the task-surface boxes and the secondary grid came off the
+                  canvas, and a checkbox that turns on nothing is worse than no
+                  checkbox: it is a promise the drawing does not keep. `zones`
+                  stays, because hand-drawn no-light zones are still on the plan
+                  and are still worth being able to hide while looking at the
+                  layout under one. */}
+              {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
+                ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
+                ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
+                ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
+                ['switchboards', 'Switchboards'],
+                ['electrical', 'Electrical lines']].map(([k, l]) => (
+                <label className={CHECK} key={k}>
+                  <input className="lp-check" type="checkbox"
+                    checked={layers[k]} onChange={toggle(k)} />{l}</label>
+              ))}
+            </details>
+          </>}
+
+          {/* --- ADMIN, AND IT HAS ITS OWN TAB NOW -------------------------
+              IT USED TO BE THE FOOT OF THE EXPORT SECTION. Role 1 in `profiles`
+              — an owner of this app, not a user of it — so it was filed last,
+              behind a magenta rule, on the reasoning that it is not part of
+              anybody's workflow: it exposes what the models DECIDED, which is
+              what you need when a spot lands somewhere surprising and what must
+              never appear on a sheet a client sees.
+
+              That reasoning is why it is a TAB. Nested at the bottom of a
+              section about file formats, it was two hundred lines of readings
+              standing between the panel's last real control and the end of the
+              scroll — for the admin, who had to scroll past every design
+              control to reach the one thing they came for, and for the panel,
+              which ended on a block most people never see. A tab is what a
+              separate audience gets. It is scoped to `isAdmin` in the strip and
+              again here, and `panelView` falls back to Design for anybody whose
+              role changes underneath a stale tab. */}
+          {panelView === 'admin' && isAdmin && <>
+            <div className={SEC_ADMIN}>
+              <h3 className={H3_ADMIN}>Admin · model readings</h3>
+              <label className={CHECK}>
+                <input className="lp-check" type="checkbox" checked={audit}
+                  onChange={(e) => setAudit(e.target.checked)} />
+                Show what was identified
+              </label>
+              {/* THE DOORS, SEPARATELY. Every dimension on the sheet hangs off
+                  one of these boxes, so "did it find the doors" is a different
+                  question from "why is the layout like this" and is asked at a
+                  different moment. */}
+              <label className={`${CHECK} mt-2`}>
+                <input className="lp-check" type="checkbox" checked={auditDoors}
+                  onChange={(e) => setAuditDoors(e.target.checked)} />
+                Show the doors it found
+              </label>
+              <p className={`${N_ADMIN} mt-0.5`}>
+                Every candidate box, kept and rejected, with the opening it
+                measured. The one the scale is taken from is drawn solid.
+                {isVector && ' This plan is a drawing, so the detector never ran'
+                  + ' on it — a DXF states its own scale.'}
+              </p>
+              {/* THE COUNTS STAY WITH THEIR OWN SWITCH rather than joining the
+                  ledger below. That one answers "what did the models see on
+                  this plan"; these four numbers answer "is the scale right",
+                  and they are read while the boxes are on the canvas. */}
+              {auditDoors && (
+                <div className="mt-2 flex flex-col gap-[5px]">
+                  <div className={KV_ADMIN}><span>Doors kept</span><b>{doors.length}</b></div>
+                  <div className={KV_ADMIN}><span>Boxes rejected</span>
+                    <b>{doorState.restored ? '—' : (doorState.rejected?.length ?? 0)}</b></div>
+                  {/* A REOPENED PLAN HAS NO REJECTS TO SHOW. The kept doors are
+                      saved with the plan; the refused boxes are not, so a
+                      restored plan would otherwise report a confident zero and
+                      read as "it refused nothing". */}
+                  {doorState.restored && (
+                    <p className={`${N_ADMIN} mt-1`}>
+                      Restored from the saved plan, which keeps the doors but not
+                      the boxes it turned down. Re-run the detection to see those.
+                    </p>
+                  )}
+                  <div className={KV_ADMIN}><span>Scale</span>
+                    <b>{pxPerFt ? `${pxPerFt.toFixed(2)} px/ft` : 'not set'}</b></div>
+                  {doorPick?.id && (
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· from a door called</span>
+                      <b>{doorPick.mm ? `${doorPick.mm}mm` : '—'}</b></div>
+                  )}
+                  {doorState.status === 'error' && (
+                    <p className={`${NE} mt-1`}>
+                      The detector failed: {doorState.error}
+                    </p>
+                  )}
+                  {!doorState.restored && doorState.rejected?.length > 0 && (
+                    <details className={`${DISCLOSE_ADMIN} mt-1`}>
+                      <summary>Why each box was turned down</summary>
+                      {doorState.rejected.map((d, i) => (
+                        <p key={i} className={`${N_ADMIN} mt-1`}>
+                          <b>{(d.cls || 'box')} {(d.conf ?? 0).toFixed(2)}</b>{' — '}{d.reason}
+                        </p>
+                      ))}
+                    </details>
+                  )}
+                  <p className={`${N_ADMIN} mt-1`}>
+                    The gates are <code className={CODE}>DOOR_DEFAULTS</code> in{' '}
+                    <code className={CODE}>doors.js</code>.
+                  </p>
+                </div>
+              )}
+
+
+              {/* THE GRID, ON THE DRAWING. Its own switch and not part of the
+                  overlay above: that one is what the MODELS read off the
+                  plan, this is what our own chunker and planner did with it
+                  afterwards. A light that lands somewhere odd is almost
+                  always a chunk that split somewhere odd, and the split is
+                  the one thing on this drawing with no visible trace at all —
+                  `gridPath` has been in PlanCanvas the whole time with
+                  nothing calling it.
+                  A BUTTON RATHER THAN A CHECKBOX, and it says which way it is
+                  about to go. It is an act — put the scaffolding on the
+                  drawing, take it off again — rather than a standing
+                  preference like the layers list, and it is the one control
+                  in here somebody toggles repeatedly while looking at the
+                  canvas rather than at this panel. */}
+              <div className={`${BTNROW} mt-2.5`}>
+                <button className={BTN_SECOND} disabled={!totals.rooms}
+                  aria-pressed={showGrid}
+                  title="Draw the chunk boxes and the cell lines the lights were laid on"
+                  onClick={() => setShowGrid((v) => !v)}>
+                  {showGrid ? 'Hide the planning grid' : 'Show the planning grid'}
+                </button>
+              </div>
+              {/* LOOK AGAIN — the manual bedroom pass. Admin-only because it
+                  spends a model call per room and because the person who
+                  wants it is the person tuning the detectors: on a plan where
+                  the first answer was wrong there is otherwise no way to ask
+                  twice without re-running the whole pipeline. */}
+              <div className={`${BTNROW} mt-2.5`}>
+                <button className={BTN_SECOND} disabled={bedLook === 'busy' || !rooms.length}
+                  title={focus
+                    ? `Ask both detectors about ${focus.outline?.name || 'this space'} again`
+                    : 'Ask both detectors about every bedroom again'}
+                  onClick={lookAgainAtBeds}>
+                  {bedLook === 'busy' ? 'Looking…'
+                    : focus ? `Look again in ${focus.outline?.name || 'this space'}`
+                    : 'Look again at the beds'}
+                </button>
+              </div>
+              {bedLook && bedLook !== 'busy' && (
+                <p className={`${N} mt-1.5`}>{bedLook}</p>
+              )}
+
+              {/* --- THE LEDGER, CLOSED, AND NO LONGER TIED TO THE OVERLAY.
+                  It was an always-open card that appeared with the checkbox
+                  above, on a #F2F2F2 ground with near-black type — a white
+                  slab two thirds of the way down a dark panel, and fifteen
+                  rows of counts permanently occupying the space between the
+                  switch and the bottom of the panel.
+                  IT IS A DISCLOSURE NOW, and shut: these are numbers you go
+                  and look up when something on the drawing surprises you, not
+                  numbers you read while working. `<details>` rather than a
+                  state flag for the same reason the View section is one — the
+                  browser already owns the open/closed, the keyboard and the
+                  screen reader.
+                  AND IT IS NO LONGER BEHIND `audit`. That checkbox draws
+                  marks on the CANVAS, which is the thing you have to remember
+                  to turn off before exporting; these are counts in a panel,
+                  which cost an export nothing. Tying them together meant the
+                  only way to read the ledger was to first put magenta on a
+                  sheet — so they are two switches now, and each one governs
+                  the surface it actually changes. */}
+              <details className={`${DISCLOSE_ADMIN} mt-3`}>
+                <summary>What was identified</summary>
+                <div className="mt-2 flex flex-col gap-[5px]">
+                  <div className={KV_ADMIN}><span>Task surfaces</span><b>{surfacesPx.length}</b></div>
+                  {/* WHAT THE RENDER PASS READ, and what it turned into. The
+                      cells are the working; the three fittings under them are
+                      the product, and they stay on the drawing whether or not
+                      this box is ticked. Counted here so that "the cells look
+                      wrong" and "the cells are right and the rule did nothing"
+                      are two different readings rather than one shrug. */}
+                  {/* THE RENDER PASS'S WHOLE LEDGER, and this is now the only
+                      place it is written down. `seen` is what PROMPT 01 read
+                      off the photographs; `placed` is how many of those PROMPT
+                      02 could tie to a wall on this drawing. The two differing
+                      is the pass's most useful single fact — "it saw nothing"
+                      and "it saw it and could not place it" are completely
+                      different problems — and it left the render-pass panel
+                      along with the rest of the reporting. */}
+                  <div className={KV_ADMIN}><span>Wall features seen</span>
+                    <b>{Object.values(wallResults)
+                      .reduce((n, w) => n + (w.elements?.length ?? 0), 0)}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· placed on the plan</span>
+                    <b>{wallCellsPx.length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· reverse coves</span>
+                    <b>{reverseCoves.length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· shelf strips</span>
+                    <b>{shelfStrips.length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· art spots</span>
+                    <b>{taskSpotsPx.filter((sp) => sp.art && !sp.rejected).length}
+                      {taskSpotsPx.some((sp) => sp.art && sp.rejected)
+                        ? ` (${taskSpotsPx.filter((sp) => sp.art && sp.rejected)
+                            .reduce((n, sp) => n + (sp.wanted ?? 1), 0)} dropped)` : ''}</b></div>
+                  {/* WHERE EACH ONE CAME FROM. Two sources feed this list and
+                      they can double up — they did, and the count was the only
+                      thing on screen that knew. A split reads as a description
+                      of the pipeline when it is right and as an obvious bug
+                      when it is not. */}
+                  {/* THE FOOT-OF-BED RE-CUT. Its ordinary answer is "no",
+                      so a count alone would be indistinguishable from the
+                      rule being off or broken — the sentence beside each
+                      space is the point. See bedGrid.js. */}
+                  {(() => {
+                    const bedrooms = rooms.filter((r) => r.plan?.ok
+                      && (r.plan.stats?.bedFootApplied || r.plan.stats?.bedFootWhy));
+                    if (!bedrooms.length) return null;
+                    const on = bedrooms.filter((r) => r.plan.stats.bedFootApplied);
+                    return (
+                      <>
+                        <div className={KV_ADMIN}><span>Foot-of-bed re-cut</span>
+                          <b>{on.length} of {bedrooms.length}</b></div>
+                        {bedrooms.filter((r) => r.plan.stats.bedFootWhy).map((r) => (
+                          <p key={r.id} className="text-[11px] text-white leading-[1.5] mt-1">
+                            <b>{r.outline?.name || 'Space'}</b>
+                            {' — '}{r.plan.stats.bedFootWhy}
+                          </p>
+                        ))}
+                      </>
+                    );
+                  })()}
+                  <div className={KV_ADMIN}><span>Bed zones</span><b>{detectedZones.length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· bed-filter, whole plan</span>
+                    <b>{detectedZones.filter((z) => !z.closeUp).length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· GPT, one bedroom crop</span>
+                    <b>{detectedZones.filter((z) => z.judged).length}</b></div>
+                  {/* AN EXCLUSION YOU CAN SEE. This used to be a third
+                      SOURCE of bed geometry and is now none: the accent pass's
+                      bed boxes never reach the chunking or the sconce rule.
+                      Counting them anyway is what stops "bed-filter found
+                      nothing here" and "there is no bed here" looking the
+                      same. */}
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· accent pass (excluded)</span>
+                    <b>{bedsPerRoom.length}</b></div>
+                  {detectState.whyRejected && (
+                    <>
+                      <div className={KV_ADMIN}><span>Bed boxes rejected</span>
+                        <b>{detectState.whyRejected.n}</b></div>
+                      <p className={`${N_ADMIN} border-l-2 border-[#C026D3] pl-[9px] mt-1`}>
+                        Mostly: {detectState.whyRejected.top}
+                        {detectState.whyRejected.topCount < detectState.whyRejected.n
+                          ? ` (${detectState.whyRejected.topCount} of ${detectState.whyRejected.n})` : ''}
+                        . The size gate is <code className={CODE}>BED_FT</code> in{' '}
+                        <code className={CODE}>furniture.js</code>.
+                      </p>
+                    </>
+                  )}
+                  {/* SPACES, NOT BEDS. The labels used to say neither, which
+                      is how "Beds re-asked 3 / Judged 1" read as three beds of
+                      which two were dropped. It was three SPACES. A space is
+                      re-asked only when the classifier called it a bedroom and
+                      the whole-plan pass put no bed in it; the list below says
+                      what came back for each one. */}
+                  <div className={KV_ADMIN}><span>Bedrooms GPT was asked about</span>
+                    <b>{Object.values(bedVerdicts).filter((v) => v?.refound).length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· of those, still empty</span>
+                    <b>{Object.values(bedVerdicts).filter((v) => v?.refound && v.kind === 'none').length}</b></div>
+                  {!!Object.keys(bedVerdicts).length && (
+                    <details className="mt-1 border-t border-border/20 pt-1.5
+                      [&>summary]:cursor-pointer [&>summary]:text-[11.5px]
+                      [&>summary]:text-white [&>summary]:list-none
+                      [&>summary]:select-none [&>summary]:hover:text-[#C026D3]
+                      [&>summary::-webkit-details-marker]:hidden
+                      [&>summary]:before:content-['▸_'] [&>summary]:before:text-[9px]
+                      [&[open]>summary]:before:content-['▾_']">
+                      <summary>What came back for each bedroom</summary>
+                      {Object.entries(bedVerdicts).map(([id, v]) => (
+                        <p key={id} className="text-[11px] text-white leading-[1.5] mt-1.5">
+                          <b>{outlines.find((o) => o.id === id)?.name || id}</b>
+                          {' — '}{judgeNote(v)}
+                        </p>
+                      ))}
+                    </details>
+                  )}
+                </div>
+              </details>
+
+              {/* --- THE FILE THEY UPLOADED -------------------------------
+                  LAST IN HERE, AND IT IS THE ONE THING IN THIS SECTION THAT
+                  IS NOT A READING. Everything above exposes what the models
+                  decided; this hands back what they were deciding ABOUT. It
+                  belongs together with them anyway, because it is the same
+                  job: a fitting lands somewhere surprising, the overlays say
+                  what was seen, and the next question is always "what does
+                  the drawing actually look like" — which needs the drawing,
+                  in the application that made it, not a PNG of it with our
+                  fittings on top.
+
+                  THE FILENAME IS THE LABEL. "The original" is a different
+                  file on every plan, and the extension is what says whether
+                  it is worth opening — a DXF opens in CAD, a phone photo of
+                  a printout does not.
+
+                  NOT BEHIND `gateExport`. That gate is the till and it asks
+                  the OWNER to pay for a drawing this app produced. This is
+                  the file they already own, handed to an operator looking at
+                  their plan; charging for it would be charging the wrong
+                  person for the wrong thing.
+
+                  AND NO `milestone`. Every export writes a revision row on
+                  the reasoning that somebody taking a file away is the
+                  strongest signal a design is finished. An operator
+                  downloading somebody else's upload is not that signal, and
+                  the row would put a fictional milestone in the corpus. Same
+                  argument as the read-only panel's copy of this button —
+                  see `onDownloadOriginal` in ViewerPanel. */}
+              <div className={`${BTNROW} mt-2.5`}>
+                <button className={BTN_SECOND} disabled={!initialFile}
+                  title={initialFile
+                    ? `${initialFile.name || 'the uploaded file'} — the file this plan was made from`
+                    : 'This plan was not opened from a stored upload, so there is'
+                      + ' no original to hand back'}
+                  onClick={() => {
+                    if (!initialFile) return;
+                    download(initialFile.name || 'original', initialFile,
+                             initialFile.type || 'application/octet-stream');
+                  }}>
+                  {initialFile
+                    ? `Download the original (${uploadExt || 'file'})`
+                    : 'No original on this plan'}
+                </button>
+              </div>
+            </div>
+          </>}
           </>}
         </>}
         </>
+        )}
+        </div>
+
+        {/* --- THE ELECTRICALS, PINNED TO THE FOOT OF THE PANEL -------------
+            THE LAST THING ANYBODY DOES WITH A PLAN, and the one control on this
+            panel that is a different TRADE. It was a white plate floating in the
+            bottom-left of the canvas; the note where it used to be says why that
+            corner was wrong. What the footer buys is the pairing:
+
+            THE ACT, AND THEN THE THING IT RESTS ON. Every switchboard on the
+            sheet is placed beside a door — see electrical.js — so this switch is
+            exactly as right as the door boxes it was derived from. The count
+            under it is the one number that says how much was found, and "Modify
+            doors" is the way back into them. Floating on the drawing those two
+            were a diagonal apart.
+
+            OUTSIDE THE SCROLLER, WHICH IS THE WHOLE POINT OF THE FOOTER. On a
+            plan with twenty spaces the panel is several screens of column; a
+            switch you have to scroll to the end of the design to reach is a
+            switch that gets missed. See the note on the column for the `min-h-0`
+            that makes the pinning actually pin.
+
+            A SWITCH, NOT A BUTTON THAT CHANGES ITS OWN NAME. It was a full
+            width outlined button reading "Show Electrical Layout" / "Hide
+            Electrical Layout", latched by a wash of white — which is a control
+            whose LABEL is its state, so the words move under you every time you
+            press it and the only way to read what is on is to read what the
+            button is offering to do next. A switch says both at once: the label
+            names the layer and never moves, and the knob says whether it is on.
+            The outline and the full width stay — this is still the second
+            loudest thing on the panel, under Share.
+
+            IT SURVIVES `doorEdit` AND `zoneEdit` ON PURPOSE, unlike everything
+            above it. Both of those steps empty the panel — and this footer is
+            how you get out of them: "Modify doors" is the door step's own toggle,
+            and the switch above it closes the step and shows the wiring. A footer
+            that vanished with the panel would take the way out with it.
+
+            `!prep` LIKE EVERY OTHER CONTROL ON THIS SCREEN: while the pipeline
+            runs the layout is being replaced under the drawing, so a switch that
+            reveals wiring derived from it cannot do what it claims. And not over
+            the schedule or the tracer, neither of which has wiring to show. */}
+        {source && !boqOpen && !showTrace && !prep && (
+          <footer className="flex-none border-t border-border/10 px-4 pt-3 pb-4
+            flex flex-col gap-2">
+            <button type="button" role="switch"
+              className={'appearance-none cursor-pointer w-full '
+                + 'inline-flex items-center justify-between gap-2 px-3 py-[9px] '
+                + 'rounded-lg border border-white text-white '
+                + 'text-[12.5px] leading-none tracking-[-0.01em] '
+                + 'transition-colors duration-[120ms] '
+                + 'focus-visible:outline-2 focus-visible:outline-accent '
+                + 'focus-visible:outline-offset-2 '
+                + (layers.electrical && !doorEdit
+                  ? 'bg-white/10' : 'bg-transparent hover:bg-white/10')}
+              aria-checked={layers.electrical && !doorEdit}
+              /* --- THE FIRST PRESS ASKS ABOUT THE DOORS -------------------
+                 A switchboard is placed beside a door, so this switch cannot
+                 honestly turn the wiring on until somebody has said the door
+                 boxes are right — see the note by `doorsOk`. It is the same
+                 control either way rather than a second button that appears once
+                 and then never again: what this button means is "show me the
+                 electricals", and the first time that is asked the honest answer
+                 is a question. */
+              title={!doorsOk && !readOnly
+                ? 'Confirm the doors, then the wiring'
+                : layers.electrical
+                  ? 'Hide the looping and the bay boards'
+                  : 'Loop every fitting back to its switchboard'}
+              onClick={() => {
+                /* IN THE VIEWER IT IS A LAYER SWITCH AND NOTHING MORE. An
+                   operator looking at somebody else's plan is not the person who
+                   can answer whether the doors are right, and this panel writes
+                   nothing — see ViewerPanel. They see the wiring the owner
+                   confirmed. */
+                if (readOnly) { setLayers((l) => ({ ...l, electrical: !l.electrical })); return; }
+                if (zoneEdit) closeZoneEdit();
+                if (doorEdit) { closeDoorEdit(); return; }
+                if (!doorsOk) { openDoorEdit(); return; }
+                setLayers((l) => ({ ...l, electrical: !l.electrical }));
+              }}>
+              {/* THE LABEL, AND IT DOES NOT MOVE. The wire itself beside it:
+                  two arcs and a plate, which is exactly what the layer draws.
+                  Live in the board's blue when it is on, so the state is said
+                  twice on one line — at the words and at the knob. */}
+              <span className="inline-flex items-center gap-2 min-w-0">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" className="flex-none"
+                  stroke={layers.electrical && !doorEdit ? SB_COLOUR : 'currentColor'}
+                  strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
+                  aria-hidden="true">
+                  <path d="M3 16c2.5-3 4.5-3 7 0M10 16c2.5-3 4.5-3 7 0" />
+                  <rect x="18.5" y="5" width="3.5" height="6" rx="1" />
+                  <path d="M20.25 11v2c0 1.5-1 2-2.25 2.6" />
+                </svg>
+                Show electrical layout
+              </span>
+              {/* THE KNOB CARRIES THE STATE. The track takes the board's own
+                  blue when the layer is on — the same blue the plates are drawn
+                  in — so the switch and the thing it reveals are one colour.
+                  `aria-hidden`: `role="switch"` on the button already announces
+                  on/off, and a screen reader has no use for the picture of it. */}
+              <span aria-hidden="true"
+                className={'flex-none inline-flex items-center w-[34px] h-[19px] '
+                  + 'rounded-full p-[2px] transition-colors duration-[120ms] '
+                  + (layers.electrical && !doorEdit ? '' : 'bg-white/25')}
+                style={layers.electrical && !doorEdit
+                  ? { backgroundColor: SB_COLOUR } : undefined}>
+                <span className={'block w-[15px] h-[15px] rounded-full bg-white '
+                  + 'transition-transform duration-[120ms] '
+                  + (layers.electrical && !doorEdit
+                    ? 'translate-x-[15px]' : 'translate-x-0')} />
+              </span>
+            </button>
+            {/* THE COUNT AND THE WAY BACK, AND NOT IN THE VIEWER. An operator
+                reading somebody else's sheet has no door to modify, and a count
+                with no question attached to it is a fact in a corner that
+                carries none.
+
+                TABULAR FIGURES, LIKE EVERY NUMBER THAT CHANGES IN PLACE — this
+                face's proportional `1` is half the width of its `0`, so a count
+                going 9 → 10 → 11 would shuffle the words after it.
+
+                A RULED LINK RATHER THAN A SECOND CHIP. The button above is the
+                act this footer is for; this reopens a step, and a second
+                bordered button under it would read as a second layer to turn
+                on. `doorEdit` latches it, so the way in is also the way out. */}
+            {!readOnly && (
+              <div className="flex items-baseline justify-between gap-2
+                text-[11px] leading-none">
+                <span className="text-subtle tabular-nums">
+                  {doors.length} door{doors.length === 1 ? '' : 's'} detected
+                </span>
+                <button type="button"
+                  className={'appearance-none border-0 bg-transparent p-0 cursor-pointer '
+                    + 'text-[11px] leading-none underline underline-offset-2 '
+                    + 'transition-colors duration-[120ms] '
+                    + 'focus-visible:outline-2 focus-visible:outline-accent '
+                    + 'focus-visible:outline-offset-2 '
+                    + (doorEdit
+                      ? 'text-white decoration-white/60'
+                      : 'text-white/70 decoration-white/25 hover:text-white')}
+                  aria-pressed={doorEdit}
+                  title={doorEdit ? 'Done with the doors' : 'Check the doors again'}
+                  onClick={() => (doorEdit ? closeDoorEdit() : openDoorEdit())}>
+                  {doorEdit ? 'Done with doors' : 'Modify doors'}
+                </button>
+              </div>
+            )}
+          </footer>
         )}
       </div>
     </div>
