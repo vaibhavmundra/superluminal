@@ -33,6 +33,7 @@ const LAYER_ROWS = [
   ['accents', 'Accent lighting'],
   ['spots', 'Task lights'],
   ['switchboards', 'Switchboards'],
+  ['electrical', 'Electrical lines'],
   ['objects', 'Ceiling objects'],
   ['zones', 'No-light zones'],
   ['dim', 'Dimensions'],

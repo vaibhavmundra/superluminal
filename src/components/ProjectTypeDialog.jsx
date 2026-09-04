@@ -29,9 +29,9 @@ import BusyModal from './BusyModal.jsx';
 // ---------------------------------------------------------------------------
 
 export default function ProjectTypeDialog({ planName, onPick, busy = null, note = null }) {
-  // The busy face of this dialog is BusyModal's now, so the electrical pass can
-  // wear the same one without a second copy of the markup drifting away from
-  // this one.
+  // The busy face of this dialog is BusyModal's own, which is where it went when
+  // a second caller wanted it — the electrical pass, since retired. It stays
+  // split: the alternative is a copy of the markup here that drifts.
   if (busy) return <BusyModal line={busy} note={note} />;
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]">

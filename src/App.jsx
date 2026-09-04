@@ -16,17 +16,15 @@ import { newHistory, record, stepBack, stepForward, historyDepth,
          QUIET_MS } from './lib/undo.js';
 import { bbox, pointInPolygon } from './lib/geometry.js';
 import { REFERENCES, scaleFromReference } from './lib/scale.js';
-import { detectDoors, doorsFromPayload, scaleFromDoor, DOOR_WIDTHS } from './lib/doors.js';
+import { detectDoors, doorsFromPayload, scaleFromDoor, openingPx, DOOR_WIDTHS } from './lib/doors.js';
 import { proposeOutlines } from './lib/outlineSources.js';
 import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, plausibleBed, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER, wireProvider } from './lib/furniture.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import LightPalette from './components/LightPalette.jsx';
 import ChunkIcon from './components/ChunkIcon.jsx';
-import BoltIcon from './components/BoltIcon.jsx';
 import CeilingPalette from './components/CeilingPalette.jsx';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
-import BusyModal from './components/BusyModal.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
 import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
@@ -57,7 +55,13 @@ import { shelfStripsFor } from './lib/shelfStrip.js';
 import RenderPassPanel from './components/RenderPassPanel.jsx';
 import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone,
          nearestWall, alongWallAt, RUN_EDIT } from './lib/accentPlace.js';
-import { planSwitchboards } from './lib/electrical.js';
+import { planSwitchboards, planChunkBoards, markClashes, asDrawn, slideBoardTo,
+         SB_COLOUR } from './lib/electrical.js';
+// THE BED, FOR THE SWITCHBOARD RULE THAT BRACKETS IT. One function, and it is
+// borrowed rather than copied so that "which bed" has one answer on a plan with
+// two of them in one room — see the note by `bedRect` below.
+import { bedZoneIn } from './lib/bedGrid.js';
+import { planFlows } from './lib/flows.js';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
          sizeLabel, radiusFt, clampFt, resizeFromCorner, rotateTo, isRect,
          halfExtents, isUniform, applyResize, FAN_SWEEPS, sweepMm, withSweep,
@@ -551,6 +555,11 @@ const ftin = (v) => {
 const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: true,
   lights: true, labels: false, fan: true, zones: true, accents: true,
   objects: true, spots: true, switchboards: true,
+  /* THE LOOPING, OFF BY DEFAULT. A lighting drawing and a wiring drawing are
+     two sheets read by two trades, and the arcs cross the layout everywhere
+     they exist — so they are asked for. Serialised with the rest, so a plan
+     reopens showing whatever it was left showing. */
+  electrical: false,
   /* DARK MODE FOR THE DRAWING, AND IT IS A PIXEL INVERSION OF THE SCAN — the
      same thing ⌘I does in Photoshop, applied to the plan image and nothing
      else. It lives in `layers` because it is a preference about the picture
@@ -972,17 +981,33 @@ export default function App({
   // under room B's controls, over a button still offering to run.
   const [accentState, setAccentState] = useState({ status: 'idle', roomId: null });
   const [accentDismissed, setAccentDismissed] = useState([]);
-  // THE ELECTRICALS, keyed by room like everything else here.
-  //
-  // NO `dismissed` AND NO `manual` LIST, unlike accents and surfaces, and that
-  // is a scope decision rather than an oversight: a board cannot be dragged or
-  // thrown away yet, so a list of thrown-away ids would be a store with nothing
-  // to put in it. Both slot in beside this one without touching anything else
-  // the day they are wanted. `sbBusy` is the room being planned right now and
-  // is deliberately NOT serialised — a plan reopened mid-run would come back
-  // with a spinner over a pass nobody is running.
-  const [sbResults, setSbResults] = useState({});   // roomId -> { boards, notes }
-  const [sbBusy, setSbBusy] = useState(null);
+  /* --- THE ELECTRICALS, AND THERE IS NO LONGER A PASS TO STORE --------------
+     `sbResults` WAS HERE — one entry per room, written by a bolt in the list of
+     spaces that ran a vision call and kept its answer. Both are gone. The rules
+     read the door boxes, the placed sconces and the bed box, all of which the
+     app already has by the time there is a layout, so the boards are a memo
+     over state rather than a result to hold: see `boardResults` below.
+
+     WHAT THE BOLT ACTUALLY BOUGHT WAS THE TELEVISION, and the television is not
+     looked for any more — the wall facing the bed gets two plates whether or not
+     a console was drawn on it. See the header of planSwitchboards for that
+     trade. With nothing left that costs a call, there is nothing left to ask for.
+
+     WHAT IS STORED INSTEAD IS WHAT A PERSON DID: the plates they threw away.
+     A board is derived, so "not this one" cannot be expressed by removing it
+     from a list — the next render would put it straight back. Same shape and
+     the same reasoning as `accentDismissed` next door. */
+  const [boardsOff, setBoardsOff] = useState([]);   // board ids somebody removed
+  /* ...AND WHERE THEY DRAGGED ONE TO: board id -> distance round that space's
+     walls, in feet. Same kind of store as `boardsOff` and for the same reason —
+     a board is derived, so a hand position has to live outside the derivation or
+     the next render puts the plate back on its rule.
+     THE COORDINATE IS ARC LENGTH AND NOT A POINT. See `wallPath` in
+     electrical.js: a run index renumbers when somebody re-traces a corner, and a
+     point in plan pixels moves when somebody corrects the scale. */
+  const [boardMoves, setBoardMoves] = useState({});
+  const [selBoardId, setSelBoardId] = useState(null);
+  const [boardDrag, setBoardDrag] = useState(null);   // {id, roomId, origin, live}
   // The image that is actually sent. Held in state rather than made at call
   // time so the panel can show it: "what did it look at" is the first question
   // whenever an answer is strange, and a crop that is off the room or washed
@@ -1144,6 +1169,37 @@ export default function App({
   const [doorPick, setDoorPick] = useState(null);   // {id, mm} | {id, mm:null} while choosing
   const [doorNonce, setDoorNonce] = useState(0);    // bumping this looks again
 
+  // --- THE DOORS, CONFIRMED BEFORE THE WIRING IS DRAWN ----------------------
+  //
+  // A SWITCHBOARD IS PLACED BESIDE A DOOR. That is the whole of the first rule
+  // in electrical.js, so every plate on the sheet is only as right as the door
+  // boxes it was derived from — and those boxes came from a detector that was
+  // asked a different question. It was run on upload to find the RULER: one
+  // clean opening, anywhere on the plan, is enough to scale the drawing, and a
+  // detector that misses three doors out of nine still answers that perfectly.
+  // The electricals need the opposite — every door, in every space that is
+  // going to take a board — and nothing before now has ever asked whether the
+  // set was complete.
+  //
+  // SO IT IS ASKED, ONCE, AND BY A PERSON. Not re-detected: a second model call
+  // would come back with the same recall and no way for anybody to tell. The
+  // boxes go on the drawing, the panel empties down to the question, and the
+  // user draws in what is missing and throws out what is not a door. Confirming
+  // is what makes the wiring visible.
+  //
+  // `doorsOk` IS A DECISION AND IS SAVED; `doorEdit` IS A SCREEN AND IS NOT.
+  // Reopening a plan whose doors were confirmed must not ask again — the answer
+  // is part of the design — but it must not reopen mid-edit either.
+  const [doorsOk, setDoorsOk] = useState(false);
+  const [doorEdit, setDoorEdit] = useState(false);
+  const [selDoorId, setSelDoorId] = useState(null);
+  const [doorDraft, setDoorDraft] = useState(null);  // the rubber band, in plan px
+  // A MOVE IN FLIGHT, HELD OUTSIDE `doors` ON PURPOSE. Writing the rect on every
+  // pointermove would recompute the board pass, the bay pass and the flows forty
+  // times a second — and the scale, if the box being dragged is the ruler. The
+  // drag carries its own live rect and the commit happens on release.
+  const [doorDrag, setDoorDrag] = useState(null);    // {id, from, rect}
+
   // Not state. Every dial that used to be a slider now lives in settings.js —
   // see the header there for why.
   const opt = PLAN_OPTIONS;
@@ -1219,7 +1275,9 @@ export default function App({
     setDetections([]); setDetectState({ status: 'idle' }); setDismissed([]);
     setRoomState({ status: 'idle' });
     setAccentRoomId(null); setAccentResults({});
-    setSbResults({}); setSbBusy(null);
+    // The plates somebody threw away go with the plan they were on: a board id
+    // names a room and a rule, and neither means anything on a fresh sheet.
+    setBoardsOff([]); setBoardMoves({}); setSelBoardId(null); setBoardDrag(null);
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
     setRenders({}); setRenderRefs({});
     setWallResults({}); setWallTranscripts({}); setRunTrims({});
@@ -1238,6 +1296,11 @@ export default function App({
     setProjectId(initialProjectType ?? null);
     setRoomTypes({}); setPrep(null); cancelPrep.current = false;
     setDoors([]); setDoorPick(null); setDoorState({ status: 'idle' });
+    // ...AND THE CONFIRMATION GOES WITH THEM. It is an answer about ONE set of
+    // door boxes; carrying it onto a fresh sheet would draw wiring off a
+    // detection nobody has looked at.
+    setDoorsOk(false); setDoorEdit(false);
+    setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
     setSurfaceRoomId(null); setSurfaceResults({});
     setSurfaceState({ status: 'idle', roomId: null }); setSurfaceDismissed([]);
     setArtDismissed([]); setSelSpotId(null);
@@ -1418,10 +1481,19 @@ export default function App({
      layer being off, because nothing in the panel says this override exists.
      They are drawn in both modes now. What DOES have to change with the ground
      is their ink, and that is handled in PlanCanvas rather than here. */
-  const canvasLayers = useMemo(() => (layers.invert
-    ? { ...layers, dim: false, cells: false, region: false, zones: false,
-        labels: false }
-    : layers), [layers]);
+  /* AND THE WIRING IS OFF WHILE THE DOORS ARE BEING CONFIRMED. The door editor
+     is a question about the door boxes, and the answer to it is what MOVES the
+     plates and re-runs the loops — so drawing the old answer under the question
+     would be showing somebody wiring derived from boxes they are in the middle
+     of correcting. It comes back the moment the editor closes; `layers.electrical`
+     itself is untouched, so nothing has to be put back. */
+  const canvasLayers = useMemo(() => {
+    const base = layers.invert
+      ? { ...layers, dim: false, cells: false, region: false, zones: false,
+          labels: false }
+      : layers;
+    return doorEdit ? { ...base, electrical: false } : base;
+  }, [layers, doorEdit]);
 
   // --- opening a saved plan -------------------------------------------------
   //
@@ -1477,11 +1549,11 @@ export default function App({
     setProjectType: setProjectId,
     setPdfPage,
     setRoomTypes, setDetections, setDismissed, setBedVerdicts, setProvider, setZones,
-    setDoors, setDoorState, setDetectState,
+    setDoors, setDoorState, setDoorsOk, setDetectState,
     setCeilingObjs, setChunkPicks, setCeilingKinds, setDesignPicks,
     setAccentResults, setAccentDismissed, setManualAccents,
     setSurfaceResults, setSurfaceDismissed, setManualSurfaces, setArtDismissed,
-    setSbResults,
+    setBoardsOff, setBoardMoves,
     // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
     // are a few hundred bytes of JSON and the renders are megabytes of
     // somebody's photographs, which do not belong in a jsonb column.
@@ -1668,8 +1740,22 @@ export default function App({
     // A door picked and named. Until BOTH have happened there is no scale —
     // a clicked door with no width yet is a question, not an answer.
     if (!doorPick?.id || !doorPick.mm) return null;
+    // THE PICK CARRIES ITS OWN RECT, AND THAT IS WHAT MAKES THE DOOR EDITOR
+    // SAFE. This used to read the rect out of `doors` and nothing else — which
+    // was fine while that list was written once by the detector and never
+    // touched. The confirm-the-doors step can now move a box or throw one away,
+    // and if that box happened to be the ruler the scale of the entire drawing
+    // changed underneath a finished layout: every fitting, every metre of strip
+    // and the whole schedule, silently, from a gesture about switchboards.
+    //
+    // The snapshot is taken when the door is CLICKED as the ruler — see
+    // `onPickDoor` on the tracer screen — so the scale is anchored to the box
+    // that was measured rather than to whatever is in the list now. The lookup
+    // stays first, and is what keeps a plan saved before this existed working:
+    // its `doorPick` has no rect, and its doors have never been editable.
     const d = doors.find((q) => q.id === doorPick.id);
-    return d ? scaleFromDoor(d.rect, doorPick.mm) : null;
+    const rect = d?.rect ?? doorPick.rect ?? null;
+    return rect ? scaleFromDoor(rect, doorPick.mm) : null;
   }, [isVector, source, scaleMode, measure, refId, customFt, doors, doorPick]);
 
   /**
@@ -3047,98 +3133,24 @@ export default function App({
     return () => { alive = false; };
   }, [focus?.id, renderRefs, renders, renderStore]);
 
-  /**
-   * THE ELECTRICALS FOR ONE ROOM. Same shape as computeAccents: no state is
-   * touched, so the caller decides what to do with the answer.
-   *
-   * THE ACCENTS ARE A PREREQUISITE AND NOT AN OPTIMISATION. Two of the three
-   * rules read a fitting that pass placed — the bedside sconces, and the strip
-   * along the TV unit — and they read the PLACED fitting rather than the
-   * furniture box behind it. That is the point: a sconce is where accentPlace
-   * put it, including any hand slide, and a strip's wall came from wallForRun,
-   * which disagrees with nearestWall in a corner on purpose. Re-deriving either
-   * would put a board on a wall the fitting it feeds is not on. So if the
-   * accent pass has not run for this room, it runs here first.
-   *
-   * The television is the one thing that may need a fresh look. If the accent
-   * pass found no `tv_unit` — common, because a console is often not drawn —
-   * one narrow question goes out on its own. See tvDetect.js.
-   */
-  const computeElectrical = useCallback(async (r, { reuseShot = null } = {}) => {
-    let accents = accentResults[r.id];
-    let shot = reuseShot;
-    if (!accents?.zones) {
-      const out = await computeAccents(r, { reuseShot: shot });
-      accents = out.result;
-      shot = out.shot;
-    }
-    const zones = (accents?.zones ?? []).filter((z) => !accentDismissed.includes(z.id));
+  /* --- THE ELECTRICAL PASS WAS HERE, AND IT HAS BEEN RETIRED ---------------
+     `computeElectrical` and `planElectrical` — the bolt in the list of spaces.
+     One room, one vision call, one spinner. It ran the accent pass first if it
+     had not run (two of the rules read a fitting that pass places), then asked a
+     narrow question of its own: is there a television on the wall opposite the
+     bed?
 
-    let tvRect = null;
-    const hasTv = zones.some((z) => z.from === 'tv_unit' && !z.rejected);
-    if (!hasTv) {
-      try {
-        shot = shot ?? await roomSnapshot({
-          source, img, polygonPx: r.plan.polygonPx,
-          lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
-        });
-        const payload = await requestAccents({
-          plan: shot, task: 'tv',
-          room: {
-            name: r.outline.name || null,
-            widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
-          },
-        });
-        const res = payload.result;
-        // OUT OF THE CROP AND BACK ONTO THE PLAN, exactly as computeAccents
-        // does. A box left in the crop's own space lands in the corner of the
-        // sheet.
-        if (res?.tv?.rect) tvRect = toPlanRect(res.tv.rect, shot.crop, res.image);
-      } catch (err) {
-        // A television nobody found is a note, not a failure. The door and the
-        // bedsides are still worth placing.
-        console.warn('[electrical] the TV pass did not answer:', err);
-      }
-    }
+     THE ANSWER TO THAT QUESTION IS NOW ASSUMED. The wall facing the bed gets two
+     plates in every bedroom, whether or not a console was ever drawn on it — see
+     the header of planSwitchboards for why that trade is the right way round.
+     With the television no longer looked for, nothing in the switchboard rules
+     costs a model call, so there is nothing left to ASK for: the boards are a
+     memo over the door boxes, the placed sconces and the bed box, and they are
+     simply there. `boardResults` further down is the whole pass now.
 
-    const out = planSwitchboards({
-      room: { id: r.id, polygonPx: r.plan.polygonPx },
-      // NAMES TOO. A note that has to say which OTHER space a door might belong
-      // to is unreadable as "o3" — see the shared-door note in electrical.js.
-      rooms: rooms.map((q) => ({
-        id: q.id, name: q.outline.name || null, polygonPx: q.plan.polygonPx,
-      })),
-      doors, roomTypes,
-      accentZones: zones,
-      tvRect, pxPerFt,
-    });
-    return { shot, result: out };
-  }, [accentResults, accentDismissed, computeAccents, rooms, doors, roomTypes,
-      pxPerFt, source, img, wallLayerSet]);
-
-  /**
-   * The bolt in the list of spaces. One room, one pass, one spinner.
-   *
-   * NOT PART OF runPipeline, deliberately. The electricals are asked for and
-   * not assumed: a lighting drawing is useful on its own, the pass costs a
-   * vision call, and the rules here are new enough to want looking at one room
-   * at a time. When it stops being new it can join the pipeline.
-   */
-  const planElectrical = useCallback(async (r) => {
-    if (sbBusy) return;
-    setSbBusy(r.id);
-    try {
-      const { result } = await computeElectrical(r);
-      setSbResults((m) => ({ ...m, [r.id]: result }));
-      console.log(`[electrical] ${r.outline.name || r.id}: ${result.boards.length} board(s)`
-        + `${result.notes.length ? ` — ${result.notes.join(' ')}` : ''}`);
-    } catch (err) {
-      console.warn('[electrical] the pass failed:', err);
-      setSbResults((m) => ({ ...m, [r.id]: { boards: [], notes: [String(err.message || err)] } }));
-    } finally {
-      setSbBusy(null);
-    }
-  }, [sbBusy, computeElectrical]);
+     tvDetect.js AND /api/accents' `tv` TASK ARE STILL THERE, unwired. They are
+     the prompt and the endpoint, not the decision to spend a call, and leaving
+     them costs nothing while the new rule is being lived with. */
 
   /** What kind of space is it? One small call, one word back. */
   const computeRoomType = useCallback(async (r, { reuseShot = null } = {}) => {
@@ -3840,19 +3852,276 @@ export default function App({
   }, [rooms, wallResults, pxPerFt]);
 
   /**
+   * THE BOARDS THAT COST NOTHING, WITHOUT ASKING FOR THEM.
+   *
+   * TWO OF THE THREE RULES ARE FREE AND WERE BEING CHARGED FOR, and that was
+   * the mistake this fixes. `planSwitchboards` has three, and they need three
+   * different things:
+   *
+   *   the door      the door boxes, detected on arrival to set the scale, and
+   *                 the room's own outline. Nothing else.
+   *   the bedsides  the sconces the ACCENT pass placed — and that pass is part
+   *                 of runPipeline, so by the time a space is lit they are
+   *                 already in `accentZonesPx`.
+   *   the TV        a `tv_unit` strip if the accent pass found one, and a fresh
+   *                 vision call if it did not. THIS is the expensive one.
+   *
+   * So only the third needs asking for, and the whole thing sat behind the bolt
+   * on the room row for its sake. Now the first two run here, for every space,
+   * on every layout: the door plate 300mm past the LATCH jamb on the side the
+   * door opens to — which `swingSides` settles by cutting the room on the line
+   * through the door and measuring the floor either side of it — and one plate
+   * at each bedside sconce, on the sconce's own wall.
+   *
+   * "AT" THE SCONCE IS "BELOW" IT, and the two words describe one place. A plan
+   * is a view from above: a switch at 1200mm and the sconce at 1600mm on the
+   * same wall are the same point on this drawing, and stacked in the room. So
+   * the board is placed at the sconce's own point and needs no offset — an
+   * offset would move it ALONG the wall, which is not below anything.
+   *
+   * A bay plate at the middle of the longest wall is not a cheaper version of
+   * any of this. It is a different and worse answer, and having it stand in
+   * silently while the real rules went unasked was the bug.
+   *
+   * IT WAS `derivedBoardsPx` AND IT USED TO BE THE POOR RELATION. There was an
+   * on-demand pass beside it — a bolt per space, a vision call, its answer
+   * stored — and this ran only for the rooms that pass had not been asked
+   * about. The bolt is gone: what it bought over these rules was the television,
+   * and the television is no longer looked for. So this is the pass, all three
+   * rules, on every space, always.
+   *
+   * ALL THREE RULES ASKED FOR BY NAME. Every one of them reads something the app
+   * has before there is a layout — the door boxes from the upload, the sconces
+   * the accent pass placed, the bed box from the furniture detection — so there
+   * is nothing here that costs a call and no reason to run a subset.
+   */
+  const boardResults = useMemo(() => {
+    const out = {};
+    if (!(pxPerFt > 0) || !rooms.length) return out;
+    const all = rooms.map((q) => ({
+      id: q.id, name: q.outline.name || null, polygonPx: q.plan.polygonPx,
+    }));
+    for (const r of rooms) {
+      if (!r.plan?.ok) continue;
+      try {
+        out[r.id] = planSwitchboards({
+          room: { id: r.id, polygonPx: r.plan.polygonPx },
+          rooms: all, doors, roomTypes, pxPerFt,
+          accentZones: accentZonesPx.filter((a) => a.roomId === r.id),
+          /* THE BED, OUT OF THIS ROOM'S OWN ZONE LIST. `plan.zonesPx` is what
+             the planner was handed — every no-light zone standing in this space,
+             the detected beds among them — so the bed is already attributed to
+             the right room and there is no second containment test to get
+             wrong. `bedZoneIn` takes the largest where a room has more than one,
+             which is the same choice bedGrid.js makes for the flanking lights. */
+          bedRect: bedZoneIn(r.plan.zonesPx ?? []),
+          // WHERE SOMEBODY DRAGGED ONE OF THIS SPACE'S PLATES TO. Handed whole
+          // rather than filtered by room: the keys are board ids and a board id
+          // names its room, so a filter here would be a second place that has to
+          // agree about that spelling.
+          moves: boardMoves,
+          /* BEDROOMS IN HOMES GET ALL THREE; EVERYTHING ELSE GETS THE DOOR.
+             This gate used to decide whether a row in the panel had a BOLT on
+             it, on the reasoning that two of the three rules are bedroom rules
+             and a control that runs a pass with nothing to say is worse than no
+             control. The bolt is gone and the reasoning is not: asked for on a
+             kitchen, `bedside` and `facing` answer by reporting that there are
+             no bedside sconces and no bed — both true, neither news, and printed
+             under every space on the sheet. A rule that was never run has
+             nothing to say, which is what `rules` is for. */
+          rules: projectId === 'residential' && roomTypes[r.id]?.type === 'bedroom'
+            ? ['door', 'bedside', 'facing']
+            : ['door'],
+        });
+      } catch (err) {
+        console.warn('[electrical] the rules failed for', r.id, err);
+      }
+    }
+    return out;
+  }, [rooms, doors, roomTypes, projectId, accentZonesPx, boardMoves, pxPerFt]);
+
+  /**
+   * This space's boards, minus the ones somebody threw away.
+   *
+   * `boardsOff` IS APPLIED HERE AND NOWHERE ELSE, which is what keeps one
+   * answer to "is this plate on the drawing". The panel's count, the canvas, the
+   * flows and the schedule all come through this function.
+   */
+  const boardsFor = useCallback((r) => (boardResults[r.id]?.boards ?? [])
+    .filter((b) => !b.rejected && b.point && !boardsOff.includes(b.id))
+    // AS DRAWN, WHICH IS WHERE SOMEBODY PUT IT. Everything that paints a plate
+    // or routes a wire to one comes through here; `ruleBoardsFor` is the other
+    // half of this and is what decides.
+    .map(asDrawn),
+  [boardResults, boardsOff]);
+
+  /**
+   * The same boards, at the positions the RULES chose.
+   *
+   * TWO READINGS OF ONE LIST, AND THIS IS THE POINT OF THE SPLIT. Dragging a
+   * plate along the plaster is a decision about where the switch is reachable
+   * from. It is not a decision about what it switches — and `planChunkBoards`
+   * decides that geometrically: a bay adopts a board standing on one of its own
+   * walls and makes itself a new one when none does. Feed it the dragged
+   * position and moving the door plate across the room would take the switch
+   * away from the ceiling it was switching and grow a second plate to replace
+   * it, which is the opposite of what dragging one is for.
+   *
+   * So ownership is settled where the rules put things, and only the drawing and
+   * the wire follow the hand. The ids are the same in both lists, which is what
+   * lets `flowsPx` take the ownership map from one and the geometry from the
+   * other.
+   */
+  const ruleBoardsFor = useCallback((r) => (boardResults[r.id]?.boards ?? [])
+    .filter((b) => !b.rejected && b.point && !boardsOff.includes(b.id)),
+  [boardResults, boardsOff]);
+
+
+  /**
+   * THE BAYS OF ONE SPACE — the pieces of ceiling a board and a flow belong to.
+   *
+   * `designChunksPx` where there is one, because that is the piece somebody
+   * chose a ceiling for, and the room's own bounding box where there is not.
+   * The fallback is not a degenerate case: a space whose outline gives the
+   * chunker nothing to work with is laid out as one grid over the whole floor,
+   * and it is then genuinely one bay with one board and its rows.
+   */
+  const baysOf = useCallback((r) => {
+    if (!r.plan?.ok) return [];
+    if (r.designChunksPx?.length) {
+      return r.designChunksPx.map((c) => ({ key: c.key, rect: c.rect }));
+    }
+    const b = bbox(r.plan.polygonPx);
+    return [{ key: 'room', rect: { x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY } }];
+  }, []);
+
+  /**
+   * THE BAY BOARDS — one per piece of ceiling that has none of its own.
+   *
+   * THE BAY IS THE DESIGN CHUNK, not the planner's. A cove design chunk comes
+   * out of the planner as five rectangles — the inner and four bands — and five
+   * plates on one wall is not a switchboard. It is one piece of ceiling somebody
+   * chose a ceiling for, so it is one plate; the planner's chunks inside it are
+   * what the ROWS come from. `designChunksPx` is empty whenever the design pass
+   * declined and the plain layout ran, and then the space is one bay.
+   *
+   * IT IS HANDED THE DOOR BOARD, so the common case makes nothing at all: one
+   * bay with a door in it adopts the plate beside that door. A new plate appears
+   * only where a bay over 25 sqft genuinely has no board on any of its own
+   * walls — the far half of a living-dining room, and not much else.
+   */
+  const bayResults = useMemo(() => {
+    const out = {};
+    if (!(pxPerFt > 0)) return out;
+    for (const r of rooms) {
+      if (!r.plan?.ok) continue;
+      const bays = baysOf(r);
+      if (!bays.length) continue;
+      out[r.id] = planChunkBoards({
+        room: { id: r.id, polygonPx: r.plan.polygonPx },
+        bays,
+        // `ruleBoardsFor` AND NOT `boardsFor`, WHICH IS THE WHOLE OF "the
+        // routing stays as it is". This pass decides which bay is switched from
+        // which plate, and it decides it by which plate stands on the bay's own
+        // walls — so a plate dragged across the room would take the switch off
+        // the ceiling it was switching and this pass would grow a replacement.
+        // Ownership is settled where the RULES put the boards; the drag moves
+        // the mark and the wire, and nothing else. See the note on that function.
+        boards: ruleBoardsFor(r),
+        // ...and this pass's OWN plates answer to the same drag. See `moves`
+        // there: it applies them to what it makes, after ownership is settled.
+        moves: boardMoves,
+        pxPerFt,
+      });
+    }
+    return out;
+  }, [rooms, pxPerFt, baysOf, ruleBoardsFor, boardMoves]);
+
+  /**
+   * The bay plates of one space, as drawn.
+   *
+   * THE SAME TWO FILTERS THE RULE BOARDS GET, and they were missing. A bay plate
+   * is a switchboard on the drawing — same rectangle, same blue, same hover card
+   * — so it is selectable and grabbable like any other, and a delete or a drag
+   * that quietly did nothing to one would be an affordance that lies. `boardsOff`
+   * and `asDrawn` belong to "a plate on this sheet", not to "a plate a rule
+   * placed".
+   *
+   * ONE FUNCTION BECAUSE THERE ARE TWO READERS. The canvas and the flows both
+   * want these, and two copies of the filter is two chances to disagree about
+   * whether a deleted bay plate is still on the drawing.
+   */
+  const bayBoardsFor = useCallback((r) => (bayResults[r.id]?.boards ?? [])
+    .filter((b) => !b.rejected && b.point && !boardsOff.includes(b.id))
+    .map(asDrawn),
+  [bayResults, boardsOff]);
+
+  /**
    * Every switchboard still standing, in plan pixels.
    *
-   * Refused boards are kept in `sbResults` — the panel and the console log want
-   * to know a board was refused and why — but they carry no geometry, so they
-   * are dropped on the way to the drawing rather than drawn at NaN.
+   * THE ROOM'S OWN BOARDS ALWAYS. Refused ones are kept in `boardResults` —
+   * the panel wants to say a board was refused and why — but they carry no
+   * geometry, so `boardsFor` drops them on the way to the drawing rather than
+   * letting the canvas draw a plate at NaN. It drops the ones somebody deleted
+   * in the same place, which is why every reader of the drawing goes through it.
+   *
+   * THE BAY BOARDS ONLY WHILE THE LAYER IS ON. A plate that exists because a
+   * bay needed one is part of the flow reading — it is what those loops run
+   * back to — and on a sheet with the loops switched off it is a blue rectangle
+   * nobody asked for. The board beside the DOOR is not like that: it is the
+   * answer to "where is the switch in this room", which is a question about the
+   * room and not about the wiring, so it stays on the drawing either way.
    */
   const switchboardsPx = useMemo(() => {
     const out = [];
     for (const r of rooms) {
-      for (const b of sbResults[r.id]?.boards ?? []) if (!b.rejected && b.point) out.push(b);
+      out.push(...boardsFor(r));
+      // `!doorEdit` FOR THE SAME REASON `canvasLayers` DROPS THE LOOPS while
+      // the doors are being confirmed: a bay board is part of the flow reading,
+      // and the flows are what the boxes being edited will move. Half the
+      // reading left on screen under the question is worse than none of it.
+      if (layers.electrical && !doorEdit) out.push(...bayBoardsFor(r));
+    }
+    return markClashes(out, pxPerFt);
+  }, [rooms, boardsFor, bayBoardsFor, layers.electrical, doorEdit, pxPerFt]);
+
+  /**
+   * EVERY FLOW ON THE SHEET. See flows.js for what a flow is and why the row is
+   * the unit; this only gathers what one space's worth of it needs.
+   *
+   * NOT GATED ON THE LAYER. It is cheap, it feeds the schedule's switch count as
+   * well as the drawing, and a memo that only runs while something is visible is
+   * a memo that recomputes the moment somebody looks at it.
+   */
+  const flowsPx = useMemo(() => {
+    const out = [];
+    if (!(pxPerFt > 0)) return out;
+    for (const r of rooms) {
+      if (!r.plan?.ok) continue;
+      // BOTH KINDS OF PLATE, EACH AS DRAWN. `owner` below comes from the same
+      // pass at its RULE positions, and the ids match across the two — which is
+      // what lets the wire follow a dragged plate while the switching does not.
+      const boards = [...boardsFor(r), ...bayBoardsFor(r)];
+      const { flows } = planFlows({
+        room: { id: r.id, polygonPx: r.plan.polygonPx },
+        bays: baysOf(r),
+        chunks: r.plan.chunksPx ?? [],
+        cells: r.plan.cellsPx ?? [],
+        lights: r.plan.lightsPx ?? [],
+        objects: obstaclesPx.filter((f) => pointInPolygon({ x: f.x, y: f.y }, r.plan.polygonPx)),
+        accents: accentZonesPx.filter((a) => a.roomId === r.id),
+        spots: taskSpotsPx.filter((sp) => sp.roomId === r.id),
+        tracks: r.plan.tracksPx ?? [],
+        boards,
+        owner: bayResults[r.id]?.owner ?? new Map(),
+        zones: r.plan.zonesPx ?? [],
+        pxPerFt,
+      });
+      out.push(...flows);
     }
     return out;
-  }, [rooms, sbResults]);
+  }, [rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx,
+      pxPerFt, baysOf]);
 
   /**
    * The layout, in the one number a lighting drawing is actually judged on.
@@ -4668,7 +4937,10 @@ export default function App({
   // plan that is no longer loaded.
   const boqOpen = view === 'boq' && !!source;
   const picking = pickingId ? rooms.find((r) => r.id === pickingId) : null;
-  const showPicker = step === 'chunks' && !zoneMode && !!picking && !readOnly;
+  // `!doorEdit` FOR THE SAME REASON `!zoneMode` IS HERE: the picker replaces
+  // the canvas, and a gesture that needs the drawing under it cannot be asked
+  // for while the drawing has been swapped out for a chooser.
+  const showPicker = step === 'chunks' && !zoneMode && !doorEdit && !!picking && !readOnly;
 
   /**
    * BACK TO THE OUTLINES, AND IT NO LONGER THROWS ANYTHING AWAY.
@@ -4829,6 +5101,184 @@ export default function App({
     setAddSnap(null); setAddGhost(null);
     setCoveFrom(null); setCoveNote('');
   }, []);
+
+  /* --- WHY THIS BLOCK IS UP HERE ---------------------------------------------
+     Beside `disarmAdd` rather than beside the pointer handlers that use it, and
+     for the reason the undo note near the top of this file describes from the
+     other side: the keydown listener answers Escape and Delete for this editor,
+     and that effect is bound hundreds of lines above the canvas gestures. Its
+     dependency array is evaluated during render, so a callback declared after
+     it is a temporal dead zone and a ReferenceError on first paint. */
+  /* --- CONFIRMING THE DOORS -------------------------------------------------
+     The gesture is the no-light zone's, because it is the same gesture: press
+     on empty plan and drag out a box. What is different is that the boxes
+     already there are grabbable, since most of the work here is correcting a
+     detection rather than making one from nothing.
+
+     THE HIT TEST IS SMALLEST-FIRST. Door boxes overlap — a box round the leaf
+     and a box round the swing survive doors.js's de-dup — and the box that is
+     hard to reach is always the small one inside the big one. Area order is
+     what makes it reachable at all. */
+  const doorHitAt = (p) => {
+    const inside = doors.filter((d) => d.rect
+      && p.x >= d.rect.x0 && p.x <= d.rect.x1
+      && p.y >= d.rect.y0 && p.y <= d.rect.y1);
+    inside.sort((a, b) => ((a.rect.x1 - a.rect.x0) * (a.rect.y1 - a.rect.y0))
+                        - ((b.rect.x1 - b.rect.x0) * (b.rect.y1 - b.rect.y0)));
+    return inside[0] ?? null;
+  };
+
+  /** A rect shifted by (dx, dy) and kept on the sheet, corner-clamped. */
+  const shiftRect = (r, dx, dy) => {
+    const w = r.x1 - r.x0, h = r.y1 - r.y0;
+    const x0 = Math.min(Math.max(r.x0 + dx, 0), Math.max(0, source.w - w));
+    const y0 = Math.min(Math.max(r.y0 + dy, 0), Math.max(0, source.h - h));
+    return { x0, y0, x1: x0 + w, y1: y0 + h };
+  };
+
+  /**
+   * OPEN THE EDITOR, AND PUT EVERY OTHER GESTURE AWAY.
+   *
+   * The canvas has one pointer pipeline and four things that can own it — an
+   * armed ceiling object, an add tool, the zone band, and now this. Two owners
+   * is a press with two meanings, so opening this disarms the rest rather than
+   * competing with them.
+   */
+  const openDoorEdit = useCallback(() => {
+    setDoorEdit(true);
+    setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setZoneMode(false); setDraftZone(null);
+    setArmed(null); setGhost(null); setGuides([]);
+    disarmAdd();
+  }, [disarmAdd]);
+
+  /* --- REMOVING A SWITCHBOARD ------------------------------------------------
+     THE ONLY EDIT THERE IS ON A BOARD, and that is not a gap in the feature —
+     it is what a derived fitting can be. A plate's position is a rule: 300mm
+     past the latch jamb, at the sconce, 300mm outboard of the bed. Dragging one
+     would put it somewhere no rule says, and the drawing would then be claiming
+     a switch position nobody can account for. What a person genuinely knows
+     better than the rule is whether the switch is WANTED — see the note on the
+     facing-wall rule in electrical.js for why two plates are placed and then
+     offered up for deletion rather than hunted for and sometimes missed.
+
+     BY ID INTO `boardsOff`, not by removing anything: the boards are a memo, so
+     a plate taken out of the list is back on the next render. Same machinery as
+     a dismissed accent. */
+  const boardPointerDown = (e, id, roomId) => {
+    if (e.button != null && e.button !== 0) return;   // middle button is the pan
+    // A TOOL IN HAND WINS. Somebody placing a fitting or boxing a zone across a
+    // plate is aiming at the drawing, not at the switch in the way — the same
+    // rule every other selectable thing on this canvas follows.
+    if (addTool || zoneMode || armed) return;
+    e.preventDefault();
+    setSelBoardId(id);
+    // ONE SELECTION ON THIS CANVAS. A plate and a fitting both picked would be
+    // two things Delete could mean.
+    setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+    /* AND THE DRAG IS ARMED BUT NOT LIVE. `live` turns on once the pointer has
+       moved past a few pixels — the accent runs' own slop, and for the same
+       reason: without it a click that wobbles one pixel writes a hand position
+       onto a board that was exactly where the rule put it, and the plate is
+       then marked "moved by hand" for the life of the plan. */
+    if (roomId) {
+      svgRef.current?.setPointerCapture?.(e.pointerId);
+      setBoardDrag({ id, roomId, origin: svgPoint(e), live: false });
+    }
+  };
+
+  /**
+   * A PLATE FOLLOWS THE POINTER ROUND THE WALLS OF ITS OWN SPACE.
+   *
+   * `slideBoardTo` is the whole of it: the pointer is projected onto every wall
+   * of that room that can hold a plate and the nearest wins, so the gesture is
+   * "which piece of plaster do you mean" rather than "drag this rectangle
+   * wherever". A switchboard off its wall is not a thing.
+   *
+   * WRITTEN STRAIGHT INTO `boardMoves`, ON EVERY MOVE, and that is deliberate
+   * rather than lazy. The chain it re-runs — the board rules, the bay boards,
+   * the flows — is pure geometry over a handful of objects and does NOT reach
+   * the planner, so the layout is not recomputed; and the alternative (a live
+   * position held in the drag and committed on release) would leave the wires
+   * hanging off the plate's old position for the whole gesture. The derived
+   * cove's end-drag already writes its trim per move for the same reason.
+   */
+  const boardPointerMove = (e) => {
+    if (!boardDrag) return;
+    const p = svgPoint(e);
+    if (!boardDrag.live) {
+      const slop = Math.max(3, (pxPerFt || 12) * 0.12);
+      if (Math.hypot(p.x - boardDrag.origin.x, p.y - boardDrag.origin.y) < slop) return;
+      setBoardDrag((d) => (d ? { ...d, live: true } : d));
+    }
+    const r = rooms.find((q) => q.id === boardDrag.roomId);
+    const poly = r?.plan?.polygonPx;
+    if (!poly?.length) return;
+    const sFt = slideBoardTo(p, { polygonPx: poly, pxPerFt });
+    if (sFt == null) return;
+    setBoardMoves((m) => ({ ...m, [boardDrag.id]: sFt }));
+  };
+
+  const boardPointerUp = () => {
+    if (!boardDrag) return;
+    setBoardDrag(null);
+  };
+
+  /**
+   * PUT A PLATE BACK WHERE THE RULE WANTED IT.
+   *
+   * BACK TO NOTHING RATHER THAN TO THE RULE'S NUMBER, which is the same
+   * distinction `runTrims` makes when a run is dragged back to its derived
+   * length: a board with no entry in this map is a board the rules own, and one
+   * carrying its own rule position as a hand position would be marked "moved by
+   * hand" for ever and would stop following the door it was placed off.
+   */
+  const resetBoard = useCallback((id) => {
+    setBoardMoves((m) => {
+      if (!(id in m)) return m;
+      const out = { ...m }; delete out[id]; return out;
+    });
+  }, []);
+
+  const deleteBoard = useCallback((id) => {
+    setBoardsOff((off) => (off.includes(id) ? off : [...off, id]));
+    setSelBoardId((cur) => (cur === id ? null : cur));
+  }, []);
+
+  const closeDoorEdit = useCallback(() => {
+    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+  }, []);
+
+  /**
+   * THE ANSWER, AND THE ONE THING IT TURNS ON.
+   *
+   * Confirming is not "save the doors" — the doors were already saved, edit by
+   * edit, because they are the same list the scale and the board pass read. It
+   * records that a person has LOOKED, and that is the gate the wiring is behind.
+   */
+  const confirmDoors = useCallback(() => {
+    closeDoorEdit();
+    setDoorsOk(true);
+    setLayers((l) => ({ ...l, electrical: true }));
+  }, [closeDoorEdit]);
+
+  const deleteDoor = useCallback((id) => {
+    setDoors((ds) => ds.filter((d) => d.id !== id));
+    setSelDoorId((cur) => (cur === id ? null : cur));
+  }, []);
+
+  /**
+   * The door boxes AS DRAWN — the list, with the box being dragged at where the
+   * pointer has it rather than at where it started.
+   *
+   * The whole reason `doorDrag` holds a rect at all. See the note on it: writing
+   * a move into `doors` on every pointermove would re-run the board pass, the
+   * bay pass and the flows on each frame, so the app's door list only changes on
+   * release and this is what closes the gap for the eye.
+   */
+  const doorEditBoxes = useMemo(() => (doorDrag
+    ? doors.map((d) => (d.id === doorDrag.id ? { ...d, rect: doorDrag.rect } : d))
+    : doors), [doors, doorDrag]);
 
   const snapTargets = useCallback((excludeId) => collectTargets({
     rooms: rooms.map((r) => ({ id: r.id, name: r.outline.name, polygonPx: r.plan?.polygonPx || r.geo?.polygonPx })),
@@ -5229,6 +5679,7 @@ export default function App({
     svgRef.current?.setPointerCapture?.(e.pointerId);
     setSelAccId(id);
     setSelObjId(null);
+    setSelBoardId(null);
     setArmed(null);
     // WHERE THE GESTURE STARTED, twice over. `from` advances with the pointer,
     // because a run must move by the DELTA and not jump to centre itself under
@@ -5377,6 +5828,7 @@ export default function App({
     setSelSpotId(id);
     setSelAccId(null);
     setSelObjId(null);
+    setSelBoardId(null);
     setArmed(null);
     const sp = taskSpotsPx.find((q) => q.id === id);
     if (sp?.roomId) setFocusId(sp.roomId);
@@ -5463,11 +5915,35 @@ export default function App({
         undoRef.current?.redo();
         return;
       }
+      /* --- THE DOOR EDITOR ANSWERS BOTH KEYS FIRST, AND IT RETURNS --------
+         It is a modal step: the panel beside it holds one question, and Delete
+         while it is open means "that is not a door" — it cannot be allowed to
+         also mean "take the space I had selected before I opened this out of the
+         layout", which is what the branch at the foot of this handler would do
+         with the very same keypress. Escape drops the selection if there is one
+         and closes the editor if there is not, which is the two-stage back-out
+         every other selection on this canvas has. */
+      if (doorEdit) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          if (selDoorId) setSelDoorId(null); else closeDoorEdit();
+          return;
+        }
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selDoorId && !doorDrag) {
+          e.preventDefault();
+          deleteDoor(selDoorId);
+          return;
+        }
+        // Ctrl+Z is handled above this and stays handled: it is about the
+        // document rather than about whatever is selected.
+        return;
+      }
       if (e.key === 'Escape') {
         if (addTool) { disarmAdd(); }
         if (armed) { setArmed(null); setGhost(null); setGuides([]); }
         else if (selSpotId) setSelSpotId(null);
         else if (selAccId) setSelAccId(null);
+        else if (selBoardId) setSelBoardId(null);
         else if (selObjId) setSelObjId(null);
         else if (focusId) setFocusId(null);
         else setObjMode(false);
@@ -5504,6 +5980,17 @@ export default function App({
         setSelAccId(null);
         return;
       }
+      /* A SELECTED SWITCHBOARD. Above the ceiling objects and the space for the
+         same most-specific-first reason the spot is above the accent: a plate is
+         a small thing on a wall, and somebody who picked one and pressed Delete
+         did not mean the room.
+         IT IS A DISMISSAL AND NOT A DELETE, which is the whole of `deleteBoard`
+         — see the note there. */
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selBoardId) {
+        e.preventDefault();
+        deleteBoard(selBoardId);
+        return;
+      }
       // THE WHOLE SELECTION, not just the primary. Deleting one of four
       // selected objects and silently leaving the other three is the reading
       // nobody expects, and it is the one a single-id delete gives.
@@ -5537,7 +6024,9 @@ export default function App({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [objMode, armed, selObjId, selObjIds, setSelObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
-      manualAccents, focusId, readOnly, selSpotId, deleteSpot]);
+      manualAccents, focusId, readOnly, selSpotId, deleteSpot,
+      selBoardId, deleteBoard,
+      doorEdit, selDoorId, doorDrag, deleteDoor, closeDoorEdit]);
 
   /**
    * OPEN A CHUNK'S OPTIONS. Called by a click on any ambient light — the light
@@ -5770,7 +6259,7 @@ export default function App({
     setOptionPick((cur) => (hit
       ? (cur?.roomId === hit.id ? cur : optionPickFor(hit.id))
       : null));
-    if (!hit) { setSelAccId(null); setSelObjId(null); }
+    if (!hit) { setSelAccId(null); setSelObjId(null); setSelBoardId(null); }
   };
 
   // no-light zones are drawn by dragging a rectangle on the plan
@@ -5950,11 +6439,36 @@ export default function App({
     };
   }, [panning]);
 
+
   const onZoneDown = (e) => {
     // NOT THE MIDDLE BUTTON. It is the pan, and every gesture on this canvas
     // has to say so — a middle press that reaches a drag handler starts a drag
     // that no mouseup will ever finish, because the pan swallows the release.
     if (e.button != null && e.button !== 0) return;
+
+    // --- CONFIRMING THE DOORS OWNS THE WHOLE CANVAS ------------------------
+    // Before every other branch, and it never falls through. This is a modal
+    // step — the panel beside it holds one question and nothing else — so while
+    // it is open a press on the plan cannot also select a space, arm a fitting
+    // or start a no-light zone. Grab a box to move it; press empty plan to draw
+    // a new one, or to drop the selection.
+    if (doorEdit && source) {
+      e.preventDefault();
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      const p = svgPoint(e);
+      const hit = doorHitAt(p);
+      if (hit) {
+        setSelDoorId(hit.id);
+        // `base` IS THE RECT AT THE PRESS AND NEVER MOVES; `rect` is where the
+        // pointer has it now. See the move handler for why the offset is
+        // measured from the press rather than accumulated frame by frame.
+        setDoorDrag({ id: hit.id, from: p, base: hit.rect, rect: hit.rect });
+        return;
+      }
+      setSelDoorId(null);
+      setDoorDraft({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+      return;
+    }
 
     // --- ADDITIONAL LIGHTING, before anything else claims the press ---------
     // First in the handler for the same reason the out-of-room check is first
@@ -6105,6 +6619,7 @@ export default function App({
       } else {
         setSelObjId(null);
         setSelAccId(null);
+        setSelBoardId(null);
       }
       return;
     }
@@ -6115,8 +6630,35 @@ export default function App({
     setDraftZone({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
   };
   const onZoneMove = (e) => {
+    // THE DOOR EDITOR FIRST, for the reason given on the press: it owns the
+    // canvas outright while it is open.
+    if (doorEdit) {
+      if (doorDrag) {
+        /* THE OFFSET IS FROM THE PRESS, NOT FROM THE LAST FRAME, and the
+           difference only shows at the edge of the sheet — which is where half
+           of these boxes are, since a door is in a wall. `shiftRect` clamps, so
+           an incremental delta would keep counting while the box was held
+           against the edge and the box would then come away from the cursor by
+           however far the pointer had gone past it. Measured from the press, a
+           clamped box stays clamped until the pointer comes back for it. */
+        const p = svgPoint(e);
+        setDoorDrag((d) => (d
+          ? { ...d, rect: shiftRect(d.base, p.x - d.from.x, p.y - d.from.y) }
+          : d));
+        return;
+      }
+      if (doorDraft) {
+        const p = svgPoint(e);
+        setDoorDraft((d) => (d ? { ...d, x1: p.x, y1: p.y } : d));
+      }
+      return;
+    }
     if (objDrag) { objPointerMove(e); return; }
     if (accDrag) { accPointerMove(e); return; }
+    // A PLATE BEING SLID ROUND THE WALLS. Above the armed-tool branch below for
+    // the same reason the object and accent drags are: a gesture already in
+    // flight owns the pointer until it is released.
+    if (boardDrag) { boardPointerMove(e); return; }
     // ARMED AND HOVERING. The guides have to appear BEFORE the click, not
     // after: their job is to tell you where the thing will land while you can
     // still move the pointer.
@@ -6178,8 +6720,51 @@ export default function App({
     setDraftZone((d) => (d ? { ...d, x1: p.x, y1: p.y } : d));
   };
   const onZoneUp = () => {
+    /* --- THE DOOR EDITOR'S RELEASE, AND THE ONE WRITE IT MAKES -------------
+       A move commits here and nowhere else — see `doorDrag`, which carries the
+       live rect precisely so that dragging a box does not re-run the board
+       pass, the bay pass and the flows on every frame.
+
+       A NEW BOX IS A DOOR LIKE ANY OTHER, in the shape doors.js produces: the
+       opening is the shorter side, because that is what the whole file means by
+       one, and `conf: 1` because a person drew it. `placed` is the only thing
+       marking it as hand-made, and nothing downstream reads it — the board pass
+       must not be able to prefer a detection over a correction. */
+    if (doorEdit) {
+      if (doorDrag) {
+        const { id, base, rect } = doorDrag;
+        setDoorDrag(null);
+        // A PRESS THAT SELECTED AND DID NOT MOVE WRITES NOTHING. The rect would
+        // be identical, but the list's identity would not — and `doors` is what
+        // the board pass, the bay pass and the flows are all memoised on, so a
+        // click to select a box would re-run every one of them for nothing.
+        if (rect.x0 === base.x0 && rect.y0 === base.y0) return;
+        setDoors((ds) => ds.map((d) => (d.id === id
+          ? { ...d, rect, openingPx: openingPx(rect) } : d)));
+        return;
+      }
+      if (!doorDraft) return;
+      const r = {
+        x0: Math.min(doorDraft.x0, doorDraft.x1), x1: Math.max(doorDraft.x0, doorDraft.x1),
+        y0: Math.min(doorDraft.y0, doorDraft.y1), y1: Math.max(doorDraft.y0, doorDraft.y1),
+      };
+      setDoorDraft(null);
+      // A press with no drag in it is a click on empty plan, which already did
+      // what it meant to do — cleared the selection. Same half-foot floor as the
+      // no-light zone, so a twitch does not leave a sliver on the sheet.
+      const minPx = Math.max(6, (pxPerFt || 0) * 0.5);
+      if (r.x1 - r.x0 < minPx || r.y1 - r.y0 < minPx) return;
+      const door = {
+        id: `door-hand-${Date.now().toString(36)}`,
+        cls: 'door', conf: 1, rect: r, openingPx: openingPx(r), placed: true,
+      };
+      setDoors((ds) => [...ds, door]);
+      setSelDoorId(door.id);
+      return;
+    }
     if (objDrag) { objPointerUp(); return; }
     if (accDrag) { accPointerUp(); return; }
+    if (boardDrag) { boardPointerUp(); return; }
     // A spot's drag makes a SURFACE, not a no-light zone — same gesture, same
     // rubber band, different destination.
     if (draftZone?.forSpot) {
@@ -6674,6 +7259,20 @@ export default function App({
   const toggle = (k) => () => setLayers((l) => ({ ...l, [k]: !l[k] }));
 
   const base = source ? source.name.replace(/\.[^.]+$/, '') : 'plan';
+  /* THE UPLOAD'S OWN KIND, from its own name. Read off `initialFile` and not off
+     `source`, and the two are not the same file: a PDF upload becomes a raster
+     `source` one page at a time, so `source.name` can say PNG about something
+     the user handed us as a PDF — and it is the PDF the operator wants back.
+
+     A MATCH AND NOT A SPLIT, because `split('.').pop()` on a name with no dot
+     in it returns the WHOLE NAME: a file called `floorplan` came back as
+     "FLOO", which reads like a format. The dot has to be there for there to be
+     an extension, and anything longer than four characters or carrying a
+     non-alphanumeric is not one either. Empty when there is nothing to say,
+     which the button below turns into the word "file". */
+  const uploadExt = initialFile
+    ? (String(initialFile.name || '').match(/\.([A-Za-z0-9]{1,4})$/)?.[1] ?? '').toUpperCase()
+    : '';
   // One room lit on its own still gets its name in the filename; the whole plan
   // does not need one, because the plan's name already is one.
   const exportBase = rooms.length === 1 && rooms[0].outline.name
@@ -6710,20 +7309,20 @@ export default function App({
     outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState,
     projectType: projectId, roomTypes, pdfPage,
     detections, dismissed, bedVerdicts, provider, zones,
-    doors,
+    doors, doorsOk,
     ceilingObjs, chunkPicks, designPicks, ceilingKinds,
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
     wallResults, runTrims, manualCoves, renderRefs,
-    sbResults,
+    boardsOff, boardMoves,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
-       detections, dismissed, bedVerdicts, provider, zones, doors,
+       detections, dismissed, bedVerdicts, provider, zones, doors, doorsOk,
        ceilingObjs, chunkPicks, designPicks, ceilingKinds,
        accentResults, accentDismissed, manualAccents,
        surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-       wallResults, runTrims, manualCoves, renderRefs, sbResults,
+       wallResults, runTrims, manualCoves, renderRefs, boardsOff, boardMoves,
        layers, zoom, view]);
 
   // --- UNDO, THE HALF THAT NEEDS THE DOCUMENT -------------------------------
@@ -6789,7 +7388,7 @@ export default function App({
     // A FITTING THAT NO LONGER EXISTS CANNOT STAY SELECTED. Cheaper and more
     // honest than reconciling every selection against the restored document:
     // whatever was picked, the picture just changed under it.
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+    setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelBoardId(null);
     setUndoDepth(historyDepth(history.current));
   }, [stateSetters, setSelObjId]);
 
@@ -6902,13 +7501,11 @@ export default function App({
           busy={doorState.status === 'running' ? 'Looking for doors…' : null}
           note="A door is a standard width, so one of them is the drawing's ruler." />
       )}
-      {/* THE SAME BOX AS THE DOOR SEARCH, for the same reason: a few seconds of
-          work the user asked for, during which the rest of the screen is not
-          much use to them. See BusyModal. */}
-      {sbBusy && (
-        <BusyModal line="Planning the electricals…"
-          note="Finding the door that opens into this space, which way it swings, and the walls that will take a board." />
-      )}
+      {/* A "PLANNING THE ELECTRICALS…" MODAL WAS HERE. It covered the bolt's
+          vision call, and there is no call left to cover — the switchboard rules
+          read the door boxes, the placed sconces and the bed box, all of which
+          are already in hand, so the boards appear with the layout rather than
+          after a wait. */}
       {/* WHICH SHEET, ASKED BEFORE ANYTHING ELSE — and only when there is more
           than one. See PdfPagePicker. */}
       {pdfPick && (
@@ -7205,6 +7802,129 @@ export default function App({
         </div>
       )}
 
+      {/* --- SHOW ELECTRICAL LINES ------------------------------------------
+          THE LOWER LEFT, opposite the appearance switch in the lower right, and
+          pinned the same way: outside the stage, so it does not scroll away
+          with the plan.
+
+          IT IS A SWITCH AND NOT A SEGMENTED PILL. The appearance control on the
+          other side has two states that are both a way of looking at the same
+          sheet, so it shows both and marks which one you are in. This has one
+          thing to say — the wiring is on, or it is not — and a two-button pill
+          for a boolean is a control that makes you read it before you can press
+          it. Same white plate, same hairline, same lift, for the same reason:
+          it floats over a black page and over a white plan and has to be
+          findable on both.
+
+          THE WORD IS ON IT. Every other layer in this app is a checkbox in the
+          panel and can be, because nobody goes looking for them; this one was
+          asked for by name and is the only piece of the drawing that is a
+          different TRADE. An unlabelled icon would be a guess. */}
+      {/* THE TWO OF THEM SHARE A ROW, and the row is why this is a flex
+          container rather than two absolutely-positioned buttons. The door
+          button is about the wiring — it is the way back to the boxes every
+          plate on the sheet was derived from — so it belongs beside the switch
+          that shows it, at its own edge, and not floating at some second
+          offset that has to be kept in step with this one's width.
+
+          `!prep` LIKE EVERY OTHER CONTROL ON THIS SCREEN. While the pipeline
+          runs the layout is being replaced under the drawing; a switch that
+          reveals wiring derived from it, or a step that empties the panel the
+          wait is being reported in, are both controls that cannot do what they
+          claim. */}
+      {source && !boqOpen && !showTrace && !prep && (
+        <div className="absolute bottom-6 left-6 z-[5] flex items-center gap-2">
+        <button type="button"
+          className={'appearance-none cursor-pointer '
+            + 'inline-flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-lg bg-white '
+            + 'border border-border shadow-[0_2px_10px_rgba(0,0,0,0.35)] '
+            + 'text-[12px] tracking-[-0.01em] leading-none '
+            + 'transition-colors duration-[120ms] '
+            + 'focus-visible:outline-2 focus-visible:outline-accent '
+            + 'focus-visible:outline-offset-1 '
+            + (layers.electrical && !doorEdit ? 'text-ink' : 'text-subtle hover:text-ink')}
+          aria-pressed={layers.electrical && !doorEdit}
+          /* --- THE FIRST PRESS ASKS ABOUT THE DOORS -----------------------
+             A switchboard is placed beside a door, so this switch cannot honestly
+             turn the wiring on until somebody has said the door boxes are
+             right — see the note by `doorsOk`. It is the same control either
+             way rather than a second button that appears once and then never
+             again: what this button means is "show me the electricals", and
+             the first time that is asked the honest answer is a question. */
+          title={!doorsOk && !readOnly
+            ? 'Confirm the doors, then the wiring'
+            : layers.electrical
+              ? 'Hide the looping and the bay boards'
+              : 'Loop every fitting back to its switchboard'}
+          onClick={() => {
+            /* IN THE VIEWER IT IS A LAYER SWITCH AND NOTHING MORE. An operator
+               looking at somebody else's plan is not the person who can answer
+               whether the doors are right, and this panel writes nothing — see
+               ViewerPanel. They see the wiring the owner confirmed. */
+            if (readOnly) { setLayers((l) => ({ ...l, electrical: !l.electrical })); return; }
+            if (doorEdit) { closeDoorEdit(); return; }
+            if (!doorsOk) { openDoorEdit(); return; }
+            setLayers((l) => ({ ...l, electrical: !l.electrical }));
+          }}>
+          {/* The wire itself: two arcs and a plate, which is exactly what the
+              layer draws. Live in the board's blue and grey when it is off, so
+              the icon carries the state as well as the label. */}
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
+            stroke={layers.electrical && !doorEdit ? SB_COLOUR : 'currentColor'}
+            strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true">
+            <path d="M3 16c2.5-3 4.5-3 7 0M10 16c2.5-3 4.5-3 7 0" />
+            <rect x="18.5" y="5" width="3.5" height="6" rx="1" />
+            <path d="M20.25 11v2c0 1.5-1 2-2.25 2.6" />
+          </svg>
+          Electrical
+        </button>
+
+        {/* --- BACK TO THE DOORS ------------------------------------------
+            ICON ONLY, AND THE ONE UNLABELLED CONTROL IN THIS ROW. The note on
+            the switch beside it says why that one carries its word: it is the
+            only piece of the drawing that is a different TRADE and it was asked
+            for by name. This is not a layer at all — it reopens a step — and it
+            sits immediately beside the thing it is a step for, in a row of two.
+            A second word here would read as a second layer.
+
+            IT ONLY EXISTS ONCE THE QUESTION HAS BEEN ASKED. Before that the
+            Electrical switch is the way in, and a door button beside it would be
+            two controls doing one thing. `doorEdit` keeps it on screen while the
+            editor is open, pressed, so the way in is also the way out. */}
+        {!readOnly && (doorsOk || doorEdit) && (
+          <button type="button"
+            className={'appearance-none cursor-pointer '
+              + 'inline-flex items-center justify-center w-[34px] h-[31px] rounded-lg bg-white '
+              + 'border shadow-[0_2px_10px_rgba(0,0,0,0.35)] '
+              + 'transition-colors duration-[120ms] '
+              + 'focus-visible:outline-2 focus-visible:outline-accent '
+              + 'focus-visible:outline-offset-1 '
+              + (doorEdit ? 'border-accent text-ink' : 'border-border text-subtle hover:text-ink')}
+            aria-pressed={doorEdit}
+            title={doorEdit ? 'Done with the doors' : 'Check the doors again'}
+            onClick={() => (doorEdit ? closeDoorEdit() : openDoorEdit())}>
+            {/* A DOOR IN PLAN, WHICH IS WHAT THE BOXES ARE DRAWN AROUND. A leaf
+                and its swing — the same object doors.js describes in its header
+                — rather than an elevation of a door with a handle on it. The
+                icon has to name the marks on the drawing, and the marks on the
+                drawing are quarter-circles. */}
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
+              stroke={doorEdit ? SB_COLOUR : 'currentColor'}
+              strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
+              aria-hidden="true">
+              {/* the wall either side of the opening */}
+              <path d="M3 19h3M18 19h3" />
+              {/* the leaf, hinged at the left jamb... */}
+              <path d="M6 19V5" />
+              {/* ...and the arc it sweeps */}
+              <path d="M6 5a14 14 0 0 1 12 14" />
+            </svg>
+          </button>
+        )}
+        </div>
+      )}
+
       <div ref={stageRef}
         className={'relative overflow-auto '
           + (boqOpen || showPicker || showTrace
@@ -7277,7 +7997,13 @@ export default function App({
               refId, setRefId, customFt, setCustomFt,
               measure, setMeasure,
               doors, doorState, pick: doorPick,
-              onPickDoor: (id) => setDoorPick(id ? { id, mm: null } : null),
+              /* THE RECT RIDES ALONG WITH THE ID. See the note in `pxPerFt`:
+                 the door boxes are editable from the electrical step now, so
+                 the scale has to be anchored to the box that was measured
+                 rather than looked up in a list that can change. */
+              onPickDoor: (id) => setDoorPick(id
+                ? { id, mm: null, rect: doors.find((d) => d.id === id)?.rect ?? null }
+                : null),
               onSetWidth: (mm) => setDoorPick((d) => (d ? { ...d, mm } : d)),
               onRetryDoors: () => setDoorNonce((n) => n + 1),
               widths: DOOR_WIDTHS,
@@ -7397,6 +8123,22 @@ export default function App({
               onZoneMove={readOnly ? null : onZoneMove}
               onZoneUp={readOnly ? null : onZoneUp}
               accents={accentZonesPx} switchboards={switchboardsPx} onFixture={setTip}
+              /* A PLATE CAN BE PICKED AND THROWN AWAY, and that is all it can
+                 be — see `deleteBoard` for why there is no drag. Null in the
+                 viewer, like every other editing handler here. */
+              selBoardId={readOnly ? null : selBoardId}
+              onBoardPointerDown={readOnly ? null : boardPointerDown}
+              /* SO THE CURSOR CAN SAY THE PLATE IS GRABBABLE, and so a plate in
+                 flight can be drawn as such. The canvas is told the gesture is
+                 happening rather than deriving it from a moved position: a board
+                 that was dragged yesterday and a board being dragged now are the
+                 same geometry and want different cursors. */
+              draggingBoardId={boardDrag?.live ? boardDrag.id : null}
+              /* THE WIRING, ON ITS OWN SWITCH. Handed in regardless of the
+                 layer — PlanCanvas gates the drawing on `layers.electrical`, so
+                 there is one place that decides whether the arcs are on rather
+                 than two that have to agree. */
+              flows={flowsPx}
               /* The audit layer — now the lit task surfaces and the render
                  pass's wall cells. The BED zones used to be passed here too and
                  are not any more: see the note in PlanCanvas's audit group.
@@ -7408,6 +8150,17 @@ export default function App({
               auditDoors={isAdmin && auditDoors}
               doorBoxes={doors} doorRejects={doorState.rejected ?? []}
               doorPickId={doorPick?.id ?? null}
+              /* --- CONFIRMING THE DOORS ------------------------------------
+                 The list handed over has the DRAG'S live rect folded into it,
+                 which is why the canvas takes `doorEditBoxes` rather than
+                 reading `doors` a second time: a move is not written to the
+                 door list until the pointer is released — see `doorDrag` — so
+                 the canvas would otherwise draw the box at the place it started
+                 from for the whole of the gesture. */
+              doorEdit={doorEdit}
+              doorEditBoxes={doorEdit ? doorEditBoxes : []}
+              selDoorId={selDoorId} doorDraft={doorDraft}
+              onDoorDelete={deleteDoor}
               /* THE SCAFFOLDING UNDER THE LAYOUT. Same gate as the audit
                  overlay and for the same reason — it is working, not drawing —
                  but its own switch, because "why did this chunk split here" and
@@ -7481,7 +8234,11 @@ export default function App({
         {/* `!prep` FOR THE SAME REASON THE STRIP HAS IT: while the pipeline runs
             the panel is a wait with one way out, and a button that opens a modal
             over it is an invitation to walk away from a thing that is happening. */}
-        {source && onShare && !readOnly && !prep && (
+        {/* `!doorEdit` FOR THE SAME REASON `!prep` IS HERE, said in the note on
+            that flag below: while the doors are being confirmed the panel is
+            one question, and the one act on this screen that reaches somebody
+            else is the loudest possible way to be taken off it. */}
+        {source && onShare && !readOnly && !prep && !doorEdit && (
           <button type="button" onClick={onShare}
             title="Share this project with somebody"
             className="w-full mb-3 text-[12.5px] px-3 py-[8px] rounded border border-white
@@ -7545,7 +8302,7 @@ export default function App({
             screen is an invitation to a blank page — but a plan with outlines
             and no layout is the same blank page, and this strip only exists past
             `step !== 'trace'`, which is exactly "there is a layout". */}
-        {source && step !== 'trace' && !readOnly && !prep && (
+        {source && step !== 'trace' && !readOnly && !prep && !doorEdit && (
           /* NO RULE UNDER THE STRIP. It carried `border-b border-border/10` — a
              full-width hairline, the convention for a tab strip on a light
              ground where the tabs are cards sitting on a sheet. These are not
@@ -7738,6 +8495,87 @@ export default function App({
               }}>Stop and start over</button>
             </div>
           </div>
+        ) : doorEdit ? (
+          /* --- CONFIRM THE DOORS, AND THE PANEL HOLDS NOTHING ELSE ---------
+             THE SAME SHAPE AS THE WAIT ABOVE, FOR A DIFFERENT REASON. That one
+             empties because everything in it is stale; this one empties because
+             everything in it is a control over a LAYOUT, and what is being
+             asked here is a question about the DRAWING — which boxes on the plan
+             are doors. Nine sections of ceiling options, cove pickers and layer
+             checkboxes beside a one-sentence question is nine invitations to
+             answer something else, and the sentence loses.
+             It is also what makes the step read as a step. A panel that keeps
+             its contents and grows a prompt at the top is a notice; a panel with
+             one line in the middle of it is a place you have been taken to.
+
+             THE QUESTION IS ONE LINE AND THE CARD UNDER IT IS THE INSTRUCTION,
+             which is the same division the No Light Zone tab makes: what to do
+             is a sentence, HOW to do it is a picture of the gesture. Somebody
+             who has drawn one of these before does not read the card, and
+             somebody who has not cannot be told "draw a box" in words that
+             mean anything until they have seen the box being drawn. */
+          <div className={`${SEC} flex-1 flex flex-col min-h-0`}>
+            <div className="flex-1 flex flex-col items-center justify-center gap-4
+              text-center px-1 py-6">
+              <p className="m-0 text-[17px] leading-[1.35] tracking-[-0.02em] text-white
+                max-w-[22ch]">Please confirm that all doors are identified</p>
+
+              {/* THE GESTURE, DRAWN. Deliberately the No Light Zone card's own
+                  graphic — a dashed box with a live corner and the pointer that
+                  is sweeping it out — because it is the same gesture and drawing
+                  it a second way would be teaching two. What differs is the
+                  subject: the box is over a DOOR, so the plan's own mark for one
+                  is under it, and the wash is the switchboard's blue rather than
+                  the accent, which is the hue these boxes are drawn in on the
+                  canvas and the hue of the plate they produce. */}
+              <div className="flex flex-col items-center gap-2 px-4 pt-3.5 pb-3
+                border border-border rounded-[10px] bg-input-bg text-center">
+                <svg viewBox="0 0 72 46" aria-hidden="true"
+                  className="w-[72px] h-[46px] block overflow-visible">
+                  {/* the door on the plan: a leaf, its swing, and the wall it
+                      is hinged into */}
+                  <g stroke="var(--text-subtle)" strokeWidth="1.3" fill="none"
+                    strokeLinecap="round" opacity="0.75">
+                    <path d="M11 30h4M39 30h5" />
+                    <path d="M15 30V12" />
+                    <path d="M15 12a18 18 0 0 1 18 18" />
+                  </g>
+                  {/* ...and the box being swept out over it */}
+                  <rect x="7" y="7" width="44" height="28" rx="2"
+                    fill={SB_COLOUR} fillOpacity="0.10"
+                    stroke={SB_COLOUR} strokeWidth="1.4" strokeDasharray="4 3" />
+                  <circle cx="7" cy="7" r="2" fill={SB_COLOUR} />
+                  {/* the pointer doing it, tip on the far corner it is dragging
+                      to, so the two read as one gesture rather than as a box and
+                      an arrow */}
+                  <g transform="translate(51 35)">
+                    <path d="M0,0 L0,15 L4,11.2 L6.8,17.6 L9.6,16.4 L6.8,10.2 L12,10 Z"
+                      fill={SB_COLOUR} stroke="#fff" strokeWidth="1.1"
+                      strokeLinejoin="round" />
+                  </g>
+                </svg>
+                <p className="m-0 text-[11px] leading-[1.5] text-subtle max-w-[30ch]">
+                  Draw a box over a door that was missed. Click one to drag it,
+                  or to remove it.
+                </p>
+              </div>
+
+              {/* THE COUNT, AND IT IS THE ONLY NUMBER HERE. What somebody is
+                  being asked is whether the set is complete, and the one thing
+                  they cannot see by looking at the plan is how many boxes are on
+                  it — a door under a fitting, off the fold, or drawn twice. */}
+              <p className={`${N} m-0`}>
+                {doors.length} box{doors.length === 1 ? '' : 'es'} on the plan
+              </p>
+
+              {/* THE ANSWER, FULL WIDTH AND THE PRIMARY ACT OF THE SURFACE —
+                  the same treatment Share gets on the panel it sits on, for the
+                  same reason: it is the one thing this screen is for. */}
+              <button className={`${BTN_PRIMARY} w-full`} onClick={confirmDoors}>
+                {doors.length ? 'These are all the doors' : 'There are no doors'}
+              </button>
+            </div>
+          </div>
         ) : <>
         {source && step !== 'trace' && <>
           {/* --- EVERY SPACE, AND EVERYTHING ABOUT ONE ------------------------
@@ -7806,14 +8644,12 @@ export default function App({
               const on = r.id === focusId;
               const chunked = r.chunking?.needsChoice;
               const coved = (r.coves?.length ?? 0) > 0;
-              // BEDROOMS IN HOMES ONLY, for now. The three rules downstream are
-              // a door, a bed and a television, and two of those are bedroom
-              // rules. An icon on a kitchen row would be a control that runs a
-              // pass with nothing to say — worse than no control, because it
-              // reads as a feature that does not work.
-              const electric = projectId === 'residential'
-                && roomTypes[r.id]?.type === 'bedroom';
-              const wired = sbResults[r.id];
+              /* THE BOLT WAS HERE, AND SO WAS `electric` — the flag that decided
+                 whether a row got one. It ran the pass for one space; there is
+                 no pass to run. What this row needs from the electricals now is
+                 the same thing every other line in it needs: an account of what
+                 is drawn. See the Electricals block further down the open row. */
+              const wired = boardResults[r.id];
               return (
                 <div key={r.id} ref={on ? openRowRef : null}
                   className={`group ${ROW_FLUSH} ${on ? ROW_ON : ROW_OFF}`}>
@@ -7872,26 +8708,6 @@ export default function App({
                           <ChunkIcon uid={r.id} ramp={THROW_STYLE.stops}
                             title={r.chunkingChosenBy === 'user'
                             ? 'Chunking — chosen by hand' : 'Chunking'} />
-                        </button>
-                      )}
-                      {electric && !readOnly && (
-                        /* NOT `ICON`, WHICH CARRIES `lp-chunk-btn` — that class
-                           paints the chunk glyph's ramp on hover and has nothing
-                           to say to a filled bolt. Same shape and same two
-                           states, without the paint server. */
-                        <button className={`${ICON_SHAPE} text-faint group-hover:text-muted hover:bg-surface disabled:cursor-default disabled:opacity-50`}
-                          disabled={!!sbBusy}
-                          title={wired
-                            ? `${wired.boards.filter((b) => !b.rejected).length} switchboard(s)`
-                              + ' — click to work them out again'
-                            : 'Plan the electricals for this space'}
-                          onClick={(e) => {
-                            // The row selects; this does something else entirely.
-                            e.stopPropagation();
-                            setFocusId(r.id);
-                            planElectrical(r);
-                          }}>
-                          <BoltIcon title={wired ? 'Electricals — planned' : 'Electricals'} />
                         </button>
                       )}
                     </div>
@@ -7982,22 +8798,69 @@ export default function App({
                         }} />
                     </div>
                   )}
-                  {/* WHAT THE ELECTRICAL PASS DID, AND WHAT IT COULD NOT DO.
-                      A board that was refused and a television that was not
-                      there are the two things this pass most often has to
-                      report, and neither of them is visible on the drawing —
-                      the drawing shows what it placed. A silence here reads as
-                      "the bolt did nothing", which is the one thing it never
-                      does. */}
-                  {wired && (
-                    <p className={`${N} mt-0.5`}>
-                      {wired.boards.filter((b) => !b.rejected).length} switchboard
-                      {wired.boards.filter((b) => !b.rejected).length === 1 ? '' : 's'}
-                      {wired.boards.some((b) => b.clash) ? ' · two of them want the same piece of wall' : ''}
-                      {[...wired.boards.filter((b) => b.rejected).map((b) => b.rejected), ...wired.notes]
-                        .map((t, i) => <span key={i}> · {t}</span>)}
-                    </p>
-                  )}
+                  {/* WHAT THE RULES DID, AND WHAT THEY COULD NOT DO.
+                      A board that was REFUSED — no wall long enough beside the
+                      door, a bed that nearly fills the wall it faces — is the
+                      one thing this pass has to report that is not visible on
+                      the drawing, because the drawing shows what it placed.
+
+                      THE COUNT COMES THROUGH `boardsFor` AND THE SENTENCES DO
+                      NOT, and the split is the point. The count is "what is on
+                      the sheet", so it has to obey the plates somebody deleted;
+                      a refusal is "why there is nothing here", and a person
+                      removing one plate has not answered that about another. */}
+                  {wired && (() => {
+                    const live = boardsFor(r);
+                    /* PLATES AND NOT BOARDS, because plates are what get
+                       ordered. They are the same number everywhere except the
+                       television wall, whose board is two of them stacked in
+                       elevation at one point in plan — see FACING_PLATES. The
+                       drawing shows positions; this line is the count. */
+                    const n = live.reduce((t, b) => t + (b.plates ?? 1), 0);
+                    /* BAY PLATES COUNT AS MOVED TOO. They are draggable for
+                       the same reason they are deletable — on the drawing they
+                       are switchboards — so the way back has to reach them, or a
+                       dragged bay plate is stuck where it was dropped. They are
+                       deliberately NOT in `n` above: that is the count of the
+                       plates the RULES place in this space, and a bay plate is a
+                       consequence of the ceiling being cut up. */
+                    const hand = [...live, ...bayBoardsFor(r)].filter((b) => b.moved);
+                    return (
+                      <p className={`${N} mt-0.5`}>
+                        {n} switchboard{n === 1 ? '' : 's'}
+                        {n !== live.length
+                          ? ` at ${live.length} position${live.length === 1 ? '' : 's'}` : ''}
+                        {live.some((b) => b.clash)
+                          ? ' · two of them want the same piece of wall' : ''}
+                        {[...wired.boards.filter((b) => b.rejected).map((b) => b.rejected),
+                          ...wired.notes].map((t, i) => <span key={i}> · {t}</span>)}
+                        {/* THE WAY BACK FROM A DRAG, and the only place there can
+                            be one. The hover card cannot carry a button — it is
+                            `pointer-events: none`, so a plate's own card is
+                            unclickable by design — and a plate somebody has
+                            slid across the room is exactly the thing they may
+                            want to undo without hunting for where the rule had
+                            it. Same shape and same argument as the coves'
+                            "Reset lengths": a hand edit on a derived fitting
+                            needs a stated way of being given back. */}
+                        {!readOnly && hand.length > 0 && (
+                          <>
+                            {' · '}
+                            <button className={BTN_TINY}
+                              title={hand.length === 1
+                                ? 'Put it back where the rule put it'
+                                : 'Put them back where the rules put them'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                hand.forEach((b) => resetBoard(b.id));
+                              }}>
+                              {hand.length} moved by hand — put back
+                            </button>
+                          </>
+                        )}
+                      </p>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -8582,7 +9445,8 @@ export default function App({
               ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
               ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
               ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
-              ['switchboards', 'Switchboards']].map(([k, l]) => (
+              ['switchboards', 'Switchboards'],
+              ['electrical', 'Electrical lines']].map(([k, l]) => (
               <label className={CHECK} key={k}>
                 <input className="lp-check" type="checkbox"
                   checked={layers[k]} onChange={toggle(k)} />{l}</label>
@@ -8935,6 +9799,52 @@ export default function App({
                     )}
                   </div>
                 </details>
+
+                {/* --- THE FILE THEY UPLOADED -------------------------------
+                    LAST IN HERE, AND IT IS THE ONE THING IN THIS SECTION THAT
+                    IS NOT A READING. Everything above exposes what the models
+                    decided; this hands back what they were deciding ABOUT. It
+                    belongs together with them anyway, because it is the same
+                    job: a fitting lands somewhere surprising, the overlays say
+                    what was seen, and the next question is always "what does
+                    the drawing actually look like" — which needs the drawing,
+                    in the application that made it, not a PNG of it with our
+                    fittings on top.
+
+                    THE FILENAME IS THE LABEL. "The original" is a different
+                    file on every plan, and the extension is what says whether
+                    it is worth opening — a DXF opens in CAD, a phone photo of
+                    a printout does not.
+
+                    NOT BEHIND `gateExport`. That gate is the till and it asks
+                    the OWNER to pay for a drawing this app produced. This is
+                    the file they already own, handed to an operator looking at
+                    their plan; charging for it would be charging the wrong
+                    person for the wrong thing.
+
+                    AND NO `milestone`. Every export writes a revision row on
+                    the reasoning that somebody taking a file away is the
+                    strongest signal a design is finished. An operator
+                    downloading somebody else's upload is not that signal, and
+                    the row would put a fictional milestone in the corpus. Same
+                    argument as the read-only panel's copy of this button —
+                    see `onDownloadOriginal` in ViewerPanel. */}
+                <div className={`${BTNROW} mt-2.5`}>
+                  <button className={BTN_SECOND} disabled={!initialFile}
+                    title={initialFile
+                      ? `${initialFile.name || 'the uploaded file'} — the file this plan was made from`
+                      : 'This plan was not opened from a stored upload, so there is'
+                        + ' no original to hand back'}
+                    onClick={() => {
+                      if (!initialFile) return;
+                      download(initialFile.name || 'original', initialFile,
+                               initialFile.type || 'application/octet-stream');
+                    }}>
+                    {initialFile
+                      ? `Download the original (${uploadExt || 'file'})`
+                      : 'No original on this plan'}
+                  </button>
+                </div>
               </div>
             )}
 

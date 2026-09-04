@@ -48,6 +48,7 @@ const STATE = {
   provider: 'judge',
   zones: [{ id: 'z1', x0: 5, y0: 5, x1: 25, y1: 25 }],
   doors: [{ id: 'd2', x: 118, y: 35, w: 16 }],
+  doorsOk: true,
   ceilingObjs: [{ id: 'c1', type: 'chandelier', x: 8.2, y: 5.5, r: 1.4 }],
   chunkPicks: { o1: 'halves-x' },
   accentResults: { o1: { zones: [{ id: 'acc-o1-0', kind: 'strip', rejected: false },
@@ -75,6 +76,13 @@ const STATE = {
   ] },
   surfaceResults: { o1: { surfaces: [{ id: 'surf-o1-0', kind: 'tv' }] } },
   surfaceDismissed: [], manualSurfaces: [{ id: 'ms-1', roomId: 'o1' }],
+  // The switchboards somebody threw away. `sbResults` — the on-demand pass's
+  // stored answer — used to be here; the pass is gone and the boards are derived,
+  // so what has to survive a reload is the deletions and nothing else.
+  boardsOff: ['sb-o2-facing'],
+  // ...and one dragged along its space's walls: 4.25ft round from the run walk's
+  // own starting corner. See wallPath in electrical.js.
+  boardMoves: { 'sb-o1-door': 4.25 },
   layers: { plan: true, lights: true, labels: true }, zoom: 1.4, view: 'boq',
 };
 
@@ -118,6 +126,20 @@ section('a full round trip');
   ok('hand-placed accents survive', same(got.setManualAccents, STATE.manualAccents));
   ok('task surfaces survive', same(got.setSurfaceResults, STATE.surfaceResults));
   ok('hand-drawn surfaces survive', same(got.setManualSurfaces, STATE.manualSurfaces));
+  // A DERIVED FITTING'S DISMISSAL, AND THE SAME ARGUMENT AS THE ACCENTS'. A
+  // board is recomputed on every render, so "not this one" only exists as long
+  // as this list does — drop it and a deleted plate is back on the sheet the
+  // next time the plan is opened.
+  ok('deleted switchboards stay deleted', same(got.setBoardsOff, STATE.boardsOff));
+  /* AND A MOVED ONE STAYS MOVED, which is the same argument again and the one
+     that was asked for out loud: a board is recomputed on every render, so this
+     map is the ONLY record that a plate is anywhere other than where its rule
+     put it. Drop it and the switch walks back to the door on reload. */
+  ok('a switchboard dragged along the wall stays there',
+    same(got.setBoardMoves, STATE.boardMoves), JSON.stringify(got.setBoardMoves));
+  ok('and it is stored in feet, not plan pixels',
+    got.setBoardMoves['sb-o1-door'] === 4.25,
+    'plan pixels would move the day somebody corrected the scale');
   // THE REGRESSION THIS SECTION WAS ADDED FOR. Reverse coves, shelf strips and
   // art spots are all derived from these two on every render — nothing about
   // them is stored — so if either field fails to round trip the render pass's
@@ -148,6 +170,41 @@ section('a full round trip');
   ok('and says it was restored', got.setRoomState?.restored === true);
   ok('the furniture detector reads as done', got.setDetectState?.status === 'done');
   ok('the door detector reads as done', got.setDoorState?.status === 'done');
+  // ...AND THE CONFIRMATION IS NOT THE DETECTION. The door boxes come back
+  // either way; whether a PERSON has said the set is complete is a separate
+  // answer, and it is the one the electrical layer is gated behind.
+  ok('the door confirmation survives', got.setDoorsOk === true, String(got.setDoorsOk));
+}
+
+section('the door confirmation, on rows that predate it');
+{
+  // THE GRANDFATHER CLAUSE. `doorsOk` gates the electrical layer, so reading a
+  // missing key as `false` would take the wiring off every plan that was saved
+  // before the gate existed and put a question in front of somebody who has
+  // been looking at their loops for a week. Having the layer ON is the old
+  // evidence that the electricals were wanted, and it stands in once.
+  const withWiring = recorder();
+  applyEditor({ v: 5, outlines: [], ui: { layers: { electrical: true } } }, withWiring.set);
+  ok('a plan already showing its wiring is treated as confirmed',
+    withWiring.got.setDoorsOk === true, String(withWiring.got.setDoorsOk));
+
+  const without = recorder();
+  applyEditor({ v: 5, outlines: [], ui: { layers: { electrical: false } } }, without.set);
+  ok('and one that never asked for it is not',
+    without.got.setDoorsOk === false, String(without.got.setDoorsOk));
+
+  const bare = recorder();
+  applyEditor({ v: 0, outlines: [] }, bare.set);
+  ok('a row with no board edits restores empty ones rather than undefined',
+    same(bare.got.setBoardsOff, []) && same(bare.got.setBoardMoves, {}));
+  ok('a row with no ui block at all does not throw and reads as unconfirmed',
+    bare.got.setDoorsOk === false, String(bare.got.setDoorsOk));
+
+  // ...and an explicit answer always wins over the inference.
+  const said = recorder();
+  applyEditor({ v: 9, doorsOk: false, ui: { layers: { electrical: true } } }, said.set);
+  ok('a stored false is not overridden by the layer',
+    said.got.setDoorsOk === false, String(said.got.setDoorsOk));
 }
 
 section('the writer and the reader cover the same fields');

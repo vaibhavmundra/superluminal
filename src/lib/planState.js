@@ -99,6 +99,12 @@ export function serialiseEditor(s) {
     // has since been removed; a fan is now a ceiling object like any other and
     // is saved with them below.)
     doors: s.doors,
+    // WHETHER SOMEBODY HAS CONFIRMED THAT SET IS COMPLETE, which is what the
+    // electrical layer is gated behind — see the note on `doorsOk` in App.jsx.
+    // A DECISION AND NOT A SCREEN: the editor it is answered in is not saved,
+    // so a plan never reopens mid-edit, but the answer is part of the design and
+    // asking for it twice would be asking somebody to redo work they have done.
+    doorsOk: s.doorsOk ?? false,
 
     // --- the ceiling as edited
     ceilingObjs: s.ceilingObjs,
@@ -185,15 +191,42 @@ export function serialiseEditor(s) {
     // JPEG at quality 0.82, and that fact is part of the row.
     renderRefs: s.renderRefs,
 
-    // --- the electricals, keyed by room like the two above.
-    //
-    // ONE KEY AND NOT THREE, because a board cannot yet be dragged or thrown
-    // away, so there is no dismissal list and no store of hand-placed ones to
-    // keep. The pass is on-demand rather than part of the pipeline, so a room
-    // that has never been asked simply has no entry — which is a different
-    // thing from a room that was asked and got nothing, and that one comes back
-    // with its `notes` saying why.
-    sbResults: s.sbResults,
+    /* --- the electricals. ONE LIST, AND IT IS THE DELETIONS.
+       `sbResults` WAS HERE — the on-demand pass's answer, keyed by room. Both
+       the pass and the key are gone: the switchboard rules read the door boxes,
+       the placed sconces and the bed box, so the boards are derived on every
+       render and there is no answer left to store. A plan saved under the old
+       shape still has that key in its column; nothing reads it, and the next
+       save drops it.
+
+       WHAT IS STORED NOW IS THE OPPOSITE — not what the rules said, but which of
+       their plates a person threw away. It has to be stored for exactly the
+       reason a derived fitting's dismissal always does: removing a board from a
+       list it is computed into does not remove it, it removes it until the next
+       render. Same shape and same argument as `accentDismissed` and
+       `artDismissed` above.
+
+       BY ID, AND THE IDS ARE STABLE FOR THIS. See the note on `id` in
+       electrical.js: a board is `sb-<room>-<rule>`, keyed to the thing the rule
+       fired off, so a stored deletion cannot slide onto a different plate when
+       another rule starts firing. */
+    boardsOff: s.boardsOff ?? [],
+    /* ...AND WHERE THEY DRAGGED ONE TO: board id -> how far round that space's
+       walls, in FEET.
+
+       IT HAS TO SURVIVE A RELOAD OR THE FEATURE DOES NOT EXIST. A board is
+       derived on every render, so this map is the only record that a plate is
+       anywhere other than where the rule put it — drop it and the switch walks
+       back to the door the next time the plan is opened, which is worse than not
+       being able to move it at all.
+
+       FEET, WHICH IS WHAT MAKES IT SAFE TO STORE. Arc length round the room's
+       wall runs from their own starting corner — see `wallPath` in
+       electrical.js. Not a point in plan pixels, which moves the day somebody
+       corrects a door width; and not a run index, which renumbers the day
+       somebody re-traces a corner. `runTrims` above is stored in feet for the
+       first of those reasons and this is the second one as well. */
+    boardMoves: s.boardMoves ?? {},
 
     // --- view preferences. Cheap, and jarring to lose.
     ui: { layers: s.layers, zoom: s.zoom, view: s.view },
@@ -243,6 +276,13 @@ export function applyEditor(p, set) {
   set.setZones(p.zones ?? []);
 
   set.setDoors(p.doors ?? []);
+  /* GRANDFATHERED OFF THE LAYER. A plan saved before this key existed has no
+     answer here, and `false` would be the wrong reading of that for the ones
+     that were already showing their wiring: it would take the electricals off a
+     finished sheet and put a question in front of somebody who has been looking
+     at the loops for a week. Having the layer on IS the old evidence that the
+     electricals were wanted, so it stands in for the confirmation once. */
+  set.setDoorsOk(p.doorsOk ?? !!p.ui?.layers?.electrical);
   set.setDoorState((p.doors?.length ?? 0)
     ? { status: 'done', restored: true, count: p.doors.length, rejected: [] }
     : { status: 'idle' });
@@ -270,7 +310,8 @@ export function applyEditor(p, set) {
   // THE POINTERS, NOT THE PIXELS. App fetches the bytes back from the bucket
   // afterwards and only for the space that is open — see the rehydrate effect.
   set.setRenderRefs?.(p.renderRefs ?? {});
-  set.setSbResults?.(p.sbResults ?? {});
+  set.setBoardsOff?.(p.boardsOff ?? []);
+  set.setBoardMoves?.(p.boardMoves ?? {});
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);

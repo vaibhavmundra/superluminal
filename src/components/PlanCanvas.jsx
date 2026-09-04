@@ -138,6 +138,22 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     placing = false,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [], switchboards = [],
+    /* WHICH PLATE IS PICKED, AND HOW ONE GETS PICKED. Optional, like every
+       other handler here — a canvas given neither draws boards that cannot be
+       selected, which is what the read-only sheet wants. A board is DERIVED, so
+       the only edit there is on one is removal; there is no drag, and hence no
+       pointer-move or pointer-up pair to go with this. */
+    selBoardId = null, onBoardPointerDown = null,
+    /* WHICH PLATE IS IN FLIGHT, if any. Told rather than derived: a board moved
+       yesterday and a board being moved right now are the same geometry and want
+       different cursors, and there is nothing on the board itself that separates
+       them. */
+    draggingBoardId = null,
+    /* THE LOOPING. One entry per flow, each already carrying its own path — see
+       flows.js. Nothing here recomputes it: the arcs are geometry and this file
+       draws geometry. Empty by default, so a canvas handed none is a lighting
+       sheet with no wiring on it, which is every caller that has not asked. */
+    flows = [],
     // WHICH SPOT IS PICKED, AND HOW ONE GETS PICKED. Optional like every other
     // handler here: a canvas given neither is a drawing whose spots cannot be
     // selected, which is what the read-only sheet wants.
@@ -156,6 +172,19 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     // question asked at a different moment — and it is the question, because
     // every dimension on the sheet hangs off one of these boxes.
     auditDoors = false, doorBoxes = [], doorRejects = [], doorPickId = null,
+    /* --- CONFIRMING THE DOORS ------------------------------------------------
+       A DIFFERENT LAYER FROM `auditDoors` ABOVE, THOUGH IT DRAWS THE SAME
+       BOXES, and the difference is who it is for. That one is an owner asking
+       whether the SCALE is right — a read-only print of what the detector
+       thought, on an admin switch. This is a step in the electrical workflow
+       that a client is walked through: the boxes are the thing being edited,
+       because a switchboard is placed beside a door and a door nobody found is
+       a room with no switch.
+       `doorEditBoxes` and not `doorBoxes`, because the caller resolves the box
+       being dragged into the list before handing it over — the drag's live rect
+       is deliberately not written into the app's door list until release. */
+    doorEdit = false, doorEditBoxes = [], selDoorId = null, doorDraft = null,
+    onDoorDelete = null,
     /* THE PLANNER'S OWN SCAFFOLDING, ON REQUEST.
        The chunk boxes and the 
        cell lines every downlight was laid on. It came off the drawing because
@@ -360,9 +389,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       className="plan"
       viewBox={`0 0 ${width} ${height}`}
       style={{ width: width * zoom, maxWidth: 'none',
-               touchAction: zoneMode ? 'none' : undefined,
+               touchAction: (zoneMode || doorEdit) ? 'none' : undefined,
                cursor: cursor || undefined }}
-      onClick={onCanvasClick}
+      /* THE CLICK IS OFF WHILE THE DOORS ARE BEING CONFIRMED. `onCanvasClick`
+          selects a space or clears the selection, and the browser synthesises it
+          after every press this layer has already answered — so without this a
+          box drawn over a bedroom would also select the bedroom, and the panel
+          the step just emptied would fill back up underneath the question. */
+      onClick={doorEdit ? undefined : onCanvasClick}
       onPointerDown={onZoneDown} onPointerMove={onZoneMove}
       onPointerUp={onZoneUp} onPointerCancel={onZoneUp}
     >
@@ -1167,6 +1201,126 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           </g>
         );
       })}
+
+      {/* --- THE LOOPING -----------------------------------------------------
+          Every flow's wire, board first. See flows.js for what a flow is; this
+          only draws it.
+
+          UNDER THE FITTINGS AND OVER THE POOLS, which is the one place it can
+          go. Over the fittings and forty arcs cross forty symbols — the symbols
+          being the entire subject of the sheet. Under the pools and the wire
+          disappears wherever two lights overlap, which on a real layout is
+          most of it.
+
+          DOTTED AND BOWED, AND THE BOW IS WHAT DOES THE WORK. A straight line
+          between two downlights is a setting-out line, a grid line, a dimension
+          or a wall — this drawing has all four — and no amount of dash pattern
+          separates it from them. A shallow arc is not any of those things. That
+          is why AutoCAD draws a loop this way and it is the whole reason the
+          geometry in flows.js is arcs rather than segments.
+
+          IN THE SWITCHBOARD'S OWN BLUE. The wire and the plate are one object:
+          the line means "these fittings come on from that board", and it says
+          so by being drawn in the board's colour. It is also the one hue on
+          this canvas that is not a light — the fittings are amber — so the
+          layer reads as a different KIND of information at a glance rather
+          than as more of the same.
+
+          INERT. There is nothing to grab on a wire and forty of them crossing
+          the layout would eat every click meant for a fitting. */}
+      {layers.electrical && (
+        <g pointerEvents="none" fill="none" stroke={SB_COLOUR}>
+          {flows.filter((f) => !f.coincident).map((f) => (
+            <g key={f.id}>
+              {/* A WHITE UNDERLAY, one weight heavier. The wire crosses the
+                  scan, the cell lines, the chunk boxes and the room outline,
+                  and a 1.2px dotted blue over somebody's hatched wall is not a
+                  line, it is a texture. The halo is what makes it one. */}
+              <path d={f.path} stroke="#fff" strokeWidth={lw * 3.4}
+                strokeLinecap="round" opacity={layers.invert ? 0.55 : 0.9} />
+              <path d={f.path} strokeWidth={lw * 1.5} strokeLinecap="round"
+                strokeDasharray={`${lw * 1.5} ${lw * 3.2}`} />
+              {/* THE SECOND PLACE THE SAME SWITCH IS REACHED FROM — the fan's
+                  point on the far bedside plate. Drawn in the same weight and
+                  the same dash, because it is the same wire doing the same job:
+                  a lighter one would read as a lesser connection, and it is not
+                  one. What tells them apart is that the loop has two feed ticks
+                  and the card says so. */}
+              {f.also && (
+                <>
+                  <path d={f.also.path} stroke="#fff" strokeWidth={lw * 3.4}
+                    strokeLinecap="round" opacity={layers.invert ? 0.55 : 0.9} />
+                  <path d={f.also.path} strokeWidth={lw * 1.5} strokeLinecap="round"
+                    strokeDasharray={`${lw * 1.5} ${lw * 3.2}`} />
+                </>
+              )}
+              {/* THE FEED, at the board end: one short tick across the wire
+                  where it leaves the plate. Not an arrow — a wire has no
+                  direction, and an arrowhead would claim one. It is there
+                  because a loop's first leg is its longest and a reader has to
+                  be able to find which of several plates it came off. */}
+              {[f.from && f.nodes[0] ? [f.from, f.nodes[0]] : null,
+                f.also ? [f.also.from, f.nodes.reduce((a, b) => (
+                  Math.hypot(b.x - f.also.from.x, b.y - f.also.from.y)
+                  < Math.hypot(a.x - f.also.from.x, a.y - f.also.from.y) ? b : a))] : null]
+                .filter(Boolean).map(([a, b], i) => {
+                  const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+                  const ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
+                  const t = lw * 3.2;
+                  const q = { x: a.x + ux * t * 1.6, y: a.y + uy * t * 1.6 };
+                  return (
+                    <line key={i} x1={q.x - uy * t} y1={q.y + ux * t}
+                      x2={q.x + uy * t} y2={q.y - ux * t}
+                      strokeWidth={lw * 1.5} strokeLinecap="round" />
+                  );
+                })}
+              {/* WHICH FLOW THIS IS, once per loop, at its first fitting — and
+                  only with the tags on. `layers.labels` is the switch for "name
+                  everything on this drawing"; a flow's name is exactly that
+                  kind of mark, and a sheet with forty loops and forty captions
+                  is unreadable whatever the captions say. */}
+              {layers.labels && f.nodes[0] && (
+                <text x={f.nodes[0].x} y={f.nodes[0].y - s * 0.42}
+                  textAnchor="middle" fontSize={s * 0.34} stroke="none"
+                  fill={SB_COLOUR} fontFamily="The Neue Montreal, sans-serif"
+                  paintOrder="stroke" strokeWidth={lw * 3} style={{ stroke: '#fff' }}>
+                  {f.label}
+                </text>
+              )}
+              {/* THE HIT TARGET IS THE WIRE, FATTENED — a stroked-only copy
+                  wide enough to hover without being wide enough to cover a
+                  neighbouring fitting. Live even though the group is not: the
+                  card is the only way to read what a loop actually switches. */}
+              <path className="hit" d={f.path + (f.also ? ` ${f.also.path}` : '')}
+                stroke="transparent"
+                strokeWidth={lw * 7} strokeLinecap="round" pointerEvents="stroke"
+                {...feel(f.id, {
+                  id: 'flow', label: f.label,
+                  note: f.what || null,
+                  rows: [
+                    ['Fittings', String(f.count)],
+                    /* WHAT IS CLIPPED INTO THE RAIL, and how much of it aims.
+                       A magnetic profile is fed once and everything on it is
+                       live from that feed — `Fittings` above is therefore 1 for
+                       a track flow however many modules it carries, which is
+                       correct and reads as wrong without this line. The
+                       directional count is the half people go looking for:
+                       those heads have no wire of their own, and somebody
+                       counting arcs on the drawing needs to be told where they
+                       went. See section 1 of flows.js. */
+                    ...(f.absorbed ? [['On the profile',
+                      f.heads ? `${f.absorbed} — ${f.heads} directional`
+                        : String(f.absorbed)]] : []),
+                    ['Switched from', f.boardLabel ? `the ${f.boardLabel.toLowerCase()} board`
+                      : 'nowhere yet'],
+                    ...(f.also ? [['...and from', `the ${f.also.boardLabel.toLowerCase()} board`
+                      + ' — two-way']] : []),
+                  ],
+                })} />
+            </g>
+          ))}
+        </g>
+      )}
 
       {/* The lights. Tags are prefixed with the room once there is more than
           one, because L1 in the kitchen and L1 in the hall are two fittings and
@@ -2261,6 +2415,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const { along: u, inward: n, point: q } = b;
         const pt = (a, d) => `${q.x + u.x * a + n.x * d},${q.y + u.y * a + n.y * d}`;
         const poly = [pt(-half, 0), pt(half, 0), pt(half, deep), pt(-half, deep)].join(' ');
+        // The selection frame: the same four corners, pushed out by a hairline
+        // in the plate's OWN axes, which is why it is built from `pt` rather
+        // than stroked wider or nudged with a transform — the plate is rotated
+        // onto its wall, and both of those would be an offset in screen space.
+        const pad = lw * 2.4;
+        const ring = [pt(-half - pad, -pad), pt(half + pad, -pad),
+                      pt(half + pad, deep + pad), pt(-half - pad, deep + pad)].join(' ');
 
         // WHEN TWO BOARDS WANT THE SAME PIECE OF WALL, THE CARD DESCRIBES BOTH.
         //
@@ -2292,23 +2453,74 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             + ' both positions are rules. On site these would be ganged into one plate.',
         } : {
           id: 'switchboard', label: 'Switchboard',
-          note: b.why || null,
+          /* THE RULE, AND THEN HOW TO SAY NO TO IT. Every plate on this drawing
+             is placed by a rule and none of them can be dragged, so `why` is the
+             whole of what a board is — but two of the three rules now place a
+             plate on a wall somebody may simply not want one on (see the
+             facing-wall rule in electrical.js), which makes "you can take this
+             one off" part of what the card has to say. It is added only where
+             the plate is actually selectable: on the read-only sheet there is no
+             handler and the sentence would be a lie. */
+          note: [b.why || null,
+                 onBoardPointerDown
+                   ? 'Drag it along the walls of this space to move it; Delete removes it.'
+                   : null]
+            .filter(Boolean).join(' ') || null,
           rows: [
-            ['Plate', `${SB_MM.along} x ${SB_MM.deep} mm`],
+            /* HOW MANY PLATES, WHERE IT IS NOT ONE. The television wall's board
+               is two plates stacked in elevation at one point in plan — see
+               FACING_PLATES — so the rectangle under the cursor is one mark and
+               two things to order. Saying "230 x 80 mm" and nothing else about
+               it would be a plan that quietly under-counts the job. */
+            (b.plates ?? 1) > 1
+              ? ['Plates', `${b.plates} × ${SB_MM.along} x ${SB_MM.deep} mm, stacked`]
+              : ['Plate', `${SB_MM.along} x ${SB_MM.deep} mm`],
             ['Serves', b.serves || '—'],
             ...(b.turnedCorner ? [['Note', 'turned the corner — the wall ran out']] : []),
             ...(b.poor ? [['Note', b.poor]] : []),
           ],
         };
 
+        const picked = b.id === selBoardId;
+        const flying = b.id === draggingBoardId;
         return (
-          <g key={b.id} {...feel(b.id, spec)}>
+          <g key={b.id} {...feel(b.id, spec)}
+            /* SELECTION IS A POINTERDOWN AND NOT A CLICK, like every other
+               selectable thing on this canvas, and it STOPS PROPAGATION for the
+               reason the note at the top of this file gives: the root svg's own
+               handler selects a space or clears the selection, and a press that
+               did both would deselect the plate it had just picked.
+               THE ROOM ID GOES WITH IT because the drag is confined to the walls
+               of ONE space — see slideBoardTo. The board knows which room it is
+               in and the caller would otherwise have to find out by hit-testing
+               a polygon it has already been told the answer to. */
+            onPointerDown={onBoardPointerDown
+              ? (e) => { e.stopPropagation(); onBoardPointerDown(e, b.id, b.roomId); }
+              : undefined}
+            /* GRAB, NOT POINTER, WHERE IT CAN ACTUALLY BE MOVED. `feel` sets
+               `pointer` for everything it is spread over, which is right for a
+               fitting whose card is the only thing a click gets you; a plate
+               slides along its walls, and the cursor is the only place that says
+               so before somebody tries. Spread AFTER `feel` so this wins. */
+            style={onBoardPointerDown
+              ? { cursor: flying ? 'grabbing' : 'grab' }
+              : { cursor: 'pointer' }}>
             {/* White under the fill, so the plan's own line work cannot show
                 through a solid we are claiming is a solid. */}
             <polygon points={poly} fill="#fff" />
             <polygon className="hit" points={poly} fill={SB_COLOUR}
               stroke="#fff" strokeWidth={lw * (hot === b.id ? 2.6 : 1.4)}
               strokeLinejoin="round" />
+            {/* THE FRAME THAT MEANS "THIS ONE", in the accent rather than in the
+                board's blue. The plate is already a filled blue rectangle, so a
+                heavier blue edge on it is not a state anybody can read; the
+                accent is what selection means everywhere else on this canvas —
+                see the note by `C.grip`. Drawn OUTSIDE the plate so it does not
+                eat into the solid it is marking. */}
+            {picked && (
+              <polygon points={ring} fill="none" stroke={C.grip}
+                strokeWidth={lw * 2} strokeLinejoin="round" pointerEvents="none" />
+            )}
           </g>
         );
       })}
@@ -3027,6 +3239,106 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           </g>
         );
       })()}
+
+      {/* --- CONFIRMING THE DOORS, AND IT SITS OVER EVERYTHING --------------
+          LAST IN THE FILE, WHICH IS TO SAY ON TOP OF THE WHOLE DRAWING. Every
+          other overlay here is a layer OF the sheet and takes its place in the
+          stack accordingly; this one is a modal step in front of it. The
+          plates, the loops, the fittings and the space outlines all keep
+          drawing underneath — you are correcting boxes against the plan and
+          need to see the plan — but not one of them may take the press.
+
+          THE FULL-SHEET RECT IS WHAT MAKES THAT TRUE, and it is not
+          decoration. Everything interactive on this canvas calls
+          `stopPropagation` on pointerdown — a fitting, a ceiling object, an
+          accent, a chunk pill — and the door gestures are handled by the ROOT
+          svg's handler, which those calls exist to prevent reaching. So a door
+          sitting under a downlight would have been ungrabbable, and a box drawn
+          across a room would have started somewhere and ended nowhere. A
+          transparent sheet above them all is the press target instead: it stops
+          nothing, so the event bubbles to the root exactly as a press on empty
+          plan does. It is also, deliberately, what makes the hover cards and the
+          option pills inert for the duration.
+
+          `fill="transparent"` AND NOT `fill="none"`. The second one is not a
+          colour, it is the absence of a fill, and a shape with no fill is not a
+          pointer target — which would leave this element doing nothing at all
+          while looking exactly the same. */}
+      {doorEdit && (
+        <g>
+          <rect x="0" y="0" width={width} height={height} fill="transparent"
+            style={{ cursor: 'crosshair' }} />
+
+          {/* THE BOXES, IN THE SWITCHBOARD'S OWN BLUE.
+              Not the magenta the audit print uses. Magenta on this canvas means
+              "you are looking at the working" and is reserved for it; these
+              boxes are not working, they are the question a client is being
+              asked. Blue because of what they are FOR: the plate beside a door
+              is drawn in this hue and the loop back to it is too, so a door
+              being confirmed is visibly the same subject as the thing it
+              produces.
+
+              FILLED, LIGHTLY. A dashed outline over somebody's hatched wall is
+              a texture; a wash is what makes a box a box at a glance, which is
+              the whole of what this step asks somebody to check. */}
+          {doorEditBoxes.map((d) => {
+            if (!d.rect) return null;
+            const r = d.rect;
+            const on = d.id === selDoorId;
+            const w = r.x1 - r.x0, h = r.y1 - r.y0;
+            return (
+              <g key={'de' + d.id} style={{ cursor: 'move' }}>
+                <rect x={r.x0} y={r.y0} width={w} height={h}
+                  fill={SB_COLOUR} fillOpacity={on ? 0.18 : 0.10}
+                  stroke={SB_COLOUR} strokeWidth={lw * (on ? 2.8 : 1.8)} />
+                {/* THE CORNERS, ON THE SELECTED ONE ONLY. They are not resize
+                    grips and are not drawn as anything that looks like one —
+                    they say WHICH box the keyboard is about, in the same idiom
+                    the ceiling objects' selection frame uses. */}
+                {on && [[r.x0, r.y0], [r.x1, r.y0], [r.x1, r.y1], [r.x0, r.y1]]
+                  .map(([cx, cy], i) => (
+                    <rect key={i} x={cx - lw * 2.2} y={cy - lw * 2.2}
+                      width={lw * 4.4} height={lw * 4.4}
+                      fill="#fff" stroke={SB_COLOUR} strokeWidth={lw * 1.4} />
+                  ))}
+                {/* ...AND THE ONE WAY TO THROW IT AWAY WITH A MOUSE. Delete and
+                    Backspace do the same thing and are what somebody with a
+                    keyboard will reach for; this is here because a step a client
+                    is walked through cannot have a destructive action that is
+                    only available as a shortcut nobody was told about.
+                    OUTSIDE THE BOX, off its top-right corner, because a target
+                    inside the box would be a piece of the box that does not drag
+                    — and the box's whole surface is the move handle. */}
+                {on && onDoorDelete && (
+                  <g onPointerDown={(e) => { e.stopPropagation(); e.preventDefault();
+                                             onDoorDelete(d.id); }}
+                    style={{ cursor: 'pointer' }}>
+                    <circle cx={r.x1 + lw * 5} cy={r.y0 - lw * 5} r={lw * 4.6}
+                      fill="#fff" stroke={SB_COLOUR} strokeWidth={lw * 1.6} />
+                    <path d={`M${r.x1 + lw * 3.2},${r.y0 - lw * 6.8}`
+                           + `L${r.x1 + lw * 6.8},${r.y0 - lw * 3.2}`
+                           + `M${r.x1 + lw * 6.8},${r.y0 - lw * 6.8}`
+                           + `L${r.x1 + lw * 3.2},${r.y0 - lw * 3.2}`}
+                      stroke={SB_COLOUR} strokeWidth={lw * 1.7} strokeLinecap="round" />
+                  </g>
+                )}
+              </g>
+            );
+          })}
+
+          {/* The box being swept out. Same wash, no dashes: it is not a state,
+              it is a gesture in progress. */}
+          {doorDraft && (
+            <rect pointerEvents="none"
+              x={Math.min(doorDraft.x0, doorDraft.x1)}
+              y={Math.min(doorDraft.y0, doorDraft.y1)}
+              width={Math.abs(doorDraft.x1 - doorDraft.x0)}
+              height={Math.abs(doorDraft.y1 - doorDraft.y0)}
+              fill={SB_COLOUR} fillOpacity="0.14"
+              stroke={SB_COLOUR} strokeWidth={lw * 2} />
+          )}
+        </g>
+      )}
 
       {measure?.a && (
         <g stroke={C.measure} strokeWidth={lw * 2} fill={C.measure}>

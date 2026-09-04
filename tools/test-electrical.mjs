@@ -13,6 +13,8 @@
 import {
   wallRuns, runFrame, wallFrame, doorCandidate, mergeDoors, assignDoors,
   entryDoor, latchEnd, halfPlaneArea, swingSides, planSwitchboards, px, SB_MM,
+  headSide, facingWall, FACING_PLATES,
+  slideBoardTo, plateAtS, wallPath, asDrawn,
 } from '../src/lib/electrical.js';
 
 let fail = 0;
@@ -336,24 +338,236 @@ console.log('\n-- the bedside boards ARE the sconces --');
     'a refused sconce is not a fitting, so it gets no board');
 }
 
-console.log('\n-- the TV board comes off the strip, not off a fresh guess --');
+console.log('\n-- the television wall: one mark, two plates, on the centreline --');
 {
+  // THE TELEVISION HUNT IS GONE. This rule used to read the strip along a
+  // `tv_unit` the accent pass had found, and fall back to a vision call asking
+  // whether there was a television opposite the bed. It now takes that wall as
+  // a given and lands on the bed's own centreline — see the header of
+  // planSwitchboards and rule 3.
+  //
+  // A 5.9ft bed, head against the top wall, sides at x=210 and x=390, so its
+  // centreline is x=300. The wall it faces is the bottom one, y=360.
   const room = { id: 'o4', polygonPx: ROOM };
-  const strip = {
-    id: 'acc-o4-2', type: 'strip', from: 'tv_unit',
-    run: [{ x: 210, y: 360 }, { x: 390, y: 360 }],
-    wall: { a: ROOM[2], b: ROOM[3], index: 2 },
-    alongWall: { t0: 210, t1: 390 },
-  };
-  const { boards } = planSwitchboards({
-    room, rooms: [room], doors: [], pxPerFt: PPF, accentZones: [strip],
+  const bed = { x0: 210, y0: 0, x1: 390, y1: 200, cls: 'bed' };
+  const { boards, notes } = planSwitchboards({
+    room, rooms: [room], doors: [], pxPerFt: PPF, bedRect: bed,
   });
-  const tv = boards.find((b) => b.role === 'tv');
-  ok(tv && !tv.rejected, 'a TV strip yields a board');
-  ok(near(tv.point.y, 360), 'on the TV\'s own wall — the one the strip is on');
-  ok(near(Math.min(Math.abs(tv.point.x - 210), Math.abs(tv.point.x - 390)), GAP + HALF),
-    `300mm clear of one end of the unit (got x=${tv.point.x})`);
-  ok(/beyond the end of the TV/.test(tv.why), `and says so: "${tv.why}"`);
+  const face = boards.filter((b) => b.role === 'facing');
+  ok(face.length === 1,
+    `ONE board object, because in plan the two plates are one rectangle (got ${face.length})`);
+  const f = face[0];
+  ok(!f.rejected, 'and it is not refused on a wall this long');
+  ok(f.plates === FACING_PLATES && f.plates === 2,
+    `carrying two plates, stacked in elevation (got ${f.plates})`);
+  ok(near(f.point.y, 360), 'on the wall the bed looks at, not the one behind it');
+  ok(near(f.point.x, 300),
+    `exactly where the bed's centreline meets it (got x=${f.point.x})`);
+  ok(!f.clamped, 'nothing was moved to make it fit');
+  ok(/centreline/.test(f.why), `and says so: "${f.why}"`);
+  ok(!notes.some((n) => /television|TV/i.test(n)),
+    'and nothing is said about a television, because nothing looked for one');
+  ok(!boards.some((b) => b.role === 'tv'), 'no board has the retired tv role');
+
+  // NOT A CLASH. Two board objects at one point would have `markClashes`
+  // reporting a deliberate arrangement as a fault; one object carrying a count
+  // cannot.
+  ok(!f.clash, 'and the pair is not reported as two boards fighting over a wall');
+
+  // STABLE IDS, because a deletion is stored against one. Adding a bedside
+  // sconce must not renumber this plate.
+  const withSconce = planSwitchboards({
+    room, rooms: [room], doors: [], pxPerFt: PPF, bedRect: bed,
+    accentZones: [{ id: 'acc-o4-0', type: 'sconce', group: 'bedside', what: 'left',
+      point: { x: 166.8, y: 0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
+      wall: { a: ROOM[0], b: ROOM[1], index: 0 }, t: 166.8 }],
+  });
+  ok(withSconce.boards.find((b) => b.role === 'facing')?.id === f.id,
+    `it keeps its id when another rule fires (${f.id})`);
+}
+
+console.log('\n-- ...and when it cannot find the wall, it says so --');
+{
+  const room = { id: 'o4b', polygonPx: ROOM };
+  const none = planSwitchboards({ room, rooms: [room], doors: [], pxPerFt: PPF });
+  ok(!none.boards.some((b) => b.role === 'facing'), 'no bed, no board');
+  ok(none.notes.some((n) => /no bed was found/i.test(n)), 'and it says why');
+
+  // A bed adrift in the middle of the floor has no headboard wall, so there is
+  // no wall facing one either. Same 2ft threshold bedGrid.js uses — at 30.48
+  // px/ft that is 61px, and this bed is 90px (2.95ft) clear on all four sides.
+  const adrift = planSwitchboards({
+    room, rooms: [room], doors: [], pxPerFt: PPF,
+    bedRect: { x0: 210, y0: 90, x1: 390, y1: 270, cls: 'bed' },
+  });
+  ok(!adrift.boards.some((b) => b.role === 'facing'), 'a bed adrift gets no board');
+  ok(adrift.notes.some((n) => /not against a wall/i.test(n)),
+    'and it says that rather than guessing');
+
+  // The rule not asked for says nothing at all — the same contract the other two
+  // keep, so a caller running the door alone does not print a bed note per space.
+  const doorOnly = planSwitchboards({
+    room, rooms: [room], doors: [door(180)], pxPerFt: PPF, rules: ['door'],
+  });
+  ok(!doorOnly.notes.some((n) => /bed/i.test(n)),
+    'a rule that was not run has nothing to say about its input');
+}
+
+console.log('\n-- the headboard wall is read off the box, whichever side it is --');
+{
+  const room = { id: 'o4c', polygonPx: ROOM };
+  // Head against the LEFT wall this time: the bed runs along x, its centreline
+  // is y=180, and the wall it faces is the right-hand one at x=600.
+  const { boards } = planSwitchboards({
+    room, rooms: [room], doors: [], pxPerFt: PPF,
+    bedRect: { x0: 0, y0: 90, x1: 200, y1: 270, cls: 'bed' },
+  });
+  const f = boards.find((b) => b.role === 'facing');
+  ok(f && !f.rejected && f.plates === 2, 'still one board of two plates');
+  ok(near(f.point.x, 600) && near(f.point.y, 180),
+    `on the right-hand wall, on the bed's centreline (got ${f.point.x}, ${f.point.y})`);
+}
+
+console.log('\n-- a centreline in a corner is moved, not refused --');
+{
+  // THE ONE PLACE THIS FILE CLAMPS ON PURPOSE. Every other rule steps off a
+  // thing and has somewhere else to go when the wall runs out; this rule IS the
+  // centreline and has nowhere. A bedroom with no switch on its television wall
+  // is a worse answer than a plate that says it moved.
+  //
+  // A narrow bed hard against the left of the top wall: centreline x=17, which
+  // is inside half a plate plus its 100mm clearance (21.5px) of the corner.
+  const room = { id: 'o4d', polygonPx: ROOM };
+  const { boards } = planSwitchboards({
+    room, rooms: [room], doors: [], pxPerFt: PPF,
+    bedRect: { x0: 2, y0: 0, x1: 32, y1: 200, cls: 'bed' },
+  });
+  const f = boards.find((b) => b.role === 'facing');
+  ok(f && !f.rejected, 'still a board');
+  ok(f.clamped === true, 'and it says it was moved');
+  ok(near(f.point.x, HALF + px(SB_MM.clearEnd, PPF)),
+    `to half a plate plus its clearance off the corner (got x=${f.point.x})`);
+  ok(/moved along/.test(f.why), `and why: "${f.why}"`);
+
+  // A wall that cannot take a plate at all is refused with a sentence rather
+  // than clamped into something that hangs off both ends.
+  const slot = [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 360 }, { x: 0, y: 360 }];
+  const tiny = planSwitchboards({
+    room: { id: 'o4e', polygonPx: slot }, rooms: [], doors: [], pxPerFt: PPF,
+    bedRect: { x0: 5, y0: 0, x1: 35, y1: 200, cls: 'bed' },
+  });
+  const tf = tiny.boards.find((b) => b.role === 'facing');
+  ok(tf?.rejected && /too short/.test(tf.rejected),
+    `a 40px wall is refused with a sentence: "${tf?.rejected}"`);
+}
+
+console.log('\n-- a board moved by hand, along the walls of its space --');
+{
+  // ROOM is 600x360, wound (0,0) (600,0) (600,360) (0,360). wallRuns starts at a
+  // genuine corner, so the runs come out top, right, bottom, left and the
+  // perimeter reads 0..600 along the top, 600..960 down the right, 960..1560
+  // back along the bottom, 1560..1920 up the left. KEEP is half a plate plus its
+  // 100mm clearance: 21.5px.
+  const room = { id: 'o8', polygonPx: ROOM };
+  const KEEP = HALF + px(SB_MM.clearEnd, PPF);
+  const base = { room, rooms: [room], doors: [door(180)], pxPerFt: PPF };
+  const before = planSwitchboards(base).boards.find((b) => b.role === 'door');
+  ok(before && !before.moved && !before.hand,
+    'a board nobody touched carries no hand position');
+
+  // 300px round the top wall.
+  const at300 = planSwitchboards({ ...base, moves: { [before.id]: 300 / PPF } })
+    .boards.find((b) => b.role === 'door');
+  ok(near(at300.hand.point.x, 300) && near(at300.hand.point.y, 0),
+    `it lands where it was dragged (got ${at300.hand.point.x}, ${at300.hand.point.y})`);
+  ok(at300.moved === true && /moved onto this wall by hand/.test(at300.why),
+    `and says it was moved: "${at300.why}"`);
+  ok(/300mm past the latch jamb/.test(at300.why),
+    'while still saying what the rule had wanted');
+  ok(near(at300.point.x, before.point.x) && near(at300.point.y, before.point.y),
+    'THE RULE POSITION IS KEPT — the pass that decides which bay adopts this'
+    + ' plate must not see the drag');
+  ok(near(asDrawn(at300).point.x, 300), 'and asDrawn is what hands over the drag');
+
+  // ...and 700px round, which is 100px down the RIGHT-hand wall.
+  const round = planSwitchboards({ ...base, moves: { [before.id]: 700 / PPF } })
+    .boards.find((b) => b.role === 'door');
+  const h = round.hand;
+  ok(near(h.point.x, 600) && near(h.point.y, 100),
+    `past the corner it is on the next wall (got ${h.point.x}, ${h.point.y})`);
+  ok(near(h.along.x, 0) && near(h.along.y, 1),
+    'THE PLATE TURNED WITH THE WALL — its along axis is now vertical');
+  ok(near(h.inward.x, -1) && near(h.inward.y, 0),
+    'and it faces back into the room, not out through the wall');
+  ok(h.wall.index !== before.wall.index, 'and it knows it is on a different wall');
+
+  // A PLATE CANNOT STRADDLE A CORNER. The last KEEP of every wall is not a
+  // position, so a drag into one steps to the clearance rather than hanging the
+  // plate round the return.
+  const corner = planSwitchboards({ ...base, moves: { [before.id]: 598 / PPF } })
+    .boards.find((b) => b.role === 'door');
+  ok(near(corner.hand.t, 600 - KEEP),
+    `dragged into a corner it stops a plate's clearance short (got t=${corner.hand.t})`);
+
+  // THE WALLS CLOSE, so the coordinate is a loop and cannot be dragged off the
+  // end of. 1920 is the whole perimeter; 1925 is 5px back onto the top wall.
+  const wrapped = planSwitchboards({ ...base, moves: { [before.id]: 1925 / PPF } })
+    .boards.find((b) => b.role === 'door');
+  ok(near(wrapped.hand.point.y, 0) && near(wrapped.hand.t, KEEP),
+    `a distance past the last wall comes round onto the first (got t=${wrapped.hand.t})`);
+
+  // A REFUSED BOARD HAS NO POSITION TO OVERRIDE.
+  const noScale = planSwitchboards({ ...base, pxPerFt: null, moves: { [before.id]: 300 } })
+    .boards.find((b) => b.role === 'door');
+  ok(noScale.rejected && !noScale.hand && !noScale.moved,
+    'a refused board is not movable');
+}
+
+console.log('\n-- the drag itself: a pointer becomes a distance round the walls --');
+{
+  const KEEP = HALF + px(SB_MM.clearEnd, PPF);
+  const opt = { polygonPx: ROOM, pxPerFt: PPF };
+
+  // Just inside the top wall, a third of the way along: the top wall is nearest.
+  ok(near(slideBoardTo({ x: 200, y: 8 }, opt) * PPF, 200),
+    'the nearest wall wins, and the distance is measured along it');
+
+  // Just inside the right-hand wall: 600 along the top plus 150 down the right.
+  ok(near(slideBoardTo({ x: 592, y: 150 }, opt) * PPF, 750),
+    'on the next wall round it keeps counting');
+
+  // OUT IN THE MIDDLE OF THE FLOOR IS STILL A WALL POSITION. A switchboard off
+  // its wall is not a thing, so the pointer is projected rather than followed.
+  const mid = slideBoardTo({ x: 300, y: 120 }, opt) * PPF;
+  ok(near(mid, 300), `a pointer off the wall projects onto the nearest one (got ${mid})`);
+
+  // THE CORNER ITSELF IS NOT A POSITION. A pointer in one is nearest to whichever
+  // wall's clearance point is closer — here the right-hand wall's, 19.5px away
+  // against the top wall's 20.6px — so the answer is never a distance at which a
+  // plate would hang round the return. Which wall wins is not the assertion; the
+  // clearance is.
+  const inCorner = slideBoardTo({ x: 599, y: 2 }, opt) * PPF;
+  ok(near(inCorner, 600 + KEEP),
+    `a pointer in a corner lands on the nearer wall's clearance (got ${inCorner})`);
+  const cornerT = plateAtS(inCorner, wallRuns(ROOM), ROOM, PPF, 360).t;
+  ok(cornerT >= KEEP - 1e-6, `and a plate there clears the corner (t=${cornerT})`);
+
+  // FEET, NOT PIXELS — the answer is stored, and plan pixels move with the
+  // scale. Same reasoning as runTrims.
+  ok(near(slideBoardTo({ x: 200, y: 8 }, opt), 200 / PPF),
+    'the answer is in feet');
+
+  // A wall too short for a plate is not offered at all: this 40px-wide slot has
+  // two long walls and two that cannot hold a board.
+  const slot = [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 360 }, { x: 0, y: 360 }];
+  const onSlot = slideBoardTo({ x: 20, y: 4 }, { polygonPx: slot, pxPerFt: PPF });
+  const plate = plateAtS(onSlot * PPF, wallRuns(slot), slot, PPF, 40);
+  ok(plate && (near(plate.point.x, 0) || near(plate.point.x, 40)),
+    `a 40px end wall is skipped for one that can hold a plate (got x=${plate?.point.x})`);
+
+  ok(slideBoardTo({ x: 1, y: 1 }, { polygonPx: ROOM, pxPerFt: 0 }) === null,
+    'no scale, no answer — 230mm is not a distance it can measure');
+  ok(slideBoardTo(null, opt) === null, 'and no pointer is no answer either');
 }
 
 console.log('\n-- two plates in the same place are marked, not tidied away --');
