@@ -14,7 +14,7 @@
 
 import { COUNTRIES, DEFAULT_COUNTRY, LIGHT_MAX_A, countryFor, lightSwitchA,
          modulesFor, labelFor, socketWithSwitch, pointsFromFlows, packBoards,
-         frameFor, composeSwitchboard, addablePoints, tally }
+         frameFor, composeSwitchboard, composeOutlet, addablePoints, tally }
   from '../src/lib/switchboards.js';
 
 let fail = 0;
@@ -116,6 +116,59 @@ console.log('\n-- two-way switching is a switch, not a second regulator --');
   ok(there[0].modules === 1, '...one module, not the regulator\'s two');
   ok(pointsFromFlows(IN, twoWay, B)[0].kind === 'fan',
     'while the plate that owns it still gets the regulator');
+}
+
+console.log('\n-- the socket outlet, and the switch it puts somewhere else --');
+{
+  /* THE ONE EXCEPTION TO "EVERY SOCKET NEEDS A SWITCH", AND IT DOES NOT BREAK
+     THE RULE. The socket is on a wall and its switch is on a board; both exist,
+     they are just not on the same plate. `composeOutlet` builds the plate with
+     the socket, and `pointsFromFlows` builds the module on whichever board the
+     outlet's wire lands on. */
+  const out = composeOutlet({ country: 'IN', amps: 16, switchedFrom: 'Door' });
+  ok(out.outlet === true, 'it says it is an outlet, so the card can read it apart');
+  ok(out.boards.length === 1, 'one frame, always — a single socket never splits');
+  const b = out.boards[0];
+  ok(howMany(b, '16A socket') === 1, 'with the socket on it');
+  ok(howMany(b, '16A switch') === 0 && howMany(b, '6A switch') === 0,
+    '...and no switch at all, which is the whole of the exception');
+  ok(b.used === 2 && b.size === 2, `two modules in a two-module frame (got ${b.used}/${b.size})`);
+  ok(howMany(b, 'Blank plate') === 0, 'so there is nothing to blank out');
+  ok(out.switchedFrom === 'Door', 'and it names the board its switch is on');
+  ok(composeOutlet({}).amps === lightSwitchA(IN),
+    'with no rating asked for, the country\'s low-power one');
+  ok(composeOutlet({ country: 'US' }).boards[0].used === 1, 'one gang in the US');
+
+  /* AND THE CONVERSION KEEPS THE RATING. Add a point to a 16A outlet and it
+     becomes a switchboard — but the socket that was on the wall is still the
+     socket that is on the wall. The change is about where the SWITCH lives, and
+     re-rating it on the way through would be the conversion quietly editing
+     something it was not asked to. */
+  const converted = composeSwitchboard({ country: 'IN', flows: [], boardId: 'x',
+                                         spareAmps: 16 });
+  ok(howMany(converted.boards[0], '16A socket') === 1,
+    'converted into a switchboard, its socket is still 16A');
+  ok(howMany(converted.boards[0], '16A switch') === 1,
+    '...and the switch that appears beside it matches');
+  ok(converted.outlet === false, 'and the answer says which of the two it is');
+  ok(composeSwitchboard({ country: 'IN', flows: [], boardId: 'x' })
+    .boards[0].points.some((p) => p.label === '6A socket'),
+    'while a board nobody converted keeps the low-power default');
+
+  // ...AND THE OTHER HALF: the module on the board the wire runs to.
+  const soFlow = { id: 'fl-so', kind: 'socket', label: '16A socket',
+                   boardId: B, amps: 16, outletId: 'sb-hand-1' };
+  const pts = pointsFromFlows(IN, [soFlow], B);
+  ok(pts.length === 1 && pts[0].kind === 'switch',
+    'the board the outlet wires to gets a SWITCH');
+  ok(pts[0].amps === 16, '...at the outlet\'s own rating and not at the light rating');
+  ok(pts[0].forOutlet === true, '...marked as the outlet\'s');
+  ok(pts[0].modules === 1, 'one module — the socket is over there, on the wall');
+  // The whole plate, so the exception is visible in context.
+  const host = composeSwitchboard({ country: 'IN', flows: [...lights(1), soFlow], boardId: B });
+  ok(howMany(host.boards[0], '16A switch') === 1, 'and it lands on the composed board');
+  ok(howMany(host.boards[0], '16A socket') === 0,
+    'without a second socket appearing on the board with it');
 }
 
 console.log('\n-- frames you can buy --');

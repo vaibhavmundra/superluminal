@@ -254,9 +254,24 @@ export function pointsFromFlows(country, flows = [], boardId = null) {
   const out = [];
   for (const f of flows) {
     if (boardId && f.boardId === boardId) {
-      out.push(f.kind === 'object' && f.label === 'Fan'
-        ? point(country, { kind: 'fan', flowId: f.id, what: f.label })
-        : point(country, { kind: 'switch', amps: a, flowId: f.id, what: f.label }));
+      /* A SOCKET OUTLET'S SWITCH, AND IT LANDS HERE BECAUSE THE WIRE DOES.
+         An outlet is a plate on a wall with one socket and no switch — the one
+         switchboard allowed to have none, see `placedBoards` in electrical.js —
+         and this is where "every socket needs a switch" is honoured for it. The
+         module is a SWITCH and not a switch-and-socket pair: the socket is over
+         there, on the wall, and ordering a second one here because its switch is
+         here would put an outlet on the wrong plate.
+
+         AT THE OUTLET'S OWN RATING. A 16A socket is not controlled by a 6A
+         switch, and the flow carries the rating precisely so this does not have
+         to guess. Move the wire to another board and the switch moves with it,
+         at the same rating, because both are derived from where the flow lands. */
+      out.push(f.kind === 'socket'
+        ? point(country, { kind: 'switch', amps: f.amps ?? a, flowId: f.id,
+                           what: f.label, forOutlet: true })
+        : f.kind === 'object' && f.label === 'Fan'
+          ? point(country, { kind: 'fan', flowId: f.id, what: f.label })
+          : point(country, { kind: 'switch', amps: a, flowId: f.id, what: f.label }));
     } else if (boardId && f.also?.boardId === boardId) {
       out.push(point(country, {
         kind: 'switch', amps: a, flowId: f.id, twoWay: true,
@@ -339,6 +354,16 @@ export function composeSwitchboard({
   // added them. Stored against the board id by the caller — see App.jsx.
   extras = [],
   spare = true,
+  /* THE RATING OF THE PLATE'S OWN SOCKET. Null means the country's low-power
+     one, which is what almost every board wants and what this always used to be.
+
+     IT EXISTS BECAUSE A BOARD CAN HAVE BEEN AN OUTLET. Check the box on a 16A
+     socket outlet and it becomes a switchboard — and the socket that was on the
+     wall is still the socket that is on the wall, at sixteen amps. Composing it
+     with the default 6A spare would quietly re-rate somebody's air-conditioner
+     point on the way through a conversion that was supposed to be about where
+     the SWITCH lives. */
+  spareAmps = null,
 } = {}) {
   const country = typeof code === 'string' ? countryFor(code) : (code ?? COUNTRIES[DEFAULT_COUNTRY]);
   const a = lightSwitchA(country);
@@ -365,7 +390,8 @@ export function composeSwitchboard({
   }
 
   const spares = spare
-    ? socketWithSwitch(country, { amps: a, source: 'spare', what: 'a spare outlet' })
+    ? socketWithSwitch(country, { amps: spareAmps ?? a, source: 'spare',
+                                  what: 'a spare outlet' })
     : [];
 
   const wanted = [...switches, ...fans, ...spares, ...added];
@@ -389,11 +415,64 @@ export function composeSwitchboard({
 
   return {
     country,
+    // NOT AN OUTLET, SAID OUT LOUD. The card reads this to decide which of two
+    // plates it is drawing, and `composeOutlet` says the opposite — so the field
+    // is present on both answers rather than absent on one, which is the
+    // difference between a check and a guess about undefined.
+    outlet: false,
     boards,
     // The whole position, whether it came out as one frame or three.
     total: wanted.reduce((s, p) => s + p.modules, 0),
+    amps: spareAmps ?? a,
     lightSwitchA: a,
     split: boards.length > 1,
+  };
+}
+
+/**
+ * A SOCKET OUTLET, COMPOSED — the one plate with no switch on it.
+ *
+ * IT IS NOT `composeSwitchboard` WITH ARGUMENTS, AND THAT IS DELIBERATE. Every
+ * path through that function adds a switch to a socket, because that is the rule
+ * it exists to enforce; a flag that switched the rule off would put the one case
+ * that may break it inside the function that must not. This is a different
+ * object — a wall fixture with a socket in it — and it says so by being its own
+ * function.
+ *
+ * THE SWITCH IS NOT MISSING, IT IS ELSEWHERE. `switchedFrom` is what the card
+ * prints so the plate can account for itself: the board the outlet's wire runs
+ * to has a module for it, at this same rating. Null while nothing has been
+ * worked out yet, which reads as "not yet" rather than as "none".
+ *
+ * ONE FRAME, ALWAYS. A single socket is two modules in India and one gang in the
+ * US, and both are frames you can buy, so there is never a blank and never a
+ * split. The shape of the answer matches composeSwitchboard's so the same card
+ * draws both.
+ */
+export function composeOutlet({ country: code = DEFAULT_COUNTRY, amps = null,
+                                switchedFrom = null } = {}) {
+  const country = typeof code === 'string' ? countryFor(code) : (code ?? COUNTRIES[DEFAULT_COUNTRY]);
+  const a = amps ?? lightSwitchA(country);
+  const sock = point(country, { kind: 'socket', amps: a, source: 'outlet' });
+  const size = frameFor(country, sock.modules);
+  const blanks = Math.max(0, size - sock.modules);
+  return {
+    country,
+    outlet: true,
+    amps: a,
+    switchedFrom,
+    boards: [{
+      index: 0,
+      size,
+      used: sock.modules,
+      unit: country.unit,
+      units: country.units,
+      points: [sock, ...Array.from({ length: blanks },
+        () => point(country, { kind: 'blank', source: 'fill' }))],
+    }],
+    total: sock.modules,
+    lightSwitchA: lightSwitchA(country),
+    split: false,
   };
 }
 

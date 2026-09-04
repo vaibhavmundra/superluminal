@@ -156,6 +156,19 @@ export const FACING_PLATES = SB_HEIGHT_MM.facing.length;
 /** Blue, because the brief said blue and because nothing else on the plan is. */
 export const SB_COLOUR = '#2563EB';
 
+/* `SB_LOOSE` WAS HERE — red, for a plate nothing was switched from.
+   THE STATE IT MARKED SHOULD NOT EXIST. It was invented for the hand-placed
+   board: drop a plate on a wall, it switches nothing, so colour it red until
+   somebody wires it. That made "unconfigured" a thing a drawing could show, and
+   a drawing that can show an unfinished state will show it — a room of red
+   plates is a to-do list on a deliverable.
+   WHAT REPLACED IT IS THE THING ITSELF. A plate somebody drops on a wall is a
+   SOCKET OUTLET — one socket, no switch — and a socket has never been allowed
+   to exist without a switch (see `socketWithSwitch` in switchboards.js). So it
+   wires itself, immediately, to the nearest board that can switch it, and that
+   board grows the switch. There is no unconfigured second, so there is nothing
+   to colour. See `placedBoards` below and section 0 of flows.js. */
+
 export const ELEC_DEFAULTS = {
   // How far two consecutive edges may turn and still be one wall.
   runAngleTol: 3,
@@ -920,7 +933,7 @@ export function plateAtS(sPx, runs, polygon, pxPerFt, scale, extra = {}) {
  * switchboard off its wall is not a thing, and a board floating in the middle of
  * a room is a mark nobody could build from.
  */
-export function slideBoardTo(p, { polygonPx = [], pxPerFt = 0, opts = {} } = {}) {
+export function nearestSeat(p, { polygonPx = [], pxPerFt = 0, opts = {} } = {}) {
   if (!p || polygonPx.length < 3 || !(pxPerFt > 0)) return null;
   const o = { ...ELEC_DEFAULTS, ...opts };
   const runs = wallRuns(polygonPx, o);
@@ -935,9 +948,112 @@ export function slideBoardTo(p, { polygonPx = [], pxPerFt = 0, opts = {} } = {})
     const t = clamp(dot(sub(p, f.origin), f.u), keep, seg.length - keep);
     const at = add(f.origin, mul(f.u, t));
     const d = len(sub(p, at));
-    if (!best || d < best.d) best = { d, sFt: (seg.s0 + t) / pxPerFt };
+    if (!best || d < best.d) best = { d, at, sFt: (seg.s0 + t) / pxPerFt };
   }
-  return best ? best.sFt : null;
+  return best;
+}
+
+/**
+ * ...AND THE ONE NUMBER A DRAG NEEDS. `slideBoardTo` is what App.jsx has always
+ * called and it still means the same thing; the distance came out of it because
+ * PLACING a board asks a question dragging one never has to — which of several
+ * rooms did that click mean. A drag already knows its room.
+ */
+export function slideBoardTo(p, opts = {}) {
+  return nearestSeat(p, opts)?.sFt ?? null;
+}
+
+/**
+ * SOCKET OUTLETS — the one plate that is allowed to have no switch on it.
+ *
+ * THE EXCEPTION, AND WHY IT IS THE ONLY ONE. Every socket needs a switch; that
+ * is a rule about wiring and switchboards.js enforces it in one place. What the
+ * rule does NOT say is that the switch has to be on the same plate — and the
+ * commonest thing in any real room is exactly that: a socket on a wall,
+ * controlled from a board by the door. So an outlet on its own is not an
+ * unfinished switchboard, it is a complete and ordinary fitting whose switch
+ * lives somewhere else.
+ *
+ * WHICH MAKES IT A WALL FIXTURE AND NOT A BOARD. It behaves like a sconce: it is
+ * placed where it is wanted, it wires itself to the nearest plate that can carry
+ * it, and the wire can be dragged onto a different plate afterwards — at which
+ * point the switch moves with it, because the switch is a MODULE that exists
+ * because the flow lands there. See section 0 of flows.js for the flow, and
+ * `pointsFromFlows` in switchboards.js for the module.
+ *
+ * A SEAT IS `{ id, roomId, sFt, amps }` — how far round this room's walls it
+ * sits, in feet, and what it is rated at. Same coordinate as `boardMoves`, for
+ * the same two reasons: a run index renumbers when a corner is re-traced and a
+ * pixel moves when the scale is corrected. Everything else is derived here on
+ * every render, exactly as a rule's board is.
+ *
+ * `socketOnly` IS WHAT THE REST OF THE APP READS. It is not in `boardPool`, so
+ * no wire can be dragged onto it — a light cannot be switched from a socket —
+ * and `servesBay` is false for its role, so no ceiling can fall back to it.
+ */
+export function placedBoards(seats = [], { polygonPx = [], pxPerFt = 0, opts = {} } = {}) {
+  if (!seats.length || polygonPx.length < 3 || !(pxPerFt > 0)) return [];
+  const o = { ...ELEC_DEFAULTS, pxPerFt, ...opts };
+  const runs = wallRuns(polygonPx, o);
+  const scale = roomScale(polygonPx);
+  const out = [];
+  for (const seat of seats) {
+    const plate = plateAtS(seat.sFt * pxPerFt, runs, polygonPx, pxPerFt, scale);
+    if (!plate) continue;
+    out.push({
+      id: seat.id,
+      roomId: seat.roomId,
+      role: 'placed',
+      placed: true,
+      serves: 'whatever is wired to it',
+      servesShort: 'Board',
+      why: 'Placed by hand on this wall.',
+      heightsMm: SB_HEIGHT_MM.door,
+      plates: 1,
+      sFt: seat.sFt,
+      ...plate,
+    });
+  }
+  return out;
+}
+
+/**
+ * THE SAME PLATE, AS A SOCKET OUTLET — one socket, no switch.
+ *
+ * A TRANSFORM AND NOT A KIND, WHICH IS THE POINT. Outlet and switchboard are two
+ * states of ONE object and a person moves a plate between them: one press makes
+ * a board a socket switched from somewhere else, and adding any point to a
+ * socket makes it a board again. Building them as two different things — one
+ * produced by `placedBoards`, the other by the rules — would mean a conversion
+ * had to construct the other from scratch and get every field right, which is
+ * how the two drift.
+ *
+ * SO EVERY PLATE ON THE DRAWING CAN BE ONE, including a board a RULE placed. The
+ * geometry is unchanged: it is the same rectangle on the same piece of wall, and
+ * what changes is what is on it, what it is called, how high it is set and —
+ * the load-bearing part — that nothing can be switched from it any more. See
+ * DEDICATED_ROLES: `servesBay` is false for `socket`, so a ceiling that used to
+ * fall back to this plate falls back to the next one instead, by itself.
+ *
+ * `amps` IS THE SOCKET'S RATING and it travels into the flow, which is how the
+ * switch on the far board gets built to match. See section 0 of flows.js.
+ */
+export function asOutlet(b, amps = null) {
+  if (!b) return b;
+  return {
+    ...b,
+    role: 'socket',
+    socketOnly: true,
+    amps,
+    serves: 'a socket outlet',
+    servesShort: 'Socket',
+    why: 'A socket on this wall, switched from another board.',
+    // SOCKET HEIGHT AND NOT SWITCH HEIGHT. 300mm is a general-purpose outlet
+    // above skirting; the plate by the door is at 1200 because a hand reaches it
+    // on the way past, and an outlet is not operated at all.
+    heightsMm: [300],
+    plates: 1,
+  };
 }
 
 /**
@@ -950,6 +1066,48 @@ export function slideBoardTo(p, { polygonPx = [], pxPerFt = 0, opts = {} } = {})
  */
 export function asDrawn(b) {
   return b?.hand ? { ...b, ...b.hand } : b;
+}
+
+/**
+ * WHICH PLATE IS UNDER THIS POINT — the drop test for a wire dragged onto a
+ * switchboard.
+ *
+ * IN THE PLATE'S OWN FRAME, and not against an axis-aligned bounding box. A
+ * board is 230 x 80mm standing on a wall at whatever angle that wall runs, so
+ * its bounding box on a diagonal wall is nearly twice its area and would claim
+ * drops that visibly missed it. The plate already carries its own axes — see
+ * `plateAt` — so the test is two dot products.
+ *
+ * A GENEROUS SLOP, DELIBERATELY. The target is 230mm long and 80mm deep, which
+ * at a normal zoom is a rectangle a few pixels tall; asking somebody to land a
+ * pointer inside it is asking them to miss. The slop is a fraction of a foot in
+ * plan pixels rather than a pixel count, so it scales with the drawing.
+ *
+ * THE DEEPEST HIT WINS, which matters exactly where two plates clash — see
+ * `markClashes`. Two boards at one spot are drawn on top of each other, and a
+ * drop between them has to pick one; picking the one whose middle the pointer is
+ * nearest is the only answer that responds to aiming.
+ */
+export function boardUnder(p, boards = [], { pxPerFt = 0, slopFt = 0.5 } = {}) {
+  if (!p) return null;
+  const slop = Math.max(4, slopFt * (pxPerFt || 0));
+  let best = null, bestScore = Infinity;
+  for (const b of boards) {
+    if (!b?.point || !b.along || !b.inward) continue;
+    const rel = sub(p, b.point);
+    const a = dot(rel, b.along);
+    const d = dot(rel, b.inward);
+    const half = (b.alongPx ?? 0) / 2, deep = b.deepPx ?? 0;
+    // How far outside the rectangle the point is, on each axis. Zero inside.
+    const outA = Math.max(0, Math.abs(a) - half);
+    const outD = Math.max(0, d < 0 ? -d : d - deep);
+    if (outA > slop || outD > slop) continue;
+    // Inside, prefer the plate whose centre the pointer is nearest; outside,
+    // prefer the near miss. One score does both.
+    const score = outA + outD + (Math.abs(a) + Math.abs(d - deep / 2)) * 1e-3;
+    if (score < bestScore) { best = b; bestScore = score; }
+  }
+  return best;
 }
 
 /**
@@ -1714,7 +1872,13 @@ export const CHUNK_BOARD = {
  * bedside plate is often the nearest board to most of the room, so anything
  * measured in feet gets this backwards in exactly the rooms it matters in.
  */
-export const DEDICATED_ROLES = new Set(['bedside', 'facing']);
+/* PLATES THAT SWITCH ONE THING AND CANNOT BE FALLEN BACK TO FOR A CEILING.
+   A bedside plate switches its own sconce and a facing plate its own television.
+   A SOCKET OUTLET IS THE THIRD, AND THE STRONGEST CASE OF THE THREE: the other
+   two at least have a switch on them, where an outlet has none at all — a row of
+   downlights whose nearest plate is a socket would come out switched from a
+   thing with nothing to press. */
+export const DEDICATED_ROLES = new Set(['bedside', 'facing', 'socket']);
 export const servesBay = (b) => !DEDICATED_ROLES.has(b?.role);
 
 /** Rect corners, and its centre. Local because a bay is a rect and nothing more. */

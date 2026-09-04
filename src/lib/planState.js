@@ -239,6 +239,67 @@ export function serialiseEditor(s) {
        because two 6A sockets on one plate are two rows a person can remove
        independently and `{kind, amps}` cannot tell them apart. */
     boardPoints: s.boardPoints ?? {},
+    /* --- AND THE TWO THINGS A PERSON DECIDES ABOUT A WIRE.
+
+       `flowBoards` is flow id -> board id: which plate a loop runs off, where
+       the rules' nearest-plate answer is not the one wanted. `flowBends` is
+       flow id -> { leg key -> feet }: how far each arc is nudged off where the
+       rule bows it, as a DELTA, in feet for the same reason `runTrims` and
+       `boardMoves` are in feet.
+
+       THE SAME ARGUMENT AS EVERY OTHER OVERRIDE HERE — a flow is derived on
+       every render, so both of these are the only record that a wire is
+       anywhere other than where the rules put it.
+
+       AND THE FLOW IDS ARE STABLE ENOUGH TO STORE, which they were not before
+       this pair existed. See the note by `id` in flows.js: they used to be a
+       counter, and a counter would have moved somebody's reassignment onto a
+       different wire the first time a light was added to an earlier chunk. */
+    flowBoards: s.flowBoards ?? {},
+    flowBends: s.flowBends ?? {},
+    /* --- AND THE PLATES SOMEBODY PUT ON A WALL THEMSELVES.
+       `[{ id, roomId, sFt }]` — how far round that room's walls each one sits,
+       in feet, which is the same coordinate `boardMoves` above stores and is
+       stored that way for the same two reasons.
+
+       THE ODD ONE OUT IN THIS BLOCK, AND WORTH SAYING SO. Everything else here
+       modifies something a rule produced: a deletion, a position, an assignment,
+       a bend. Nothing derives these plates at all — no pass proposes one, so
+       there is no answer for this to override. The list IS the fact, the way
+       `manualCoves` and `manualAccents` are, and losing it loses the boards
+       rather than losing an adjustment to them. */
+    manualBoards: s.manualBoards ?? [],
+    /* ...AND WHICH OF THE TWO THINGS EACH PLATE IS: board id ->
+       `{ outlet, amps }`.
+
+       A SOCKET OUTLET IS ONE SOCKET AND NO SWITCH, and a switchboard is
+       everything else; either can be turned into the other, including a plate a
+       rule placed — adding any point to an outlet makes it a board, and one
+       press makes a board an outlet. What is stored is only what somebody CHANGED — a plate with
+       no entry here is whatever it was born as, hand-placed ones being outlets
+       and rule-placed ones boards — so an entry that only restated the default
+       is deleted rather than written. See `setBoardOutlet` in App.jsx.
+
+       THE RATING LIVES HERE AND NOT ON `manualBoards` ABOVE, for one reason: it
+       has to survive the conversion. A 16A outlet ticked into a switchboard is a
+       board with a 16A socket on it, and a rating stored against the outlet
+       would have been lost on the way through. */
+    boardKinds: s.boardKinds ?? {},
+    /* ...AND HOW HIGH EACH ONE IS SET: board id -> millimetres above finished
+       floor level.
+
+       THE ONE THING ABOUT A SWITCHBOARD A PLAN VIEW CANNOT SHOW. A plate is the
+       same rectangle from above at 300mm as at 1200mm, and the difference
+       between those two numbers is the difference between a socket and a switch.
+       The rules have a default per role (SB_HEIGHT_MM in electrical.js) and a
+       default is all it can be — 1200 is switch height in most of the world and
+       1100 in some offices — so what is stored here is the plates somebody
+       actually set, and nothing else.
+
+       THE PRIMARY HEIGHT ONLY. The wall facing a bed is two plates at two
+       heights, which is what makes it two; an override replaces the first of
+       that list and leaves the second alone. See `withMode` in App.jsx. */
+    boardHeights: s.boardHeights ?? {},
 
     // --- view preferences. Cheap, and jarring to lose.
     ui: { layers: s.layers, zoom: s.zoom, view: s.view },
@@ -325,6 +386,11 @@ export function applyEditor(p, set) {
   set.setBoardsOff?.(p.boardsOff ?? []);
   set.setBoardMoves?.(p.boardMoves ?? {});
   set.setBoardPoints?.(p.boardPoints ?? {});
+  set.setFlowBoards?.(p.flowBoards ?? {});
+  set.setFlowBends?.(p.flowBends ?? {});
+  set.setManualBoards?.(p.manualBoards ?? []);
+  set.setBoardKinds?.(p.boardKinds ?? {});
+  set.setBoardHeights?.(p.boardHeights ?? {});
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);

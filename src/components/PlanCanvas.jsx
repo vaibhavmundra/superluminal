@@ -6,6 +6,7 @@ import { STRIP_STYLE, THROW_STYLE, GLINT_STYLE, PILL_STYLE,
          COVE_BAND_STYLE } from '../lib/settings.js';
 import { TRACK_DIMS_IN } from '../lib/track.js';
 import { SB_COLOUR, SB_MM } from '../lib/electrical.js';
+import { WIRE_CHAIN } from '../lib/flows.js';
 import { doorWidthAt } from '../lib/doors.js';
 
 // ---------------------------------------------------------------------------
@@ -158,6 +159,37 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        draws geometry. Empty by default, so a canvas handed none is a lighting
        sheet with no wiring on it, which is every caller that has not asked. */
     flows = [],
+    /* --- EDITING A WIRE ------------------------------------------------------
+       WHICH LOOP IS PICKED, AND THE TWO GESTURES ON IT. Optional like every
+       other handler here, so a canvas given none draws wires that cannot be
+       touched — which is the read-only sheet and the print.
+
+       ONE SELECTION FOR THE WHOLE LOOP, AND NOT PER LEG. A flow is one switch;
+       its legs are how that switch reaches its lamps, and picking "the third
+       arc" as a thing in its own right would be picking a piece of drawing
+       rather than a piece of the design. So the click selects the flow, the
+       whole chain lights, and the grips then appear on EVERY leg — which is
+       what makes "adjust any one of them" possible without ever making a leg a
+       selectable object.
+
+       TWO GRIPS, TWO MEANINGS, ONE HANDLER. `onFlowGripDown` is told which:
+       'board' is the end at the plate, and dragging it re-assigns the switch;
+       'bend' is a leg's own peak, and dragging it moves the arc off whatever it
+       was crossing. They are one handler because they are one pointer pipeline
+       in the caller — see `flowDrag` in App.jsx — and two would be two places to
+       forget to capture the pointer. */
+    selFlowId = null, onFlowPointerDown = null, onFlowGripDown = null,
+    /* WHERE THE BOARD END IS RIGHT NOW, mid-drag, in plan pixels — and the
+       plate it would land on if the finger came up here.
+
+       TOLD RATHER THAN DERIVED, exactly as `draggingBoardId` above is. The
+       committed assignment is not written until the drop (unlike a board slide,
+       which writes per move — see the note there), because a wire re-assigned
+       on every pointermove would re-order the loop, re-cut both plates'
+       compositions and repaint the panel forty times on the way past. So for
+       the length of the gesture the wire's end is a thing the caller is holding,
+       and this is how it gets drawn. */
+    flowGrab = null,
     // WHICH SPOT IS PICKED, AND HOW ONE GETS PICKED. Optional like every other
     // handler here: a canvas given neither is a drawing whose spots cannot be
     // selected, which is what the read-only sheet wants.
@@ -1327,34 +1359,80 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           layer reads as a different KIND of information at a glance rather
           than as more of the same.
 
-          INERT. There is nothing to grab on a wire and forty of them crossing
-          the layout would eat every click meant for a fitting. */}
+          THE FEED LEG IS BLUE AND THE REST OF THE CHAIN IS GREY, and thinner.
+          One loop is not one uniform statement: the first leg answers "which
+          plate switches this", which is the whole question the layer exists to
+          answer and the thing a reader traces across the sheet; every leg after
+          it says "and on to the next lamp in this row", which the row already
+          said by being a row. Drawn all in blue at one weight, a bay with three
+          rows of six was a thicket, and the three short lines that actually
+          carry the information were lost in it. See WIRE_CHAIN in flows.js.
+
+          NOT INERT ANY MORE, AND THAT REVERSED AN EARLIER DECISION. The note
+          here used to read "there is nothing to grab on a wire" — which was
+          true while a wire was purely derived. It is not now: the plate a loop
+          runs off can be dragged onto another plate, and a leg that crosses
+          something somebody wants visible can be nudged off it. The group is
+          still `pointerEvents="none"`; what is live is the fattened hit path,
+          exactly as before, plus the grips on the picked loop. */}
       {layers.electrical && (
         <g pointerEvents="none" fill="none" stroke={SB_COLOUR}>
-          {flows.filter((f) => !f.coincident).map((f) => (
+          {flows.filter((f) => !f.coincident).map((f) => {
+            const picked = f.id === selFlowId;
+            /* THE LEGS, OR THE WHOLE PATH AS ONE LEG. A flow from a caller that
+               predates `legs` — or one built by hand in a test — still has a
+               `path`, and drawing nothing for it would be a wire that vanished
+               because a field was added. */
+            const legs = f.legs?.length
+              ? f.legs
+              : (f.path ? [{ key: '0', d: f.path, feed: true }] : []);
+            const alsoLegs = f.also
+              ? (f.also.legs?.length ? f.also.legs
+                : (f.also.path ? [{ key: 'a0', d: f.also.path, feed: true }] : []))
+              : [];
+            /* ONE DESCRIPTION OF A LEG'S PAINT, used for the loop and for the
+               second feed alike. `picked` brightens rather than recolours: a
+               selected wire that changed hue would stop reading as the same
+               object it was a moment ago, and the grey legs have to stay
+               visibly the chain even while they are lit. */
+            const leg = (l) => {
+              const feed = l.feed;
+              return {
+                key: l.key,
+                d: l.d,
+                stroke: feed ? SB_COLOUR : WIRE_CHAIN,
+                width: (feed ? lw * 1.5 : lw * 0.95) * (picked ? 1.6 : 1),
+                dash: feed ? `${lw * 1.5} ${lw * 3.2}` : `${lw * 1.2} ${lw * 2.4}`,
+                halo: feed ? lw * 3.4 : lw * 2.4,
+              };
+            };
+            const painted = [...legs, ...alsoLegs].map(leg);
+
+            return (
             <g key={f.id}>
               {/* A WHITE UNDERLAY, one weight heavier. The wire crosses the
                   scan, the cell lines, the chunk boxes and the room outline,
                   and a 1.2px dotted blue over somebody's hatched wall is not a
-                  line, it is a texture. The halo is what makes it one. */}
-              <path d={f.path} stroke="#fff" strokeWidth={lw * 3.4}
-                strokeLinecap="round" opacity={layers.invert ? 0.55 : 0.9} />
-              <path d={f.path} strokeWidth={lw * 1.5} strokeLinecap="round"
-                strokeDasharray={`${lw * 1.5} ${lw * 3.2}`} />
+                  line, it is a texture. The halo is what makes it one.
+                  ALL THE HALOES FIRST AND THEN ALL THE WIRES, which matters now
+                  that a loop is several strokes: painted leg by leg, the halo of
+                  leg two would be laid over the wire of leg one and would eat a
+                  bite out of it at every joint. */}
+              {painted.map((l) => (
+                <path key={`h${l.key}`} d={l.d} stroke="#fff" strokeWidth={l.halo}
+                  strokeLinecap="round" opacity={layers.invert ? 0.55 : 0.9} />
+              ))}
               {/* THE SECOND PLACE THE SAME SWITCH IS REACHED FROM — the fan's
-                  point on the far bedside plate. Drawn in the same weight and
-                  the same dash, because it is the same wire doing the same job:
-                  a lighter one would read as a lesser connection, and it is not
-                  one. What tells them apart is that the loop has two feed ticks
-                  and the card says so. */}
-              {f.also && (
-                <>
-                  <path d={f.also.path} stroke="#fff" strokeWidth={lw * 3.4}
-                    strokeLinecap="round" opacity={layers.invert ? 0.55 : 0.9} />
-                  <path d={f.also.path} strokeWidth={lw * 1.5} strokeLinecap="round"
-                    strokeDasharray={`${lw * 1.5} ${lw * 3.2}`} />
-                </>
-              )}
+                  point on the far bedside plate — is in this list too, and it is
+                  a FEED, so it is blue at feed weight. That is the same wire
+                  doing the same job: a lighter one would read as a lesser
+                  connection, and it is not one. What tells them apart is that
+                  the loop has two feed ticks and the card says so. */}
+              {painted.map((l) => (
+                <path key={l.key} d={l.d} stroke={l.stroke} strokeWidth={l.width}
+                  strokeLinecap="round" strokeDasharray={l.dash}
+                  opacity={picked ? 1 : undefined} />
+              ))}
               {/* THE FEED, at the board end: one short tick across the wire
                   where it leaves the plate. Not an arrow — a wire has no
                   direction, and an arrowhead would claim one. It is there
@@ -1394,7 +1472,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   card is the only way to read what a loop actually switches. */}
               <path className="hit" d={f.path + (f.also ? ` ${f.also.path}` : '')}
                 stroke="transparent"
-                strokeWidth={lw * 7} strokeLinecap="round" pointerEvents="stroke"
+                strokeWidth={lw * 7} strokeLinecap="round"
                 {...feel(f.id, {
                   id: 'flow', label: f.label,
                   note: f.what || null,
@@ -1416,10 +1494,43 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       : 'nowhere yet'],
                     ...(f.also ? [['...and from', `the ${f.also.boardLabel.toLowerCase()} board`
                       + ' — two-way']] : []),
+                    /* WHOSE DECISION THE PLATE IS. A wire dragged onto another
+                       board is the one thing about a loop that is not derived,
+                       and a card that did not say so would be presenting
+                       somebody's override as the rules' answer. */
+                    ...(f.assigned ? [['Note', 'moved onto this board by hand']] : []),
                   ],
-                })} />
+                })}
+                /* AND THE SAME PATH IS WHAT PICKS THE LOOP. Pointerdown rather
+                   than click, like every other selectable thing here, and it
+                   stops propagating for the reason at the top of this file: the
+                   root svg's handler selects a space or clears the selection,
+                   and a press that did both would deselect the wire it had just
+                   picked. */
+                onPointerDown={placing || !onFlowPointerDown ? undefined
+                  : (e) => { e.stopPropagation(); onFlowPointerDown(e, f.id); }}
+                /* `INERT.style` WHILE SOMETHING IS BEING PLACED, exactly as the
+                   plate does. `feel` already returns it, and this attribute is
+                   spread after `feel` — so writing a cursor here unconditionally
+                   would put the pointer events back on a wire that is meant to
+                   be out of the way. */
+                /* `pointerEvents` IN THE STYLE AND NOT AS AN ATTRIBUTE, which
+                   is the same correction the accent runs carry — see the note
+                   over `.plan .hit` in styles.css. That rule declares
+                   `pointer-events:all`, and a CSS declaration beats a
+                   presentation attribute, so the `pointerEvents="stroke"`
+                   written here did nothing: `all` makes a path's INTERIOR live
+                   as well as its perimeter, so the target was not the fat band
+                   along the wire this comment claims, it was the whole region a
+                   loop encloses. Tolerable while a wire was only hoverable and
+                   not while it can be SELECTED — a press anywhere inside a row
+                   of six downlights would have picked the wire. */
+                style={placing ? INERT.style
+                  : { cursor: 'pointer', pointerEvents: 'stroke' }} />
+
             </g>
-          ))}
+            );
+          })}
         </g>
       )}
 
@@ -1749,7 +1860,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // THE RECTANGLES KEEP THE ACCENT IN BOTH MODES. A cassette and a hatch
         // are filled shapes with hatching inside them, and white-on-white would
         // erase the marks that tell those two apart.
-        const round = f.kind === 'fan' || f.kind === 'chandelier';
+        // ROUND OR RECTANGULAR, ASKED OF THE CATALOGUE. It was a list of two
+        // kinds here and a different list of two kinds a dozen lines down, and
+        // adding a split unit and a geyser to the catalogue would have left
+        // both of them out of both lists — drawn as a fan, and framed as one.
+        const round = !isRect(f);
         const col = round && layers.invert ? C.object : C.lit;
         // THE CHANDELIER'S SIX LAMPS SIT ON ITS RING, so they have to be the
         // opposite of it or they stop being lamps and become part of the
@@ -1761,7 +1876,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // The BODY's radius, which is NOT the clearance radius: on a rectangle
         // the clearance circle is circumscribed and larger. The selection frame
         // has to fit the body, because the body is what a resize changes.
-        const rect = f.kind === 'ac' || f.kind === 'trapdoor';
+        const rect = isRect(f);
         // The clearance, in plan pixels. Drawn as the offset of the body, so a
         // circle keeps a ring and a rectangle keeps a rounded rectangle.
         const CL = clearanceFt * (pxPerFt || 0);
@@ -1785,7 +1900,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 round everything is the only way the reserved area on screen is
                 the reserved area in the layout — and drawing a big circle round
                 a small cassette was how it came to be reserving one. */}
-            {rect ? (
+            {/* AND NOTHING AT ALL FOR THE THINGS THAT ARE NOT ON THE CEILING.
+                A split unit sits at 2100mm on a wall and a geyser above a
+                toilet door; neither obstructs a downlight, so neither reserves
+                anything and a dashed ring round one would be drawing a hole in
+                a layout that has none. See `offCeiling` in ceilingObjects.js —
+                the same flag keeps them out of what the planner is handed. */}
+            {f.offCeiling ? null : rect ? (
               <rect transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}
                 x={f.x - f.w / 2 - CL} y={f.y - f.h / 2 - CL}
                 width={f.w + CL * 2} height={f.h + CL * 2} rx={CL} ry={CL}
@@ -1815,7 +1936,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 })}
                 <circle cx={f.x} cy={f.y} r={lw * 2.2} fill={lamp} stroke="none" />
               </g>
-            ) : (f.kind === 'ac' || f.kind === 'trapdoor') ? (
+            ) : rect ? (
               <g transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}>
                 <rect x={f.x - f.w / 2} y={f.y - f.h / 2} width={f.w} height={f.h}
                   fill={col} fillOpacity="0.12" stroke={col} strokeWidth={lw * 2} />
@@ -1832,10 +1953,34 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     <line x1={f.x - f.w / 2} y1={f.y - f.h / 2} x2={f.x + f.w / 2} y2={f.y + f.h / 2} />
                     <line x1={f.x + f.w / 2} y1={f.y - f.h / 2} x2={f.x - f.w / 2} y2={f.y + f.h / 2} />
                   </g>
+                ) : f.kind === 'split_ac' ? (
+                  /* LOUVRES, ALONG THE LONG AXIS. A split unit's plan mark is a
+                     long thin rectangle, which on its own is indistinguishable
+                     from a duct, a beam or a shelf — this drawing has all
+                     three. Three lines across the width say "grille", and they
+                     run the length of the unit because that is how the blades
+                     actually sit. */
+                  <g stroke={col} strokeWidth={lw} opacity="0.7">
+                    {[-1, 0, 1].map((k) => (
+                      <line key={k} x1={f.x - f.w / 2 + lw * 5} y1={f.y + (f.h / 5) * k}
+                        x2={f.x + f.w / 2 - lw * 5} y2={f.y + (f.h / 5) * k} />
+                    ))}
+                  </g>
                 ) : (
                   <line x1={f.x} y1={f.y - f.h / 2} x2={f.x} y2={f.y - f.h / 2 + Math.min(f.w, f.h) * 0.28}
                     stroke={col} strokeWidth={lw * 1.8} />
                 )}
+              </g>
+            ) : f.kind === 'geyser' ? (
+              /* THE CYLINDER, SEEN FROM ABOVE, AND ITS INLET. A plain circle is
+                 a fan with its blades missing; the double ring is the tank in
+                 its casing, and the stub is the pipework, which is the half of
+                 the mark that says this is plumbing rather than a light. */
+              <g stroke={col} strokeWidth={lw * 1.6} fill="none">
+                <circle cx={f.x} cy={f.y} r={R * 0.92} fill={col} fillOpacity="0.12" />
+                <circle cx={f.x} cy={f.y} r={R * 0.5} />
+                <line x1={f.x} y1={f.y - R * 0.92} x2={f.x} y2={f.y - R * 1.35}
+                  strokeLinecap="round" />
               </g>
             ) : (
               <g>
@@ -2546,14 +2691,19 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           rows: [
             ['Plate', `${SB_MM.along} x ${SB_MM.deep} mm each`],
             ...group.map((g, i) => [
-              `${i + 1} · ${g.servesShort || 'Board'}`,
+              `${g.name ?? i + 1} · ${g.servesShort || 'Board'}`,
               g.shortWhy || g.why || '',
             ]),
           ],
           note: 'They land within one plate of each other. Neither was moved, because'
             + ' both positions are rules. On site these would be ganged into one plate.',
         } : {
-          id: 'switchboard', label: 'Switchboard',
+          /* SB7 AND NOT "SWITCHBOARD", where the caller has numbered it. The
+             generic word names the class of thing and says nothing about WHICH
+             one, and on a plan with nine plates the card's whole job is to tell
+             you which one is under the cursor. `?? 'Switchboard'` because the
+             read-only sheet and the tests hand over boards with no name. */
+          id: 'switchboard', label: b.name ?? 'Switchboard',
           /* THE RULE, AND THEN HOW TO SAY NO TO IT. Every plate on this drawing
              is placed by a rule and none of them can be dragged, so `why` is the
              whole of what a board is — but two of the three rules now place a
@@ -2592,11 +2742,22 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                position cannot be accounted for is one somebody redraws. */
             ...(b.pastSwing ? [['Note', 'past the open leaf — the latch side is joinery']] : []),
             ...(b.poor ? [['Note', b.poor]] : []),
+            /* AN OUTLET HAS NO SWITCH ON IT AND HAS TO SAY SO. It is the one
+               plate on this drawing that may have none — see `placedBoards` in
+               electrical.js — and a card that listed a socket and stopped would
+               read as a plate somebody forgot to finish. */
+            ...(b.socketOnly ? [['Note',
+              'a socket on its own — its switch is on the board its wire runs to']] : []),
           ],
         };
 
         const picked = b.id === selBoardId;
         const flying = b.id === draggingBoardId;
+        /* AN `ink` WAS HERE, AND IT WAS RED FOR AN UNWIRED PLATE. The state is
+           gone rather than the colour: a plate somebody drops on a wall is a
+           socket outlet and wires itself the moment it exists, so no board is
+           ever sitting there unconfigured. See the note where SB_LOOSE used to
+           be in electrical.js. */
         return (
           <g key={b.id} {...feel(b.id, spec)}
             /* SELECTION IS A POINTERDOWN AND NOT A CLICK, like every other
@@ -2633,6 +2794,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 see the note by `C.grip`. Drawn OUTSIDE the plate so it does not
                 eat into the solid it is marking. */}
             {picked && (
+              <polygon points={ring} fill="none" stroke={C.grip}
+                strokeWidth={lw * 2} strokeLinejoin="round" pointerEvents="none" />
+            )}
+            {/* WHERE A WIRE WOULD LAND. The same frame in the same accent as
+                selection, because it means the same thing at the moment it is
+                shown — "this is the plate you are pointing at" — and a second
+                colour for it would be a second vocabulary to learn for a mark
+                that is on screen for the length of one drag. It cannot collide
+                with the selection frame: selecting a wire clears the board
+                selection, so nothing is ever both. */}
+            {flowGrab?.overId === b.id && !picked && (
               <polygon points={ring} fill="none" stroke={C.grip}
                 strokeWidth={lw * 2} strokeLinejoin="round" pointerEvents="none" />
             )}
@@ -3497,6 +3669,79 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           )}
         </g>
       )}
+
+      {/* --- THE HANDLES ON THE PICKED WIRE ------------------------------------
+          LAST IN THE DOCUMENT, AND THAT IS THE WHOLE REASON THIS IS NOT DRAWN
+          WITH ITS OWN WIRE. SVG hit-tests the topmost PAINTED thing, and the
+          switchboards are painted a thousand lines after the looping — so the
+          grip at a wire's board end, drawn with the wire, sat underneath the
+          plate's own hit polygon. Pressing it selected the board. There was
+          nothing wrong with the handler; the handle was simply not the thing
+          under the pointer. Everything interactive on this canvas that sits ON
+          something else has to be painted after it, and the only place that is
+          true of every layer at once is the end.
+
+          AND EVERY CIRCLE IS `.hit`, which is the second half of the same bug.
+          `.plan g, .plan circle, …{pointer-events:none}` in styles.css makes the
+          whole drawing inert by default and `.hit` is what re-enables a control
+          — see the note over that rule. A CSS declaration beats a presentation
+          attribute, so `pointerEvents="all"` written on the element did nothing
+          at all: the class is the only way in.
+
+          TWO SHAPES FOR TWO MEANINGS. The bend grips are small hollow rings
+          sitting ON the wire, because what they move is the wire. The board grip
+          is a filled ring at the plate, because what it moves is the CONNECTION
+          — it comes off one plate and lands on another.
+
+          ONLY ON THE PICKED LOOP, and that is not tidiness: forty loops with six
+          legs each is two hundred and forty handles laid over a lighting layout,
+          every one of them a target that is not a fitting. */}
+      {layers.electrical && !placing && (() => {
+        const f = flows.find((q) => q.id === selFlowId && !q.coincident);
+        if (!f) return null;
+        const all = [...(f.legs ?? []), ...(f.also?.legs ?? [])].filter((l) => l.grip);
+        return (
+          <g fill="none">
+            {onFlowGripDown && all.map((l) => (
+              <circle className="hit" key={`g${l.key}`} cx={l.grip.x} cy={l.grip.y}
+                r={lw * 3.2} fill="#fff" stroke={SB_COLOUR} strokeWidth={lw * 1.3}
+                style={{ cursor: 'grab' }}
+                onPointerDown={(e) => {
+                  e.stopPropagation(); e.preventDefault();
+                  onFlowGripDown(e, f.id, 'bend', l.key);
+                }} />
+            ))}
+            {/* THE END AT THE PLATE, drawn after the bend grips so it wins where
+                the two overlap — on a short feed leg they are a few pixels
+                apart, and the one somebody means when they press on the plate is
+                this one. */}
+            {onFlowGripDown && f.from && (
+              <circle className="hit" cx={f.from.x} cy={f.from.y} r={lw * 4.4}
+                fill={SB_COLOUR} stroke="#fff" strokeWidth={lw * 1.5}
+                style={{ cursor: 'grab' }}
+                onPointerDown={(e) => {
+                  e.stopPropagation(); e.preventDefault();
+                  onFlowGripDown(e, f.id, 'board', null);
+                }} />
+            )}
+            {/* WHERE THAT END IS RIGHT NOW, while it is being carried: a dashed
+                band from the first fitting to the pointer, and a dot under it.
+                The ring round the plate it would land on is drawn by the plate
+                itself — see `flowGrab` there. This is the whole of the feedback,
+                because the assignment is not committed until the drop. */}
+            {flowGrab?.id === f.id && f.nodes[0] && (
+              <g pointerEvents="none">
+                <line x1={f.nodes[0].x} y1={f.nodes[0].y}
+                  x2={flowGrab.at.x} y2={flowGrab.at.y}
+                  stroke={SB_COLOUR} strokeWidth={lw * 1.5}
+                  strokeDasharray={`${lw * 2} ${lw * 2}`} strokeLinecap="round" />
+                <circle cx={flowGrab.at.x} cy={flowGrab.at.y} r={lw * 3}
+                  fill={SB_COLOUR} stroke="#fff" strokeWidth={lw * 1.2} />
+              </g>
+            )}
+          </g>
+        );
+      })()}
 
       {measure?.a && (
         <g stroke={C.measure} strokeWidth={lw * 2} fill={C.measure}>

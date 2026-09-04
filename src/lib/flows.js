@@ -94,6 +94,23 @@ export const FLOW_DEFAULTS = {
   boardBulge: 0.035,
 };
 
+/**
+ * THE CHAIN BETWEEN FITTINGS, AS AGAINST THE LEG OFF THE PLATE.
+ *
+ * GREY, AND THINNER, AND THE REASON IS WHAT EACH HALF OF A LOOP SAYS. The first
+ * leg answers "where is this switched from" — the one question the electrical
+ * layer exists for, and the one a reader has to trace across a sheet with six
+ * plates on it. Everything after it says "and then it carries on to the next
+ * lamp in this row", which the row's own geometry already made obvious.
+ *
+ * Drawing all of it in the switchboard's blue at one weight spent the emphasis
+ * evenly over a figure that is not evenly interesting, and on a bay with three
+ * rows of six it made a thicket of blue arcs out of what is really three short
+ * blue lines and some joinery. See SB_COLOUR in electrical.js for the other half
+ * of the pair.
+ */
+export const WIRE_CHAIN = '#8A8A8A';
+
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const r2 = (v) => Math.round(v * 100) / 100;
 const centroid = (pts) => ({
@@ -103,7 +120,7 @@ const centroid = (pts) => ({
 const inRect = (p, r) => p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1;
 
 /**
- * ONE LOOP, AS A PATH — the board, then every fitting in order, bowed.
+ * ONE LOOP, LEG BY LEG — the board, then every fitting in order, bowed.
  *
  * A QUADRATIC PER LEG rather than one long spline through all of them. A spline
  * would be smoother and would also stop being a chain: its curvature at each
@@ -115,26 +132,86 @@ const inRect = (p, r) => p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y
  * quadratic reaches half way to its control. `bulge` is therefore the peak of
  * the visible arc and not an internal number, which is what makes it tunable by
  * eye.
+ *
+ * THE LEGS ARE THE RETURN VALUE NOW, AND THE PATH IS DERIVED FROM THEM. This
+ * used to hand back one `d` string, and one string is exactly the wrong shape
+ * for the two things a wire has to do on this canvas:
+ *
+ *   THE FIRST LEG IS NOT LIKE THE OTHERS. A loop's first leg is the one that
+ *   says "this comes off THAT plate" — it is the fact a reader is hunting for —
+ *   and the rest are a chain between lamps that are already obviously in a row.
+ *   Drawing all of them in the switchboard's blue at one weight spends the whole
+ *   emphasis on the least interesting part of the figure. One string cannot be
+ *   two weights.
+ *
+ *   AND A BEND IS A PROPERTY OF ONE LEG. A wire that crosses something somebody
+ *   wants visible is nudged off it — see `bends` — and that nudge has to land on
+ *   the leg that crosses, not on the loop.
+ *
+ * `bends` IS BY LEG KEY AND IS IN FEET. Feet for the reason `runTrims` and
+ * `boardMoves` are stored in feet: a nudge in plan pixels means something
+ * different the day somebody corrects the scale. The key is the leg's position
+ * in the chain, prefixed — see `keyPrefix`, which is how the second feed of a
+ * two-way switch gets its own keys without colliding with the loop's.
+ *
+ * IT IS A DELTA ON THE RULE AND NOT A POSITION. Zero is "however the rule bows
+ * it", so a leg nobody touched keeps following its own length as the fittings
+ * move, and a leg somebody nudged keeps the nudge on top of that. Storing the
+ * absolute offset would freeze a leg's bow at whatever the geometry was on the
+ * day it was dragged.
  */
-export function loopPath(nodes, { from = null, pxPerFt = 0, opt = {} } = {}) {
+export function loopLegs(nodes, { from = null, pxPerFt = 0, opt = {},
+                                  bends = {}, keyPrefix = '' } = {}) {
   const o = { ...FLOW_DEFAULTS, ...opt };
   const pts = from ? [from, ...nodes] : [...nodes];
-  if (pts.length < 2) return '';
+  const legs = [];
+  if (pts.length < 2) return legs;
   const cap = o.maxBulgeFt * (pxPerFt || 0) || Infinity;
-  let d = `M ${r2(pts[0].x)} ${r2(pts[0].y)}`;
   for (let k = 1; k < pts.length; k++) {
     const a = pts[k - 1], b = pts[k];
     const dx = b.x - a.x, dy = b.y - a.y;
     const L = Math.hypot(dx, dy);
     if (L < 1e-6) continue;
     const frac = from && k === 1 ? o.boardBulge : o.bulge;
-    const sag = Math.min(frac * L, cap) * 2;
     // Always to the left of travel, so every leg of one loop bows the same way.
-    const cx = (a.x + b.x) / 2 + (dy / L) * sag;
-    const cy = (a.y + b.y) / 2 - (dx / L) * sag;
-    d += ` Q ${r2(cx)} ${r2(cy)} ${r2(b.x)} ${r2(b.y)}`;
+    const nx = dy / L, ny = -dx / L;
+    const key = `${keyPrefix}${legs.length}`;
+    const bend = bends[key] ?? 0;
+    // THE RULE'S BOW, AND THEN THE HAND'S. The cap is on the rule only: a leg
+    // nobody touched must not sweep across the room, and a leg somebody dragged
+    // is exactly a request to put it somewhere the rule would not.
+    const base = Math.min(frac * L, cap);
+    const h = base + bend * (pxPerFt || 0);
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const cx = mid.x + nx * h * 2, cy = mid.y + ny * h * 2;
+    legs.push({
+      key, index: legs.length,
+      // WHICH LEG IS THE ONE OFF THE PLATE. It is the first, and only when
+      // there is a plate — a loop with no board is all chain.
+      feed: !!from && legs.length === 0,
+      a, b, mid, normal: { x: nx, y: ny }, base, bend,
+      // The point on the curve you can actually grab, which is its own peak:
+      // a quadratic reaches half way to its control, so the visible bow is `h`
+      // where the control point is `2h` out. Grabbing the control point instead
+      // would mean a handle floating twice as far off the wire as the wire is
+      // from straight.
+      grip: { x: mid.x + nx * h, y: mid.y + ny * h },
+      q: `Q ${r2(cx)} ${r2(cy)} ${r2(b.x)} ${r2(b.y)}`,
+      d: `M ${r2(a.x)} ${r2(a.y)} Q ${r2(cx)} ${r2(cy)} ${r2(b.x)} ${r2(b.y)}`,
+    });
   }
-  return d;
+  return legs;
+}
+
+/** The legs as one path, which is what a single stroked wire wants. */
+export function pathOf(legs = []) {
+  if (!legs.length) return '';
+  return `M ${r2(legs[0].a.x)} ${r2(legs[0].a.y)} ` + legs.map((l) => l.q).join(' ');
+}
+
+/** The whole loop as one `d`. Kept for every reader that wants one stroke. */
+export function loopPath(nodes, opts = {}) {
+  return pathOf(loopLegs(nodes, opts));
 }
 
 /** The chain, oriented so the wire comes in at the end nearest the board. */
@@ -211,7 +288,47 @@ export function planFlows({
   spots = [],
   tracks = [],
   boards = [],
+  /* THE SOCKET OUTLETS IN THIS SPACE — `[{ id, x, y, amps }]`, in plan pixels.
+     Plates with one socket and no switch, dropped on a wall by hand. See
+     `placedBoards` in electrical.js for what one is and why it is the only
+     switchboard allowed to have no switch on it; section 0 below turns each one
+     into a flow, which is what gives it its switch — on somebody else's plate. */
+  outlets = [],
+  /* EVERY PLATE ON THE SHEET, and not only this room's — the pool a HAND
+     ASSIGNMENT is allowed to name. It defaults to `boards`, so a caller that
+     does not pass one behaves exactly as before.
+
+     TWO LISTS AND NOT ONE, WHICH IS THE WHOLE POINT. `boards` is what the rules
+     may fall back to, and it has to stay this room's own: "the nearest plate"
+     resolved against the whole drawing would switch a bedroom's ceiling from a
+     board in the hall the moment the hall's plate happened to be nearer the
+     party wall. An ASSIGNMENT is the opposite case — somebody dragged this
+     wire's end onto that plate and said so — and refusing it because the plate
+     is in the next room would refuse the one thing the gesture is for. A
+     balcony is already switched from indoors; see `outdoorFeeds` in App. */
+  boardPool = null,
   owner = new Map(),
+  /* WHERE A WIRE'S BOARD END WAS DRAGGED TO: flow id -> board id.
+
+     AN OVERRIDE ON A DERIVED FITTING, the fourth of that shape in this app —
+     see `boardsOff`, `boardMoves` and `runTrims`. The rules still work out every
+     flow and still say which plate it would run off; an entry here replaces THAT
+     ONE DECISION and nothing else. What the flow is, what is on it and how it is
+     drawn are untouched, which is right: moving a wire's end from one board to
+     another is a decision about which switch operates these lamps, and it is
+     precisely the decision a person is better placed to make than a distance
+     test — the rule's fallback is literally "the nearest plate that can carry a
+     ceiling", and nearest is not always where the switch belongs.
+
+     IT NAMES A BOARD AND NOT A POSITION, so the wire follows the plate if the
+     plate is later slid along its wall. An id that no longer resolves — a board
+     somebody deleted — falls back to the rule rather than to nothing. */
+  assign = {},
+  /* AND WHERE ITS BENDS WERE NUDGED TO: flow id -> { leg key -> feet }.
+     See `loopLegs`. Two levels rather than one flat map because a leg key means
+     nothing without its flow, and because clearing a wire's bends should be one
+     delete. */
+  bends = {},
   zones = [],
   pxPerFt = 0,
   opts = {},
@@ -224,6 +341,10 @@ export function planFlows({
 
   const live = boards.filter((b) => !b.rejected && b.point);
   const byId = new Map(live.map((b) => [b.id, b]));
+  // ...AND EVERY PLATE AN ASSIGNMENT MAY NAME. See `boardPool`.
+  const byIdAll = boardPool
+    ? new Map(boardPool.filter((b) => !b.rejected && b.point).map((b) => [b.id, b]))
+    : byId;
   // THE PLATES UNDER THE SCONCES. Read by two sections — the sconces themselves
   // and the fan's second point — so it is settled once here rather than
   // filtered twice with two chances to disagree about what a bedside board is.
@@ -236,8 +357,35 @@ export function planFlows({
   // common case rather than the odd one.
   const general = live.filter(servesBay);
   const cellById = new Map(cells.map((c) => [c.id, c]));
-  let seq = 0;
-  const id = () => `fl-${room.id}-${seq++}`;
+
+  /* AN ID THAT SAYS WHICH FLOW IT IS, AND IT USED TO BE A COUNTER.
+     `fl-<room>-0`, `fl-<room>-1`, in the order the sections below happen to
+     run. That was fine for exactly as long as nothing outside one render knew
+     these ids — and it stopped being fine the moment a wire could be dragged
+     onto another board, for precisely the reason electrical.js gives about its
+     own board ids. A stored override against `fl-r1-7` means "whichever flow
+     comes eighth next time": add one downlight to a chunk earlier in the room
+     and somebody's reassignment silently moves from the wire they dragged onto
+     a wire they never touched. Nothing on screen would say so.
+
+     SO THE TAG IS WHAT THE FLOW IS FOR. A track piece names its track and its
+     run, a cove names the accent, a fan names the object, a row names its chunk
+     and its index within that chunk. Every one of those survives the edits that
+     do not remove the thing the flow exists for — which is the same bar
+     electrical.js sets and the same one it clears.
+
+     AND THE COLLISION GUARD IS NOT DECORATION. Two spot clusters can, in
+     principle, anchor on the same fitting id after a regroup; duplicate ids
+     would silently drop one wire's overrides onto the other's. A suffix is a
+     worse id than a unique tag and a better one than a collision. */
+  const used = new Set();
+  const id = (tag) => {
+    const base = `fl-${room.id}-${tag}`;
+    let k = base;
+    for (let n = 2; used.has(k); n++) k = `${base}~${n}`;
+    used.add(k);
+    return k;
+  };
 
   // WHICH BAY A POINT IS IN, and the nearest one when it is in none. A fitting
   // on a bay boundary, or in the sliver a decomposition left over, still has to
@@ -272,19 +420,36 @@ export function planFlows({
    * alternative — each rule pathing its own — is how two flows on one drawing
    * end up bowing opposite ways.
    */
-  const add = ({ kind, label, what, nodes, bayKey, order = 'chain',
+  const add = ({ kind, tag, label, what, nodes, bayKey, order = 'chain',
                  board: given = null, also = null, extra = {} }) => {
     const pts = nodes.filter((n) => n && Number.isFinite(n.x) && Number.isFinite(n.y));
     if (!pts.length) return null;
-    // `given` NAMES THE PLATE OUTRIGHT and beats the bay, for the one case where
-    // the fitting and its board were placed as a pair: a bedside sconce and the
-    // switch under it. See the bedsides below — that join is an id, not a guess.
-    const board = given ?? boardFor(bayKey, centroid(pts));
+    /* THE ID BEFORE THE BOARD, because the board may be an answer keyed on the
+       id. That inverts the old order and it is the only structural consequence
+       of hand assignment reaching in here. */
+    const flowId = id(tag ?? kind);
+    /* A HAND ASSIGNMENT BEATS EVERYTHING, including `given`. `given` names the
+       plate outright for the one case where the fitting and its board were
+       placed as a pair — a bedside sconce and the switch under it — and that is
+       a very good rule which a person is nonetheless allowed to overrule: they
+       dragged the wire's end onto another plate and there is nothing ambiguous
+       about what they meant. An id that resolves to nothing falls through to the
+       rules, so deleting a board un-assigns the wires that named it rather than
+       leaving them switched from a plate that is not there. */
+    const forced = assign[flowId] ? byIdAll.get(assign[flowId]) ?? null : null;
+    const board = forced ?? given ?? boardFor(bayKey, centroid(pts));
     const seat = order === 'walk' ? walk(pts, board?.point)
       : order === 'fixed' ? pts
       : towards(pts, board?.point);
+    const myBends = bends[flowId] ?? {};
+    const legs = loopLegs(seat, { from: board?.point ?? null, pxPerFt, opt: o,
+                                  bends: myBends });
     const flow = {
-      id: id(), roomId: room.id, kind, label, what,
+      id: flowId, roomId: room.id, kind, label, what,
+      // WHETHER THE PLATE IS THE RULE'S OR A PERSON'S, which the card says and
+      // the canvas does not draw. A wire nobody moved must not be marked as
+      // moved, for the same reason a board nobody dragged must not be.
+      assigned: !!forced,
       bayKey: bayKey ?? null,
       boardId: board?.id ?? null,
       // WHICH PLATE, IN WORDS. The id is what the drawing joins on and is
@@ -295,7 +460,13 @@ export function planFlows({
       from: board?.point ?? null,
       nodes: seat,
       count: seat.length,
-      path: loopPath(seat, { from: board?.point ?? null, pxPerFt, opt: o }),
+      /* THE LEGS, AND THE WHOLE PATH DERIVED FROM THEM — not two calculations
+         of one figure. The canvas draws the legs (the feed one weight and
+         colour, the chain another) and hovers the path, and if those came from
+         two calls the hit target could sit off the wire the day one of them
+         changed. */
+      legs,
+      path: pathOf(legs),
       // NOTHING TO DRAW, AND THAT IS THE TRUTH RATHER THAN A GAP.
       //
       // A bedside sconce and the plate that switches it are ONE POINT on a
@@ -323,19 +494,60 @@ export function planFlows({
         boardId: also.id,
         boardLabel: also.servesShort || 'Board',
         from: also.point,
-        path: loopPath(
-          // FROM THE NEAREST FITTING ON THE FLOW, not from the whole chain
-          // again. The loop is already drawn; this leg only has to say "and
-          // from here too", so it reaches the one fitting closest to the second
-          // plate and stops.
-          [seat.reduce((a, b) => (dist(b, also.point) < dist(a, also.point) ? b : a))],
-          { from: also.point, pxPerFt, opt: o }),
+        ...(() => {
+          /* FROM THE NEAREST FITTING ON THE FLOW, not from the whole chain
+             again. The loop is already drawn; this leg only has to say "and
+             from here too", so it reaches the one fitting closest to the second
+             plate and stops.
+             ITS OWN KEY SPACE, `a0`, so a bend nudged onto the second feed does
+             not land on the first leg of the loop. One flow, two chains of legs,
+             and the keys have to say which. */
+          const near = seat.reduce((a, b) =>
+            (dist(b, also.point) < dist(a, also.point) ? b : a));
+          const aLegs = loopLegs([near], { from: also.point, pxPerFt, opt: o,
+                                           bends: myBends, keyPrefix: 'a' });
+          return { legs: aLegs, path: pathOf(aLegs) };
+        })(),
       } : null,
       ...extra,
     };
     flows.push(flow);
     return flow;
   };
+
+  // --- 0. the socket outlets ------------------------------------------------
+  //
+  // A SOCKET IS A FITTING AND ITS SWITCH IS SOMEWHERE ELSE, which is the whole
+  // of this section and the whole of what makes an outlet work. Every socket
+  // needs a switch — switchboards.js will not build one without — and the rule
+  // has never said the switch has to be on the same plate. On a real job it
+  // almost never is: the socket is where you plug something in and the switch is
+  // by the door with the others.
+  //
+  // SO IT IS A FLOW, EXACTLY LIKE A SCONCE'S. One node, at the outlet; one
+  // board, picked the ordinary way — the nearest plate that can actually switch
+  // something. That single decision is what buys everything else for nothing:
+  // the wire is drawn, it can be dragged onto a different plate, its bends can
+  // be nudged, and the SWITCH follows, because the switch is a module that
+  // exists on whichever board the flow lands on. See `pointsFromFlows` in
+  // switchboards.js.
+  //
+  // FIRST IN THE FILE because an outlet is the one flow that is not about light
+  // at all, and burying it among the rows would suggest it is a kind of them.
+  //
+  // ITS RATING TRAVELS WITH IT. A 16A outlet is not controlled by a 6A switch,
+  // so the flow carries `amps` and the board's module is built at that rating.
+  for (const so of outlets) {
+    if (!Number.isFinite(so?.x) || !Number.isFinite(so?.y)) continue;
+    add({
+      kind: 'socket', tag: `socket-${so.id}`,
+      label: so.amps ? `${so.amps}A socket` : 'Socket',
+      what: 'a socket outlet on the wall, switched from another board',
+      nodes: [{ id: so.id, x: so.x, y: so.y, what: 'a socket outlet' }],
+      bayKey: bayAt(so)?.key ?? null, order: 'fixed',
+      extra: { outletId: so.id, amps: so.amps ?? null },
+    });
+  }
 
   // --- 1. the tracks --------------------------------------------------------
   //
@@ -424,6 +636,10 @@ export function planFlows({
       const modules = mine.length + heads.length;
       add({
         kind: 'track',
+        // THE PIECE, AND NOT THE ENTRY. Two parallel rails are two flows off
+        // one `tracks` entry — see `pieces` above — so the run index is part of
+        // the name or the second rail's overrides would land on the first.
+        tag: `track-${t.id}-${piece.runIdx ?? 'all'}`,
         // THE SIDE IS IN THE NAME WHERE THERE IS MORE THAN ONE PIECE. Two cards
         // both reading "Track" on one drawing is two hover cards nobody can tell
         // apart, on precisely the arrangement where telling them apart is the
@@ -469,7 +685,7 @@ export function planFlows({
       ? pts.reduce((x, y) => (dist(y, board.point) < dist(x, board.point) ? y : x))
       : pts[0];
     add({
-      kind: a.kind, label,
+      kind: a.kind, label, tag: `${a.kind}-${a.id}`,
       what: `${a.label || label}, fed at ${a.loop ? 'a corner' : 'one end'}`,
       nodes: [{ id: a.id, x: feed.x, y: feed.y, what: a.label || label }],
       bayKey: bay?.key ?? null, order: 'fixed',
@@ -503,7 +719,7 @@ export function planFlows({
     const p = pointOf(sc);
     if (!Number.isFinite(p.x)) continue;
     add({
-      kind: 'bedside', label: 'Bedside',
+      kind: 'bedside', label: 'Bedside', tag: `bedside-${sc.id}`,
       what: `the sconce ${sc.what || 'beside the bed'}, off the plate below it`,
       nodes: [p], order: 'fixed',
       board: bedsideBoards.find((b) => b.fromId === sc.id) ?? null,
@@ -524,11 +740,14 @@ export function planFlows({
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(sc);
   }
-  for (const [, set] of groups) {
+  for (const [gk, set] of groups) {
     const pts = set.map(pointOf);
     if (pts.some((p) => !Number.isFinite(p.x))) continue;
     add({
-      kind: 'wall', label: 'Wall lights',
+      // THE GROUP IS THE NAME, and `group` is not a label put on afterwards —
+      // see accentPlace: it is WHY those sconces are where they are, which is
+      // exactly the kind of thing an id should be keyed to.
+      kind: 'wall', label: 'Wall lights', tag: `wall-${gk}`,
       what: `${pts.length} wall light${pts.length === 1 ? '' : 's'}`,
       nodes: pts, bayKey: bayAt(centroid(pts))?.key ?? null,
     });
@@ -569,7 +788,7 @@ export function planFlows({
         (dist(b.point, main.point) > dist(a.point, main.point) ? b : a))
       : null;
     add({
-      kind: 'object', label,
+      kind: 'object', label, tag: `object-${ob.id}`,
       what: `${label.toLowerCase()} — switched on its own`
         + (twoWay ? ', and from the far bedside as well' : ''),
       nodes: [{ id: ob.id, x: ob.x, y: ob.y, what: label }],
@@ -599,6 +818,14 @@ export function planFlows({
     for (const group of cluster(placedSpots, reach)) {
       add({
         kind: 'spots',
+        /* THE CLUSTER'S LOWEST FITTING ID, which is the most stable name a
+           cluster has. A cluster is not a thing anybody placed — it is
+           recovered from proximity — so it has no id of its own, and its
+           MEMBERSHIP can change when a spot is added nearby. The anchor
+           survives everything that does not remove the anchor itself, and the
+           collision guard in `id` covers the case where two clusters end up
+           claiming one. */
+        tag: `spots-${group.map((sp) => sp.id).sort()[0]}`,
         label: group.length === 1 ? 'Spot' : 'Spots',
         what: `${group.length} directional spot${group.length === 1 ? '' : 's'}`
           + (group.length > 1 ? ', within reach of each other' : ''),
@@ -670,11 +897,18 @@ export function planFlows({
       if (!mine.length) continue;
       for (const row of rowsOf(ch, mine, along)) all.push({ ch, row, along });
     }
+    // THE ROW'S INDEX WITHIN ITS OWN CHUNK, for the tag — NOT `k`, which counts
+    // across every chunk in the bay. `k` is right for the LABEL ("Row 3 of 7"
+    // is a statement about the bay) and wrong for an id: adding a light to the
+    // first chunk renumbers every row after it, and every override with it.
+    const perChunk = new Map();
     all.forEach(({ ch, row }, k) => {
       const n = row.length;
       const long = along ?? ((ch.x1 - ch.x0) >= (ch.y1 - ch.y0) ? 'x' : 'y');
+      const within = (perChunk.get(ch.id) ?? 0) + 1;
+      perChunk.set(ch.id, within);
       add({
-        kind: 'row',
+        kind: 'row', tag: `row-${ch.id}-${within}`,
         label: all.length > 1 ? `Row ${k + 1}` : 'Downlights',
         what: `${n} downlight${n === 1 ? '' : 's'} in a row across the`
           + ` ${long === 'x' ? 'width' : 'depth'} of this bay`
@@ -743,7 +977,7 @@ export function planFlows({
     });
     if (sideNodes.length) {
       add({
-        kind: 'bedsides', label: 'Beside the bed',
+        kind: 'bedsides', label: 'Beside the bed', tag: `bedsides-${bay.key ?? 'all'}`,
         what: `${sideNodes.length} downlight${sideNodes.length === 1 ? '' : 's'} in the bands`
           + ' either side of the bed, on one switch',
         nodes: sideNodes, bayKey: bay.key, order: 'fixed',
@@ -773,7 +1007,7 @@ export function planFlows({
       const rest = footLights.filter((l, i) => ds[i] - near >= pitch / 2);
       if (first.length) {
         add({
-          kind: 'bedfoot', label: 'Foot of the bed',
+          kind: 'bedfoot', label: 'Foot of the bed', tag: `bedfoot-${bay.key ?? 'all'}`,
           what: `${first.length} downlight${first.length === 1 ? '' : 's'} in the row`
             + ' immediately past the foot of the bed',
           nodes: first

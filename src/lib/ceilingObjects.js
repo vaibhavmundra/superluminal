@@ -43,8 +43,31 @@ export const CEILING_TYPES = [
     diaFt: 1200 * MM, sweepsMm: [900, 1200] },
   { id: 'chandelier', kind: 'chandelier', label: 'Chandelier', colour: '#404040',
     diaFt: 900 * MM },
-  { id: 'ac',         kind: 'ac',         label: 'AC unit',    colour: '#404040',
+  { id: 'ac',         kind: 'ac',         label: 'Cassette AC', colour: '#404040',
     wFt: 900 * MM, hFt: 900 * MM },
+  /* --- AND TWO THINGS THAT ARE NOT ON THE CEILING AT ALL --------------------
+     A SPLIT AC'S INDOOR UNIT AND A GEYSER ARE WALL-MOUNTED. They are in this
+     catalogue because they are placed by the same gesture, drawn by the same
+     code and ordered on the same schedule — and they are marked `offCeiling`
+     because the one thing this file's geometry is FOR does not apply to them.
+
+     `offCeiling` MEANS "THE GRID DOES NOT MOVE FOR THIS". Everything else here
+     reserves clearance: a downlight cannot be under a fan, inside a cassette or
+     over a hatch, so the planner is handed a circle and lays out around it. A
+     split unit sits at 2100mm on a wall and a geyser above a toilet door, and a
+     downlight in the middle of the ceiling is not obstructed by either. Feeding
+     them in as obstacles would punch holes in a layout for objects that are not
+     in its way — see `ceilingObstaclesPx` in App.jsx, which is the one place
+     this flag is read.
+
+     THEY ARE STILL DRAWN AND STILL SCHEDULED. What they are for is the
+     ELECTRICAL drawing: a split AC and a geyser are each a dedicated circuit at
+     a rating a lighting board does not carry, and putting them on the plan is
+     how the person specifying the switchboards knows they are there. */
+  { id: 'split_ac',   kind: 'split_ac',   label: 'Split AC',   colour: '#404040',
+    wFt: 1000 * MM, hFt: 250 * MM, offCeiling: true },
+  { id: 'geyser',     kind: 'geyser',     label: 'Geyser',     colour: '#404040',
+    diaFt: 450 * MM, offCeiling: true },
   { id: 'trapdoor',   kind: 'trapdoor',   label: 'Trap door',  colour: '#404040',
     wFt: 600 * MM, hFt: 600 * MM },
 ];
@@ -53,8 +76,23 @@ export const CEILING_TYPES = [
  * Round or rectangular, which is the only distinction any of the maths cares
  * about. A trap door and an AC cassette differ in what they are called, what
  * they are drawn as and what size they default to — and in nothing else.
+ *
+ * A SET AND NOT A CHAIN OF `||`. It was two comparisons and it is four kinds
+ * now; a chain that has to be edited in step with the catalogue is a chain that
+ * will one day be missing the newest entry, and the symptom of that is an
+ * object drawn as a circle whose width and height are the only sizes it has.
  */
-export const isRect = (o) => o?.kind === 'ac' || o?.kind === 'trapdoor';
+const RECT_KINDS = new Set(['ac', 'trapdoor', 'split_ac']);
+export const isRect = (o) => RECT_KINDS.has(o?.kind);
+
+/**
+ * DOES THE CEILING GRID HAVE TO KEEP OFF THIS? Read off the catalogue rather
+ * than off the object, so an object stored before the flag existed still
+ * answers correctly, and so the answer lives in one table.
+ */
+export const OFF_CEILING = new Set(
+  CEILING_TYPES.filter((t) => t.offCeiling).map((t) => t.kind));
+export const offCeiling = (o) => OFF_CEILING.has(o?.kind);
 
 export const CEILING_BY_ID = Object.fromEntries(CEILING_TYPES.map((t) => [t.id, t]));
 
@@ -122,6 +160,10 @@ export function toObstaclePx(o, pxPerFt) {
     h: (o.hFt || 0) * s,
     rot: o.rot || 0,
     shape: isRect(o) ? 'rect' : 'circle',
+    // CARRIED THROUGH, so a consumer holding only the pixel-space obstacle can
+    // still tell whether the grid owes it anything. See the note by the two
+    // wall-mounted entries in the catalogue.
+    offCeiling: offCeiling(o),
     source: 'placed',
   };
 }

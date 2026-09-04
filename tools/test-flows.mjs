@@ -15,7 +15,9 @@
 // ---------------------------------------------------------------------------
 
 import { planLights } from '../src/lib/planner.js';
-import { planFlows, loopPath, cluster, flowSummary, FLOW_DEFAULTS } from '../src/lib/flows.js';
+import { planFlows, loopPath, loopLegs, pathOf, cluster, flowSummary, FLOW_DEFAULTS }
+  from '../src/lib/flows.js';
+import { COUNTRIES, pointsFromFlows } from '../src/lib/switchboards.js';
 import { planSwitchboards, planChunkBoards, bayWalls, wallRuns, asDrawn,
          px, SB_MM, servesBay, CHUNK_BOARD } from '../src/lib/electrical.js';
 
@@ -754,6 +756,253 @@ console.log('\n-- the arcs --');
 
   ok(loopPath([A], {}) === '', 'one fitting and no board is not a path');
   ok(loopPath([], {}) === '', 'and neither is nothing');
+}
+
+console.log('\n-- a socket outlet wires itself --');
+{
+  /* THE ONE PLATE WITH NO SWITCH ON IT. A socket dropped on a wall is a fitting
+     rather than a board: it makes a flow of its own, back to the nearest plate
+     that can switch something, and THAT plate grows the module. Everything else
+     — the wire, its bends, dragging its end onto a different board — falls out
+     of it being an ordinary flow. */
+  const g = lay([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }]);
+  const A = { id: 'sb-A', roomId: 'r1', role: 'door', servesShort: 'Door',
+              point: { x: 0, y: 0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
+              alongPx: 20, deepPx: 8 };
+  const B = { id: 'sb-B', roomId: 'r1', role: 'bay', servesShort: 'Bay',
+              point: { x: 30 * PPF, y: 12 * PPF }, along: { x: 1, y: 0 },
+              inward: { x: 0, y: -1 }, alongPx: 20, deepPx: 8 };
+  const outlet = { id: 'sb-hand-1', x: 2 * PPF, y: 0, amps: 16 };
+
+  const { flows } = wire(g, { boards: [A, B], outlets: [outlet] });
+  const so = flows.find((f) => f.kind === 'socket');
+  ok(!!so, 'the outlet produced a flow of its own');
+  ok(so.outletId === 'sb-hand-1', 'which names the outlet it is for');
+  ok(so.id.endsWith('socket-sb-hand-1'), `and is named after it (${so.id})`);
+  ok(so.count === 1 && so.nodes[0].x === outlet.x, 'one node, at the socket');
+  ok(so.amps === 16, 'carrying the rating, so the switch is built to match');
+  ok(so.boardId === A.id,
+    `and it runs back to the NEAREST plate that can switch it (${so.boardId})`);
+  ok(so.from.x === A.point.x && so.from.y === A.point.y, 'the wire leaves that plate');
+  ok(so.legs.length === 1 && so.legs[0].feed, 'one leg, and it is a feed');
+
+  // A SOCKET IS NOT SOMEWHERE A CEILING CAN BE SWITCHED FROM, which is what
+  // keeps it out of `general` — but it is not in `boards` at all here, so what
+  // this really guards is that adding one changed nothing about the rest.
+  const bare = wire(g, { boards: [A, B] }).flows;
+  ok(flows.length === bare.length + 1, 'and nothing else in the room gained a flow');
+  ok(bare.every((f, i) => f.boardId
+    === flows.filter((q) => q.kind !== 'socket')[i].boardId),
+    '...nor changed the plate it runs off');
+
+  // MOVED ONTO ANOTHER BOARD, which is the point of it being a flow: the switch
+  // is a module on whichever plate the wire lands on, so it moves too.
+  const moved = wire(g, { boards: [A, B], outlets: [outlet],
+                          assign: { [so.id]: B.id } }).flows
+    .find((f) => f.kind === 'socket');
+  ok(moved.boardId === B.id && moved.assigned, 'its wire can be dragged onto another plate');
+  ok(moved.amps === 16, 'and it takes its rating with it');
+
+  ok(wire(g, { boards: [A, B], outlets: [{ id: 'x' }] }).flows
+    .some((f) => f.kind === 'socket') === false,
+    'an outlet with no position makes no flow rather than a flow at NaN');
+}
+
+console.log('\n-- outlet and switchboard, converted both ways --');
+{
+  /* THE CONVERSION IS THE POINT AND IT REMOVES NOTHING. Stop treating a plate
+     as an outlet and its flow simply stops being produced — so the wire is gone
+     and the switch on the far board is gone with it, not because anything went
+     and deleted them but because both were only ever a function of that flow.
+     Treat it as one again and both are back. This section is that round trip,
+     run through the pass rather than argued about.
+     WHICH DIRECTION IS WHICH IS A UI QUESTION and is not this file's business:
+     adding any point to an outlet converts it, and a button converts it back.
+     What the pass sees is a plate in the `outlets` list or not in it. */
+  const g = lay([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }]);
+  const A = { id: 'sb-A', roomId: 'r1', role: 'door', servesShort: 'Door',
+              point: { x: 0, y: 0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
+              alongPx: 20, deepPx: 8 };
+  const hand = { id: 'sb-hand-1', roomId: 'r1', role: 'placed', servesShort: 'Board',
+                 point: { x: 20 * PPF, y: 0 }, along: { x: 1, y: 0 },
+                 inward: { x: 0, y: 1 }, alongPx: 20, deepPx: 8 };
+  const outlet = { id: hand.id, x: hand.point.x, y: hand.point.y, amps: 16 };
+
+  // AS AN OUTLET: it is not a board the room may use, and it makes a flow.
+  const asOut = wire(g, { boards: [A], outlets: [outlet] }).flows;
+  const so = asOut.find((f) => f.kind === 'socket');
+  ok(!!so && so.boardId === A.id, 'as an outlet it wires itself to the door board');
+  ok(pointsFromFlows(COUNTRIES.IN, asOut, A.id).some(
+    (p) => p.kind === 'switch' && p.amps === 16),
+    '...and that board carries a 16A switch for it');
+  ok(asOut.filter((f) => f.boardId === hand.id).length === 0,
+    'and nothing at all is switched from the outlet');
+
+  // AS A SWITCHBOARD: no flow of its own, and it is a plate like any other.
+  const asBoard = wire(g, { boards: [A, hand], outlets: [] }).flows;
+  ok(!asBoard.some((f) => f.kind === 'socket'), 'converted over, the outlet flow is gone');
+  ok(!pointsFromFlows(COUNTRIES.IN, asBoard, A.id).some((p) => p.forOutlet),
+    '...so the switch on the door board went with it');
+  ok(asBoard.length === asOut.length - 1,
+    'one fewer flow in the room, and it is that one');
+
+  // AND BACK AGAIN, byte for byte — the conversion has no residue.
+  const again = wire(g, { boards: [A], outlets: [outlet] }).flows;
+  ok(again.map((f) => `${f.id}:${f.boardId}`).join() ===
+     asOut.map((f) => `${f.id}:${f.boardId}`).join(),
+    'and converting back puts the room back exactly as it was');
+}
+
+console.log('\n-- ids that survive an edit --');
+{
+  /* THE WHOLE REASON STABLE IDS EXIST. A hand assignment and a hand bend are
+     stored against a flow id, so an id that renumbers when a light is added is
+     an override that silently moves onto a wire nobody touched. This section is
+     the guard: light a room, light it again with one more fitting in it, and
+     the flows that did not change must still be called what they were. */
+  const poly = [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }];
+  const g = lay(poly);
+  const before = wire(g).flows;
+  ok(before.every((f) => !/-\d+$/.test(f.id) || /row-/.test(f.id)),
+    'no flow is named by a bare counter any more');
+  ok(before.every((f) => f.id.startsWith(`fl-${g.room.id}-`)), 'every id names its room');
+  ok(new Set(before.map((f) => f.id)).size === before.length, 'and no two collide');
+
+  // The same room, laid out again: identical ids, in the same order.
+  const again = wire(lay(poly)).flows;
+  ok(again.map((f) => f.id).join() === before.map((f) => f.id).join(),
+    'the same room lays out to the same ids');
+
+  // A ROW IS NAMED BY ITS CHUNK AND ITS INDEX WITHIN THAT CHUNK, which is what
+  // makes it survive a row appearing earlier in the bay.
+  const rows = before.filter((f) => f.kind === 'row');
+  ok(rows.every((f) => f.id.includes(`row-${f.chunk}-`)),
+    'a row names the chunk it is a row of');
+
+  // A FITTING NAMES THE FITTING. Add a fan and it is `object-<its id>`.
+  const withFan = wire(g, { objects: [{ id: 'fan-xyz', kind: 'fan', ...toPx({ x: 15, y: 6 }) }] });
+  const fan = withFan.flows.find((f) => f.kind === 'object');
+  ok(fan?.id.endsWith('object-fan-xyz'), `the fan's flow names the fan (got ${fan?.id})`);
+  // ...and adding it did not rename the rows that were already there.
+  const stillThere = withFan.flows.filter((f) => f.kind === 'row').map((f) => f.id);
+  ok(rows.every((f) => stillThere.includes(f.id)),
+    'and putting a fan in the room renamed none of the existing wires');
+}
+
+console.log('\n-- a wire dragged onto another plate --');
+{
+  const poly = [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }];
+  const g = lay(poly);
+  const A = { id: 'sb-A', roomId: 'r1', role: 'door', servesShort: 'Door',
+              point: { x: 0, y: 0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
+              alongPx: 20, deepPx: 8 };
+  const B = { id: 'sb-B', roomId: 'r1', role: 'bay', servesShort: 'Bay',
+              point: { x: 30 * PPF, y: 12 * PPF }, along: { x: 1, y: 0 },
+              inward: { x: 0, y: -1 }, alongPx: 20, deepPx: 8 };
+  const base = wire(g, { boards: [A, B] }).flows;
+  const target = base[0];
+  ok(!!target.boardId, 'to begin with the rules pick a plate');
+  ok(target.assigned === false, 'and say it is theirs and not a hand\'s');
+
+  const other = target.boardId === A.id ? B.id : A.id;
+  const moved = wire(g, { boards: [A, B], assign: { [target.id]: other } }).flows;
+  const m = moved.find((f) => f.id === target.id);
+  ok(m.boardId === other, 'an assignment moves the wire onto the named plate');
+  ok(m.assigned === true, '...and the flow says so, for the card');
+  ok(m.from.x === (other === A.id ? A : B).point.x, 'the wire now leaves that plate');
+  ok(moved.filter((f) => f.id !== target.id).every((f, i) =>
+    f.boardId === base.filter((q) => q.id !== target.id)[i].boardId),
+    'and no other wire in the room moved');
+
+  // A NAME THAT NO LONGER RESOLVES FALLS BACK TO THE RULES, so deleting a board
+  // un-assigns the wires that named it rather than leaving them fed by nothing.
+  const gone = wire(g, { boards: [A, B], assign: { [target.id]: 'sb-deleted' } }).flows;
+  const gf = gone.find((f) => f.id === target.id);
+  ok(gf.boardId === target.boardId && !gf.assigned,
+    'a board that is not there any more is not an assignment');
+
+  // THE POOL IS WHAT AN ASSIGNMENT MAY NAME, and it is not the fallback list.
+  const far = { ...A, id: 'sb-far', point: { x: -900, y: -900 } };
+  const cross = wire(g, { boards: [A, B], boardPool: [A, B, far],
+                          assign: { [target.id]: 'sb-far' } }).flows;
+  ok(cross.find((f) => f.id === target.id).boardId === 'sb-far',
+    'a plate in the pool can be named even though the rules would never pick it');
+  ok(cross.filter((f) => f.id !== target.id).every((f) => f.boardId !== 'sb-far'),
+    '...and the rules still never pick it');
+}
+
+console.log('\n-- a bend, through the pass --');
+{
+  const g = lay([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }]);
+  const A = { id: 'sb-A', roomId: 'r1', role: 'door', servesShort: 'Door',
+              point: { x: 0, y: 0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
+              alongPx: 20, deepPx: 8 };
+  const plain = wire(g, { boards: [A] }).flows[0];
+  const bent = wire(g, { boards: [A], bends: { [plain.id]: { 1: 2 } } }).flows
+    .find((f) => f.id === plain.id);
+  ok(plain.legs.length > 1, 'the loop has more than one leg to bend');
+  ok(bent.legs[0].d === plain.legs[0].d, 'the leg nobody touched is untouched');
+  ok(bent.legs[1].d !== plain.legs[1].d, 'and the one that was nudged moved');
+  ok(bent.legs[1].bend === 2, 'by the two feet it was given');
+  ok(bent.path === pathOf(bent.legs), 'the whole path still comes from the legs');
+  // A bend belongs to ONE wire.
+  const neighbour = wire(g, { boards: [A], bends: { [plain.id]: { 1: 2 } } }).flows
+    .find((f) => f.id !== plain.id);
+  const clean = wire(g, { boards: [A] }).flows.find((f) => f.id !== plain.id);
+  ok(!neighbour || neighbour.path === clean.path, 'and to no other');
+}
+
+console.log('\n-- the legs, one by one --');
+{
+  const A = { x: 0, y: 0 }, Bp = { x: 100, y: 0 }, Cp = { x: 200, y: 0 };
+  const legs = loopLegs([Bp, Cp], { from: A, pxPerFt: PPF });
+  ok(legs.length === 2, `two legs (got ${legs.length})`);
+  ok(legs[0].feed && !legs[1].feed, 'the first is the feed and the rest are chain');
+  ok(legs.map((l) => l.key).join() === '0,1', 'keyed by position in the chain');
+  ok(legs.every((l) => l.d.startsWith('M ')), 'each leg is a path in its own right');
+  ok(pathOf(legs) === loopPath([Bp, Cp], { from: A, pxPerFt: PPF }),
+    'and the whole path is exactly the legs, joined');
+
+  // The grip sits ON the wire — half way to the control point, which is where
+  // a quadratic actually reaches.
+  const l = legs[1];
+  const cy = Number(l.q.match(/Q [\d.-]+ ([\d.-]+)/)[1]);
+  ok(near(l.grip.y, cy / 2, 0.01), `the grip is on the curve, not on the control (${l.grip.y})`);
+  ok(near(l.grip.x, 150, 0.01), 'and half way along it');
+  ok(near(Math.hypot(l.normal.x, l.normal.y), 1), 'the normal is a unit vector');
+
+  ok(loopLegs([A], {}).length === 0, 'one fitting and no board is no legs');
+  ok(pathOf([]) === '', 'and no legs is no path');
+
+  // A LOOP WITH NO BOARD IS ALL CHAIN. Nothing is a feed if there is nothing to
+  // feed from, which is what the canvas needs to know not to paint one blue.
+  ok(loopLegs([A, Bp], { pxPerFt: PPF }).every((g) => !g.feed),
+    'no plate, no feed leg');
+}
+
+console.log('\n-- a bend is a delta on the rule --');
+{
+  const A = { x: 0, y: 0 }, Bp = { x: 100, y: 0 };
+  const plain = loopLegs([Bp], { from: A, pxPerFt: PPF })[0];
+  const bent = loopLegs([Bp], { from: A, pxPerFt: PPF, bends: { 0: 1 } })[0];
+  ok(near(bent.base, plain.base), 'the rule\'s own bow is unchanged by a nudge');
+  ok(bent.bend === 1, 'the leg reports the nudge it is carrying');
+  ok(near(bent.grip.y - plain.grip.y, plain.normal.y * PPF, 0.01),
+    'and one foot of bend moves the arc one foot along its normal');
+  // ZERO IS "HOWEVER THE RULE BOWS IT", which is what makes a stored bend safe
+  // to keep while the fittings move.
+  ok(loopLegs([Bp], { from: A, pxPerFt: PPF, bends: {} })[0].d === plain.d,
+    'no entry is no change at all');
+  // THE CAP IS ON THE RULE ONLY. A leg somebody dragged is a request to put it
+  // somewhere the rule would not.
+  const long = loopLegs([{ x: 3000, y: 0 }], { from: A, pxPerFt: PPF, bends: { 0: 5 } })[0];
+  ok(long.base < 5 * PPF && Math.abs(long.grip.y) > 5 * PPF,
+    'a hand bend is not capped the way the rule is');
+
+  // KEY SPACES DO NOT COLLIDE: the second feed of a two-way switch has its own.
+  const pref = loopLegs([Bp], { from: A, pxPerFt: PPF, keyPrefix: 'a', bends: { 0: 1 } })[0];
+  ok(pref.key === 'a0' && pref.bend === 0,
+    'a leg keyed a0 does not pick up the bend stored against 0');
 }
 
 console.log('\n-- proximity groups --');

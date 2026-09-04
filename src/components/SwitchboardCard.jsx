@@ -44,7 +44,18 @@ const W = 22;          // one module, across
 const H = W * 2;       // ...and its height. The 2:1 the brief asked for.
 const G = 4;           // between two devices
 const PAD = 9;         // the plate, around the modules
-const STROKE = '#FFFFFF';
+
+/**
+ * THE INK IS A PARAMETER NOW, AND IT WAS A CONSTANT. White, because this card
+ * lives on a dark glass panel and every other stroke on it is white.
+ *
+ * THEN THE SHEET ARRIVED. "See all switchboards" draws the same plates on WHITE
+ * PAPER — see SwitchboardSheet — and white on white is nothing at all. One
+ * drawing, two grounds, so the colour comes in from outside and the geometry
+ * stays in one place. The default is the panel's, so every existing call site is
+ * unchanged.
+ */
+const PANEL_INK = '#FFFFFF';
 
 /**
  * WHAT GOES INSIDE ONE DEVICE.
@@ -53,7 +64,8 @@ const STROKE = '#FFFFFF';
  * plate, and a mark in the middle of it would be saying the opposite of what
  * the part is.
  */
-function Face({ kind, x, y, w, h }) {
+function Face({ kind, x, y, w, h, ink = PANEL_INK }) {
+  const STROKE = ink;
   const cx = x + w / 2, cy = y + h / 2;
   const r = Math.min(w, h) * 0.26;
   const common = { fill: 'none', stroke: STROKE, strokeWidth: 1.3, strokeLinecap: 'round' };
@@ -102,8 +114,15 @@ function Face({ kind, x, y, w, h }) {
   }
 }
 
-/** One frame: the plate, and the devices in it. */
-function Frame({ board }) {
+/**
+ * ONE FRAME: the plate, and the devices in it.
+ *
+ * EXPORTED, because the sheet draws the same thing. Two implementations of "what
+ * a six-module plate looks like" would be two drawings of one part, and the day
+ * one of them learned about a new module the other would not.
+ */
+export function BoardFrame({ board, ink = PANEL_INK }) {
+  const STROKE = ink;
   const n = board.points.length;
   const inner = board.size * W + Math.max(0, n - 1) * G;
   const vw = inner + PAD * 2;
@@ -135,7 +154,7 @@ function Frame({ board }) {
                    the plate should read that way at a glance. */
                 strokeOpacity={p.kind === 'blank' ? 0.35 : 1}
                 strokeWidth={1.4} />
-          <Face kind={p.kind} x={x} y={y} w={w} h={h} />
+          <Face kind={p.kind} x={x} y={y} w={w} h={h} ink={STROKE} />
           {/* THE RATING, ON THE PARTS THAT HAVE ONE. It is the one thing about a
               module that cannot be drawn — a 6A rocker and a 20A rocker are the
               same mark — and on a plate with both on it, which is the plate this
@@ -148,6 +167,55 @@ function Frame({ board }) {
         </g>
       ))}
     </svg>
+  );
+}
+
+/**
+ * HOW HIGH OFF THE FINISHED FLOOR, IN MILLIMETRES — and it is an input, because
+ * the number is a decision rather than a derivation.
+ *
+ * THE ONE THING ABOUT A SWITCHBOARD A PLAN VIEW CANNOT SHOW. A plate is a
+ * rectangle on a wall from above whether it is at 300 or at 1200, and the
+ * difference is the difference between a socket and a switch. The rules have a
+ * default per role — see SB_HEIGHT_MM in electrical.js — and a default is all it
+ * can be: 1200 is switch height in most of the world and 1100 in some offices,
+ * and the person drawing knows which.
+ *
+ * `type="number"` AND NOT A TEXT BOX, so a phone gets a numeric keypad and the
+ * arrows work. `step={50}` because nobody sets a socket to 317mm, and the
+ * browser's own steppers then land on numbers a site would build to.
+ *
+ * IT COMMITS ON CHANGE AND NOT ON BLUR, so the drawing and the schedule follow
+ * the number as it is typed — the same rule everything else editable in this app
+ * follows. An empty box is not zero and is not written: it is somebody half way
+ * through typing 1200, and writing 0 on the way past would put a plate on the
+ * floor for one keystroke.
+ *
+ * SHARED BY THE PANEL AND THE SHEET, which is the reason it is exported rather
+ * than written inline twice — two number boxes for one number is two places for
+ * the step, the units and the empty-string rule to drift.
+ */
+export function HeightField({ mm, onChange, ink = 'currentColor' }) {
+  return (
+    <span className="inline-flex items-baseline gap-1 text-[11.5px] tabular-nums"
+      style={{ color: ink }}>
+      <input type="number" min={0} max={3000} step={50}
+        value={Number.isFinite(mm) ? mm : ''}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === '') return;
+          const n = Number(v);
+          if (Number.isFinite(n)) onChange(Math.max(0, Math.min(3000, Math.round(n))));
+        }}
+        aria-label="Height above finished floor level, in millimetres"
+        className="w-[52px] bg-transparent border-0 border-b border-current/40
+          px-0 py-0 text-right tabular-nums text-[11.5px] leading-none
+          focus:outline-none focus:border-current
+          [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none
+          [&::-webkit-outer-spin-button]:appearance-none"
+        style={{ color: 'inherit' }} />
+      <span className="opacity-70">mm above FFL</span>
+    </span>
   );
 }
 
@@ -174,7 +242,7 @@ export default function SwitchboardCard({ composition, extras = [], onRemove = n
             <span>{b.size} {unitOf(b)}</span>
             {boards.length > 1 && <span>{b.index + 1} of {boards.length}</span>}
           </div>
-          <Frame board={b} />
+          <BoardFrame board={b} />
           <ul className="list-none m-0 p-0 mt-0.5">
             {tally(b).map((row) => (
               <li key={row.label}
@@ -204,6 +272,20 @@ export default function SwitchboardCard({ composition, extras = [], onRemove = n
       <p className="text-[11.5px] text-muted leading-[1.5] m-0">
         {country.name} · {composition.total} {composition.total === 1
           ? country.unit : country.units}
+        {/* WHERE ITS SWITCH IS, for the one plate that has none of its own. The
+            card would otherwise be describing a socket with nothing to turn it
+            on, which is either a mistake or a rule somebody has to be told
+            about — and it is the second. Drag the outlet's wire onto another
+            board and this line follows it, because both are read off the flow. */}
+        {composition.outlet && (
+          <> · switched from{' '}
+            <b className="text-text font-normal">
+              {composition.switchedFrom
+                ? `the ${composition.switchedFrom.toLowerCase()} board`
+                : 'no board yet'}
+            </b>
+          </>
+        )}
       </p>
     </div>
   );

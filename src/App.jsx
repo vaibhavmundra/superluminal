@@ -56,7 +56,8 @@ import RenderPassPanel from './components/RenderPassPanel.jsx';
 import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone,
          nearestWall, alongWallAt, RUN_EDIT } from './lib/accentPlace.js';
 import { planSwitchboards, planChunkBoards, markClashes, asDrawn, slideBoardTo,
-         innerSpaceFor, nearestBoardTo, SB_COLOUR } from './lib/electrical.js';
+         innerSpaceFor, nearestBoardTo, boardUnder, nearestSeat, placedBoards,
+         asOutlet, heightsFor, SB_COLOUR } from './lib/electrical.js';
 // THE BED, FOR THE SWITCHBOARD RULE THAT BRACKETS IT. One function, and it is
 // borrowed rather than copied so that "which bed" has one answer on a plan with
 // two of them in one room — see the note by `bedRect` below.
@@ -65,10 +66,13 @@ import { planFlows } from './lib/flows.js';
 // WHAT IS ON THE PLATE, as against where the plate is. electrical.js above
 // answers the second; this answers the first, and it is a different question in
 // every country — see its header.
-import { composeSwitchboard, countryFor, addablePoints } from './lib/switchboards.js';
+import { composeSwitchboard, composeOutlet, countryFor, addablePoints,
+         lightSwitchA } from './lib/switchboards.js';
 import SwitchboardCard from './components/SwitchboardCard.jsx';
+import { HeightField } from './components/SwitchboardCard.jsx';
+import SwitchboardSheet from './components/SwitchboardSheet.jsx';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
-         radiusFt, resizeFromCorner, rotateTo, isRect,
+         radiusFt, resizeFromCorner, rotateTo,
          halfExtents, isUniform, applyResize, FAN_SWEEPS, sweepMm, withSweep,
          newCeilingObjectId }
          from './lib/ceilingObjects.js';
@@ -1069,6 +1073,117 @@ export default function App({
   const [boardPoints, setBoardPoints] = useState({});
   const [selBoardId, setSelBoardId] = useState(null);
   const [boardDrag, setBoardDrag] = useState(null);   // {id, roomId, origin, live}
+
+  /* --- THE WIRES ------------------------------------------------------------
+     A FLOW IS DERIVED LIKE EVERYTHING ELSE HERE, so the two things a person can
+     decide about one live outside the derivation, in the same shape as
+     `boardsOff` and `boardMoves` above:
+
+       `flowBoards`  flow id -> board id. Which plate this loop runs off, where
+                     the rules' answer is not the one wanted. The rules pick the
+                     nearest plate that can carry a ceiling, which is a good
+                     guess and is not a decision — a room with two boards has a
+                     real question about which switch these lamps belong on, and
+                     nothing in the geometry can settle it.
+
+       `flowBends`   flow id -> { leg key -> feet }. How far each leg's arc is
+                     nudged off where the rule bows it. A DELTA and not a
+                     position, so a leg nobody touched still follows its own
+                     length as the fittings move — see `loopLegs` in flows.js.
+
+     THE IDS ARE STABLE FOR THIS, and they were not until this feature. See the
+     note by `id` in flows.js: a counter would have slid somebody's reassignment
+     onto a different wire the first time a light was added to an earlier chunk.
+
+     AND THERE IS NO "PUT IT BACK" BUTTON, deliberately. Both of these are in
+     `editorState`, so the undo already covers a bend nudged too far or a wire
+     dropped on the wrong plate — and a panel control for undoing the last thing
+     you did is a second undo with a smaller scope. */
+  const [flowBoards, setFlowBoards] = useState({});
+  const [flowBends, setFlowBends] = useState({});
+  const [selFlowId, setSelFlowId] = useState(null);
+  /* THE GESTURE IN FLIGHT: `{ id, kind, key, origin, live, at, overId }`.
+     `kind` is 'board' or 'bend'; `at` is where the pointer is now, and `overId`
+     the plate a board drag would land on. Both are here rather than in
+     `flowBoards` because a re-assignment written per pointermove would re-order
+     the loop, re-compose two switchboards and repaint the panel on every frame
+     of the drag — see the note on `boardPointerMove`, which writes per move for
+     the opposite reason. A BEND does write per move: it changes one arc and
+     nothing downstream reads it. */
+  const [flowDrag, setFlowDrag] = useState(null);
+
+  /* --- PLATES SOMEBODY PUT THERE THEMSELVES --------------------------------
+     `[{ id, roomId, sFt }]` — how far round that room's walls each one sits, in
+     feet. The same coordinate `boardMoves` stores and for the same reasons: a
+     run index renumbers when a corner is re-traced and a pixel moves when the
+     scale is corrected. The geometry is derived on every render by
+     `placedBoards`; this is the whole of what is kept.
+
+     A LIST AND NOT AN OVERRIDE, WHICH MAKES IT THE ODD ONE OUT. `boardsOff`,
+     `boardMoves`, `flowBoards` and `flowBends` all modify something the rules
+     produced. This one is not a modification of anything — nothing derives these
+     plates, so the list IS the fact, the way `manualAccents` and `manualCoves`
+     are. That is also why deleting one removes it from here rather than adding
+     an id to `boardsOff`: there is no rule to keep suppressing.
+
+     WHERE IT IS, AND NOTHING ABOUT WHAT IT IS. Whether a plate is a socket
+     outlet or a full switchboard lives in `boardKinds` below, because that is a
+     question every plate on the drawing can be asked and not only these. */
+  const [manualBoards, setManualBoards] = useState([]);
+
+  /* --- OUTLET OR SWITCHBOARD: `{ [boardId]: { outlet, amps } }` -------------
+     TWO STATES OF ONE PLATE, AND A CHECKBOX BETWEEN THEM.
+
+       A SOCKET OUTLET is one socket and no switch — the one composition allowed
+       to have none. It is not switched from; it wires ITSELF to the nearest
+       board that can switch it, and that board carries the switch.
+
+       A SWITCHBOARD is everything else: the room's switches, its own socket and
+       the switch for that socket, plus whatever was added by hand.
+
+     THE CONVERSION IS THE WHOLE FEATURE AND IT COSTS ALMOST NOTHING, because
+     every consequence is already derived. Tick the box on an outlet and it stops
+     being one: its flow ceases to exist, so the wire disappears and the switch
+     on the far board disappears with it — not because anything went and removed
+     them, but because both were only ever a function of a flow that is no longer
+     produced. Untick it on a switchboard and the reverse happens, and everything
+     that was switched from it falls back to the next plate on its own, because
+     `servesBay` is false for a socket.
+
+     AN OVERRIDE AND NOT A VALUE, like every other hand decision in this file. A
+     plate with no entry here is whatever it was born as: hand-placed ones are
+     outlets, everything a rule put on a wall is a board. So the store holds only
+     what somebody actually changed, and a plate reverts by having its entry
+     deleted rather than by being set back to a default that might have moved.
+
+     `amps` IS THE SOCKET'S RATING and it belongs here rather than on
+     `manualBoards` for one reason: it survives the conversion. A 16A outlet
+     ticked into a switchboard is a board with a 16A socket on it, and a rating
+     that lived on the outlet would have been lost on the way through. */
+  const [boardKinds, setBoardKinds] = useState({});
+
+  /* --- HOW HIGH OFF THE FINISHED FLOOR: `{ [boardId]: mm }` -----------------
+     THE ONE THING ABOUT A SWITCHBOARD A PLAN VIEW CANNOT SHOW. A plate is the
+     same rectangle from above at 300mm as at 1200mm, and the difference between
+     those two numbers is the difference between a socket and a switch.
+
+     THE RULES HAVE A DEFAULT PER ROLE — see SB_HEIGHT_MM in electrical.js — and
+     a default is all it can be: 1200 is switch height in most of the world and
+     1100 in some offices, a bedside plate is set to whatever that bed is, and
+     the person drawing knows which. So this is an override like every other
+     hand decision in this file, holding only the plates somebody set.
+
+     THE PRIMARY HEIGHT ONLY, which matters for exactly one board. The wall
+     facing a bed is TWO plates at two heights — that is what makes it two, see
+     FACING_PLATES — so an override replaces the first of its list and leaves the
+     second alone. Writing a single number over the whole list would silently
+     turn a two-plate board into a one-plate board, which is a change to what
+     gets ORDERED made by editing a dimension. */
+  const [boardHeights, setBoardHeights] = useState({});
+  /* IS THE SWITCHBOARD TOOL OPEN? A step, like the door editor and the zone
+     editor — it takes the panel over and stays open across placements, because
+     somebody putting a board on one wall is usually putting one on three. */
+  const [boardPlace, setBoardPlace] = useState(false);
   // The image that is actually sent. Held in state rather than made at call
   // time so the panel can show it: "what did it look at" is the first question
   // whenever an answer is strange, and a crop that is off the room or washed
@@ -1354,6 +1469,8 @@ export default function App({
     // names a room and a rule, and neither means anything on a fresh sheet.
     setBoardsOff([]); setBoardMoves({}); setBoardPoints({});
     setSelBoardId(null); setBoardDrag(null);
+    setFlowBoards({}); setFlowBends({}); setSelFlowId(null); setFlowDrag(null);
+    setManualBoards([]); setBoardKinds({}); setBoardHeights({}); setBoardPlace(false);
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
     setRenders({}); setRenderRefs({});
     setWallResults({}); setWallTranscripts({}); setRunTrims({});
@@ -1715,7 +1832,8 @@ export default function App({
     setCeilingObjs, setChunkPicks, setCeilingKinds, setDesignPicks,
     setAccentResults, setAccentDismissed, setManualAccents,
     setSurfaceResults, setSurfaceDismissed, setManualSurfaces, setArtDismissed,
-    setBoardsOff, setBoardMoves, setBoardPoints,
+    setBoardsOff, setBoardMoves, setBoardPoints, setFlowBoards, setFlowBends,
+    setManualBoards, setBoardKinds, setBoardHeights,
     // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
     // are a few hundred bytes of JSON and the renders are megabytes of
     // somebody's photographs, which do not belong in a jsonb column.
@@ -1934,6 +2052,26 @@ export default function App({
     if (!pxPerFt) return [];
     return ceilingObjs.map((o) => toObstaclePx(o, pxPerFt));
   }, [ceilingObjs, pxPerFt]);
+
+  /**
+   * ...AND THE ONES THE GRID ACTUALLY HAS TO KEEP OFF.
+   *
+   * NOT ALL OF THEM, SINCE THE PALETTE GREW. A split AC's indoor unit hangs at
+   * 2100mm on a wall and a geyser sits above a toilet door: both are placed on
+   * this plan, both are drawn, both are on the schedule, and neither obstructs a
+   * downlight in the middle of a ceiling. Handing them to the planner would
+   * punch a hole in the layout for something that is not in its way — and
+   * because clearance is circumscribed (see ceilingObjects.js), a 1000mm split
+   * unit would reserve a two-and-a-half-foot radius of ceiling it is nowhere
+   * near.
+   *
+   * ONE FLAG, ASKED OF THE CATALOGUE, and this is the only place it is read. The
+   * full list stays whole for everything else — the canvas draws them, the
+   * schedule counts them, the DXF and the plot carry them — because being off
+   * the ceiling is a fact about clearance and about nothing else.
+   */
+  const ceilingObstaclesPx = useMemo(
+    () => obstaclesPx.filter((o) => !o.offCeiling), [obstaclesPx]);
 
   /**
    * THE BUILT AREA, in square feet — the sum of the spaces, not the sheet.
@@ -2448,7 +2586,8 @@ export default function App({
       // A whole-floor plan carries fans and beds for every room. Only the ones
       // over THIS ceiling are obstacles in THIS layout, and a centre inside the
       // polygon is the test — a bed belongs to the room it is standing in.
-      const mine = obstaclesPx.filter((f) => pointInPolygon({ x: f.x, y: f.y }, polygonPx));
+      const mine = ceilingObstaclesPx.filter(
+        (f) => pointInPolygon({ x: f.x, y: f.y }, polygonPx));
       const myZones = [
         // BY ROOM WHERE THE ZONE KNOWS ITS ROOM, and by containment otherwise.
         // A hand-drawn box belongs to whatever it is drawn over, which is what
@@ -2818,7 +2957,7 @@ export default function App({
       });
     }
     return out;
-  }, [source, pxPerFt, litOutlines, useBoundingRect, obstaclesPx, zoneList, zones,
+  }, [source, pxPerFt, litOutlines, useBoundingRect, ceilingObstaclesPx, zoneList, zones,
       reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes, projectId,
       designPicks, ceilingKinds]);
 
@@ -4192,13 +4331,75 @@ export default function App({
    * answer to "is this plate on the drawing". The panel's count, the canvas, the
    * flows and the schedule all come through this function.
    */
-  const boardsFor = useCallback((r) => (boardResults[r.id]?.boards ?? [])
+  /**
+   * WHERE THE BUILDING IS, as the registry's own record for it.
+   *
+   * UP HERE, AND NOT BESIDE THE COMPOSITION IT IS FOR. It belongs in the block
+   * five hundred lines down where the plates are composed, and that is where it
+   * was — until `boardMode` below started needing it. A `useCallback`'s BODY is
+   * deferred but its DEPENDENCY ARRAY is evaluated the moment the line is
+   * reached, so naming a `const` declared later reads it in its temporal dead
+   * zone and throws during the first render. The error says "Cannot access
+   * 'sbCountry' before initialization" and points at a line that looks fine,
+   * because the offending read is in the array and not in the function.
+   *
+   * `country` IS A PROP, so this can be resolved as early as it likes and there
+   * is nothing above it that could want it later.
+   */
+  const sbCountry = useMemo(() => countryFor(country), [country]);
+
+  /**
+   * IS THIS PLATE AN OUTLET OR A SWITCHBOARD, AND AT WHAT RATING.
+   *
+   * ONE ANSWER, ASKED IN ONE PLACE. The mode decides four things — what the
+   * plate composes to, whether it produces an outlet flow, whether a ceiling may
+   * fall back to it, and whether a dragged wire may be dropped on it — and four
+   * readers each working it out from `boardKinds` is four chances to disagree
+   * about what a plate with no entry is.
+   *
+   * THE DEFAULT IS WHERE IT CAME FROM. A plate somebody dropped on a wall starts
+   * as an outlet, because that is what the tool places; everything a rule put
+   * beside a door or a bed starts as a board, because that is what the rule
+   * placed. `boardKinds` holds only the ones somebody changed.
+   */
+  const boardMode = useCallback((b) => {
+    const o = boardKinds[b?.id] ?? {};
+    return {
+      outlet: o.outlet ?? !!b?.placed,
+      amps: o.amps ?? lightSwitchA(sbCountry),
+    };
+  }, [boardKinds, sbCountry]);
+
+  /**
+   * ...AND THE PLATE WITH THAT ANSWER APPLIED.
+   *
+   * WRAPPED ROUND ALL THREE SOURCES OF BOARDS below rather than round their
+   * readers, so nothing downstream has to remember to ask. A board reaching the
+   * canvas, the flows, the pool or the card is already the thing it is.
+   */
+  const withMode = useCallback((list) => list.map((b) => {
+    const m = boardMode(b);
+    const done = m.outlet
+      ? asOutlet(b, m.amps)
+      : { ...b, socketOnly: false, amps: m.amps };
+    /* AND THE HEIGHT, AFTER THE MODE AND NOT BEFORE. `asOutlet` sets its own
+       default — 300, outlet height — so an override applied first would be
+       overwritten by the conversion. Applied last it survives one, which is
+       right: a person who typed 900 into a plate meant 900 whichever of the two
+       things that plate is. */
+    const h = boardHeights[b.id];
+    if (!Number.isFinite(h)) return done;
+    const base = done.heightsMm ?? heightsFor(done.role);
+    return { ...done, heightsMm: [h, ...base.slice(1)], heightSet: true };
+  }), [boardMode, boardHeights]);
+
+  const boardsFor = useCallback((r) => withMode((boardResults[r.id]?.boards ?? [])
     .filter((b) => !b.rejected && b.point && !boardsOff.includes(b.id))
     // AS DRAWN, WHICH IS WHERE SOMEBODY PUT IT. Everything that paints a plate
     // or routes a wire to one comes through here; `ruleBoardsFor` is the other
     // half of this and is what decides.
-    .map(asDrawn),
-  [boardResults, boardsOff]);
+    .map(asDrawn)),
+  [boardResults, boardsOff, withMode]);
 
   /**
    * The same boards, at the positions the RULES chose.
@@ -4218,8 +4419,14 @@ export default function App({
    * other.
    */
   const ruleBoardsFor = useCallback((r) => (boardResults[r.id]?.boards ?? [])
-    .filter((b) => !b.rejected && b.point && !boardsOff.includes(b.id)),
-  [boardResults, boardsOff]);
+    .filter((b) => !b.rejected && b.point && !boardsOff.includes(b.id))
+    /* AND NOT THE ONES SOMEBODY TURNED INTO SOCKETS. This list decides which bay
+       is switched from which plate, and a socket outlet cannot switch a ceiling
+       — it has no switch on it at all. Left in, converting the door's board to
+       an outlet would leave the room's downlights owned by a plate with nothing
+       to press, instead of falling through to the next board as they should. */
+    .filter((b) => !boardMode(b).outlet),
+  [boardResults, boardsOff, boardMode]);
 
 
   /**
@@ -4303,10 +4510,30 @@ export default function App({
    * want these, and two copies of the filter is two chances to disagree about
    * whether a deleted bay plate is still on the drawing.
    */
-  const bayBoardsFor = useCallback((r) => (bayResults[r.id]?.boards ?? [])
+  const bayBoardsFor = useCallback((r) => withMode((bayResults[r.id]?.boards ?? [])
     .filter((b) => !b.rejected && b.point && !boardsOff.includes(b.id))
-    .map(asDrawn),
-  [bayResults, boardsOff]);
+    .map(asDrawn)),
+  [bayResults, boardsOff, withMode]);
+
+  /**
+   * ...AND THE PLATES SOMEBODY PUT ON THIS SPACE'S WALLS THEMSELVES.
+   *
+   * THE THIRD SOURCE OF BOARDS, and it goes through a function of its own for
+   * the reason the other two do: every reader of the drawing — the canvas, the
+   * flows, the assignable pool, the switchboard card — has to get the same
+   * answer to "is this plate there", and three filters written three times is
+   * three chances to disagree.
+   *
+   * NO `asDrawn` AND NO `boardMoves`. A rule's board has two positions — where
+   * the rule put it and where somebody dragged it — and `asDrawn` picks between
+   * them. A hand-placed board has one: `sFt` IS the hand position, so dragging
+   * one writes straight back to `manualBoards` and there is nothing to reconcile.
+   * See `boardPointerMove`.
+   */
+  const placedBoardsFor = useCallback((r) => withMode(placedBoards(
+    manualBoards.filter((m) => m.roomId === r.id && !boardsOff.includes(m.id)),
+    { polygonPx: r.plan?.polygonPx ?? [], pxPerFt })),
+  [manualBoards, boardsOff, pxPerFt, withMode]);
 
   /**
    * WHICH PLATE SWITCHES EACH OUTDOOR SPACE: balconyId -> the board, and the
@@ -4359,7 +4586,10 @@ export default function App({
          the far wall instead. So the role test comes off for this one join.
          The room's own ceiling still obeys `servesBay`; nothing about that
          changed, and nothing here can change it. */
-      const boards = [...boardsFor(host), ...bayBoardsFor(host)];
+      // AND NOT A SOCKET OUTLET. A balcony's fittings are switched from indoors,
+      // and a plate with no switch on it cannot switch them.
+      const boards = [...boardsFor(host), ...bayBoardsFor(host)]
+        .filter((b) => !b.socketOnly);
       const board = nearestBoardTo(boards, r.plan.polygonPx);
       if (!board) continue;
       out[r.id] = { board, roomId: host.id, roomName: host.outline.name || null };
@@ -4367,34 +4597,6 @@ export default function App({
     return out;
   }, [rooms, roomTypes, projectId, pxPerFt, boardsFor, bayBoardsFor]);
 
-  /**
-   * Every switchboard still standing, in plan pixels.
-   *
-   * THE ROOM'S OWN BOARDS ALWAYS. Refused ones are kept in `boardResults` —
-   * the panel wants to say a board was refused and why — but they carry no
-   * geometry, so `boardsFor` drops them on the way to the drawing rather than
-   * letting the canvas draw a plate at NaN. It drops the ones somebody deleted
-   * in the same place, which is why every reader of the drawing goes through it.
-   *
-   * THE BAY BOARDS ONLY WHILE THE LAYER IS ON. A plate that exists because a
-   * bay needed one is part of the flow reading — it is what those loops run
-   * back to — and on a sheet with the loops switched off it is a blue rectangle
-   * nobody asked for. The board beside the DOOR is not like that: it is the
-   * answer to "where is the switch in this room", which is a question about the
-   * room and not about the wiring, so it stays on the drawing either way.
-   */
-  const switchboardsPx = useMemo(() => {
-    const out = [];
-    for (const r of rooms) {
-      out.push(...boardsFor(r));
-      // `!doorEdit` FOR THE SAME REASON `canvasLayers` DROPS THE LOOPS while
-      // the doors are being confirmed: a bay board is part of the flow reading,
-      // and the flows are what the boxes being edited will move. Half the
-      // reading left on screen under the question is worse than none of it.
-      if (layers.electrical && !doorEdit) out.push(...bayBoardsFor(r));
-    }
-    return markClashes(out, pxPerFt);
-  }, [rooms, boardsFor, bayBoardsFor, layers.electrical, doorEdit, pxPerFt]);
 
   /**
    * EVERY FLOW ON THE SHEET. See flows.js for what a flow is and why the row is
@@ -4404,6 +4606,77 @@ export default function App({
    * well as the drawing, and a memo that only runs while something is visible is
    * a memo that recomputes the moment somebody looks at it.
    */
+  /**
+   * EVERY PLATE ON THE SHEET, whatever room it stands in and whatever the
+   * layers say.
+   *
+   * NOT `switchboardsPx`, WHICH IS THE DRAWING'S LIST. That one drops the bay
+   * boards while the electrical layer is off, correctly — a plate that exists
+   * because a bay needed one is part of the flow reading and has no business on
+   * a sheet with the wiring switched off. This list is not for drawing: it is
+   * the pool a HAND ASSIGNMENT may name (see `boardPool` in flows.js), and a
+   * wire dropped onto a plate last week must not come unstuck because somebody
+   * turned a layer off today.
+   */
+  /**
+   * SB1, SB2, SB3 — every plate on the job, numbered.
+   *
+   * ONE SEQUENCE OVER THE WHOLE PLAN AND NOT ONE PER ROOM, because that is what
+   * a switchboard number IS on a drawing: SB7 is a plate you can point at across
+   * a sheet, and "the third one in the kitchen" is not a name.
+   *
+   * DERIVED, LIKE THE PLATES THEMSELVES, and therefore ORDER IS EVERYTHING. The
+   * numbering has to be stable under things that do not add or remove a plate,
+   * or the names would shuffle while somebody worked:
+   *
+   *   · rooms in the order the layout holds them, which is the order everything
+   *     else on this sheet is in;
+   *   · within a room, the rules' boards, then the bay boards, then the ones
+   *     placed by hand — the order the three passes run in;
+   *   · UNGATED BY LAYERS, which is the trap this avoids. `switchboardsPx` drops
+   *     the bay boards while the electrical layer is off; numbering off that
+   *     list would renumber half the plan when somebody flicked a switch.
+   *
+   * WHAT DOES RENUMBER IS ADDING OR DELETING A PLATE, and that is unavoidable in
+   * any sequential scheme — it is also how SB numbers behave on a real job, where
+   * the schedule is renumbered when the drawing changes.
+   */
+  const boardNames = useMemo(() => {
+    const m = new Map();
+    let n = 0;
+    for (const r of rooms) {
+      for (const b of [...boardsFor(r), ...bayBoardsFor(r), ...placedBoardsFor(r)]) {
+        if (!m.has(b.id)) m.set(b.id, `SB${++n}`);
+      }
+    }
+    return m;
+  }, [rooms, boardsFor, bayBoardsFor, placedBoardsFor]);
+
+  /** The height a plate is actually set at, override or rule. */
+  const heightOf = useCallback(
+    (b) => b?.heightsMm?.[0] ?? heightsFor(b?.role)[0] ?? 1200, []);
+
+  const setBoardHeight = useCallback((id, mm) => {
+    setBoardHeights((m) => ({ ...m, [id]: mm }));
+  }, []);
+
+  const allBoardsPx = useMemo(() => {
+    const out = [];
+    for (const r of rooms) {
+      out.push(...boardsFor(r), ...bayBoardsFor(r), ...placedBoardsFor(r));
+    }
+    /* AND NOT THE SOCKET OUTLETS AMONG THEM. This list is what a dragged wire
+       may be dropped ON, and a light cannot be switched from a socket — an
+       outlet has no switch on it at all, which is the whole of what makes it
+       one. They are still drawn, still selectable and still have a card; they
+       are simply not somewhere a circuit can end.
+       FILTERED HERE RATHER THAN LEFT OUT OF THE GATHERING, because which plates
+       are outlets is now a thing that CHANGES: tick the box on a hand-placed
+       plate and it becomes a legitimate drop target, tick it on the door's board
+       and it stops being one. */
+    return out.filter((b) => !b.socketOnly);
+  }, [rooms, boardsFor, bayBoardsFor, placedBoardsFor]);
+
   const flowsPx = useMemo(() => {
     const out = [];
     if (!(pxPerFt > 0)) return out;
@@ -4424,7 +4697,12 @@ export default function App({
          the circuit does, and a drawing that stopped the loop at the threshold
          would be hiding the only unusual thing about it. */
       const feed = outdoorFeeds[r.id];
-      const boards = feed ? [feed.board] : [...boardsFor(r), ...bayBoardsFor(r)];
+      /* THE RULES' OWN FALLBACK LIST, MINUS ANY PLATE THAT IS NOW A SOCKET.
+         `boardFor` in flows.js falls back to "the nearest plate that can carry a
+         ceiling", and a converted board cannot: it has no switch on it. Leaving
+         it in would give a row of downlights a board with nothing to press. */
+      const boards = (feed ? [feed.board] : [...boardsFor(r), ...bayBoardsFor(r)])
+        .filter((b) => !b.socketOnly);
       const bays = baysOf(r);
       /* EVERY BAY OUT HERE IS SWITCHED FROM THAT ONE PLATE, said as ownership
          rather than left to the fallback. `boardFor` falls back to the nearest
@@ -4448,7 +4726,29 @@ export default function App({
         spots: taskSpotsPx.filter((sp) => sp.roomId === r.id),
         tracks: r.plan.tracksPx ?? [],
         boards,
+        /* THE SOCKET OUTLETS ON THIS SPACE'S WALLS, each of which becomes one
+           flow back to the nearest plate that can switch it — see section 0 of
+           flows.js. They are handed in as FITTINGS and not as boards, which is
+           what they are: a socket is a thing on a wall that needs switching, and
+           the plate it is switched from grows a module for it.
+
+           FROM ALL THREE SOURCES AND NOT ONLY THE HAND-PLACED ONES, because the
+           conversion is offered on every plate. A board beside a door that
+           somebody turned into an outlet is a socket outlet in every respect,
+           and it has to produce its wire like any other or it would be a socket
+           with no switch anywhere — the one thing this app does not allow. */
+        outlets: [...boardsFor(r), ...bayBoardsFor(r), ...placedBoardsFor(r)]
+          .filter((b) => b.socketOnly)
+          .map((b) => ({ id: b.id, x: b.point.x, y: b.point.y, amps: b.amps })),
+        /* AND THE POOL A DRAGGED WIRE MAY NAME, which is every plate on the
+           drawing. `boards` above stays this room's own — the rules' fallback
+           is "the nearest plate" and must not reach across a party wall — while
+           an assignment is somebody having said outright which plate they mean.
+           See the note on `boardPool` in flows.js. */
+        boardPool: allBoardsPx,
         owner,
+        assign: flowBoards,
+        bends: flowBends,
         zones: r.plan.zonesPx ?? [],
         pxPerFt,
       });
@@ -4456,28 +4756,78 @@ export default function App({
     }
     return out;
   }, [rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx,
-      outdoorFeeds, pxPerFt, baysOf]);
+      outdoorFeeds, pxPerFt, baysOf, allBoardsPx, placedBoardsFor, flowBoards, flowBends]);
+
+
+  /* EVERY SWITCHBOARD STILL STANDING, in plan pixels.
+
+     IT SITS BELOW `flowsPx` AND NO LONGER HAS TO. It was moved down here when it
+     briefly read the flows — to colour a plate red when nothing was switched
+     from it — and a `useMemo` body runs the moment it is reached during render,
+     so above `flowsPx` it would have read a `const` in its temporal dead zone
+     and thrown on the first paint. That reading is gone with the red (see
+     below); the position is kept because moving it back buys nothing and
+     nothing reads the boards between the two.
+
+     THE ROOM'S OWN BOARDS ALWAYS. Refused ones are kept in `boardResults` — the
+     panel wants to say a board was refused and why — but they carry no geometry,
+     so `boardsFor` drops them on the way to the drawing rather than letting the
+     canvas draw a plate at NaN. It drops the ones somebody deleted in the same
+     place, which is why every reader of the drawing goes through it.
+
+     THE BAY BOARDS ONLY WHILE THE LAYER IS ON. A plate that exists because a bay
+     needed one is part of the flow reading — it is what those loops run back to
+     — and on a sheet with the loops switched off it is a blue rectangle nobody
+     asked for. The board beside the DOOR is not like that: it is the answer to
+     "where is the switch in this room", which is a question about the room and
+     not about the wiring, so it stays on the drawing either way. */
+  const switchboardsPx = useMemo(() => {
+    const out = [];
+    for (const r of rooms) {
+      out.push(...boardsFor(r));
+      /* A HAND-PLACED PLATE IS ON THE DRAWING WHATEVER THE LAYER SAYS, like the
+         board beside the door and unlike a bay plate. A bay board exists because
+         a piece of ceiling needed switching and is part of the flow reading; one
+         somebody dropped on a wall is a decision they made about this building,
+         and hiding it with the wiring would mean a gesture whose result vanishes
+         when a switch is flicked. */
+      out.push(...placedBoardsFor(r));
+      // `!doorEdit` FOR THE SAME REASON `canvasLayers` DROPS THE LOOPS while
+      // the doors are being confirmed: a bay board is part of the flow reading,
+      // and the flows are what the boxes being edited will move. Half the
+      // reading left on screen under the question is worse than none of it.
+      if (layers.electrical && !doorEdit) out.push(...bayBoardsFor(r));
+    }
+    /* `loose` WAS COMPUTED HERE — which plates had nothing on them, so the
+       canvas could draw those red. It is gone with the state it marked: a plate
+       somebody drops on a wall is a SOCKET OUTLET and wires itself the moment it
+       exists, so there is no unconfigured second to colour. See the note where
+       SB_LOOSE used to be in electrical.js. */
+    /* AND ITS NAME, STAMPED ON THE WAY OUT. Every reader of the drawing goes
+       through this list — the canvas, its hover card, the panel — so the name is
+       attached once here rather than each of them being handed the map and
+       remembering to ask. */
+    return markClashes(out.map((b) => ({ ...b, name: boardNames.get(b.id) ?? null })),
+      pxPerFt);
+  }, [rooms, boardsFor, bayBoardsFor, placedBoardsFor, boardNames,
+      layers.electrical, doorEdit, pxPerFt]);
 
   /* --- WHAT IS ON THE PLATE -------------------------------------------------
 
-     THE COUNTRY, FIRST AND ONCE. `country` arrives as whatever is in the
-     project's column — a code, a name, nothing — and every reader below wants
-     the registry's record rather than the string. Resolved here so the panel,
-     the add buttons and the composition cannot disagree about which country
-     this is. See switchboards.js: it never returns nothing.
+     `sbCountry` IS DECLARED WELL ABOVE THIS, beside `boardMode` — see the note
+     there. It used to be the first thing in this block, which is where it reads
+     best and is no longer where it can go.
 
-     THEN THE PLATE SOMEBODY SELECTED, AND ONLY THAT ONE. Composing every board
-     on the sheet would be a parts list for a drawing nobody is looking at; the
-     card exists because a person clicked a rectangle and wants to know what is
-     behind it, and that is one plate at a time.
+     THE PLATE SOMEBODY SELECTED, AND ONLY THAT ONE. Composing every board on the
+     sheet would be a parts list for a drawing nobody is looking at; the card
+     exists because a person clicked a rectangle and wants to know what is behind
+     it, and that is one plate at a time.
 
      THE FLOWS ARE HANDED IN WHOLE and the composition filters them by board id.
      That is deliberate rather than lazy: a flow can name a SECOND plate as well
      as its own (two-way switching — see `also` in flows.js), so "the flows on
      this board" is not a partition of the list and cannot be pre-grouped
      without deciding, here, a question switchboards.js already answers. */
-  const sbCountry = useMemo(() => countryFor(country), [country]);
-
   const selBoard = useMemo(
     () => switchboardsPx.find((b) => b.id === selBoardId) ?? null,
     [switchboardsPx, selBoardId]);
@@ -4490,15 +4840,158 @@ export default function App({
     () => (selBoardId ? boardPoints[selBoardId] ?? [] : []),
     [boardPoints, selBoardId]);
 
-  const selBoardParts = useMemo(() => (selBoard
-    ? composeSwitchboard({
-      country: sbCountry, flows: flowsPx, boardId: selBoard.id, extras: selBoardExtras,
-    })
-    : null), [selBoard, sbCountry, flowsPx, selBoardExtras]);
+  const selBoardParts = useMemo(() => {
+    if (!selBoard) return null;
+    /* AN OUTLET IS COMPOSED BY A DIFFERENT FUNCTION, and the split is in
+       switchboards.js rather than a flag here — see `composeOutlet`. Every path
+       through `composeSwitchboard` puts a switch beside a socket, because that
+       is the rule it exists to hold; the one plate that may break the rule must
+       not be built by the function that enforces it.
+       WHICH BOARD SWITCHES IT is read off the outlet's own flow, so the card can
+       say where its switch went. That is the whole of what a person needs to
+       know about an outlet, and it is the thing that changes when they drag its
+       wire somewhere else. */
+    if (selBoard.socketOnly) {
+      const mine = flowsPx.find((f) => f.outletId === selBoard.id);
+      return composeOutlet({
+        country: sbCountry, amps: selBoard.amps,
+        switchedFrom: mine?.boardLabel ?? null,
+      });
+    }
+    /* `spareAmps` IS WHAT SURVIVES A CONVERSION. Every board carries one socket
+       of its own and the switch for it — the "spare pair" — and on a plate that
+       was an outlet a moment ago, that socket IS the one that was on the wall,
+       at the rating it was on the wall at. Composing it at the default would
+       silently re-rate somebody's air-conditioner point on the way through a
+       change that was about where the switch lives. */
+    return composeSwitchboard({
+      country: sbCountry, flows: flowsPx, boardId: selBoard.id,
+      extras: selBoardExtras, spareAmps: selBoard.amps ?? null,
+    });
+  }, [selBoard, sbCountry, flowsPx, selBoardExtras]);
+
+  /**
+   * A PLATE IS A SOCKET OUTLET, OR IT IS A SWITCHBOARD.
+   *
+   * TWO ONE-WAY ACTIONS AND NOT A TOGGLE, and that is a UI decision the panel
+   * makes rather than one this function knows about: going TO an outlet is a
+   * press of "Single socket outlet", and coming BACK is a consequence of adding
+   * any point to one. The two directions are not symmetrical, and the checkbox
+   * that used to pretend they were is what people found confusing about it.
+   *
+   * NOTHING IS MOVED, ADDED OR DELETED HERE, and that is the whole reason this
+   * is three lines. It writes one flag; everything the change is FOR then
+   * happens because the derivation reads that flag:
+   *
+   *   · the plate composes as one socket instead of a board full of switches
+   *   · it produces an outlet flow — so a wire appears, running to the nearest
+   *     board, and THAT board grows a switch for it
+   *   · `servesBay` is false for a socket, so anything that used to be switched
+   *     from it falls back to the next plate by itself
+   *   · it drops out of the pool a dragged wire may be dropped on
+   *
+   * Set it the other way and all four reverse, in the same way and for the same
+   * reason: the flow stops being produced, so the wire and the far board's
+   * switch simply are not there any more. Nothing had to go and remove them.
+   *
+   * BACK TO NOTHING RATHER THAN TO A VALUE, when the flag matches what the plate
+   * was born as. Same rule `resetBoard` follows: an entry that only restates the
+   * default is a plate marked "changed by hand" for ever, and one that would
+   * stop following its own default if that default ever moved.
+   */
+  const setBoardOutlet = useCallback((b, outlet) => {
+    if (!b) return;
+    // WHAT IT WAS BORN AS, off the plate itself: hand-placed plates are outlets
+    // and everything a rule put on a wall is a board. `placed` survives the
+    // outlet transform (see `asOutlet`), so it is readable in either state.
+    const born = !!b.placed;
+    setBoardKinds((m) => {
+      const cur = m[b.id] ?? {};
+      if (outlet === born && cur.amps == null) {
+        if (!(b.id in m)) return m;
+        const out = { ...m }; delete out[b.id]; return out;
+      }
+      return { ...m, [b.id]: { ...cur, outlet } };
+    });
+  }, []);
+
+  /** Re-rate the selected plate's socket. Its switch follows, wherever it is. */
+  const setBoardAmps = useCallback((id, amps) => {
+    setBoardKinds((m) => ({ ...m, [id]: { ...(m[id] ?? {}), amps } }));
+  }, []);
+
+  /**
+   * EVERY PLATE ON THE JOB, GROUPED BY SPACE AND ORDERED BY SIZE — the sheet.
+   *
+   * TWO ORDERINGS, EACH ANSWERING A DIFFERENT QUESTION. By space, because a
+   * switchboard belongs to a room in a way a light does not: it is on that
+   * room's wall, it switches that room's ceiling, and an electrician wires a
+   * room at a time. Then by MODULE COUNT ascending within the space — not by
+   * name, which would be the obvious thing and is the wrong one, because SB1..n
+   * is an ordering by when a plate came into existence and that is an accident
+   * of how somebody worked. Size is a fact about the part.
+   *
+   * COMPOSED HERE AND NOT IN THE SHEET, for the reason BOQView is handed a built
+   * schedule: one place works out what is on a plate, and the view is markup.
+   * It is the same pair of functions the panel's card uses, so the two cannot
+   * come to disagree about what SB7 is.
+   *
+   * EVERY PLATE INCLUDING THE BAY BOARDS, whatever the layer says. The layer is
+   * about what is drawn ON THE PLAN; this is a schedule, and a schedule that
+   * omitted half the plates because a switch was off would be a schedule nobody
+   * could order from.
+   */
+  const boardSheet = useMemo(() => {
+    const groups = [];
+    for (const r of rooms) {
+      const plates = [...boardsFor(r), ...bayBoardsFor(r), ...placedBoardsFor(r)]
+        .map((b) => {
+          const composition = b.socketOnly
+            ? composeOutlet({
+              country: sbCountry, amps: b.amps,
+              switchedFrom: flowsPx.find((f) => f.outletId === b.id)?.boardLabel ?? null,
+            })
+            : composeSwitchboard({
+              country: sbCountry, flows: flowsPx, boardId: b.id,
+              extras: boardPoints[b.id] ?? [], spareAmps: b.amps ?? null,
+            });
+          return {
+            id: b.id,
+            name: boardNames.get(b.id) ?? '—',
+            heightMm: heightOf(b),
+            modules: composition.total,
+            composition,
+          };
+        })
+        // ASCENDING BY SIZE, and by NAME where two plates are the same size —
+        // otherwise two equal boards would sit in whatever order the passes
+        // happened to emit them, which is an order that can change.
+        .sort((a, b) => a.modules - b.modules
+          || a.name.localeCompare(b.name, undefined, { numeric: true }));
+      if (plates.length) {
+        groups.push({ roomId: r.id, name: r.outline.name || 'Space', plates });
+      }
+    }
+    return groups;
+  }, [rooms, boardsFor, bayBoardsFor, placedBoardsFor, boardNames, heightOf,
+      sbCountry, flowsPx, boardPoints]);
 
   /** A point added by hand, onto the selected plate. See `boardPoints`. */
   const addBoardPoint = useCallback((p) => {
     if (!selBoardId) return;
+    /* ADDING A POINT TO A SOCKET OUTLET IS HOW ONE STOPS BEING ONE, and that is
+       the whole of the conversion now — there is no checkbox.
+
+       AN OUTLET IS "ONE SOCKET AND NOTHING ELSE". That is not a setting that
+       happens to be true of it, it is the definition — so pressing "+ 16A
+       switch" on one is not a request that needs reconciling with a mode flag,
+       it is a statement that this plate is not an outlet any more. A checkbox
+       beside these buttons would have been a second way to say the same thing,
+       and two controls for one fact disagree the first time somebody uses the
+       one you did not expect.
+       THE FLIP AND THE POINT LAND TOGETHER, in one gesture, so the plate a
+       person is looking at is the plate they asked for. */
+    if (selBoard?.socketOnly) setBoardOutlet(selBoard, false);
     /* AN ID PER PRESS, AND NOT A KEY MADE OF THE POINT. Two 16A sockets on one
        plate is an ordinary thing to want, and they have to be removable one at
        a time — which `socket:16` used as a key cannot express. */
@@ -4508,7 +5001,7 @@ export default function App({
       [selBoardId]: [...(m[selBoardId] ?? []),
         { id, kind: p.kind, amps: p.amps ?? null, label: p.label }],
     }));
-  }, [selBoardId]);
+  }, [selBoardId, selBoard, setBoardOutlet]);
 
   const removeBoardPoint = useCallback((pid) => {
     if (!selBoardId) return;
@@ -4577,6 +5070,21 @@ export default function App({
   const spotsPlaced = useMemo(
     () => taskSpotsPx.filter((sp) => !sp.rejected && sp.x != null).length,
     [taskSpotsPx]);
+
+  /**
+   * RUNS OF TAPE ON THE DRAWING — coves, reverse coves, shelf strips and every
+   * run somebody set out by hand.
+   *
+   * A COUNT AND NOT METRES, which is a change of unit from what the Result
+   * panel printed and is deliberate. The footer line beside it counts LIGHTS and
+   * SPOTS, and "12 lights, 3 spots, 4.7 m of strip" mixes a quantity with a
+   * measurement in one comma list — the eye reads all three as counts and the
+   * third one is not. The metres are still on the schedule, which is where a
+   * number somebody orders against belongs.
+   */
+  const stripRuns = useMemo(
+    () => accentZonesPx.filter((a) => a.type === 'strip' && !a.rejected).length,
+    [accentZonesPx]);
 
   const boq = useMemo(() => buildBOQ({
     rooms,
@@ -5343,6 +5851,28 @@ export default function App({
   // so that a stale `view` cannot survive a Clear and render a schedule of a
   // plan that is no longer loaded.
   const boqOpen = view === 'boq' && !!source;
+  /* THE SWITCHBOARD SHEET TAKES THE STAGE TOO, on the same terms and gated the
+     same way: a stale `view` must not survive a Clear and render a schedule of
+     plates from a plan that is no longer loaded.
+
+     `sheetOpen` IS THE TEST EVERY OTHER GATE WANTS, and it is why this is two
+     constants rather than one. Roughly a dozen places ask "is the plan on
+     screen" and every one of them was written as `!boqOpen`, because the
+     schedule was the only thing that ever replaced it. Two answers to one
+     question is how the second one gets forgotten in half of them — and the
+     symptom would be the appearance toolbar and the plan's own keyboard
+     shortcuts still live over a sheet of paper. Where a gate genuinely means the
+     SCHEDULE and not "some sheet", it still says `boqOpen`. */
+  /* `!readOnly` AS WELL, AND IT IS ABOUT THE WAY BACK. A viewer has no tab strip
+     — see the gate on it — so the only routes into a view for them are the
+     buttons ViewerPanel offers, and it offers one: the schedule. A `view` of
+     'boards' restored from somebody else's saved state would put an operator on
+     a sheet with no way off it. The sheet itself is perfectly readable read-only
+     (`onHeight` is withheld and the numbers are printed), so this is a routing
+     guard rather than a judgement about who may see it: add a button to
+     ViewerPanel and this condition comes off. */
+  const boardsOpen = view === 'boards' && !!source && !readOnly;
+  const sheetOpen = boqOpen || boardsOpen;
   /* WHICH TAB THE PANEL IS ON, WITH ONE FALLBACK. `view` is what somebody
      clicked; this is what can actually be rendered. Admin is scoped to role 1,
      and a role can go away underneath a stale tab — a session that loses it, or
@@ -5389,7 +5919,9 @@ export default function App({
     // own, so forcing 'design' meant a trip to straighten one wall put you back
     // on a tab you had deliberately left. The schedule is the only view that
     // cannot survive the crossing.
-    setView((v) => (v === 'boq' ? 'design' : v));
+    // ...AND SO DOES THE SWITCHBOARD SHEET, for exactly the same reason: both
+    // replace the stage, and the tracer needs the stage.
+    setView((v) => (v === 'boq' || v === 'boards' ? 'design' : v));
     return true;
   };
 
@@ -5605,7 +6137,7 @@ export default function App({
    */
   const openDoorEdit = useCallback(() => {
     setDoorEdit(true);
-    setZoneEdit(false);
+    setZoneEdit(false); setBoardPlace(false);
     setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
     setZoneMode(false); setDraftZone(null);
     setArmed(null); setGhost(null); setGuides([]);
@@ -5644,7 +6176,7 @@ export default function App({
     setView((v) => (v === 'admin' ? v : 'design'));
     // ONE SELECTION ON THIS CANVAS. A plate and a fitting both picked would be
     // two things Delete could mean.
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+    setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelFlowId(null);
     /* AND THE DRAG IS ARMED BUT NOT LIVE. `live` turns on once the pointer has
        moved past a few pixels — the accent runs' own slop, and for the same
        reason: without it a click that wobbles one pixel writes a hand position
@@ -5685,12 +6217,127 @@ export default function App({
     if (!poly?.length) return;
     const sFt = slideBoardTo(p, { polygonPx: poly, pxPerFt });
     if (sFt == null) return;
+    /* A HAND-PLACED PLATE HAS ONE POSITION AND IT IS THIS ONE. `boardMoves` is
+       an OVERRIDE — it exists so a rule's board can be somewhere the rule did
+       not put it, and so the card can say both. A board somebody dropped on a
+       wall has no rule behind it, so writing a move for one would be storing
+       "moved from" a position that was itself a hand position: two records of
+       one fact, and a plate that could be reset to a place nobody chose. */
+    if (manualBoards.some((m) => m.id === boardDrag.id)) {
+      setManualBoards((list) => list.map((m) => (
+        m.id === boardDrag.id ? { ...m, sFt } : m)));
+      return;
+    }
     setBoardMoves((m) => ({ ...m, [boardDrag.id]: sFt }));
   };
 
   const boardPointerUp = () => {
     if (!boardDrag) return;
     setBoardDrag(null);
+  };
+
+  /* --- A WIRE, PICKED ------------------------------------------------------
+     ONE PRESS SELECTS THE WHOLE LOOP. A flow is one switch — its legs are how
+     that switch reaches its lamps — so picking "the third arc" would be picking
+     a piece of drawing rather than a piece of the design. The grips then appear
+     on every leg, which is what makes "adjust any one of them" possible without
+     a leg ever being a selectable object of its own. */
+  const flowPointerDown = (e, id) => {
+    if (e.button != null && e.button !== 0) return;
+    // A TOOL IN HAND WINS, exactly as it does for a plate: somebody placing a
+    // fitting across a wire is aiming at the drawing, not at the wire.
+    if (addTool || zoneMode || armed) return;
+    e.preventDefault();
+    setSelFlowId(id);
+    // ONE SELECTION ON THIS CANVAS.
+    setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelBoardId(null);
+  };
+
+  /**
+   * AND THEN A GRIP ON IT — the end at the plate, or one leg's own bow.
+   *
+   * THE POINTER IS CAPTURED HERE AND THE WORK HAPPENS IN THE MOVE, which is the
+   * same shape every other drag on this canvas has. `live` turns on once the
+   * pointer has gone past a few pixels, for the reason the board drag gives: a
+   * click that wobbles writes a hand value onto something that was exactly where
+   * the rule put it, and the wire is then marked as moved for the life of the
+   * plan.
+   */
+  const flowGripDown = (e, id, kind, key) => {
+    if (e.button != null && e.button !== 0) return;
+    if (addTool || zoneMode || armed) return;
+    e.preventDefault();
+    setSelFlowId(id);
+    svgRef.current?.setPointerCapture?.(e.pointerId);
+    const p = svgPoint(e);
+    setFlowDrag({ id, kind, key, origin: p, at: p, live: false, overId: null });
+  };
+
+  const flowPointerMove = (e) => {
+    if (!flowDrag) return;
+    const p = svgPoint(e);
+    if (!flowDrag.live) {
+      const slop = Math.max(3, (pxPerFt || 12) * 0.12);
+      if (Math.hypot(p.x - flowDrag.origin.x, p.y - flowDrag.origin.y) < slop) return;
+      setFlowDrag((d) => (d ? { ...d, live: true } : d));
+    }
+    const flow = flowsPx.find((f) => f.id === flowDrag.id);
+    if (!flow) return;
+
+    if (flowDrag.kind === 'board') {
+      /* NOTHING IS COMMITTED UNTIL THE DROP. The end is carried — `at` for the
+         rubber band, `overId` for the ring round the plate it would land on —
+         and `flowBoards` is written once, on release. Writing per move would
+         re-order the loop, re-compose two switchboards and repaint the panel on
+         every frame; a board SLIDE writes per move precisely because it does
+         none of those things. */
+      const over = boardUnder(p, allBoardsPx, { pxPerFt });
+      setFlowDrag((d) => (d ? { ...d, at: p, overId: over?.id ?? null } : d));
+      return;
+    }
+
+    /* A BEND IS THE PERPENDICULAR DISTANCE FROM THE LEG'S OWN CHORD, minus what
+       the rule already bows it by — so what is stored is the DELTA the hand
+       added and a leg's own length still drives the rest. In feet, like every
+       other stored hand position in this file.
+
+       AGAINST THE LEG AS IT IS DRAWN RIGHT NOW, which includes the bend applied
+       so far. That is what makes the grip track the pointer instead of doubling
+       its movement: `base` is the rule's bow and the pointer's offset from the
+       chord IS the new total, so the delta is one subtraction and not an
+       accumulation. */
+    const leg = [...(flow.legs ?? []), ...(flow.also?.legs ?? [])]
+      .find((l) => l.key === flowDrag.key);
+    if (!leg || !(pxPerFt > 0)) return;
+    const off = (p.x - leg.mid.x) * leg.normal.x + (p.y - leg.mid.y) * leg.normal.y;
+    const bendFt = (off - leg.base) / pxPerFt;
+    setFlowBends((m) => ({
+      ...m, [flowDrag.id]: { ...(m[flowDrag.id] ?? {}), [flowDrag.key]: bendFt },
+    }));
+  };
+
+  const flowPointerUp = () => {
+    if (!flowDrag) return;
+    /* THE DROP IS THE COMMIT, for a board drag. A release over nothing is a
+       gesture abandoned and leaves the wire where it was — NOT an un-assignment,
+       because "let go over empty floor" is what a person does when they change
+       their mind, and reading it as "disconnect this" would lose the plate they
+       had picked deliberately last week.
+       A DROP ON THE PLATE IT WAS ALREADY ON CLEARS THE OVERRIDE rather than
+       storing it, which is the way back: dragging a wire home puts it back under
+       the rules instead of pinning it to the answer the rules currently give. */
+    if (flowDrag.kind === 'board' && flowDrag.live && flowDrag.overId) {
+      const flow = flowsPx.find((f) => f.id === flowDrag.id);
+      const home = !flow?.assigned && flow?.boardId === flowDrag.overId;
+      setFlowBoards((m) => {
+        if (home) {
+          if (!(flowDrag.id in m)) return m;
+          const out = { ...m }; delete out[flowDrag.id]; return out;
+        }
+        return { ...m, [flowDrag.id]: flowDrag.overId };
+      });
+    }
+    setFlowDrag(null);
   };
 
   /**
@@ -5717,9 +6364,19 @@ export default function App({
   }, []);
 
   const deleteBoard = useCallback((id) => {
-    setBoardsOff((off) => (off.includes(id) ? off : [...off, id]));
+    /* TWO VERBS, AND THE SAME DISTINCTION `accentDismissed` MAKES. A rule's
+       board is DERIVED, so "not this one" cannot be expressed by removing it —
+       the next render puts it straight back — and the answer is a dismissal that
+       has to persist. A hand-placed board has no rule to come back from, so
+       dismissing one would leave an id in `boardsOff` for the life of the plan,
+       suppressing something that no longer exists. It is removed instead. */
+    if (manualBoards.some((m) => m.id === id)) {
+      setManualBoards((list) => list.filter((m) => m.id !== id));
+    } else {
+      setBoardsOff((off) => (off.includes(id) ? off : [...off, id]));
+    }
     setSelBoardId((cur) => (cur === id ? null : cur));
-  }, []);
+  }, [manualBoards]);
 
   const closeDoorEdit = useCallback(() => {
     setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
@@ -5743,6 +6400,7 @@ export default function App({
      pointer pipeline, one owner. */
   const openZoneEdit = useCallback(() => {
     setZoneEdit(true);
+    setBoardPlace(false);
     setZoneMode(true); setDraftZone(null);
     setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
     setArmed(null); setGhost(null); setGuides([]);
@@ -5752,6 +6410,76 @@ export default function App({
   const closeZoneEdit = useCallback(() => {
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
   }, []);
+
+  /* --- PUTTING SWITCHBOARDS ON WALLS BY HAND --------------------------------
+     THE THIRD STEP ON THIS SCREEN, AND THE SAME SHAPE AS THE OTHER TWO. Like
+     the door editor and the zone editor it empties the panel, owns the pointer
+     and stays open until it is closed — and for the same reason all three do:
+     what is being asked for is a GESTURE ON THE DRAWING, and the panel's job
+     while it is being made is to say what the gesture is and get out of the way.
+
+     IT STAYS OPEN ACROSS PLACEMENTS, which is the whole of why it is a step and
+     not the one-shot the rest of the palette uses. A fan is dropped one at a
+     time; boards come in threes, because a room has a door wall and two others
+     somebody wants a switch on. A tool that disarmed after the first plate would
+     mean going back to the palette between each one.
+
+     AND IT PUTS EVERY OTHER GESTURE AWAY on the way in, exactly as the other two
+     do: one pointer pipeline, one owner. */
+  const openBoardPlace = useCallback(() => {
+    setBoardPlace(true);
+    setZoneEdit(false); setZoneMode(false); setDraftZone(null);
+    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setArmed(null); setGhost(null); setGuides([]);
+    setSelBoardId(null); setSelFlowId(null);
+    disarmAdd();
+    /* THE WIRING LAYER COMES ON WITH IT. A plate placed on a sheet with the
+       electricals switched off lands invisibly — the gesture appears to do
+       nothing at all — and the entire point of the red plate is that somebody
+       can see it is not connected yet. */
+    setLayers((l) => (l.electrical ? l : { ...l, electrical: true }));
+  }, [disarmAdd]);
+
+  const closeBoardPlace = useCallback(() => setBoardPlace(false), []);
+
+  /**
+   * ONE CLICK SEATS A PLATE ON THE NEAREST WALL THAT CAN HOLD ONE.
+   *
+   * FREE ALONG THE WALLS AND NOWHERE ELSE, which is the same rule dragging a
+   * plate follows and is not a limitation: a switchboard off its wall is not a
+   * thing, and a blue rectangle in the middle of a room is a mark nobody could
+   * build from. So the click means "which piece of plaster do you mean", and
+   * `nearestSeat` answers it.
+   *
+   * ACROSS EVERY LIT SPACE AND NOT JUST THE ONE UNDER THE POINTER. A wall is
+   * shared by two rooms and a click aimed at it lands a pixel either side by
+   * luck; asking `roomAt` first would make which room's wall you got depend on
+   * that pixel. Every room bids with its own nearest wall and the closest wins,
+   * which is the answer the pointer was actually pointing at.
+   */
+  const placeBoardAt = useCallback((p) => {
+    if (!(pxPerFt > 0)) return;
+    let best = null;
+    for (const r of rooms) {
+      const poly = r.plan?.polygonPx;
+      if (!poly?.length) continue;
+      const seat = nearestSeat(p, { polygonPx: poly, pxPerFt });
+      if (!seat) continue;
+      if (!best || seat.d < best.seat.d) best = { seat, roomId: r.id };
+    }
+    // TOO FAR FROM ANY WALL IS A MISS AND NOT A GUESS. Without a ceiling on it,
+    // a click in the middle of a hall would seat a plate on whichever wall
+    // happened to be nearest — twelve feet away, and nowhere near where the
+    // person pointed.
+    if (!best || best.seat.d > Math.max(24, pxPerFt * 4)) return;
+    const id = `sb-hand-${Date.now().toString(36)}-${Math.round(Math.random() * 1e4).toString(36)}`;
+    /* WHERE IT IS, AND NOTHING ABOUT WHAT IT IS. It is a socket outlet at the
+       country's low-power rating because that is the DEFAULT for a hand-placed
+       plate — see `boardMode` — and defaults are not written down. Both are
+       changed in the panel afterwards: a checkbox for which of the two things it
+       is, and a chip for the rating. */
+    setManualBoards((m) => [...m, { id, roomId: best.roomId, sFt: best.seat.sFt }]);
+  }, [rooms, pxPerFt]);
 
   /**
    * THE ANSWER, AND THE ONE THING IT TURNS ON.
@@ -6184,6 +6912,7 @@ export default function App({
     setSelAccId(id);
     setSelObjId(null);
     setSelBoardId(null);
+    setSelFlowId(null);
     setArmed(null);
     // WHERE THE GESTURE STARTED, twice over. `from` advances with the pointer,
     // because a run must move by the DELTA and not jump to centre itself under
@@ -6333,6 +7062,7 @@ export default function App({
     setSelAccId(null);
     setSelObjId(null);
     setSelBoardId(null);
+    setSelFlowId(null);
     setArmed(null);
     const sp = taskSpotsPx.find((q) => q.id === id);
     if (sp?.roomId) setFocusId(sp.roomId);
@@ -6455,11 +7185,15 @@ export default function App({
         return;
       }
       if (e.key === 'Escape') {
+        // THE STEP FIRST AND ON ITS OWN. A step has taken the panel over, so
+        // Escape means "close it" and cannot also mean "drop the selection".
+        if (boardPlace) { closeBoardPlace(); return; }
         if (addTool) { disarmAdd(); }
         if (armed) { setArmed(null); setGhost(null); setGuides([]); }
         else if (selSpotId) setSelSpotId(null);
         else if (selAccId) setSelAccId(null);
         else if (selBoardId) setSelBoardId(null);
+        else if (selFlowId) setSelFlowId(null);
         else if (selObjId) setSelObjId(null);
         else if (focusId) setFocusId(null);
         else setObjMode(false);
@@ -6507,6 +7241,28 @@ export default function App({
         deleteBoard(selBoardId);
         return;
       }
+      /* A SELECTED WIRE, AND DELETE MEANS "UNDO WHAT I DID TO IT".
+         A flow cannot be deleted: it is the switch a fitting needs, it is
+         derived from the fittings, and removing it from the drawing would be
+         claiming a lamp with no way to turn it on. So the only thing there is
+         to take away is the pair of overrides — the plate it was dragged onto
+         and the bends it was nudged into — and Delete takes those, putting the
+         wire back under the rules.
+
+         AND THE BRANCH HAS TO EXIST EVEN IF IT DID NOTHING, which is the part
+         that matters. Without it, Delete on a picked wire falls past the
+         ceiling objects and reaches the SPACE — so picking a wire and pressing
+         Delete would take the room out of the layout. */
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selFlowId && !flowDrag) {
+        e.preventDefault();
+        const drop = (m) => {
+          if (!(selFlowId in m)) return m;
+          const out = { ...m }; delete out[selFlowId]; return out;
+        };
+        setFlowBoards(drop);
+        setFlowBends(drop);
+        return;
+      }
       // THE WHOLE SELECTION, not just the primary. Deleting one of four
       // selected objects and silently leaving the other three is the reading
       // nobody expects, and it is the one a single-id delete gives.
@@ -6541,7 +7297,7 @@ export default function App({
     return () => window.removeEventListener('keydown', onKey);
   }, [objMode, armed, selObjId, selObjIds, setSelObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
       manualAccents, focusId, readOnly, selSpotId, deleteSpot,
-      selBoardId, deleteBoard,
+      selBoardId, deleteBoard, selFlowId, flowDrag, boardPlace, closeBoardPlace,
       doorEdit, selDoorId, doorDrag, deleteDoor, closeDoorEdit,
       zoneEdit, closeZoneEdit]);
 
@@ -6776,7 +7532,7 @@ export default function App({
     setOptionPick((cur) => (hit
       ? (cur?.roomId === hit.id ? cur : optionPickFor(hit.id))
       : null));
-    if (!hit) { setSelAccId(null); setSelObjId(null); setSelBoardId(null); }
+    if (!hit) { setSelAccId(null); setSelObjId(null); setSelBoardId(null); setSelFlowId(null); }
   };
 
   // no-light zones are drawn by dragging a rectangle on the plan
@@ -6904,7 +7660,7 @@ export default function App({
   // is a letter.
   useEffect(() => {
     const onKey = (e) => {
-      if (!source || boqOpen) return;
+      if (!source || sheetOpen) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement
           || e.target instanceof HTMLTextAreaElement) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -6917,7 +7673,7 @@ export default function App({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [source, boqOpen, fitZoom, zoomTo]);
+  }, [source, sheetOpen, fitZoom, zoomTo]);
 
   const stageMouseDown = (e) => {
     if (e.button !== 1) return;
@@ -6988,6 +7744,17 @@ export default function App({
     }
 
     // --- ADDITIONAL LIGHTING, before anything else claims the press ---------
+    /* THE SWITCHBOARD STEP OWNS THE CLICK OUTRIGHT, and it is first because it
+       is the most exclusive of the gestures here: while it is open, a press on
+       the plan means one thing and nothing else on the canvas may see it. It
+       does not disarm on a miss — a click too far from any wall places nothing
+       and says nothing, and the step's way out is its Done button, exactly as
+       the spot's and the cove's are. */
+    if (boardPlace && source && pxPerFt) {
+      e.preventDefault();
+      placeBoardAt(svgPoint(e));
+      return;
+    }
     // First in the handler for the same reason the out-of-room check is first
     // in the block below it: a tool that is armed owns the next click, and any
     // path that lets selection or a ceiling object see it first is a path where
@@ -7149,6 +7916,7 @@ export default function App({
         setSelObjId(null);
         setSelAccId(null);
         setSelBoardId(null);
+        setSelFlowId(null);
       }
       return;
     }
@@ -7188,6 +7956,9 @@ export default function App({
     // the same reason the object and accent drags are: a gesture already in
     // flight owns the pointer until it is released.
     if (boardDrag) { boardPointerMove(e); return; }
+    // A WIRE'S END, OR ONE OF ITS BENDS. Same rule: a gesture already in flight
+    // owns the pointer until it is released.
+    if (flowDrag) { flowPointerMove(e); return; }
     // ARMED AND HOVERING. The guides have to appear BEFORE the click, not
     // after: their job is to tell you where the thing will land while you can
     // still move the pointer.
@@ -7294,6 +8065,7 @@ export default function App({
     if (objDrag) { objPointerUp(); return; }
     if (accDrag) { accPointerUp(); return; }
     if (boardDrag) { boardPointerUp(); return; }
+    if (flowDrag) { flowPointerUp(); return; }
     /* A COVE IS A DRAG TOO, AND THIS IS WHERE IT LANDS. Press seats the wall,
        the move projects onto it, and the let-go is the commit — one gesture,
        with no state left over between two events. It reads the LAST TRACKED
@@ -7894,7 +8666,8 @@ export default function App({
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
     wallResults, runTrims, manualCoves, renderRefs,
-    boardsOff, boardMoves, boardPoints,
+    boardsOff, boardMoves, boardPoints, flowBoards, flowBends, manualBoards, boardKinds,
+    boardHeights,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
@@ -7903,6 +8676,7 @@ export default function App({
        accentResults, accentDismissed, manualAccents,
        surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
        wallResults, runTrims, manualCoves, renderRefs, boardsOff, boardMoves, boardPoints,
+       flowBoards, flowBends, manualBoards, boardKinds, boardHeights,
        layers, zoom, view]);
 
   // --- UNDO, THE HALF THAT NEEDS THE DOCUMENT -------------------------------
@@ -7969,6 +8743,7 @@ export default function App({
     // honest than reconciling every selection against the restored document:
     // whatever was picked, the picture just changed under it.
     setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelBoardId(null);
+    setSelFlowId(null);
     setUndoDepth(historyDepth(history.current));
   }, [stateSetters, setSelObjId]);
 
@@ -8324,7 +9099,7 @@ export default function App({
           changed is that PlanCanvas no longer needs a filter — it takes the line
           work's greys from the ground (see the `vector` branch there), so a DXF
           has a real night mode and the switch has something to do on one. */}
-      {source && !boqOpen && !showTrace && (
+      {source && !sheetOpen && !showTrace && (
         <div className="absolute bottom-6 right-[364px] [@media(max-width:960px)]:right-6
           z-[5] flex gap-0.5 p-1 rounded-lg bg-white border border-border
           shadow-[0_2px_10px_rgba(0,0,0,0.35)]"
@@ -8405,7 +9180,7 @@ export default function App({
 
       <div ref={stageRef}
         className={'relative overflow-auto '
-          + (boqOpen || showPicker || showTrace
+          + (sheetOpen || showPicker || showTrace
             ? 'block pt-[68px] px-[22px] pb-6'
             : source
               ? 'pt-[68px] px-[18px] pb-6 flex [justify-content:safe_center] items-start'
@@ -8419,6 +9194,15 @@ export default function App({
       >
         {boqOpen ? (
           <BOQView boq={boq} planName={source.name} />
+        ) : boardsOpen ? (
+          /* THE SWITCHBOARD SHEET, ON THE SAME TERMS AS THE SCHEDULE. See
+             SwitchboardSheet for why it replaces the drawing rather than
+             sitting beside it. `onHeight` is withheld from a viewer, exactly
+             as every other write on this screen is: they get the numbers
+             printed rather than typed. */
+          <SwitchboardSheet groups={boardSheet} planName={source.name}
+            country={sbCountry}
+            onHeight={readOnly ? null : setBoardHeight} />
         ) : !source ? (
           <div className={'w-[min(560px,92%)] border border-dashed border-border/10 '
             + 'rounded-lg bg-surface backdrop-blur-[5px] px-8 py-[52px] text-center '
@@ -8565,7 +9349,11 @@ export default function App({
                  sconce aimed just inside a fan's footprint would grab the fan
                  instead of landing. It is the only thing that suppresses them
                  now; see the long note at the move target in PlanCanvas. */
-              placing={!readOnly && !!(armed || addTool)}
+              /* THE BOARD STEP COUNTS AS PLACING, and it is the strictest of
+                 the three: while it is open every press on the plan seats a
+                 plate, so every other hit target on the canvas has to be inert
+                 or it will eat the click. */
+              placing={!readOnly && !!(armed || addTool || boardPlace)}
               selObjIds={readOnly ? [] : selObjIds}
               onObjPointerDown={readOnly ? null : objPointerDown}
               objDragMode={objDrag?.moved ? objDrag.mode : null}
@@ -8642,6 +9430,18 @@ export default function App({
                  there is one place that decides whether the arcs are on rather
                  than two that have to agree. */
               flows={flowsPx}
+              /* --- EDITING A WIRE. Gated exactly as the plate's own handlers
+                 are: nothing on the read-only sheet, and nothing while a tool
+                 is in hand, because a press with a tool armed is aiming at the
+                 drawing rather than at the wire in the way. */
+              selFlowId={readOnly ? null : selFlowId}
+              onFlowPointerDown={readOnly || armed || addTool ? null : flowPointerDown}
+              onFlowGripDown={readOnly || armed || addTool ? null : flowGripDown}
+              /* THE END IN FLIGHT, and only once the drag is past its slop —
+                 otherwise a press on the grip would paint a rubber band of zero
+                 length over the plate before anybody had moved. */
+              flowGrab={flowDrag?.kind === 'board' && flowDrag.live
+                ? { id: flowDrag.id, at: flowDrag.at, overId: flowDrag.overId } : null}
               /* The audit layer — now the lit task surfaces and the render
                  pass's wall cells. The BED zones used to be passed here too and
                  are not any more: see the note in PlanCanvas's audit group.
@@ -8696,7 +9496,7 @@ export default function App({
             )}
           </div>
         )}
-        {prep && !boqOpen && (
+        {prep && !sheetOpen && (
           <PlanLoader
             width={source.w} height={source.h}
             rooms={loaderRooms}
@@ -8776,7 +9576,8 @@ export default function App({
             wait with one way out, or a gesture being asked for — and a row of
             file formats and a modal invite over the top of one is an invitation
             to walk away from a thing that is happening. */}
-        {source && !readOnly && !prep && !doorEdit && !zoneEdit && !stepTool && !boqOpen && (
+        {source && !readOnly && !prep && !doorEdit && !zoneEdit && !boardPlace
+          && !stepTool && !sheetOpen && (
           <header className="flex-none flex items-center justify-between gap-2
             pt-4 px-4 pb-3">
             {/* NOTHING TO EXPORT ON THE TRACER. There is no layout yet, so all
@@ -8922,7 +9723,7 @@ export default function App({
             and no layout is the same blank page, and this strip only exists past
             `step !== 'trace'`, which is exactly "there is a layout". */}
         {source && step !== 'trace' && !readOnly && !prep && !doorEdit && !zoneEdit
-          && !stepTool && (
+          && !boardPlace && !stepTool && (
           /* NO RULE UNDER THE STRIP. It carried `border-b border-border/10` — a
              full-width hairline, the convention for a tab strip on a light
              ground where the tabs are cards sitting on a sheet. These are not
@@ -8964,7 +9765,13 @@ export default function App({
                 one tab that is not offered to everybody, so it is the one tab
                 whose absence has to leave the other three looking deliberate:
                 three words instead of four, no gap, no disabled stub. */}
-            {[['spaces', 'Spaces'], ['design', 'Design'], ['boq', 'BOQ'],
+            {/* BOARDS SITS BETWEEN DESIGN AND BOQ, which is where it belongs in
+                the order the work happens: the drawing, then the plates that
+                switch it, then the schedule of everything. It is also a tab and
+                not a modal because "See all switchboards" has to be somewhere
+                you can get BACK from, and the strip is that place. */}
+            {[['spaces', 'Spaces'], ['design', 'Design'], ['boards', 'Boards'],
+              ['boq', 'BOQ'],
               ...(isAdmin ? [['admin', 'Admin']] : [])].map(([k, label]) => (
               <button key={k} role="tab" aria-selected={panelView === k}
                 className={panelView === k ? PTAB_ON : PTAB}
@@ -9002,7 +9809,32 @@ export default function App({
             full of controls that act on something you cannot see is worse than
             an empty one, so it collapses to the only thing there is to do with a
             schedule: get it out of here — which the strip above now does. */}
-        {boqOpen ? (
+        {boardsOpen ? (
+          /* --- THE PANEL BESIDE THE SHEET, AND IT SAYS ALMOST NOTHING.
+              THE SAME ARGUMENT THE SCHEDULE'S PANEL MAKES. Every other section
+              in this column is a control over the DRAWING, and not one of them
+              means anything while a sheet of paper is on screen — a panel full
+              of controls acting on something you cannot see is worse than an
+              empty one.
+              WHAT IS DIFFERENT IS THAT THERE IS NOTHING TO DO WITH THIS SHEET.
+              A schedule collapses to its three export buttons; a switchboard
+              sheet is edited ON the sheet, where each plate's height is a box
+              you type in. So the panel holds the count, and the way out is the
+              strip above it. */
+          <div className={SEC}>
+            <h3 className={H3}>Switchboards</h3>
+            <div className={KV_HEAD}>
+              <span>{boardSheet.reduce((n, g) => n + g.plates.length, 0)} plates</span>
+              <span>{sbCountry.name}</span>
+            </div>
+            {boardSheet.map((g) => (
+              <div className={KV} key={g.roomId}>
+                <span>{g.name}</span>
+                <b>{g.plates.map((q) => q.name).join(', ')}</b>
+              </div>
+            ))}
+          </div>
+        ) : boqOpen ? (
           <div className={SEC}>
             <h3 className={H3}>Export the schedule</h3>
             <p className={`${N} mt-0.5 mb-2.5`}>
@@ -9227,6 +10059,85 @@ export default function App({
               <button className={`${BTN_PRIMARY} w-full`} onClick={confirmDoors}>
                 {doors.length ? 'These are all the doors' : 'There are no doors'}
               </button>
+            </div>
+          </div>
+        ) : boardPlace ? (
+          /* --- PUT A SOCKET ON A WALL, AND NOTHING ELSE --------------------
+             THE ZONE STEP'S SHAPE, FOR THE ZONE STEP'S REASON. A third question
+             about the DRAWING answered with a gesture on it, and the panel's
+             whole job while that gesture is being made is to say what is being
+             asked and then get out of the way.
+
+             WHAT THIS PLACES IS AN OUTLET, and the copy says so rather than
+             saying "switchboard". It IS a switchboard — one socket, no switch,
+             which is the one composition allowed to have none — but calling it
+             that would set the wrong expectation twice over: nothing is switched
+             FROM it, and it is not something you then have to go and configure.
+
+             THE PICTURE IS THE INSTRUCTION, and what it has to carry is the
+             thing nobody guesses: it goes ON A WALL. A click in the middle of a
+             room does nothing, and a tool that silently ignores half the clicks
+             aimed at it reads as broken. So the drawing is a pointer at a wall
+             with a plate seated on it, and a wire leaving that plate — because
+             the wire is the other half of what happens on the click. */
+          <div className={`${SEC} flex-1 flex flex-col min-h-0`}>
+            <div className="flex-1 flex flex-col items-center justify-center gap-4
+              text-center px-1 py-6">
+              <p className="m-0 text-[17px] leading-[1.35] tracking-[-0.02em] text-white
+                max-w-[22ch]">Click a wall to put a socket on it</p>
+
+              <div className="flex flex-col items-center gap-2 px-4 pt-3.5 pb-3
+                border border-border rounded-[10px] bg-input-bg text-center">
+                <svg viewBox="0 0 72 46" aria-hidden="true"
+                  className="w-[72px] h-[46px] block overflow-visible">
+                  {/* The wall, as a corner of a room — two strokes, because one
+                      line is a dimension and a corner is a room. */}
+                  <path d="M6 10 H60 M6 10 V40" fill="none"
+                    stroke="var(--text-subtle)" strokeWidth="1.6" />
+                  {/* The wire it leaves with, bowed the way every loop on the
+                      drawing is bowed, running off to a board out of frame. */}
+                  <path d="M37 14 Q22 24 8 22" fill="none" stroke={SB_COLOUR}
+                    strokeWidth="1.3" strokeDasharray="2.5 2.5" strokeLinecap="round" />
+                  {/* The plate, seated on the inside face of the top wall and
+                      drawn in the colour it actually lands in. */}
+                  <rect x="30" y="10.8" width="15" height="5" rx="1"
+                    fill={SB_COLOUR} stroke="#fff" strokeWidth="1.1" />
+                  {/* ...and the pointer, tip on the plate. */}
+                  <g transform="translate(38 19)">
+                    <path d="M0,0 L0,15 L4,11.2 L6.8,17.6 L9.6,16.4 L6.8,10.2 L12,10 Z"
+                      fill="var(--accent)" stroke="#fff" strokeWidth="1.1"
+                      strokeLinejoin="round" />
+                  </g>
+                </svg>
+                <p className="m-0 text-[11px] leading-[1.5] text-subtle max-w-[30ch]">
+                  It seats itself on the nearest wall and wires itself to the
+                  nearest board, which grows a switch for it. Place as many as
+                  you need.
+                </p>
+              </div>
+
+              {/* HOW MANY ARE ON THE PLAN, AND THE WAY TO TAKE THEM ALL BACK —
+                  the zone step's readout, in the zone step's words, because it
+                  is the same question. ONLY THE ONES PLACED HERE: the rules put
+                  boards beside doors and beds of their own, and a "clear all"
+                  that took those would be offering to undo work this step did
+                  not do. One at a time is Delete on the plate itself. */}
+              {manualBoards.length > 0 && (
+                <div className="w-full text-left">
+                  <div className={KV_HEAD}>
+                    <span>{manualBoards.length} socket{manualBoards.length === 1 ? '' : 's'} placed</span>
+                    <button className={BTN_TINY}
+                      onClick={() => setManualBoards([])}>Clear all</button>
+                  </div>
+                </div>
+              )}
+
+              {/* NO "SET THE SCALE FIRST" HERE, and it is not an omission. The
+                  palette cell that opens this step is `disabled` without a
+                  scale, so the step cannot be reached without one — a warning
+                  about a condition that cannot occur is a sentence that only
+                  ever costs the reader a moment. */}
+              <button className={`${BTN_EXIT} w-full`} onClick={closeBoardPlace}>Done</button>
             </div>
           </div>
         ) : zoneEdit ? (
@@ -9685,13 +10596,93 @@ export default function App({
               is saying. See SwitchboardCard for why it is an elevation. */}
           {selBoardParts && (
             <div className={SEC}>
-              <h3 className={H3}>Switchboard</h3>
-              <SwitchboardCard composition={selBoardParts} extras={selBoardExtras}
-                onRemove={removeBoardPoint} />
-              {/* WHAT ELSE CAN GO ON IT, generated from the country rather than
+              {/* --- THE NAME, AND THE WAY TO THE WHOLE SET -----------------
+                  SB7 AND NOT "SWITCHBOARD". The generic word was the heading
+                  when a plate was the only plate you could see; on a plan with
+                  nine of them it names the CLASS of thing and says nothing about
+                  which one — and SB7 is what the sheet, the schedule and the
+                  person on site call it. What KIND it is moves to the row below,
+                  where it belongs beside the height: those two together are the
+                  whole of what a plate is.
+
+                  AND THE LINK IS TOP-RIGHT, in the heading's own row. It is not
+                  a control over this plate — it leaves for a different screen —
+                  so it must not sit among the chips that are. Link-styled rather
+                  than a button for the same reason: a bordered button here would
+                  read as the third thing you can do to SB7. */}
+              <div className="flex items-baseline justify-between gap-2 mb-1">
+                <h3 className={H3_FLUSH}>{selBoard?.name ?? 'Switchboard'}</h3>
+                <button type="button"
+                  className={'appearance-none border-0 bg-transparent p-0 cursor-pointer '
+                    + 'text-[11px] leading-none underline underline-offset-2 '
+                    + 'whitespace-nowrap transition-colors duration-[120ms] '
+                    + 'focus-visible:outline-2 focus-visible:outline-accent '
+                    + 'focus-visible:outline-offset-2 '
+                    + 'text-white/70 decoration-white/25 hover:text-white'}
+                  onClick={() => setView('boards')}>
+                  See all switchboards →
+                </button>
+              </div>
+
+              {/* WHAT IT IS, AND HOW HIGH — space-betweened, directly above the
+                  illustration. The height is the one thing about a plate that a
+                  plan view cannot show (a rectangle at 300 and a rectangle at
+                  1200 are the same rectangle from above), and it is a DECISION
+                  rather than a derivation, so it is a box you type in and not a
+                  number that is printed. The same box is on the sheet; see
+                  HeightField for why it is shared. */}
+              <div className="flex items-baseline justify-between gap-2 mb-2.5
+                text-[11.5px] text-muted">
+                <span>{selBoardParts.outlet ? 'Socket outlet' : 'Switchboard'}</span>
+                <HeightField mm={heightOf(selBoard)}
+                  onChange={(mm) => setBoardHeight(selBoard.id, mm)} />
+              </div>
+
+              <SwitchboardCard composition={selBoardParts}
+                extras={selBoardParts.outlet ? [] : selBoardExtras}
+                onRemove={selBoardParts.outlet ? null : removeBoardPoint} />
+
+              {/* --- THE RATING, AND ONLY ON AN OUTLET -----------------------
+                  "CAN BE ANY POWER RATING" IS THE WHOLE OF WHAT VARIES BETWEEN
+                  ONE OUTLET AND THE NEXT. A 6A point for a lamp and a 16A one
+                  for an air conditioner are the same fitting at two ratings, and
+                  the switch on the far board is rebuilt to match — see
+                  `pointsFromFlows`. Same shape as a fan's sweep chips, and there
+                  for the same reason: a property of the selected thing, asked
+                  where the thing is described.
+
+                  IT WAS ON THE SWITCHBOARD TOO AND SHOULD NOT HAVE BEEN. On a
+                  board these chips set the rating of one socket among a dozen
+                  modules — a detail of one part, given the same weight as the
+                  question the panel is actually for — and they sat directly
+                  above a row of "+ 6A switch / + 16A socket" buttons that ALSO
+                  name ratings. Two rows of amperages meaning two different
+                  things is a panel nobody can read at a glance. On a board the
+                  socket's rating is chosen the same way every other part on it
+                  is: by adding the one you want. */}
+              {selBoardParts.outlet && (
+                <div className="flex flex-wrap gap-1 mt-2.5">
+                  {sbCountry.switchRatings.map((a) => (
+                    <button key={a} type="button"
+                      className={selBoard?.amps === a ? PROP_ON : PROP_OFF}
+                      onClick={() => setBoardAmps(selBoard.id, a)}>{a}A</button>
+                  ))}
+                </div>
+              )}
+
+              {/* --- WHAT CAN GO ON IT, generated from the country rather than
                   listed — see addablePoints. A socket's chip prints the width of
-                  the PAIR, because that is what pressing it costs the plate. */}
-              <div className="flex flex-wrap gap-1 mt-2.5">
+                  the PAIR, because that is what pressing it costs the plate.
+
+                  ON AN OUTLET AS WELL, AND THAT IS THE CONVERSION. An outlet is
+                  one socket and nothing else — that is the definition, not a
+                  setting — so pressing "+ 16A switch" on one IS saying it is not
+                  an outlet any more, and it flips as the point lands. See
+                  `addBoardPoint`. A "Single socket outlet" checkbox used to live
+                  here for that; it was a second way to say the same thing as
+                  these buttons, and the two would have disagreed the first time
+                  somebody used the one you did not expect. */}
+              <div className="flex flex-wrap gap-1 mt-2">
                 {addablePoints(sbCountry).map((p) => (
                   <button key={`${p.kind}:${p.amps ?? ''}`} type="button"
                     className={BTN_TINY} onClick={() => addBoardPoint(p)}>
@@ -9699,6 +10690,26 @@ export default function App({
                   </button>
                 ))}
               </div>
+
+              {/* --- AND THE WAY BACK, WHICH IS ONE PRESS AND NOT A TOGGLE.
+                  A BUTTON AND NOT THE OTHER HALF OF A CHECKBOX. The two
+                  directions are not symmetrical and pretending they were is what
+                  made the checkbox confusing: going TO an outlet is a decision
+                  ("this plate is just a socket"), where coming BACK is a
+                  consequence of adding something. So the decision gets a button,
+                  the consequence gets no control at all, and neither is a state
+                  anybody has to interpret.
+
+                  OFFERED ON EVERY PLATE, including the board a rule put beside
+                  the door. It is not destructive: whatever was switched from it
+                  falls back to the next board by itself, and adding any point
+                  brings it straight back. */}
+              {!selBoardParts.outlet && (
+                <button type="button" className={`${BTN_TINY} mt-2`}
+                  onClick={() => setBoardOutlet(selBoard, true)}>
+                  Single socket outlet
+                </button>
+              )}
             </div>
           )}
           <div className={SEC}>
@@ -9767,19 +10778,40 @@ export default function App({
             )}
           </div>
 
-          {/* --- WHAT THE LIGHT HAS TO KEEP OFF ---------------------------
-              UNDER THE LIGHTS AND NOT ABOVE THEM, which is a reversal of the
-              old tab order. A fan, a cassette and a trapdoor are not things
-              anybody came here to place: they are constraints — the grid moves
-              out of their way and the schedule counts around them — so they
-              belong after the thing they constrain. */}
+          {/* --- THE ELECTRICAL ELEMENTS ---------------------------------
+              IT WAS "CEILING OBJECTS", AND THAT NAME STOPPED BEING TRUE. The
+              row held a fan, a cassette and a hatch — three things ON a ceiling
+              that the grid has to keep off — and the argument for its position
+              under the lights was that they are CONSTRAINTS and belong after the
+              thing they constrain.
+
+              Half of that is still right and the name is not. A split AC's
+              indoor unit is on a wall at 2100mm, a geyser is over a door, and a
+              switchboard is a plate on the plaster: none of them is on the
+              ceiling, and none of them moves a downlight. What the six items
+              share is that they are what the ELECTRICAL drawing is about — the
+              things that need a circuit, and the plate that circuit runs from.
+
+              IT KEEPS ITS PLACE UNDER THE LIGHTING, which the rename does not
+              change: the lights are what somebody came here to lay out, and
+              three of these six still shape where they can go. */}
           <div className={SEC}>
-            <h3 className={H3}>Ceiling objects</h3>
-            {/* Four symbols, and clicking one arms it. There is no separate
+            <h3 className={H3}>Electrical elements</h3>
+            {/* Six symbols, and clicking one arms it. There is no separate
                 "place" button: picking the thing IS asking to place it, and a
                 picker that then needs confirming was a click spent on nothing. */}
-            <CeilingPalette armed={armed} disabled={!pxPerFt}
-              onArm={(id) => {
+            <CeilingPalette armed={boardPlace ? 'board' : armed} disabled={!pxPerFt}
+              onArm={(id, machine) => {
+                /* TWO MACHINES BEHIND ONE ROW, exactly as LightPalette has. Five
+                   cells arm the ceiling-object one-shot; the switchboard opens a
+                   STEP, which takes the panel over and seats plates on walls
+                   until it is closed. The palette says which it wants rather
+                   than this branch testing for an id. */
+                if (machine === 'board') {
+                  if (id) openBoardPlace(); else closeBoardPlace();
+                  return;
+                }
+                closeBoardPlace();
                 setArmed(id);
                 if (id) { setObjType(id); setObjMode(true); setZoneMode(false); }
                 setGuides([]); setGhost(null);
@@ -9818,42 +10850,16 @@ export default function App({
               );
             })()}
 
-            {/* WHICH RECTANGLE, asked in the same place and the same shape as
-                a fan's sweep — because after the palette merged the cassette
-                and the hatch into one button, this is the only thing left to
-                say about the object, and it is a property rather than a
-                gesture. It still matters: the two carry different marks on
-                the drawing and different lines in the schedule, so the choice
-                could not simply be dropped along with the second button. */}
-            {(() => {
-              const sel = ceilingObjs.find((o) => o.id === selObjId);
-              const RECTS = ['ac', 'trapdoor'];
-              if (!RECTS.includes(armed) && !isRect(sel)) return null;
-              const current = isRect(sel) ? sel.typeId : armed;
-              return (
-                <div className="flex gap-1 mt-[7px]">
-                  {RECTS.map((id) => (
-                    <button key={id} type="button"
-                      className={current === id ? PROP_ON : PROP_OFF}
-                      onClick={() => {
-                        // Arming follows the pick, so the next click on the
-                        // plan places what the row says. Changing a SELECTED
-                        // object retypes it in place and leaves its size,
-                        // rotation and position alone: it is the same hole in
-                        // the same ceiling, called what it actually is.
-                        if (RECTS.includes(armed)) { setArmed(id); setObjType(id); }
-                        // ...and it retypes EVERY selected rectangle, for the
-                        // reason the sweep chips apply to every selected fan.
-                        // Round objects in the selection are untouched: an
-                        // "AC or trapdoor" question has no answer for a fan.
-                        const picked = new Set(selObjIds);
-                        setCeilingObjs((os) => os.map((o) => (
-                          picked.has(o.id) && isRect(o) ? { ...o, typeId: id, kind: id } : o)));
-                      }}>{CEILING_BY_ID[id]?.label}</button>
-                  ))}
-                </div>
-              );
-            })()}
+            {/* THE "AC OR TRAP DOOR" CHIPS WERE HERE, and they were the cost of
+                one shared palette cell: the button placed a rectangle and this
+                row said which rectangle it was. The cassette and the hatch have
+                their own buttons now — see CeilingPalette — so the question is
+                answered by the thing you pressed, and a property row that only
+                ever repeated the press is a second control for one decision.
+                WHAT WENT WITH IT is RETYPING a placed object from cassette to
+                hatch without moving it. That was real, and it is not worth a
+                permanent row: the object is deleted and the other button
+                pressed, which is two clicks on a mistake nobody makes twice. */}
 
             {!pxPerFt && <p className={NOTE_WARN}>Set the scale first — these are placed at a real size.</p>}
             {armed && (
@@ -9892,116 +10898,31 @@ export default function App({
                 of all of them. */}
           </div>
 
-            {/* --- THE RESULT, DIRECTLY UNDER THE EDITING THAT MOVES IT.
-                It was below the View toggles, which put a list of checkboxes
-                between an action and its consequence. Every number here changes
-                when something above it is placed or removed, and a readout you
-                have to scroll past a settings panel to find is a readout nobody
-                watches. */}
-            {totals.rooms > 0 && (
+            {/* --- THE RESULT PANEL WAS HERE, AND IT IS A LINE IN THE FOOTER
+                NOW. Two tiles, a verdict sentence and a recommendation, in a
+                section of their own between the palettes and the View
+                disclosure — half a screen of chrome saying four numbers, in a
+                column where every other section is something to press.
+
+                It was also in the wrong place to be READ. Every figure in it
+                moves when a fitting is placed, and the placing happens on the
+                canvas: a readout you have to find by scrolling the panel is a
+                readout nobody watches while they work. In the footer it is
+                always on screen, beside the door count, which is the other
+                standing fact about this drawing. See the footer.
+
+                WHAT SURVIVES HERE IS THE FAILURES, AND ONLY THE FAILURES. A
+                space that produced no layout, and a space whose layout has
+                something wrong with it, are not summary — they are the app
+                telling somebody their plan did not come out, and a line in a
+                footer is not where that belongs. They render nothing at all
+                when there is nothing wrong, which is the usual case. */}
+            {troubles.length > 0 && (
               <div className={SEC}>
-                <h3 className={H3}>Result</h3>
-                <div className="grid grid-cols-2 gap-2 backdrop-blur-md [&>div]:bg-white/5
-                  [&>div]:border [&>div]:border-border/10 [&>div]:rounded [&>div]:px-[11px]
-                  [&>div]:py-[9px] [&_b]:block [&_b]:text-[17px] [&_b]:tracking-[-0.03em]
-                  [&_b]:tabular-nums [&_span]:text-[9.5px] [&_span]:text-subtle
-                  [&_span]:uppercase [&_span]:tracking-[0.08em]">
-                  <div><b>{totals.lights}</b><span>lights</span></div>
-                  <div><b>{totals.perSqft.toFixed(0)}</b><span>lm / sq ft</span></div>
-                  {/* THE AIMED SPOTS AND THE TAPE, WHICH THIS PANEL USED NOT TO
-                      COUNT. `totals.lights` is the ambient grid and the track
-                      heads — everything `plan.lights` holds — and it silently
-                      excluded the two things a person places by hand. A summary
-                      that omits half of what somebody just spent an afternoon
-                      putting on the drawing is a summary they learn not to read.
-
-                      REJECTED SPOTS ARE NOT COUNTED. The placer returns an entry
-                      for a surface it refused, carrying a reason and no geometry,
-                      so that the panel can explain itself; counting those would
-                      report fittings that are not on the plan.
-
-                      THE STRIP COMES FROM THE BOQ, not from a length summed here.
-                      `boq.totals.stripMetres` is the figure the schedule and the
-                      exports use, and two places computing metres of tape is how
-                      the headline and the order end up disagreeing.
-
-                      HIDDEN AT ZERO, both of them, which is this panel's own rule
-                      — see the BOQ header, where a tile reading "0.00 m of strip"
-                      was judged to spend a third of the summary saying a thing is
-                      absent. */}
-                  {spotsPlaced > 0 && (
-                    <div><b>{spotsPlaced}</b><span>spots</span></div>
-                  )}
-                  {boq.totals.stripMetres > 0 && (
-                    <div><b>{boq.totals.stripMetres.toFixed(1)}</b><span>m of strip</span></div>
-                  )}
-                </div>
-                {/* --- IS IT ENOUGH LIGHT? -------------------------------------
-                    "OVER — 3 SPACES, 950 SQ FT" WAS HERE. It was the denominator
-                    of the lm/sqft tile above, stated as a fact with nothing to
-                    compare it to: a reader who does not already know what 18
-                    lm/sqft means learns nothing from being told the area it was
-                    divided by. This says the thing that number was for.
-
-                    THE VERDICT IS COMPUTED, NOT ASSERTED, and that is the one
-                    place this departs from what was asked. A white tick and "your
-                    project is well lit" printed unconditionally would be the app
-                    congratulating itself on plans that are short — and it is the
-                    same figure the cove ladder and every room's own criterion are
-                    judged against, so it is not a hard thing to check. Over the
-                    target it reads as asked; under it, it says by how much and
-                    drops the tick. The area moves into this sentence, so nothing
-                    that was on screen is lost.
-
-                    ONE PROJECT-WIDE FIGURE, so `lumenCriteriaFor` is asked with no
-                    room type. Per-room criteria still differ — a kitchen wants 36
-                    and a toilet 25 — but this line is about the plan, and the
-                    place a room's own target is enforced is its layout. */}
-                {(() => {
-                  const target = lumenCriteriaFor(projectId, null);
-                  const got = totals.perSqft;
-                  // THE VERDICT IS JUDGED ON THE ROUNDED FIGURE, so it can never
-                  // contradict the number printed beside it. A raw `got >= target`
-                  // reads 19.9 as short and then prints it as "20", which is the
-                  // panel arguing with itself — and 19.9 against a round 20 is
-                  // inside the error of the lumen figures anyway. The tile above
-                  // rounds the same way, so all three agree.
-                  const ok = Math.round(got) >= target;
-                  const label = PROJECT_BY_ID[projectId]?.label;
-                  return (
-                    <div className="flex items-center gap-2 mt-2.5 mb-4">
-                      {ok ? (
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
-                          stroke="#FFFFFF" strokeWidth="2.6" strokeLinecap="round"
-                          strokeLinejoin="round" className="flex-none"
-                          aria-hidden="true"><path d="M4.5 12.75l5.25 5.25L19.5 6" /></svg>
-                      ) : (
-                        /* NOT A TICK, AND NOT A RED CROSS EITHER. A plan under its
-                           criterion is not broken — it may be exactly what the
-                           designer wants — so this is a statement, not an error.
-                           The dash is the same mark the schedule uses for "not
-                           specified". */
-                        <span className="flex-none mt-[1px] text-subtle leading-none"
-                          aria-hidden="true">—</span>
-                      )}
-                      {/* `min-w-0` IS THE GUARD, not decoration. A flex item gets
-                          `min-width: auto`, which refuses to shrink below its
-                          min-content width — so a long sentence beside an icon can
-                          push the row wider than the panel instead of wrapping
-                          inside it. This is the standard fix and it costs nothing
-                          when the text already fits. */}
-                      <p className="m-0 min-w-0 text-[11.5px] leading-[1.5] text-muted">
-                        Recommendation for{' '}
-                        <b className="text-subtle">{label ?? 'this project'}</b> is{' '}
-                        <b className="text-subtle">{target} lumens per sqft</b>.{' '}
-                      </p>
-                    </div>
-                  );
-                })()}
-                {/* Named per room. A warning about a light off its cell centre is
-                    useless if you cannot tell which of eight rooms it is in. */}
+                {/* Named per room. A warning about a light off its cell centre
+                    is useless if you cannot tell which of eight rooms it is in. */}
                 {troubles.map((t, i) => (
-                  <p className={NOTE_WARN} key={i}><b>{t.name}</b> — {t.msg}</p>
+                  <p className={i ? NOTE_WARN : NW} key={i}><b>{t.name}</b> — {t.msg}</p>
                 ))}
               </div>
             )}
@@ -10443,7 +11364,7 @@ export default function App({
             runs the layout is being replaced under the drawing, so a switch that
             reveals wiring derived from it cannot do what it claims. And not over
             the schedule or the tracer, neither of which has wiring to show. */}
-        {source && !boqOpen && !showTrace && !prep && (
+        {source && !sheetOpen && !showTrace && !prep && (
           <footer className="flex-none border-t border-border/10 px-4 pt-3 pb-4
             flex flex-col gap-2">
             <button type="button" role="switch"
@@ -10549,6 +11470,67 @@ export default function App({
                 </button>
               </div>
             )}
+            {/* --- WHAT IS ON THE DRAWING, AND WHETHER IT IS ENOUGH LIGHT.
+                THE RESULT PANEL, AS ONE LINE. It was a section up in the Design
+                tab: two big tiles, a tick and two sentences of recommendation.
+                Everything in it moves when a fitting is placed on the CANVAS,
+                and a readout you have to scroll a panel to find is a readout
+                nobody watches while they are working. Down here it is beside the
+                door count — the other standing fact about this sheet — and it is
+                on screen whatever tab the panel is on.
+
+                THE SAME 11px AS THE DOORS LINE ABOVE IT, deliberately: these are
+                two readings of one drawing, and a heavier one would claim to be
+                the more important of the two.
+
+                COUNTS ON THE LEFT AND THE VERDICT ON THE RIGHT, because they are
+                different kinds of fact. The left is what you put there. The
+                right is whether it works, and it is the half with a threshold
+                attached — so it is the half that gets the tick.
+
+                THE VERDICT IS COMPUTED AND NOT ASSERTED, which is the one thing
+                carried over verbatim from the panel this replaces. A tick
+                printed unconditionally would be the app congratulating itself on
+                plans that are short. Over the target it ticks; under it, the
+                dash — the same mark the schedule uses for "not specified",
+                because a plan under its criterion may be exactly what the
+                designer wants and is not an error.
+
+                JUDGED ON THE ROUNDED FIGURE, so the tick can never contradict
+                the number printed beside it: a raw `got >= target` reads 19.9 as
+                short and then prints it as "20". */}
+            {totals.rooms > 0 && (() => {
+              const target = lumenCriteriaFor(projectId, null);
+              const got = Math.round(totals.perSqft);
+              const bits = [
+                `${totals.lights} light${totals.lights === 1 ? '' : 's'}`,
+                // HIDDEN AT ZERO, both of them, which was this panel's own rule
+                // and stays it: a line that spends a third of its width saying a
+                // thing is absent is a line that is harder to read for nothing.
+                spotsPlaced > 0 ? `${spotsPlaced} spot${spotsPlaced === 1 ? '' : 's'}` : null,
+                stripRuns > 0 ? `${stripRuns} strip${stripRuns === 1 ? '' : 's'}` : null,
+              ].filter(Boolean);
+              return (
+                <div className="flex items-baseline justify-between gap-2
+                  text-[11px] leading-none">
+                  <span className="text-subtle tabular-nums">{bits.join(', ')}</span>
+                  <span className="inline-flex items-baseline gap-1 tabular-nums
+                    text-subtle whitespace-nowrap">
+                    {got >= target ? (
+                      <svg viewBox="0 0 24 24" width="10" height="10" fill="none"
+                        stroke="#FFFFFF" strokeWidth="3.2" strokeLinecap="round"
+                        strokeLinejoin="round" className="flex-none
+                          self-center translate-y-[0.5px]"
+                        aria-hidden="true"><path d="M4.5 12.75l5.25 5.25L19.5 6" /></svg>
+                    ) : (
+                      <span className="flex-none text-subtle leading-none"
+                        aria-hidden="true">—</span>
+                    )}
+                    {got} lm/sft achieved ({target} required)
+                  </span>
+                </div>
+              );
+            })()}
           </footer>
         )}
       </div>

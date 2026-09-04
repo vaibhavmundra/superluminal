@@ -156,11 +156,22 @@ export const FIXTURES = [
     note: 'accent — washes a panelled or papered wall' },
 ];
 
-/** Placed on the ceiling, counted, and deliberately not billed. */
+/**
+ * Placed on the plan, counted, and deliberately not billed.
+ *
+ * IT WAS "PLACED ON THE CEILING" AND TWO OF THESE ARE NOT. A split AC's indoor
+ * unit is on a wall and a geyser is over a door; they are here for the reason
+ * the other four are — somebody else supplies them, this drawing has to
+ * coordinate with them, and a schedule that omits them is a schedule the
+ * electrician has to be told about separately. What they do NOT do, unlike a
+ * cassette or a hatch, is move a light: see `offCeiling` in ceilingObjects.js.
+ */
 export const COORDINATION = [
   { id: 'fan',        label: 'Ceiling fan' },
   { id: 'chandelier', label: 'Chandelier / pendant' },
-  { id: 'ac',         label: 'AC ceiling unit' },
+  { id: 'ac',         label: 'AC cassette unit' },
+  { id: 'split_ac',   label: 'Split AC indoor unit' },
+  { id: 'geyser',     label: 'Geyser / water heater' },
   { id: 'trapdoor',   label: 'Trap door / access panel' },
 ];
 

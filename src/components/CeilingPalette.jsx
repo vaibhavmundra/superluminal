@@ -40,20 +40,53 @@ import { CEILING_BY_ID } from '../lib/ceilingObjects.js';
 // to match. It is in LightPalette now, where somebody looking for a decorative
 // fitting would go to find one.
 //
-// TWO BUTTONS, SO TWO COLUMNS. A three-column grid with two items leaves a slot
-// of dead air that reads as a missing tool.
+/* --- IT IS THE ELECTRICAL ROW NOW, AND THE PAIR CAME APART -----------------
+   THE CASSETTE AND THE TRAP DOOR SHARED A BUTTON, and the argument for it — one
+   button per GESTURE, since both are "drop a rectangle somebody else owns into
+   this ceiling" — was sound while there were four slots and two things to put in
+   them. It stopped being sound the moment the row grew: the two are now sitting
+   among four other items that each have a button of their own, so the one shared
+   cell was the only place in the palette where picking the thing you wanted took
+   two presses and a chooser row. The type chip under the palette went with it.
+
+   AND THE SWITCHBOARD IS SECOND, DIRECTLY AFTER THE FAN. Not at the end, where a
+   new tool naturally lands: it is the only item here that is the SUBJECT of the
+   electrical drawing rather than a thing that drawing has to account for, and it
+   is the one people will reach for repeatedly. The fan keeps the first slot
+   because it is the item that changes the LAYOUT most.
+
+   IT ARMS A DIFFERENT MACHINE, WHICH IS WHY `arms` EXISTS. Five of these drop a
+   catalogue object at a point; the switchboard seats a plate on a WALL, and it
+   takes over the panel while it is armed — the same shape LightPalette uses for
+   the chandelier, and for the same reason: the row is a row of things to place,
+   not a row of one machine's tools. */
 const GROUPS = [
-  { key: 'fan',        ids: ['fan'],                icon: '/icons/fan.png' },
-  // The crossed square is the hatch, which is the half of this pair that has a
-  // mark everyone already knows. A cassette is the other half and does not get
-  // its grille here — see the note above about one button and two types.
-  { key: 'rect',       ids: ['ac', 'trapdoor'],     icon: '/icons/trap.png',
-    label: 'AC / Trap door' },
+  { key: 'fan',        ids: ['fan'],       icon: '/icons/fan.png' },
+  /* LABELLED FOR WHAT IT PLACES, WHICH IS A SOCKET. It is a switchboard — one
+     socket and no switch, the one composition allowed to have none — and calling
+     the button "Switchboard" would promise the wrong thing twice: that something
+     gets switched FROM it, and that there is a configuring step afterwards.
+     There is not. It lands, it wires itself to the nearest board, and that board
+     grows the switch. */
+  { key: 'board',      ids: ['board'],     icon: '/icons/sb.png',
+    label: 'Socket', arms: 'board' },
+  { key: 'ac',         ids: ['ac'],        icon: '/icons/casette.png' },
+  { key: 'split_ac',   ids: ['split_ac'],  icon: '/icons/split_ac.png' },
+  { key: 'geyser',     ids: ['geyser'],    icon: '/icons/geyser.png' },
+  // The crossed square, which is the mark everyone already knows for a hatch.
+  { key: 'trapdoor',   ids: ['trapdoor'],  icon: '/icons/trap.png' },
 ];
 
+/**
+ * `armed` is a catalogue id, or the string 'board' while the switchboard step is
+ * open — the caller keeps those in two different pieces of state and passes
+ * whichever is live, because to this row they are one question: which cell is
+ * lit. `onArm` is handed the id and the machine, so the caller does not have to
+ * test for a magic string of its own.
+ */
 export default function CeilingPalette({ armed, onArm, disabled = false }) {
   return (
-    <div className="grid grid-cols-2 gap-[5px] mt-2">
+    <div className="grid grid-cols-3 gap-[5px] mt-2">
       {GROUPS.map((g) => {
         // Armed if ANY of the group's types is, so choosing "trap door" in the
         // row below keeps this button lit rather than appearing to disarm it.
@@ -63,6 +96,9 @@ export default function CeilingPalette({ armed, onArm, disabled = false }) {
         // the palette's idea, and nothing downstream has to learn about it.
         const on = g.ids.includes(armed);
         const armId = (on && armed) || g.ids[0];
+        // THE CATALOGUE NAMES ITSELF wherever there is a catalogue entry to ask.
+        // The switchboard has none — it is not a ceiling object — so it is the
+        // one row that carries its own label.
         const label = g.label ?? CEILING_BY_ID[g.ids[0]]?.label ?? g.key;
         return (
           <button key={g.key} type="button" disabled={disabled}
@@ -92,7 +128,7 @@ export default function CeilingPalette({ armed, onArm, disabled = false }) {
                 : 'border-border/10 bg-surface backdrop-blur-md enabled:hover:bg-input-bg')
             }
             title={label}
-            onClick={() => onArm(on ? null : armId)}>
+            onClick={() => onArm(on ? null : armId, g.arms ?? 'object')}>
             {/* alt="" ON PURPOSE: the label below is the accessible name, and a
                 screen reader reading "fan" twice is worse than not drawing the
                 picture for it at all. */}

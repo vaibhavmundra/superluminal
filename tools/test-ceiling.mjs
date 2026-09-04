@@ -12,7 +12,7 @@
 import { CEILING_TYPES, makeCeilingObject, radiusFt, toObstaclePx,
          sizeLabel, clampFt, resizeFromCorner, rotateTo, toLocal, toWorld,
          halfExtents, isUniform, applyResize, ROTATE_SNAP, isRect, sweepMm,
-         withSweep } from '../src/lib/ceilingObjects.js';
+         withSweep, offCeiling } from '../src/lib/ceilingObjects.js';
 import { collectTargets, snapPoint, guideLine } from '../src/lib/snapGuides.js';
 import { planLights, surfaceDistance } from '../src/lib/planner.js';
 import { PLAN_OPTIONS } from '../src/lib/settings.js';
@@ -20,8 +20,23 @@ import { PLAN_OPTIONS } from '../src/lib/settings.js';
 let fail = 0; const ok = (c,m)=>{console.log((c?'  ok  ':'  FAIL')+'  '+m); if(!c) fail++;};
 const near=(a,b,e=1e-3)=>Math.abs(a-b)<=e;
 
-ok(CEILING_TYPES.map(t=>t.id).join(',') === 'fan,chandelier,ac,trapdoor',
-  `four types, in palette order: ${CEILING_TYPES.map(t=>t.id).join(', ')}`);
+ok(CEILING_TYPES.map(t=>t.id).join(',') === 'fan,chandelier,ac,split_ac,geyser,trapdoor',
+  `six types, in catalogue order: ${CEILING_TYPES.map(t=>t.id).join(', ')}`);
+// THE TWO WALL-MOUNTED ONES, and the flag that keeps the grid off their case.
+// A split unit at 2100mm and a geyser over a door obstruct no downlight, so a
+// layout must not open a hole for either. See `offCeiling`.
+ok(offCeiling(makeCeilingObject('split_ac',{x:0,y:0}))
+   && offCeiling(makeCeilingObject('geyser',{x:0,y:0})),
+  'the split AC and the geyser are off the ceiling');
+ok(!offCeiling(makeCeilingObject('ac',{x:0,y:0}))
+   && !offCeiling(makeCeilingObject('fan',{x:0,y:0}))
+   && !offCeiling(makeCeilingObject('trapdoor',{x:0,y:0})),
+  '...and the cassette, the fan and the hatch are not');
+ok(isRect(makeCeilingObject('split_ac',{x:0,y:0})),
+  'a split unit is a rectangle, not a circle');
+ok(!isRect(makeCeilingObject('geyser',{x:0,y:0})), 'and a geyser is round');
+ok(toObstaclePx(makeCeilingObject('geyser',{x:0,y:0}), 30).offCeiling === true,
+  'the flag survives the conversion to plan pixels');
 const fan = makeCeilingObject('fan',{x:0,y:0});
 ok(near(radiusFt(fan), 3.937/2, 0.01), 'a fan defaults to 1200 sweep -> 1.97ft radius');
 ok(sweepMm(fan) === 1200 && sweepMm(withSweep(fan, 900)) === 900, 'the sweep is switchable and round-trips');

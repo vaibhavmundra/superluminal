@@ -14,7 +14,8 @@ import {
   wallRuns, runFrame, wallFrame, doorCandidate, mergeDoors, assignDoors,
   entryDoor, latchEnd, halfPlaneArea, swingSides, planSwitchboards, px, SB_MM,
   headSide, facingWall, FACING_PLATES,
-  slideBoardTo, plateAtS, wallPath, asDrawn,
+  slideBoardTo, plateAtS, wallPath, asDrawn, boardUnder, nearestSeat, placedBoards,
+  asOutlet, servesBay,
 } from '../src/lib/electrical.js';
 
 let fail = 0;
@@ -628,6 +629,115 @@ console.log('\n-- silence is never the answer --');
     try { planSwitchboards(junk); } catch { threw = true; }
     ok(!threw, `junk input does not throw: ${JSON.stringify(junk) ?? 'undefined'}`);
   }
+}
+
+console.log('\n-- a plate put on a wall by hand, and the outlet it becomes --');
+{
+  /* THE HAND-PLACED BOARD. A click becomes a seat — how far round the walls, in
+     feet — and the seat becomes a plate on every render. Nothing derives these,
+     so the seat IS the record; see `placedBoards`. */
+  const seat = nearestSeat({ x: 300, y: 20 }, { polygonPx: ROOM, pxPerFt: PPF });
+  ok(!!seat, 'a click near a wall finds a seat on it');
+  ok(seat.sFt > 0, `...at some distance round the walls (${seat.sFt.toFixed(2)} ft)`);
+  ok(near(seat.at.y, 0, 1e-6), 'and the seat is ON the wall, not where the pointer was');
+  ok(near(seat.d, 20, 1e-6), `...with the distance to it reported (${seat.d})`);
+  ok(slideBoardTo({ x: 300, y: 20 }, { polygonPx: ROOM, pxPerFt: PPF }) === seat.sFt,
+    'slideBoardTo is the same answer with the distance dropped');
+
+  const mid = nearestSeat({ x: 300, y: 180 }, { polygonPx: ROOM, pxPerFt: PPF });
+  ok(mid.d > seat.d, 'a click in the middle of the room is a long way from any wall');
+
+  const made = placedBoards([{ id: 'sb-hand-1', roomId: 'r1', sFt: seat.sFt }],
+    { polygonPx: ROOM, pxPerFt: PPF });
+  ok(made.length === 1, 'a seat resolves to a plate');
+  const b = made[0];
+  ok(b.id === 'sb-hand-1' && b.roomId === 'r1', 'carrying the id and the room it is in');
+  ok(b.placed === true, 'and saying it was placed by hand');
+  /* OUTLET AND SWITCHBOARD ARE TWO STATES OF ONE PLATE, flipped by a checkbox,
+     so the outlet is a TRANSFORM of the plate rather than a second kind of
+     object. The geometry is untouched; what changes is what is on it and,
+     crucially, that nothing can be switched from it. */
+  const so = asOutlet(b, 16);
+  ok(so.socketOnly === true && so.role === 'socket', 'asOutlet makes it a socket outlet');
+  ok(so.amps === 16, 'at the rating it was given');
+  ok(!servesBay(so), 'no ceiling can fall back to it — an outlet has nothing to press');
+  ok(servesBay(b), '...while the plate it was made from could carry one');
+  ok(so.heightsMm[0] === 300, 'set at outlet height and not at switch height');
+  ok(so.point === b.point && so.alongPx === b.alongPx,
+    'and it is the same rectangle on the same piece of wall');
+  // A RULE'S BOARD CAN BECOME ONE TOO, which is the whole reason this is a
+  // transform: the checkbox is offered on every plate, not only hand-placed ones.
+  ok(asOutlet({ id: 'sb-r1-door', role: 'door', servesShort: 'Door' }).socketOnly === true,
+    'a board beside a door can be converted as well');
+  ok(asOutlet(null) === null, 'and nothing converts to nothing');
+  ok(near(b.point.x, seat.at.x, 1e-6) && near(b.point.y, seat.at.y, 1e-6),
+    'it stands where the click seated it');
+  ok(b.alongPx > 0 && b.deepPx > 0 && b.along && b.inward,
+    'with the same geometry a rule\'s plate has, so everything downstream reads it');
+  ok(b.sFt === seat.sFt, 'and it keeps its seat, which is the whole of what is stored');
+
+  // A SEAT IS A NUMBER AND THE GEOMETRY IS DERIVED, so the same seat on a
+  // re-traced outline still lands on a wall rather than at a stale point.
+  ok(placedBoards([{ id: 'x', roomId: 'r1', sFt: 0 }], { polygonPx: ROOM, pxPerFt: PPF })
+    .length === 1, 'a seat at zero is a plate at the first corner, not a refusal');
+  ok(placedBoards([], { polygonPx: ROOM, pxPerFt: PPF }).length === 0, 'no seats, no plates');
+  ok(placedBoards([{ id: 'x', roomId: 'r1', sFt: 1 }], { polygonPx: [], pxPerFt: PPF })
+    .length === 0, 'no outline, no plates');
+  ok(placedBoards([{ id: 'x', roomId: 'r1', sFt: 1 }], { polygonPx: ROOM, pxPerFt: 0 })
+    .length === 0, 'and no scale, no plates — a plate is a real size');
+  ok(nearestSeat(null, { polygonPx: ROOM, pxPerFt: PPF }) === null, 'no point, no seat');
+}
+
+console.log('\n-- which plate is under the pointer --');
+{
+  /* THE DROP TEST FOR A WIRE DRAGGED ONTO A SWITCHBOARD. In the plate's OWN
+     frame, which is the whole point: a bounding box on a diagonal wall is
+     nearly twice the plate's area and would claim drops that visibly missed. */
+  const plate = (id, point, along, inward) => ({
+    id, point, along, inward, alongPx: 23, deepPx: 8,
+  });
+  const flat = plate('a', { x: 100, y: 100 }, { x: 1, y: 0 }, { x: 0, y: 1 });
+  // 45 degrees, on a diagonal wall.
+  const k = Math.SQRT1_2;
+  const diag = plate('b', { x: 400, y: 400 }, { x: k, y: k }, { x: -k, y: k });
+  const all = [flat, diag];
+
+  ok(boardUnder({ x: 100, y: 104 }, all, { pxPerFt: PPF })?.id === 'a',
+    'a point inside the plate hits it');
+  ok(boardUnder({ x: 111, y: 104 }, all, { pxPerFt: PPF })?.id === 'a',
+    '...and so does one near its end');
+  ok(boardUnder({ x: 100, y: 108 }, all, { pxPerFt: PPF })?.id === 'a',
+    '...and one at its full depth');
+  ok(boardUnder({ x: 300, y: 300 }, all, { pxPerFt: PPF }) === null,
+    'a point nowhere near anything hits nothing');
+
+  // THE SLOP: a 230x80mm plate is a few pixels at a normal zoom, so landing a
+  // pointer inside it is asking somebody to miss.
+  ok(boardUnder({ x: 100, y: 96 }, all, { pxPerFt: PPF })?.id === 'a',
+    'just off the plate still counts — the target is otherwise unhittable');
+  ok(boardUnder({ x: 100, y: 60 }, all, { pxPerFt: PPF }) === null,
+    'well off it does not');
+
+  // THE DIAGONAL, WHICH IS WHY THE TEST IS IN THE PLATE'S FRAME. This point is
+  // inside the plate's bounding box and outside the plate.
+  ok(boardUnder({ x: 400 + 12, y: 400 - 12 }, [diag], { pxPerFt: PPF, slopFt: 0 }) === null,
+    'a point in the bounding box but off a diagonal plate is a miss');
+  ok(boardUnder({ x: 400 - 2, y: 400 + 2 }, [diag], { pxPerFt: PPF })?.id === 'b',
+    '...while one standing off its face is a hit');
+
+  // TWO PLATES AT ONE SPOT — the clash case. The drop has to pick one, and it
+  // picks the one the pointer is aiming at.
+  const twinA = plate('L', { x: 200, y: 200 }, { x: 1, y: 0 }, { x: 0, y: 1 });
+  const twinB = plate('R', { x: 212, y: 200 }, { x: 1, y: 0 }, { x: 0, y: 1 });
+  ok(boardUnder({ x: 199, y: 204 }, [twinA, twinB], { pxPerFt: PPF })?.id === 'L',
+    'of two plates within a plate of each other, the nearer middle wins');
+  ok(boardUnder({ x: 216, y: 204 }, [twinA, twinB], { pxPerFt: PPF })?.id === 'R',
+    '...either way round');
+
+  ok(boardUnder(null, all, {}) === null, 'no point, no plate');
+  ok(boardUnder({ x: 0, y: 0 }, [], {}) === null, 'no plates, no plate');
+  ok(boardUnder({ x: 0, y: 0 }, [{ id: 'junk' }], {}) === null,
+    'a board with no geometry is skipped rather than thrown over');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');
