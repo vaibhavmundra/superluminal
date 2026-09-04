@@ -34,7 +34,10 @@
 //   1. The foot region becomes ONE chunk, spanning the full width of
 //      flank + bed + flank. It is often already one; where the decomposition
 //      split it, the pieces are merged, because two chunks cannot be given one
-//      row of lights.
+//      row of lights. What is left of the chunks it was cut out of stays as it
+//      is — except for a piece too small to be a chunk on its own, which joins
+//      the neighbour it shares a full edge with rather than being left to go
+//      dark. See `carveFootRegion`.
 //   2. Its cell lines along the alignment axis are COPIED FROM THE CHUNKS
 //      BESIDE THE BED — their own cut lines, plus the bed's two edges, which
 //      make the band alongside the bed a row in its own right. So the foot
@@ -294,6 +297,49 @@ export function flankFitLines(geo, opt) {
  * or an enclosed room the decomposition worked around, and paving over it would
  * put a fitting exactly where something else already said not to.
  */
+/**
+ * THE AREA OF A SET OF RECTANGLES, COUNTING OVERLAP ONCE.
+ *
+ * A plain sum would double-count, and here that is not a rounding error — it is
+ * the difference between "this region is accounted for" and "this region has a
+ * gap in it", which is the whole judgement `carveFootRegion` makes below. Two
+ * no-light zones genuinely do overlap: a hand-drawn box over a wardrobe the
+ * detector also found is one piece of ceiling and two rectangles.
+ *
+ * A SLAB SWEEP, because the inputs are axis-aligned and there are a handful of
+ * them. Cut at every x, and in each slab merge the y-intervals of the rectangles
+ * that span it. Exact, twenty lines, and no dependency.
+ */
+function unionArea(rects) {
+  if (!rects.length) return 0;
+  const xs = [...new Set(rects.flatMap((r) => [r.x0, r.x1]))].sort((a, b) => a - b);
+  let total = 0;
+  for (let i = 0; i + 1 < xs.length; i++) {
+    const w = xs[i + 1] - xs[i];
+    if (w <= EPS) continue;
+    const spans = rects
+      .filter((r) => r.x0 <= xs[i] + EPS && r.x1 >= xs[i + 1] - EPS)
+      .map((r) => [r.y0, r.y1])
+      .sort((a, b) => a[0] - b[0]);
+    let acc = 0;
+    let cur = null;
+    for (const [a, b] of spans) {
+      if (!cur || a > cur[1]) { if (cur) acc += cur[1] - cur[0]; cur = [a, b]; }
+      else cur[1] = Math.max(cur[1], b);
+    }
+    if (cur) acc += cur[1] - cur[0];
+    total += w * acc;
+  }
+  return total;
+}
+
+/** A rectangle clipped to another, or null when they do not meet. */
+function clipTo(r, R) {
+  const x0 = Math.max(r.x0, R.x0), x1 = Math.min(r.x1, R.x1);
+  const y0 = Math.max(r.y0, R.y0), y1 = Math.min(r.y1, R.y1);
+  return (x1 - x0 > EPS && y1 - y0 > EPS) ? { x0, y0, x1, y1 } : null;
+}
+
 export function carveFootRegion(chunks, geo, opt = {}) {
   const R = geo.region;
   const minSide = opt.minChunk ?? 1.5;
@@ -320,16 +366,128 @@ export function carveFootRegion(chunks, geo, opt = {}) {
     ]) {
       const w = r.x1 - r.x0, h = r.y1 - r.y0;
       if (w <= EPS || h <= EPS) continue;
-      if (Math.min(w, h) < minSide - EPS || w * h < minArea - EPS) return null;
+      // NOT VALIDATED YET. A piece too small to stand on its own may still have
+      // a neighbour to join — see the absorb pass below, which runs once every
+      // leftover exists rather than judging them one at a time in here.
       kept.push({ ...r, w, h, area: w * h });
     }
   }
 
-  const want = (R.x1 - R.x0) * (R.y1 - R.y0);
-  if (Math.abs(covered - want) > Math.max(1e-4, want * 1e-6)) return null;
+  /* --- A LEFTOVER TOO SMALL TO BE A CHUNK JOINS THE ONE NEXT TO IT ----------
+   *
+   * WHY THIS IS NOT "LET THE SMALL PIECE THROUGH". A chunk under the planner's
+   * own minimums is OMITTED — left dark, no light — so producing one would take
+   * the light off a corner of the room that has one today. That is what the
+   * refusal was protecting against, and it was right to.
+   *
+   * WHAT IT MISSED IS THAT THE PIECE DOES NOT HAVE TO BE A CHUNK. Cutting a
+   * full-width course out of a room leaves the corner of that course standing
+   * on top of the flank below it — same width, touching along its whole edge —
+   * and the two together are one perfectly ordinary rectangle. Refusing the
+   * whole re-cut because a piece would be lonely, when the piece has a neighbour
+   * it fits exactly, is a bedroom losing its alignment over an arithmetic
+   * accident.
+   *
+   * A FULL SHARED EDGE AND NOTHING LESS. Two rectangles only merge into a
+   * rectangle when they agree exactly on one axis and touch on the other; a
+   * partial overlap would give an L, and every downstream reader here assumes a
+   * chunk is a box. So this can absorb a corner into a flank and cannot invent
+   * a shape.
+   *
+   * REPEATED UNTIL NOTHING MOVES, because absorbing one piece can make its
+   * neighbour absorbable in turn, and the pass is a handful of rectangles.
+   * A piece with nowhere to go still refuses — with its measurements, so the
+   * panel can say which piece and by how much. */
+  const fails = (c) => Math.min(c.w, c.h) < minSide - EPS || c.w * c.h < minArea - EPS;
+  const joins = (a, b) =>
+    (Math.abs(a.x0 - b.x0) < EPS && Math.abs(a.x1 - b.x1) < EPS
+      && (Math.abs(a.y1 - b.y0) < EPS || Math.abs(b.y1 - a.y0) < EPS))
+    || (Math.abs(a.y0 - b.y0) < EPS && Math.abs(a.y1 - b.y1) < EPS
+      && (Math.abs(a.x1 - b.x0) < EPS || Math.abs(b.x1 - a.x0) < EPS));
+  for (let moved = true; moved;) {
+    moved = false;
+    for (let i = 0; i < kept.length && !moved; i++) {
+      if (!fails(kept[i])) continue;
+      const j = kept.findIndex((q, k) => k !== i && joins(kept[i], q));
+      if (j < 0) continue;
+      const a = kept[i], b = kept[j];
+      const box = { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0),
+                    x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) };
+      kept.splice(Math.max(i, j), 1);
+      kept.splice(Math.min(i, j), 1);
+      kept.push({ ...b, ...box, w: box.x1 - box.x0, h: box.y1 - box.y0,
+                  area: (box.x1 - box.x0) * (box.y1 - box.y0) });
+      moved = true;
+    }
+  }
+  const stranded = kept.find(fails);
+  if (stranded) {
+    /* THE PIECE ITSELF COMES BACK, NOT JUST A NO. "It would leave a sliver" is
+       true of every refusal and actionable in none: two minimums can refuse, a
+       piece can miss either by a hair or by half, and "is the minimum wrong or
+       is the room wrong" is a measurement. */
+    return { chunks: null, foot: null,
+             blocked: { w: stranded.w, h: stranded.h,
+                        area: stranded.w * stranded.h, minSide, minArea } };
+  }
 
-  const foot = { ...R, w: R.x1 - R.x0, h: R.y1 - R.y0, area: want };
-  return { chunks: [...kept, foot], foot };
+  /* WHAT THE REGION SHOULD ADD UP TO — ITS AREA, LESS THE HOLES IN IT.
+   *
+   * THE TEST IS THAT NOTHING IS UNACCOUNTED FOR, and it used to say that as
+   * "the chunks cover every inch of the region". That was true while the only
+   * no-light zone a bedroom had was the bed, which is outside this region by
+   * construction — the region starts at the bed's FOOT edge. It stopped being
+   * true the day a detected wardrobe became a no-light zone: a wardrobe running
+   * past the foot of the bed puts a hole inside the region, no chunk covers a
+   * hole, the sums came up short, and a bedroom that wanted this rule was
+   * refused it for a reason that was not a fault.
+   *
+   * A HOLE IS ACCOUNTED FOR. That is the distinction the old test could not
+   * draw: a piece of the region belonging to no chunk is a gap when nobody
+   * meant it and a zone when somebody did, and only the second is fine. So the
+   * zones inside the region are discounted from what the chunks are expected to
+   * add up to, and a genuine gap still fails exactly as before.
+   *
+   * AND THE FOOT CHUNK STILL SPANS THE WHOLE RECTANGLE, hole included, which is
+   * the point of the rule rather than a compromise with it: the foot region has
+   * to be ONE chunk to be given one grid copied from the flanks — two chunks
+   * either side of the wardrobe would be gridded independently, which is the
+   * misalignment this file exists to remove. The wardrobe does not get a light
+   * out of that: a cell inside a no-light zone cannot place one near its centre,
+   * so it comes out `awkward` and is ceded (see `omitAwkwardCells` in
+   * planner.js). The chunk covers the wardrobe; the light does not.
+   */
+  const holes = (geo.holes ?? []).map((z) => clipTo(z, R)).filter(Boolean);
+  const full = (R.x1 - R.x0) * (R.y1 - R.y0);
+  const want = full - unionArea(holes);
+  if (Math.abs(covered - want) > Math.max(1e-4, full * 1e-6)) {
+    return { chunks: null, foot: null, uncovered: want - covered };
+  }
+
+  const foot = { ...R, w: R.x1 - R.x0, h: R.y1 - R.y0, area: full };
+  return { chunks: [...kept, foot], foot, blocked: null, uncovered: 0 };
+}
+
+/**
+ * WHY A CARVE WAS REFUSED, in a sentence with the numbers in it.
+ *
+ * Built here rather than in the planner because the numbers are here: the piece
+ * that failed, and the two minimums it failed against. The planner's job is to
+ * decide WHEN to ask, not to know what a sliver is.
+ */
+export function carveRefusal(res) {
+  if (!res || res.chunks) return null;
+  if (res.blocked) {
+    const { w, h, area, minSide, minArea } = res.blocked;
+    const thin = Math.min(w, h) < minSide;
+    return `cutting the foot region out would leave a ${w.toFixed(1)} × ${h.toFixed(1)} ft`
+      + ` piece — ${thin ? `under the ${minSide} ft minimum width`
+                         : `${area.toFixed(1)} sqft, under the ${minArea} sqft minimum`}`;
+  }
+  if (res.uncovered > 0) {
+    return `${res.uncovered.toFixed(1)} sqft of the foot region belongs to no chunk`;
+  }
+  return 'the foot region could not be cut out';
 }
 
 /**
@@ -382,7 +540,17 @@ export function bedFootPlan({ polygon, zones, chunks, lights, opt }) {
   if (!flankFitLines(geo, opt)) {
     return no('the chunks beside the bed have no cut lines to copy');
   }
-  return { plan: { fit: geo.fit, anchors, region: geo.region }, why: null };
+  /* THE HOLES TRAVEL WITH THE PLAN. The second pass re-decomposes the room and
+     re-reads the flank lines off the chunks it produces, but the ZONES are the
+     same list it was handed in the first place — so carrying them here costs
+     nothing and saves threading a fourth argument through `applyBedFootPlan`
+     for a fact this function already has in its hand. Clipped and non-bed only:
+     the bed is outside the region by construction, and a rectangle that does
+     not reach the region is not a hole in it. */
+  const holes = zones.filter((z) => z.cls !== 'bed'
+    && Math.min(z.x1, geo.region.x1) - Math.max(z.x0, geo.region.x0) > EPS
+    && Math.min(z.y1, geo.region.y1) - Math.max(z.y0, geo.region.y0) > EPS);
+  return { plan: { fit: geo.fit, anchors, region: geo.region, holes }, why: null };
 }
 
 /**
@@ -391,8 +559,9 @@ export function bedFootPlan({ polygon, zones, chunks, lights, opt }) {
  */
 export function applyBedFootPlan(chunks, plan, opt = {}) {
   if (!plan) return chunks;
-  const merged = carveFootRegion(chunks, { region: plan.region, fit: plan.fit }, opt);
-  if (!merged) return chunks;
+  const merged = carveFootRegion(chunks,
+    { region: plan.region, fit: plan.fit, holes: plan.holes ?? [] }, opt);
+  if (!merged?.chunks) return chunks;
   // NO FIXTURE OVERRIDE. The rows are copies of rows that already carry this
   // room\'s ordinary fitting, so the foot of the bed is lit with the same lamp
   // as the sides of it. See the note at the top of this file.

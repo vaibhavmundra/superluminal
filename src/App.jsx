@@ -30,7 +30,7 @@ import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
 import { buildBOQ, FIXTURE_BY_ID, trackFixtureFor } from './lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
-import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, targetAreaFor, fixtureForCell } from './lib/roomTypes.js';
+import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, isOutdoor, targetAreaFor, fixtureForCell } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
 import OptionCoach from './components/OptionCoach.jsx';
 /* The walkthrough, playing in the panel rather than linked out of it. Named
@@ -56,7 +56,7 @@ import RenderPassPanel from './components/RenderPassPanel.jsx';
 import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone,
          nearestWall, alongWallAt, RUN_EDIT } from './lib/accentPlace.js';
 import { planSwitchboards, planChunkBoards, markClashes, asDrawn, slideBoardTo,
-         SB_COLOUR } from './lib/electrical.js';
+         innerSpaceFor, nearestBoardTo, SB_COLOUR } from './lib/electrical.js';
 // THE BED, FOR THE SWITCHBOARD RULE THAT BRACKETS IT. One function, and it is
 // borrowed rather than copied so that "which bed" has one answer on a plan with
 // two of them in one room — see the note by `bedRect` below.
@@ -1290,6 +1290,14 @@ export default function App({
   // arrival and usually with nothing else on screen. One checkbox for both
   // would mean turning on four overlays to check one number.
   const [auditDoors, setAuditDoors] = useState(false);
+  /* THE BEDS, ON A THIRD SWITCH, for the reason the doors have a second one.
+     They were dropped from `audit` when that overlay began opening by default —
+     see the note in PlanCanvas's bed group — and what was lost with them is the
+     only view of a fact the layout obeys but never draws: a bed moves every
+     downlight around it and appears nowhere on the sheet. Asked on its own,
+     because "is that bed right" is a question about one room at one moment, not
+     a thing to have standing on. */
+  const [auditBeds, setAuditBeds] = useState(false);
   const svgRef = useRef(null);
 
   useEffect(() => {
@@ -1501,6 +1509,39 @@ export default function App({
     }
   }, [layers.invert, isVector, source]);
 
+  /* --- TWO TOOLS ARE STEPS, AND THE OTHER THREE ARE NOT --------------------
+     THE TEST IS WHETHER THE TOOL HAS A `GESTURE`, and that is deliberately the
+     same test the palette already makes to decide between a picture card and a
+     one-line sentence. Written there: a card is worth its space "where the
+     gesture is hard to imagine or its result lands somewhere surprising, and
+     'click a wall' is neither". That is exactly the line between a tool that
+     can be explained beside a palette and one that deserves the panel, so it is
+     one criterion and not two that can disagree.
+
+     WHICH LEAVES THE SPOT AND THE COVE. Neither puts a fitting where you point.
+     The spot's box names what is being LIT and the fitting then stands off on
+     the ceiling grid, aimed back into it; the cove's drag is locked to the wall
+     the press landed on, so pulling out into the room does not do what it looks
+     like it does. Both are gestures somebody can perform
+     correctly and still read as a bug — and both were being explained by one
+     card under a six-cell palette, beside a spaces list and two more sections.
+
+     A SCONCE, A STRIP AND A CHANDELIER STAY AS THEY WERE: click a wall, click
+     two ends, drop it on the ceiling. The result is under the cursor, the
+     palette stays up, and emptying the panel for them would be ceremony.
+
+     `!readOnly` because an operator cannot place anything, and `!prep` for the
+     reason every other control on this screen carries it: while the pipeline
+     runs the layout is being replaced underneath. The door and zone editors
+     take precedence in the panel's own branch order — they own the canvas
+     outright, and `openZoneEdit`/`openDoorEdit` disarm the tools on the way in.
+
+     THE TOOL'S OWN ROW IS WHAT THE STEP RENDERS FROM, so the heading, the hint
+     and the consequence cannot drift from the palette button they came off. */
+  const stepTool = addTool && GESTURE[addTool] && !readOnly && !prep
+    ? LIGHT_TOOLS.find((t) => t.id === addTool) ?? null
+    : null;
+
   /* INVERTED MEANS THE PLAN AND WHAT IS ON THE CEILING, AND NOTHING ELSE. Cell
      shading, the grid, space outlines and tags are all our WORKING drawn over
      somebody's plan, and on a black ground they are what stops it reading as
@@ -1541,12 +1582,48 @@ export default function App({
      would be showing somebody wiring derived from boxes they are in the middle
      of correcting. It comes back the moment the editor closes; `layers.electrical`
      itself is untouched, so nothing has to be put back. */
+  /* --- AND THE COVE STEP TURNS THE OUTLINES UP AND THE PLAN DOWN -----------
+     THE GESTURE IS AIMED AT A LINE, WHICH NO OTHER GESTURE ON THIS CANVAS IS.
+     A no-light zone is boxed over open ceiling, a spot's box encloses a piece
+     of furniture, a sconce is a click at a wall with a foot of tolerance either
+     side. A cove is dragged ALONG a wall and seats on the wall it starts on —
+     so the one thing the drawing has to make easy to hit is the outline, and
+     for the whole of this app's life that outline has been OFF by default and
+     the thing under it — somebody else's scan, at full strength, with its own
+     wall lines a few pixels away from ours — has been on.
+
+     SO `region: true` AND `dim: true`, FOR THE LENGTH OF THE STEP ONLY. Our
+     polygon is what the press is projected onto (see `coveWallAt`), so it is
+     the only line on the sheet that is actually true here; the scan's own walls
+     are a picture of the same wall, off by however much the trace was off by.
+     Turning ours on and fading theirs makes the line you can hit the line you
+     can see. Both are derived, not set: `layers` is untouched, so the View
+     switches and the saved plan come back exactly as they were the moment Done
+     is pressed.
+
+     THE FADE IS NOT `layers.dim`, AND THAT IS THE ONE SUBTLE PART. `dim` is
+     ELEMENT OPACITY on the plan itself, which does not wash a drawing towards
+     the ground — it makes it SEE-THROUGH, and what is behind it in night mode
+     is the page, which carries this app's graph-paper wallpaper. Turning it on
+     over a scan on the negative would have put 24px graph paper through every
+     room; the DXF branch in PlanCanvas has a note about the same hole, which is
+     why it paints its own black sheet. Night mode drops `dim` for a related
+     reason of its own: it exists to keep black ink legible over a black scan.
+     So the wash is a SCRIM of the ground's own colour laid over the plan and
+     under our line work — see `wash` in PlanCanvas. It cannot reveal anything
+     behind it because it is opaque paint, it works on both grounds by taking
+     the ground's colour, and it leaves every layer switch alone.
+
+     THE OUTLINE'S INK FOLLOWS THE GROUND TOO — see `regionInk` in PlanCanvas,
+     the same rule the no-light zones take — so neither mode is left drawing a
+     line in the colour of the thing behind it. */
   const canvasLayers = useMemo(() => {
     const base = layers.invert
       ? { ...layers, dim: false, cells: false, region: false, labels: false }
       : layers;
-    return doorEdit ? { ...base, electrical: false } : base;
-  }, [layers, doorEdit]);
+    const aiming = stepTool?.id === 'cove' ? { ...base, region: true } : base;
+    return doorEdit ? { ...aiming, electrical: false } : aiming;
+  }, [layers, doorEdit, stepTool]);
 
   // --- opening a saved plan -------------------------------------------------
   //
@@ -2170,6 +2247,58 @@ export default function App({
   }, [addTool, coveFrom, addAt, pxPerFt]);
 
   /**
+   * THE WARDROBES THE ACCENT PASS FOUND, in plan pixels, room by room.
+   *
+   * `accentResults[id].furniture` is what the RULES saw — the list the strips
+   * and sconces were derived from, with this pass's own loose bed boxes already
+   * swapped for the measured ones (see `computeAccents`). So a wardrobe in here
+   * is a wardrobe the app has already acted on: it is the reason there is a
+   * strip along that wall, and this is the same rectangle that produced it.
+   *
+   * OFF `litOutlines` AND NOT `rooms`, which is not a style preference — it is
+   * the only ordering that works. `rooms` is computed FROM the zone list, and
+   * the zone list is about to contain these; reading `rooms` here would be a
+   * cycle. The results are keyed by the outline's own id, so there is nothing
+   * `rooms` could add.
+   */
+  const wardrobesPx = useMemo(() => {
+    const out = [];
+    for (const o of litOutlines) {
+      for (const f of accentResults[o.id]?.furniture ?? []) {
+        if (f.type !== 'wardrobe' || !f.rect) continue;
+        out.push({ id: `wd-${f.id}`, roomId: o.id, rect: f.rect });
+      }
+    }
+    return out;
+  }, [litOutlines, accentResults]);
+
+  /**
+   * A WARDROBE IS A NO-LIGHT ZONE, on the same terms as a bed.
+   *
+   * A DOWNLIGHT OVER A WARDROBE LIGHTS THE TOP OF THE WARDROBE. It is a foot and
+   * a half of dust-catcher at head height and the light lands on it, so the
+   * fitting is spent on the one square metre of the room nobody looks at, and
+   * the wall the wardrobe is on gets its light from the strip inside the unit —
+   * which is why the strip is there. This is the same argument the bed makes
+   * (nobody wants a downlight over a pillow) reaching the same list.
+   *
+   * DERIVED, NOT DRAWN, exactly like the beds. `drawnZones` is hand-drawn zones
+   * and enclosed spaces only — see the note there about a hatched box over
+   * somebody's bed on a sheet handed to a client. The zone moves the fittings
+   * and does not argue about it on the drawing.
+   *
+   * IT ARRIVES AFTER THE FIRST LAYOUT, and that is fine and worth stating. The
+   * accent pass runs on a space that is already lit, so the lights move once
+   * when its answer lands — the same way they move when somebody boxes a zone
+   * by hand. Nothing loops: `accentResults` is a stored answer, not a
+   * derivation of the layout, so a re-layout does not re-run the pass.
+   */
+  const wardrobeZones = useMemo(
+    () => wardrobesPx.map((w) => ({ id: w.id, roomId: w.roomId, ...w.rect,
+                                    kind: 'wardrobe' })),
+    [wardrobesPx]);
+
+  /**
    * ...and as no-light zones, which is how "a reverse cove is a no-draw area"
    * is actually enforced.
    *
@@ -2222,8 +2351,9 @@ export default function App({
   // Hand-drawn zones and detected ones behave identically from here on — that
   // was the point of making a detection produce a rectangle rather than a new
   // kind of obstacle. So do the reverse coves.
-  const zoneList = useMemo(() => [...zones, ...detectedZones, ...reverseCoveZones],
-    [zones, detectedZones, reverseCoveZones]);
+  const zoneList = useMemo(
+    () => [...zones, ...detectedZones, ...wardrobeZones, ...reverseCoveZones],
+    [zones, detectedZones, wardrobeZones, reverseCoveZones]);
 
   // Which layers are walls, for the detector's render. classifyLayers already
   // works this out for room extraction; the same answer decides which lines get
@@ -3956,6 +4086,24 @@ export default function App({
     }));
     for (const r of rooms) {
       if (!r.plan?.ok) continue;
+      /* --- A BALCONY GETS NO BOARD OF ITS OWN ---------------------------
+         The rules below all place a plate ON the space they are given: beside
+         its door, at its bedside, on the wall facing its bed. Run on a balcony
+         they would put a switch outside — on an external wall, in the weather,
+         reachable only by somebody who has already walked out there in the
+         dark. The light is switched from indoors instead, off a plate in the
+         room the balcony opens off; `outdoorFeeds` below works out which plate,
+         and the flows carry the balcony's fittings to it.
+         AN EMPTY RESULT AND NOT A SKIPPED KEY. Everything downstream reads
+         `boardResults[id]` and a missing entry is "the pass has not run", which
+         is a different statement from "this space has no boards" — the second
+         is a decision, and it comes with a sentence saying so. */
+      if (isOutdoor(projectId, roomTypes[r.id]?.type)) {
+        out[r.id] = { boards: [], notes: [
+          'This space is outside, so its light is switched from the room it'
+          + ' opens off rather than from a plate on its own wall.'] };
+        continue;
+      }
       try {
         out[r.id] = planSwitchboards({
           room: { id: r.id, polygonPx: r.plan.polygonPx },
@@ -3968,6 +4116,18 @@ export default function App({
              wrong. `bedZoneIn` takes the largest where a room has more than one,
              which is the same choice bedGrid.js makes for the flanking lights. */
           bedRect: bedZoneIn(r.plan.zonesPx ?? []),
+          /* AND THE WARDROBES, WHICH NO PLATE MAY STAND ON. Raw rectangles: the
+             six inches of clear plaster either side is the rules' number, not
+             this file's, so it is applied in electrical.js where every caller
+             gets the same one. See `keepOutsFor`.
+             FROM `wardrobesPx` AND NOT FROM `r.plan.zonesPx`, even though the
+             same rectangles are in there as no-light zones now. That list is
+             what the CEILING keeps off — beds, hand-drawn boxes, reverse coves,
+             wardrobes — and a switch has no reason to avoid a bed or a cove. A
+             plate must keep off JOINERY, which is a different fact that happens
+             to share some of its geometry, and the honest way to say it is to
+             hand in the joinery. */
+          keepOff: wardrobesPx.filter((w) => w.roomId === r.id).map((w) => w.rect),
           // WHERE SOMEBODY DRAGGED ONE OF THIS SPACE'S PLATES TO. Handed whole
           // rather than filtered by room: the keys are board ids and a board id
           // names its room, so a filter here would be a second place that has to
@@ -3991,7 +4151,7 @@ export default function App({
       }
     }
     return out;
-  }, [rooms, doors, roomTypes, projectId, accentZonesPx, boardMoves, pxPerFt]);
+  }, [rooms, doors, roomTypes, projectId, accentZonesPx, wardrobesPx, boardMoves, pxPerFt]);
 
   /**
    * This space's boards, minus the ones somebody threw away.
@@ -4068,11 +4228,18 @@ export default function App({
     if (!(pxPerFt > 0)) return out;
     for (const r of rooms) {
       if (!r.plan?.ok) continue;
+      // AND NO BAY PLATES OUTSIDE, for the reason the rules pass skips it: a bay
+      // plate is a switchboard on the drawing like any other, and this space's
+      // switches are indoors. See `outdoorFeeds`.
+      if (isOutdoor(projectId, roomTypes[r.id]?.type)) continue;
       const bays = baysOf(r);
       if (!bays.length) continue;
       out[r.id] = planChunkBoards({
         room: { id: r.id, polygonPx: r.plan.polygonPx },
         bays,
+        // The same joinery the rules pass keeps off, for the same reason: a bay
+        // plate is a switchboard on the drawing like any other.
+        keepOff: wardrobesPx.filter((w) => w.roomId === r.id).map((w) => w.rect),
         // `ruleBoardsFor` AND NOT `boardsFor`, WHICH IS THE WHOLE OF "the
         // routing stays as it is". This pass decides which bay is switched from
         // which plate, and it decides it by which plate stands on the bay's own
@@ -4088,7 +4255,7 @@ export default function App({
       });
     }
     return out;
-  }, [rooms, pxPerFt, baysOf, ruleBoardsFor, boardMoves]);
+  }, [rooms, pxPerFt, baysOf, ruleBoardsFor, wardrobesPx, boardMoves, projectId, roomTypes]);
 
   /**
    * The bay plates of one space, as drawn.
@@ -4108,6 +4275,65 @@ export default function App({
     .filter((b) => !b.rejected && b.point && !boardsOff.includes(b.id))
     .map(asDrawn),
   [bayResults, boardsOff]);
+
+  /**
+   * WHICH PLATE SWITCHES EACH OUTDOOR SPACE: balconyId -> the board, and the
+   * room it stands in.
+   *
+   * THE RULE IN THREE STEPS, AND THE THIRD IS THE ONE THAT KEEPS IT HONEST.
+   * `innerSpaceFor` says which room the balcony's LONG side is connected to —
+   * see the note there for why the long side and not the nearest room.
+   * `nearestBoardTo` then picks that room's plate nearest the balcony's own
+   * boundary. And because it picks from `boardsFor` + `bayBoardsFor` — the
+   * boards AS DRAWN, deletions applied — a plate added to the inner room later
+   * takes the balcony over automatically if it lands nearer: the answer is
+   * derived from what is on the sheet, not stored when the balcony was lit.
+   * That is the second half of what was asked for ("if another switchboard is
+   * placed in the inner space which is closest to the balcony, then the
+   * connection is from that switchboard") and it needs no code of its own.
+   *
+   * A SPACE WITH NOWHERE TO FEED FROM FALLS BACK TO ITSELF. A detached terrace,
+   * or a balcony whose inner room was never lit, has no plate to point at — so
+   * `boardResults` has already given it none and this gives it none either, and
+   * its flows come out with no board, which the drawing shows as fittings with
+   * no loop rather than as a wire to nowhere.
+   */
+  const outdoorFeeds = useMemo(() => {
+    const out = {};
+    if (!(pxPerFt > 0) || !rooms.length) return out;
+    const all = rooms.filter((r) => r.plan?.ok)
+      .map((r) => ({ id: r.id, polygonPx: r.plan.polygonPx }));
+    for (const r of rooms) {
+      if (!r.plan?.ok) continue;
+      if (!isOutdoor(projectId, roomTypes[r.id]?.type)) continue;
+      const inner = innerSpaceFor({
+        room: { id: r.id, polygonPx: r.plan.polygonPx }, rooms: all, pxPerFt });
+      if (!inner) continue;
+      const host = rooms.find((q) => q.id === inner.roomId);
+      if (!host) continue;
+      /* NEAREST, WHATEVER ITS ROLE — AND THAT IS A DELIBERATE EXCEPTION TO
+         `servesBay`, WHICH IS WHY IT IS WRITTEN OUT.
+         This filtered to the general plates first, on the reasoning `servesBay`
+         gives inside a room: a bedside plate exists to switch its own sconce
+         and a television plate its own socket, so a ROOM's ceiling must never
+         be hung off either — otherwise the downlights come on from a plate at
+         the pillow while the board beside the door feeds nothing.
+         A BALCONY IS NOT A PIECE OF THAT ROOM'S CEILING. It is one light on the
+         other side of a wall, and the question it asks is the plain one: which
+         switch is nearest to reach. In a bedroom the answer is very often the
+         bedside plate — a multi-gang plate at the pillow carrying the room's
+         masters is exactly where somebody wants the balcony on it — and the
+         general-plates rule sent the wire the length of the room to a board on
+         the far wall instead. So the role test comes off for this one join.
+         The room's own ceiling still obeys `servesBay`; nothing about that
+         changed, and nothing here can change it. */
+      const boards = [...boardsFor(host), ...bayBoardsFor(host)];
+      const board = nearestBoardTo(boards, r.plan.polygonPx);
+      if (!board) continue;
+      out[r.id] = { board, roomId: host.id, roomName: host.outline.name || null };
+    }
+    return out;
+  }, [rooms, roomTypes, projectId, pxPerFt, boardsFor, bayBoardsFor]);
 
   /**
    * Every switchboard still standing, in plan pixels.
@@ -4154,10 +4380,34 @@ export default function App({
       // BOTH KINDS OF PLATE, EACH AS DRAWN. `owner` below comes from the same
       // pass at its RULE positions, and the ids match across the two — which is
       // what lets the wire follow a dragged plate while the switching does not.
-      const boards = [...boardsFor(r), ...bayBoardsFor(r)];
+      /* AN OUTDOOR SPACE IS HANDED THE PLATE THAT SWITCHES IT, which stands in
+         another room. `boardsFor(r)` is empty for one — the rules pass was
+         skipped, see `boardResults` — so without this its fittings would come
+         out with no board and no loop at all. With it, every flow on the
+         balcony falls back to the one board on offer (there is no `owner` map
+         to override it, because a balcony has no bays of its own) and the wire
+         runs from the fittings, through the wall, to a plate somebody can reach
+         from indoors.
+         THE WIRE CROSSING THE WALL IS THE POINT AND NOT A GLITCH: that is what
+         the circuit does, and a drawing that stopped the loop at the threshold
+         would be hiding the only unusual thing about it. */
+      const feed = outdoorFeeds[r.id];
+      const boards = feed ? [feed.board] : [...boardsFor(r), ...bayBoardsFor(r)];
+      const bays = baysOf(r);
+      /* EVERY BAY OUT HERE IS SWITCHED FROM THAT ONE PLATE, said as ownership
+         rather than left to the fallback. `boardFor` falls back to the nearest
+         board that `servesBay` — which excludes a bedside and a television
+         plate, correctly, because neither can carry a ceiling. If the inner
+         room's nearest plate happens to be one of those, the fallback would
+         find nothing and the balcony would come out with no loops at all.
+         Naming the owner says what has actually been decided: this ceiling runs
+         off that plate, whatever kind of plate it turned out to be. */
+      const owner = feed
+        ? new Map(bays.map((b) => [b.key, feed.board.id]))
+        : (bayResults[r.id]?.owner ?? new Map());
       const { flows } = planFlows({
         room: { id: r.id, polygonPx: r.plan.polygonPx },
-        bays: baysOf(r),
+        bays,
         chunks: r.plan.chunksPx ?? [],
         cells: r.plan.cellsPx ?? [],
         lights: r.plan.lightsPx ?? [],
@@ -4166,7 +4416,7 @@ export default function App({
         spots: taskSpotsPx.filter((sp) => sp.roomId === r.id),
         tracks: r.plan.tracksPx ?? [],
         boards,
-        owner: bayResults[r.id]?.owner ?? new Map(),
+        owner,
         zones: r.plan.zonesPx ?? [],
         pxPerFt,
       });
@@ -4174,7 +4424,7 @@ export default function App({
     }
     return out;
   }, [rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx,
-      pxPerFt, baysOf]);
+      outdoorFeeds, pxPerFt, baysOf]);
 
   /**
    * The layout, in the one number a lighting drawing is actually judged on.
@@ -4938,38 +5188,6 @@ export default function App({
   // is no layout.
   const showTrace = step === 'trace' && !readOnly;
 
-  /* --- TWO TOOLS ARE STEPS, AND THE OTHER THREE ARE NOT --------------------
-     THE TEST IS WHETHER THE TOOL HAS A `GESTURE`, and that is deliberately the
-     same test the palette already makes to decide between a picture card and a
-     one-line sentence. Written there: a card is worth its space "where the
-     gesture is hard to imagine or its result lands somewhere surprising, and
-     'click a wall' is neither". That is exactly the line between a tool that
-     can be explained beside a palette and one that deserves the panel, so it is
-     one criterion and not two that can disagree.
-
-     WHICH LEAVES THE SPOT AND THE COVE. Neither puts a fitting where you point.
-     The spot's box names what is being LIT and the fitting then stands off on
-     the ceiling grid, aimed back into it; the cove's drag is locked to the wall
-     the press landed on, so pulling out into the room does not do what it looks
-     like it does. Both are gestures somebody can perform
-     correctly and still read as a bug — and both were being explained by one
-     card under a six-cell palette, beside a spaces list and two more sections.
-
-     A SCONCE, A STRIP AND A CHANDELIER STAY AS THEY WERE: click a wall, click
-     two ends, drop it on the ceiling. The result is under the cursor, the
-     palette stays up, and emptying the panel for them would be ceremony.
-
-     `!readOnly` because an operator cannot place anything, and `!prep` for the
-     reason every other control on this screen carries it: while the pipeline
-     runs the layout is being replaced underneath. The door and zone editors
-     take precedence in the panel's own branch order — they own the canvas
-     outright, and `openZoneEdit`/`openDoorEdit` disarm the tools on the way in.
-
-     THE TOOL'S OWN ROW IS WHAT THE STEP RENDERS FROM, so the heading, the hint
-     and the consequence cannot drift from the palette button they came off. */
-  const stepTool = addTool && GESTURE[addTool] && !readOnly && !prep
-    ? LIGHT_TOOLS.find((t) => t.id === addTool) ?? null
-    : null;
   /* WHAT THIS STEP HAS PUT ON THE PLAN, AND HOW TO TAKE IT BACK. Two tools, two
      lists, one readout — kept as a table rather than as a pair of ternaries in
      the markup, because the noun and the list it counts have to stay together:
@@ -5197,6 +5415,46 @@ export default function App({
     return { a: { ...w.a }, b: { ...w.b }, wallIndex: w.index, inward,
              t: Math.max(0, Math.min(L, t)), L };
   }, [pxPerFt]);
+
+  /**
+   * WHICH ROOM A COVE PRESS BELONGS TO, AND IT IS NOT SIMPLY `roomAt`.
+   *
+   * THE TARGET IS THE OUTLINE ITSELF, WHICH IS THE BOUNDARY OF THE TEST. Every
+   * other gesture on this canvas is aimed at the INSIDE of a room — a box over
+   * a bed, a click on open ceiling — so `pointInPolygon` is exactly the right
+   * question for them. A cove is aimed AT the line, and half of the pixels a
+   * careful person clicks when they are aiming at a line are on the far side of
+   * it. `roomAt` answers null for those, the press did nothing at all, and the
+   * tool looked broken precisely when it was being used most carefully.
+   *
+   * HALF A FOOT, IN THE DRAWING'S OWN UNITS, with an 8px floor so a plan zoomed
+   * out to a thumbnail still has a grabbable edge. Wide enough to forgive the
+   * aim, far too narrow to seat a cove on a room the pointer is not near.
+   *
+   * NEAREST WINS, NOT FIRST FOUND. Two rooms share a party wall, so a press on
+   * it is within tolerance of both; taking the nearer one puts the cove in the
+   * room whose side of the wall was pressed, which is the only reading of that
+   * press anybody intends.
+   */
+  const coveRoomAt = useCallback((pt) => {
+    const inside = roomAt(pt);
+    if (inside) return inside;
+    const tol = Math.max(8, (pxPerFt || 0) * 0.5);
+    let best = null;
+    let bestD = Infinity;
+    for (const r of rooms) {
+      const poly = r.plan?.polygonPx || r.geo?.polygonPx;
+      if (!poly?.length) continue;
+      const w = nearestWall({ x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y }, poly);
+      if (!w) continue;
+      // The perpendicular distance to that edge: the along-wall component is
+      // `t`, so what is left of the offset vector is the distance off it.
+      const { t, u } = alongWallAt(w, pt);
+      const d = Math.hypot(pt.x - (w.a.x + u.x * t), pt.y - (w.a.y + u.y * t));
+      if (d < bestD) { bestD = d; best = r; }
+    }
+    return bestD <= tol ? best : null;
+  }, [roomAt, rooms, pxPerFt]);
 
   /** Where along the stored wall the pointer is, clamped to that wall's ends. */
   const coveTAt = useCallback((pt) => {
@@ -6660,6 +6918,39 @@ export default function App({
          the press, and every later position is projected onto that stored wall.
          Dragging past the end of it clamps rather than cancels. */
 
+      /* THE COVE SEATS ITSELF FIRST, AHEAD OF THE OUT-OF-ROOM GUARD, and that
+         ordering is load-bearing rather than tidy. The guard asks
+         `pointInPolygon`, and this is the one gesture whose target IS the
+         polygon's edge — so the press that is aimed best is the press most
+         likely to land a pixel outside and be thrown away. It resolves its own
+         room with a tolerance instead; see `coveRoomAt`. A press with no
+         outline near it does nothing at all: no seat, and no disarm either,
+         because the step's way out is its Done button. */
+      if (addTool === 'cove') {
+        const seatRoom = coveRoomAt(p);
+        if (!seatRoom) return;
+        e.preventDefault();
+        const poly = seatRoom.plan?.polygonPx || seatRoom.geo?.polygonPx;
+        const seat = coveWallAt(raw, poly);
+        if (!seat) { setCoveNote('That space has no wall to cove along.'); return; }
+        if (seat.angled) { setCoveNote(seat.reason); return; }
+        setCoveNote('');
+        setCoveFrom({ ...seat, roomId: seatRoom.id });
+        /* THE POINTER IS CAPTURED, exactly as the spot's marquee captures it.
+           The end of a run is very often PAST the end of the wall — that is the
+           normal way to reach a corner, and the projection clamps it — so the
+           release routinely happens outside the element the press landed on.
+           Without capture that release is somebody else's event and the slot is
+           never committed: the band would simply hang there, following a
+           pointer that is no longer dragging anything. */
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        // THE BAND IS UP THE INSTANT THE PRESS LANDS, at zero length, rather
+        // than waiting for the pointer to move. A tool that shows nothing until
+        // you happen to move is a tool that looks like it missed the press.
+        setAddAt(raw);
+        return;
+      }
+
       const room = roomAt(p);
       /* Off the ceiling: put the tool away rather than place a fitting in a
          space that does not exist. Same rule the ceiling palette follows.
@@ -6675,31 +6966,6 @@ export default function App({
          no ceiling out here to put a fitting on. */
       if (!room) { if (!GESTURE[addTool]) disarmAdd(); return; }
       e.preventDefault();
-
-      /* ...AND THE PRESS DOES need a room, because the wall it seats on comes
-         out of that room's polygon. This is the whole of the cove's press: it
-         resolves the wall, and the drag and the release do the rest. */
-      if (addTool === 'cove') {
-        const poly = room.plan?.polygonPx || room.geo?.polygonPx;
-        const seat = coveWallAt(raw, poly);
-        if (!seat) { setCoveNote('That space has no wall to cove along.'); return; }
-        if (seat.angled) { setCoveNote(seat.reason); return; }
-        setCoveNote('');
-        setCoveFrom({ ...seat, roomId: room.id });
-        /* THE POINTER IS CAPTURED, exactly as the spot's marquee captures it.
-           The end of a run is very often PAST the end of the wall — that is the
-           normal way to reach a corner, and the projection clamps it — so the
-           release routinely happens outside the element the press landed on.
-           Without capture that release is somebody else's event and the slot is
-           never committed: the band would simply hang there, following a
-           pointer that is no longer dragging anything. */
-        e.currentTarget.setPointerCapture?.(e.pointerId);
-        // THE BAND IS UP THE INSTANT THE PRESS LANDS, at zero length, rather
-        // than waiting for the pointer to move. A tool that shows nothing until
-        // you happen to move is a tool that looks like it missed the press.
-        setAddAt(raw);
-        return;
-      }
 
       if (addTool === 'sconce') {
         // ONE CLICK, AND THE WALL DOES THE REST. The click says WHICH wall and
@@ -8181,6 +8447,11 @@ export default function App({
                  nothing when they have picked nothing. */
               selectedId={focusId}
               fansPx={obstaclesPx} pxPerFt={pxPerFt} layers={canvasLayers} zoom={zoom}
+              /* THE PLAN GOES QUIET WHILE A COVE IS BEING AIMED. Not a layer:
+                 it is a property of the gesture in flight, it is never
+                 serialised, and it must not appear in the View list as
+                 something to switch. See `canvasLayers` above. */
+              wash={stepTool?.id === 'cove'}
               /* READ-ONLY: EVERY HANDLER OFF, AND `onFixture` BELOW LEFT ON.
                  PlanCanvas treats each of these as optional — a null
                  onObjPointerDown is a fan you cannot pick up, a false objMode is
@@ -8201,10 +8472,19 @@ export default function App({
               guides={readOnly ? [] : guides} ghost={readOnly ? null : ghost}
               clearanceFt={opt.fanClearance}
               selAccId={readOnly ? null : selAccId}
-              onAccPointerDown={readOnly ? null : accPointerDown}
+              /* AND NOTHING ON THE DRAWING IS GRABBABLE WHILE A TOOL IS ARMED.
+                 Same reasoning as `onPickChunk` above and the same phrase, for
+                 the three fittings that carry their own press handlers: an
+                 armed tool has spoken for the pointer, and a press that both
+                 places a cove and picks up the strip it was aimed past is a
+                 press nobody asked for. It matters most for the cove, whose
+                 whole gesture is a drag ALONG A WALL — which is where the runs
+                 that would steal it already live. `placing` does the same for
+                 the hover targets inside the canvas; see `INERT` there. */
+              onAccPointerDown={readOnly || armed || addTool ? null : accPointerDown}
               surfaces={surfacesPx} taskSpots={taskSpotsPx}
               selSpotId={readOnly ? null : selSpotId}
-              onSpotPointerDown={readOnly ? null : spotPointerDown}
+              onSpotPointerDown={readOnly || armed || addTool ? null : spotPointerDown}
               /* THE GRID CELLS ARE A READING, NOT A FITTING, and they have
                  moved to where the other readings live.
                  They were a public layer while the render pass was being built,
@@ -8227,6 +8507,17 @@ export default function App({
                  saying what the click will do before it is spent. */
               cursor={readOnly ? null
                 : objDrag || accDrag ? 'grabbing'
+                /* THE COVE KEEPS ITS CROSSHAIR OFF THE CEILING, and it is the
+                   only tool that does. `overRoom` is `pointInPolygon`, so it
+                   goes false the moment the pointer crosses the outline — which
+                   for every other tool is honest (nothing will land out there)
+                   and for this one is a lie told at the exact pixel the gesture
+                   is aimed at: the wall IS the boundary, the press is forgiven
+                   for half a foot either side (see `coveRoomAt`), and dragging
+                   PAST the end of a wall is the normal way to finish a run. A
+                   hand cursor there says "this press picks something up", and
+                   the press it invited was the wrong one. */
+                : addTool === 'cove' ? 'crosshair'
                 : (armed || addTool) ? (overRoom ? 'crosshair' : 'pointer')
                 : null}
               zones={drawnZones} draftZone={readOnly ? null : draftZone}
@@ -8239,7 +8530,7 @@ export default function App({
                  be — see `deleteBoard` for why there is no drag. Null in the
                  viewer, like every other editing handler here. */
               selBoardId={readOnly ? null : selBoardId}
-              onBoardPointerDown={readOnly ? null : boardPointerDown}
+              onBoardPointerDown={readOnly || armed || addTool ? null : boardPointerDown}
               /* SO THE CURSOR CAN SAY THE PLATE IS GRABBABLE, and so a plate in
                  flight can be drawn as such. The canvas is told the gesture is
                  happening rather than deriving it from a moved position: a board
@@ -8260,6 +8551,11 @@ export default function App({
               /* THE DOOR BOXES, on a switch of their own — they answer "is the
                  SCALE right", which is asked on arrival and on its own. */
               auditDoors={isAdmin && auditDoors}
+              /* THE BEDS AS THE PLANNER HAS THEM — `detectedZones` and not the
+                 accent pass's own boxes, which is the same list the chunking
+                 obeys. A debug overlay drawn from a second source is a debug
+                 overlay that can agree with nothing. */
+              bedBoxes={isAdmin && auditBeds ? detectedZones : []}
               doorBoxes={doors} doorRejects={doorState.rejected ?? []}
               doorPickId={doorPick?.id ?? null}
               /* --- CONFIRMING THE DOORS ------------------------------------
@@ -9678,12 +9974,7 @@ export default function App({
                   onChange={(e) => setAuditDoors(e.target.checked)} />
                 Show the doors it found
               </label>
-              <p className={`${N_ADMIN} mt-0.5`}>
-                Every candidate box, kept and rejected, with the opening it
-                measured. The one the scale is taken from is drawn solid.
-                {isVector && ' This plan is a drawing, so the detector never ran'
-                  + ' on it — a DXF states its own scale.'}
-              </p>
+              
               {/* THE COUNTS STAY WITH THEIR OWN SWITCH rather than joining the
                   ledger below. That one answers "what did the models see on
                   this plan"; these four numbers answer "is the scale right",
@@ -9732,6 +10023,29 @@ export default function App({
               )}
 
 
+              {/* THE BED, AND THEN THE GRID — TWO MORE OVERLAYS, TWO MORE
+                  CHECKBOXES. Every switch in this section is now the same
+                  control: a box you tick to put a reading on the drawing.
+                  THE GRID WAS A BUTTON, and the argument for that was that it
+                  is an ACT — put the scaffolding on, take it off — rather than
+                  a standing preference. It reads better as the odd one out than
+                  it did as a button: four switches over one drawing, three of
+                  them ticked and one of them pressed, with the pressed one
+                  carrying its state in a word that changes under the cursor
+                  while the other three carry theirs in a tick. One idiom. The
+                  label stays put and the tick says which way it is, which is
+                  also what makes the pair readable at a glance — "grid on, beds
+                  off" is a shape, not two sentences to read. */}
+              {/* NO NOTE AND NO TOOLTIP. What the box is for — the rectangle
+                  the planner keeps the downlights off, invisible on the sheet
+                  otherwise — is written above in the bed group in PlanCanvas,
+                  which is where the reasoning belongs. The label is the
+                  control. */}
+              <label className={`${CHECK} mt-2`}>
+                <input className="lp-check" type="checkbox" checked={auditBeds}
+                  onChange={(e) => setAuditBeds(e.target.checked)} />
+                Show the beds it identified
+              </label>
               {/* THE GRID, ON THE DRAWING. Its own switch and not part of the
                   overlay above: that one is what the MODELS read off the
                   plan, this is what our own chunker and planner did with it
@@ -9740,20 +10054,16 @@ export default function App({
                   the one thing on this drawing with no visible trace at all —
                   `gridPath` has been in PlanCanvas the whole time with
                   nothing calling it.
-                  A BUTTON RATHER THAN A CHECKBOX, and it says which way it is
-                  about to go. It is an act — put the scaffolding on the
-                  drawing, take it off again — rather than a standing
-                  preference like the layers list, and it is the one control
-                  in here somebody toggles repeatedly while looking at the
-                  canvas rather than at this panel. */}
-              <div className={`${BTNROW} mt-2.5`}>
-                <button className={BTN_SECOND} disabled={!totals.rooms}
-                  aria-pressed={showGrid}
-                  title="Draw the chunk boxes and the cell lines the lights were laid on"
-                  onClick={() => setShowGrid((v) => !v)}>
-                  {showGrid ? 'Hide the planning grid' : 'Show the planning grid'}
-                </button>
-              </div>
+                  DISABLED WITH NOTHING TO DRAW, which the button said by going
+                  grey and a checkbox says the same way. There is no grid until
+                  there is a layout. */}
+              <label className={`${CHECK} mt-2 ${totals.rooms ? '' : 'opacity-40'}`}
+                title="Draw the chunk boxes and the cell lines the lights were laid on">
+                <input className="lp-check" type="checkbox" checked={showGrid}
+                  disabled={!totals.rooms}
+                  onChange={(e) => setShowGrid(e.target.checked)} />
+                Show the planning grid
+              </label>
               {/* LOOK AGAIN — the manual bedroom pass. Admin-only because it
                   spends a model call per room and because the person who
                   wants it is the person tuning the detectors: on a plan where

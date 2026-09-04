@@ -36,7 +36,7 @@ import {
   enumerateChunkings, findChunking, prepareZones,
   normalizeZone, pointInZone, inAnyZone,
 } from './chunking.js';
-import { bedFootPlan, applyBedFootPlan, footGeometry, flankFitLines, BED_GRID_DEFAULTS } from './bedGrid.js';
+import { bedFootPlan, applyBedFootPlan, carveFootRegion, carveRefusal, footGeometry, flankFitLines, BED_GRID_DEFAULTS } from './bedGrid.js';
 
 // Zone geometry lives in chunking.js — it is what defines the chunks — but the
 // planner has always exported normalizeZone, so callers keep working.
@@ -1323,7 +1323,23 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
       // a layout no better than this one. `bedFootApplied` is the second pass
       // saying it actually did the thing.
       if (retry.ok && retry.stats?.bedFootApplied) return retry;
-      bedFootWhy = 'the foot region could not be cut out without leaving a sliver';
+      /* THE SENTENCE COMES FROM THE CARVE ITSELF, WITH ITS NUMBERS IN IT.
+         "It would leave a sliver" was true of every refusal and actionable in
+         none of them: two different minimums can refuse, a piece can miss
+         either by a hair or by half, and the answer to "is the minimum wrong or
+         is the room wrong" is a measurement. So the carve is run here on the
+         chunks it would have run on, purely to be told what happened.
+         THE SAME DECOMPOSITION, WHICH IS WHY THIS IS HONEST RATHER THAN AN
+         APPROXIMATION. `chunks` at this point is `chosen.chunks` with the
+         bed-foot merge applied, and on THIS pass there is no merge to apply —
+         `opt.bedFoot` is unset, which is the condition we are inside. The
+         second pass re-decomposes the same polygon with the same zones and the
+         same options, so it reaches the same chunks and hands them to the same
+         function. Running it again costs one pass over a handful of
+         rectangles. */
+      const refusal = carveRefusal(carveFootRegion(chunks,
+        { region: plan.region, fit: plan.fit, holes: plan.holes ?? [] }, opt));
+      bedFootWhy = refusal ?? 'the foot region could not be cut out';
     }
   }
 

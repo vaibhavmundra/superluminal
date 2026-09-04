@@ -69,6 +69,17 @@ const NONE = { accent: false, spots: false };
 // in a WC that a directional spot would help with, and one over a basin is
 // glare in a mirror.
 const WET = { accent: true, spots: false };
+/* OUTSIDE THE BUILDING LINE, which is a fact about SERVICES rather than about
+   light. A balcony is lit like any other small space; what makes it different
+   is that its switch does not belong on it — nobody stands out in the rain to
+   turn the balcony light on, and a plate on an external wall is a detail
+   nobody wants to build. See `innerSpaceFor` in electrical.js for what the
+   rule does with this.
+   ONE FLAG RATHER THAN A LIST OF IDS AT THE CALL SITE, for the reason this
+   file's header gives: the vocabulary and the rules that read it have to move
+   together, and `type === 'balcony'` written in the electricals is a rule that
+   silently stops applying the day a terrace becomes its own type. */
+const OUTSIDE = { outdoor: true };
 
 const COMMON = [
   { id: 'toilet', label: 'Toilet', ...WET,
@@ -103,8 +114,15 @@ export const PROJECT_TYPES = [
         plan: 'counters running along the walls with a sink, a hob drawn as four small circles, and often an island' },
       { id: 'foyer', label: 'Foyer', ...NONE,
         plan: 'a small entrance space just inside the main door, sometimes with a shoe unit or a console' },
-      { id: 'balcony', label: 'Balcony', ...NONE,
-        plan: 'a space outside the building line, usually long and narrow with a railing drawn as a thin double line' },
+      /* ONE TYPE FOR BOTH, AND THE LABEL SAYS SO. A terrace and a balcony are
+         the same space to every rule this app has — outside the building line,
+         no accents, no aimed spots, and a switch that belongs indoors — and a
+         classifier picking between two words for one treatment is a classifier
+         given a way to be wrong for no gain. See the note on the short lists
+         above. The `plan` line names both so the model does not have to decide
+         that a large one is still a balcony. */
+      { id: 'balcony', label: 'Balcony / terrace', ...NONE, ...OUTSIDE,
+        plan: 'a space outside the building line — a balcony, a terrace or an open deck — usually long and narrow, with a railing or parapet drawn as a thin double line and no ceiling over it' },
       { id: 'utility', label: 'Utility', ...NONE,
         plan: 'a small service space with a washing machine or a sink, often off the kitchen' },
       { id: 'pooja_room', label: 'Pooja room', ...NONE,
@@ -196,6 +214,14 @@ export const roomTypeIn = (projectId, typeId) =>
 /** The two gates. Unknown type means we know nothing, so we do nothing. */
 export const wantsAccents = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.accent;
 export const wantsSpots = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.spots;
+/**
+ * Is this space outside the building line?
+ *
+ * Read by the electricals and by nothing else so far: an outdoor space is lit
+ * from a switch in the room it opens off, so it gets no board of its own. See
+ * `innerSpaceFor` in electrical.js.
+ */
+export const isOutdoor = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.outdoor;
 /**
  * Should this kind of space contain a bed?
  *

@@ -55,7 +55,7 @@
 // PURE. No React, no canvas, no fetch.
 // ---------------------------------------------------------------------------
 
-import { edges, pointInPolygon, polygonArea } from './geometry.js';
+import { edges, pointInPolygon, polygonArea, distanceToBoundary } from './geometry.js';
 import { projectOntoWall } from './accentPlace.js';
 import { openingPx, doorWidthAt, MM_PER_FT } from './doors.js';
 
@@ -73,7 +73,69 @@ export const SB_MM = {
   // The plate's far edge must still clear the corner by this much, or it is a
   // switch jammed into a return and it does not get built.
   clearEnd: 100,
+  /* AND THIS MUCH CLEAR OF ANY JOINERY, measured from the thing's own edge.
+     Six inches, which is the number a site would give you: a switch closer than
+     that to a wardrobe is behind its shutter when the shutter is open, and on a
+     full-height unit it is behind the carcass altogether. The plate is not
+     merely ON the wardrobe in that case — it is unreachable, which is a worse
+     failure than being in an awkward place, because the drawing still shows a
+     switch and the room does not have one.
+     BOTH THE FOOTPRINT AND THE MARGIN COME FROM ONE NUMBER, applied as an
+     inflation of the rectangle — see `keepOutsFor`. "No plate on the wardrobe"
+     and "no plate within six inches of it" are the same statement about one
+     rectangle, and writing them as two rules is how they come to disagree. */
+  clearFurniture: 150,
 };
+
+/**
+ * HOW HIGH OFF THE FINISHED FLOOR EACH KIND OF BOARD IS SET, in mm.
+ *
+ * A LIST PER ROLE AND NOT A NUMBER, because the television wall's board is
+ * genuinely two plates at two heights — see FACING_PLATES, which says the same
+ * thing about the count. The list's length IS the plate count for that role,
+ * and a role whose board is one plate has a list of one.
+ *
+ * THE NUMBERS, AND WHERE THEY COME FROM:
+ *   · 1200 is switch height — the plate a standing person reaches on the way
+ *     past, which is what a board beside a door and a board for a bay both are.
+ *     They light a piece of ceiling and they are operated from the doorway.
+ *   · 700 is bedside height: reachable from the pillow, sitting up, which is
+ *     the whole reason that plate exists where it does.
+ *   · The television wall gets one of each. The lower plate is the one at the
+ *     unit — the socket and its switch, at the height the equipment stands —
+ *     and the upper one is at ordinary switch height for whatever is operated
+ *     standing in front of it.
+ *
+ * IT IS A SPECIFICATION AND NOT A DRAWING, and this is a plan view, so nothing
+ * on the canvas moves because of it: two plates at one point in plan are one
+ * rectangle whether they are 500mm apart in elevation or not. It is here so the
+ * schedule can say it, the card can show it, and the rules can ASK — "is this a
+ * switch or is it a socket" is a question about height, and the balcony feed is
+ * the first rule that will want to.
+ */
+export const SB_HEIGHT_MM = {
+  door: [1200],
+  bay: [1200],
+  bedside: [700],
+  facing: [700, 1200],
+};
+
+/* Switch height, in mm — under this a plate is equipment rather than a switch
+   somebody flicks. Nothing filters on it yet; it is here so that when something
+   does, the threshold is written down once. */
+export const SB_SWITCH_MIN_MM = 600;
+
+/**
+ * The heights for one board, and the count of plates that implies.
+ *
+ * AN UNKNOWN ROLE TAKES SWITCH HEIGHT rather than nothing: a plate with no
+ * height is a plate the schedule cannot issue, and a role this table has not
+ * heard of is a rule somebody added — which will be a switch, because every
+ * rule in this file places switches.
+ */
+export function heightsFor(role) {
+  return SB_HEIGHT_MM[role] ?? [1200];
+}
 
 /**
  * HOW MANY PLATES THE TELEVISION WALL'S BOARD IS.
@@ -83,11 +145,13 @@ export const SB_MM = {
  * this drawing is a view from above, so both plates are the one rectangle the
  * canvas draws, and the number exists so that what gets ORDERED is two.
  *
- * Named rather than written as a `2` in the rule because it is the sort of
- * number that turns out to be three the moment somebody wants a data point on
- * that wall too.
+ * IT IS THE HEIGHT LIST'S LENGTH AND NOT A `2`, which is the whole reason the
+ * table above comes first. The two facts are one fact — the board is two plates
+ * BECAUSE it is a plate at 700 and a plate at 1200 — and while they were two
+ * literals it was possible to add a third height and still order two plates.
  */
-export const FACING_PLATES = 2;
+export const FACING_PLATES = SB_HEIGHT_MM.facing.length;
+
 
 /** Blue, because the brief said blue and because nothing else on the plan is. */
 export const SB_COLOUR = '#2563EB';
@@ -134,6 +198,22 @@ export const ELEC_DEFAULTS = {
   // number is, and two different answers to one question would mean a bed with
   // a headboard wall for the lights and none for the switches.
   bedHeadGapFt: 2.0,
+  /* --- THE OUTDOOR SPACES' OWN THREE NUMBERS, all read by `innerSpaceFor`.
+     HOW FAR TO STEP ACROSS A WALL to see whose room is behind it, in feet. A
+     foot and a half clears a 230mm wall with its plaster and its skirting and
+     stops well short of the far side of any corridor, which is the whole
+     discrimination this number has to make: "the room on the other side of this
+     wall" and not "the next room along". */
+  outdoorReachFt: 1.5,
+  /* WHAT COUNTS AS A LONG SIDE, as a fraction of the balcony's longest edge.
+     Half takes both edges of a balcony that steps round a corner and still
+     refuses its ends — which is the point of the rule, since a balcony's end
+     touching a corridor is a neighbour by geometry and not by use. */
+  outdoorLongFrac: 0.5,
+  /* How many probes along each long side. Nine is enough to tell a wall a room
+     stands fully behind from a corner it clips, and the answer is a weighted
+     share rather than a yes, so a sample or two either way moves nothing. */
+  outdoorSamples: 9,
 };
 
 /** Room types a bedroom door leads INTO rather than in from. */
@@ -566,6 +646,156 @@ export function latchEnd(cand, polygon, opts = {}) {
   };
 }
 
+// --- the room an outdoor space is switched from ------------------------------
+
+/**
+ * WHICH SPACE A BALCONY OPENS OFF, decided by its LONG SIDE.
+ *
+ * THE RULE, IN THE WORDS IT ARRIVED IN: the light connection for a balcony or a
+ * terrace goes in the space its long side is connected to, and inside that
+ * space it goes on the board nearest the balcony. The switch for the outside
+ * belongs inside, because nobody steps out into the rain to turn it on and a
+ * plate on an external wall is a detail that does not get built.
+ *
+ * WHY THE LONG SIDE AND NOT SIMPLY "THE NEAREST ROOM". A balcony is long and
+ * narrow, and its two ends very often touch something — the next balcony along,
+ * a shaft, a corridor that runs past it. Those are neighbours by geometry and
+ * not by use: the room the balcony BELONGS to is the one behind its length,
+ * which is where its door and its window are. So an edge's vote is worth its
+ * own length, and only edges that are recognisably long sides get to vote at
+ * all.
+ *
+ * IT PROBES RATHER THAN LOOKING FOR SHARED EDGES. Two rooms traced off a plan
+ * do not share a polygon edge: they are the two inner faces of one wall, so
+ * there is nine inches of nothing between them, and their edges are neither
+ * collinear nor equal. Stepping across that gap perpendicular to the edge and
+ * asking which polygon the far point is in is the only test that works on real
+ * traced geometry — and it costs one point-in-polygon per sample.
+ *
+ * `reachFt` IS HOW THICK A WALL IS ALLOWED TO BE. A foot and a half clears a
+ * 230mm wall with its finishes and does not reach across a corridor into the
+ * room beyond, which is exactly the discrimination wanted. Without a scale it
+ * falls back to a fraction of the room's own size, like everything else here.
+ *
+ * Returns `{ roomId, share, edge }` — `share` being how much of the long side
+ * that room stands behind, in plan pixels, so a caller can tell a wall it is
+ * fully behind from a corner it merely clips.
+ */
+export function innerSpaceFor({ room, rooms = [], pxPerFt = null, opts = {} } = {}) {
+  const o = { ...ELEC_DEFAULTS, ...opts };
+  const poly = room?.polygonPx ?? [];
+  const others = rooms.filter((r) => r.id !== room?.id && (r.polygonPx?.length ?? 0) >= 3);
+  if (poly.length < 3 || !others.length) return null;
+
+  const scale = roomScale(poly);
+  const reach = pxPerFt > 0 ? o.outdoorReachFt * pxPerFt : scale * 0.15;
+  const es = edges(poly).map(([a, b]) => ({ a, b, length: len(sub(b, a)) }));
+  const longest = es.reduce((m, e) => Math.max(m, e.length), 0);
+  if (!(longest > 0)) return null;
+  // THE LONG SIDES, PLURAL AND NOT "THE LONGEST". A balcony that steps round a
+  // corner has two edges behind the building and neither is the longer by much;
+  // half the longest takes both and still refuses the ends.
+  const sides = es.filter((e) => e.length >= o.outdoorLongFrac * longest);
+
+  // Two maps rather than one with prefixed keys: how much of a long side a room
+  // stands behind, and which side that was.
+  const share = new Map();
+  const sideOf = new Map();
+  for (const e of sides) {
+    const u = mul(sub(e.b, e.a), 1 / e.length);
+    const n = { x: -u.y, y: u.x };
+    // WHICH WAY IS OUT, asked of the polygon rather than assumed from the
+    // winding. `wallRuns` and the placers do the same thing for the same
+    // reason: a traced outline can be wound either way.
+    const mid = add(e.a, mul(u, e.length / 2));
+    const out = pointInPolygon(add(mid, mul(n, Math.max(1, reach * 0.05))), poly)
+      ? { x: -n.x, y: -n.y } : n;
+    // Samples inside the edge's own span, so a probe at a corner cannot vote
+    // for the room round the corner.
+    const N = Math.max(3, o.outdoorSamples);
+    for (let i = 0; i < N; i++) {
+      const t = ((i + 0.5) / N) * e.length;
+      const p = add(add(e.a, mul(u, t)), mul(out, reach));
+      const hit = others.find((r) => pointInPolygon(p, r.polygonPx));
+      if (!hit) continue;
+      const w = e.length / N;
+      share.set(hit.id, (share.get(hit.id) ?? 0) + w);
+      if (!sideOf.has(hit.id)) sideOf.set(hit.id, e);
+    }
+  }
+
+  let best = null;
+  for (const [roomId, v] of share) {
+    if (!best || v > best.share) best = { roomId, share: v, edge: sideOf.get(roomId) };
+  }
+  return best;
+}
+
+/**
+ * THE BOARD NEAREST A GIVEN SPACE, out of the ones offered.
+ *
+ * Distance from the plate to the space's own boundary, not to its centre: what
+ * "nearest the balcony" means to somebody standing at the door is how far along
+ * the wall they have to reach, and a plate beside the balcony door in a long
+ * living room is nearer the balcony than one in the middle of that room even
+ * though the centres say otherwise.
+ *
+ * `rulePoint` FIRST, for the reason `boardFor` in flows.js gives at greater
+ * length: a plate can be dragged by hand, and that is a decision about where
+ * the switch is reachable from rather than about what it switches. The wire
+ * still runs to where the plate now is.
+ */
+export function nearestBoardTo(boards = [], polygonPx = []) {
+  const live = boards.filter((b) => !b.rejected && b.point);
+  if (!live.length || polygonPx.length < 3) return null;
+  const at = (b) => distanceToBoundary(b.rulePoint ?? b.point, polygonPx);
+  return live.reduce((a, b) => (at(b) < at(a) ? b : a));
+}
+
+// --- where a plate may not stand ---------------------------------------------
+
+/** Do two axis-aligned rectangles share any area? */
+function rectsOverlap(a, b) {
+  return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+}
+
+/**
+ * JOINERY -> THE PIECES OF WALL A PLATE MAY NOT STAND ON, in plan pixels.
+ *
+ * One rectangle in, one rectangle out, grown by `clearFurniture` on every side.
+ * ON EVERY SIDE AND NOT ONLY ALONG THE WALL, which is worth saying because the
+ * rule is usually described as "six inches either side". A wardrobe is drawn as
+ * a footprint, its ends are where the shutters are, and its face is what a hand
+ * meets — so the margin is wanted in every direction the plate could approach
+ * from, and inflating the rectangle says that in one line instead of resolving
+ * which axis is "along" for a piece of furniture whose wall we have not been
+ * told.
+ *
+ * IT IS A GEOMETRIC TEST AND NOT A WALL ASSIGNMENT. The alternative — work out
+ * which run the wardrobe is against, project it onto that run, and block an
+ * interval — is more code and is wrong more often: a unit in a corner belongs
+ * to two runs, and a projection onto the far wall of a narrow room blocks a
+ * wall the wardrobe is nowhere near. A plate is a small rectangle standing on
+ * its own wall; asking whether it overlaps this one answers the question for
+ * every wall at once.
+ *
+ * Empty in, empty out — and with no scale there is no six inches to measure, so
+ * the rectangles are used as they arrived rather than silently unmargined.
+ */
+export function keepOutsFor(rects = [], pxPerFt) {
+  if (!rects.length) return [];
+  const m = pxPerFt > 0 ? px(SB_MM.clearFurniture, pxPerFt) : 0;
+  return rects
+    .filter((r) => r && Number.isFinite(r.x0) && Number.isFinite(r.y1))
+    .map((r) => ({ x0: Math.min(r.x0, r.x1) - m, y0: Math.min(r.y0, r.y1) - m,
+                   x1: Math.max(r.x0, r.x1) + m, y1: Math.max(r.y0, r.y1) + m }));
+}
+
+/** Would this plate stand on something it has to keep off? */
+function blocked(plate, keeps) {
+  return !!plate && keeps.some((k) => rectsOverlap(plate.rect, k));
+}
+
 // --- putting a plate on a wall -----------------------------------------------
 
 /** The plate itself: a point on a wall becomes a rectangle standing off it. */
@@ -791,6 +1021,10 @@ export function applyMoves(boards = [], { moves, runs, polygon, pxPerFt, scale }
 export function placeBoard({
   run, frame, runs, polygon, pxPerFt, fromT, awayFrom = null, gapMm, scale,
   allowHingeSide = true,
+  /* THE RECTANGLES THIS PLATE MAY NOT STAND ON, already inflated by whatever
+     margin they carry — see `keepOutsFor`. Empty by default, so a caller that
+     knows of no joinery gets exactly the ladder this function had before. */
+  keepOff = [],
 }) {
   const gap = px(gapMm, pxPerFt);
   const along = px(SB_MM.along, pxPerFt);
@@ -799,10 +1033,100 @@ export function placeBoard({
     ? (fromT <= run.length / 2 ? 1 : -1)
     : Math.sign(fromT - awayFrom) || 1;
 
-  if (roomOnRun(run, fromT, dir, need)) {
+  /**
+   * A PLATE AT `t` ON THIS RUN, AND IF THAT IS BLOCKED, THE FIRST CLEAR ONE
+   * PAST IT — which is what a person does on site. A switch that lands on the
+   * wardrobe does not become no switch; it becomes the same switch a foot
+   * further along, on the plaster beside it.
+   *
+   * A WALK RATHER THAN A PROJECTION, in half-plate steps. What has to be true
+   * is that the PLATE's own rectangle is clear, and the plate is built by
+   * `plateAt` from a frame — so the honest test is to build it and look. The
+   * step is half a plate because a smaller one only asks the same question
+   * twice, and the walk is bounded by the wall's own usable length.
+   *
+   * IT STOPS AT THE CLEARANCE, NOT AT THE CORNER: `keep` is the same half-plate
+   * plus corner clearance every other position in this file respects, so a
+   * board slid past a wardrobe can never end up jammed into a return.
+   */
+  const walk = (f, r, t0, d, extra) => {
+    const make = (t, more) => plateAt(add(f.origin, mul(f.u, t)), f, pxPerFt,
+      { wall: { a: r.a, b: r.b, index: r.index }, t, ...extra, ...more });
+    /* THE RULE'S OWN POSITION FIRST, UNTOUCHED. With nothing to keep off — the
+       ordinary case, and every case before this parameter existed — this
+       returns exactly what the rung used to return, at exactly the `t` the rule
+       asked for. The clearance bounds below apply to the SEARCH and not to the
+       answer, so a plate the rules put close to a corner stays where they put
+       it rather than being quietly nudged by a function that was only asked
+       about joinery. */
+    const first = make(t0);
+    if (!blocked(first, keepOff)) return first;
+
+    const keep = plateKeep(pxPerFt);
+    const lo = keep;
+    const hi = r.length - keep;
+    if (!(hi >= lo)) return null;
+    const step = Math.max(along / 2, 1e-6);
+    const moved = 'It was moved along the wall to clear the joinery.';
+    for (let t = t0 + d * step; t >= lo && t <= hi; t += d * step) {
+      const cand = make(t, {
+        slid: true,
+        note: extra?.note ? `${extra.note} ${moved}` : moved,
+      });
+      if (!blocked(cand, keepOff)) return cand;
+    }
+    return null;
+  };
+
+  /**
+   * THE OTHER SIDE OF THE DOOR, PAST THE OPEN LEAF.
+   *
+   * `awayFrom` is the hinge jamb and `fromT` the latch jamb, so the distance
+   * between them is the OPENING — which, on a single door, is the width of the
+   * shutter that swings back along this wall. A board 300mm the other side of
+   * the hinge is therefore behind that shutter whenever the door is open, which
+   * is most of the time somebody is walking through it reaching for a switch.
+   * Clearing the leaf and THEN the same 300mm puts it on plaster the door can
+   * never cover.
+   *
+   * A DOUBLE DOOR MEASURES GENEROUS, and deliberately: each of its leaves is
+   * about half the opening, so this clears both of them and a little more. The
+   * error is in the direction of a switch that is definitely reachable.
+   *
+   * NOT A CLAMP AND NOT A GUESS: if the wall does not have leaf + 300mm + a
+   * plate + its corner clearance, this rung declines like every other one and
+   * the ladder goes on.
+   */
+  const pastSwing = () => {
+    if (!allowHingeSide || awayFrom == null) return null;
+    const leaf = Math.abs(fromT - awayFrom);
+    const clear = leaf + gap;
+    if (!roomOnRun(run, awayFrom, -dir, clear + along + px(SB_MM.clearEnd, pxPerFt))) return null;
+    return walk(frame, run, awayFrom - dir * (clear + along / 2), -dir, {
+      turnedCorner: false, pastSwing: true,
+      note: 'It stands past the open leaf, on the hinge side.',
+    });
+  };
+
+  /* WAS THERE ROOM ON THE LATCH SIDE AT ALL? The two ways this rung fails want
+     two different second choices, and telling them apart is the whole of why
+     this is a variable rather than an `if`.
+       THE WALL RAN OUT — there is no plaster past the latch — and the answer is
+       the one a person gives on site: round the corner, which is where that
+       wall's plaster continues.
+       THE WALL IS THERE AND SOMETHING IS ON IT — a wardrobe — and the corner is
+       the wrong answer, because the corner may be six metres away down a wall
+       that is perfectly good everywhere except beside the door. The other side
+       of the same door is a step away and is the switch anybody would expect to
+       find. So joinery sends the board across the opening first, and only tries
+       the corner if that side is no good either. */
+  const hadLatchSide = roomOnRun(run, fromT, dir, need);
+  if (hadLatchSide) {
     const t = fromT + dir * (gap + along / 2);
-    return plateAt(add(frame.origin, mul(frame.u, t)), frame, pxPerFt,
-      { wall: { a: run.a, b: run.b, index: run.index }, t, turnedCorner: false });
+    const at = walk(frame, run, t, dir, { turnedCorner: false });
+    if (at) return at;
+    const across = pastSwing();
+    if (across) return across;
   }
 
   const tol = Math.max(1e-6, (scale ?? run.length) * 1e-3);
@@ -810,19 +1134,31 @@ export function placeBoard({
   if (next && next.run.length >= need) {
     const f2 = runFrame(next.run, polygon, scale);
     const t = next.from === 0 ? gap + along / 2 : next.run.length - (gap + along / 2);
-    return plateAt(add(f2.origin, mul(f2.u, t)), f2, pxPerFt, {
-      wall: { a: next.run.a, b: next.run.b, index: next.run.index }, t,
+    const at = walk(f2, next.run, t, next.from === 0 ? 1 : -1, {
       turnedCorner: true,
       note: 'The wall runs out before the board does, so it turns the corner.',
     });
+    if (at) return at;
   }
 
+  // ...and for the wall-ran-out case, the hinge side comes after the corner
+  // rather than before it. Same position, second in the order.
+  if (!hadLatchSide) {
+    const across = pastSwing();
+    if (across) return across;
+  }
+
+  /* BEHIND THE OPEN LEAF, AND IT IS THE LAST RUNG FOR A REASON. Everything
+     above has failed, which means this wall cannot give leaf + 300mm on the
+     hinge side either — so the choice left is a switch the door covers or no
+     switch at all, and a covered switch is one a person can still reach by
+     closing the door behind them. It says what it is: `poor` puts the sentence
+     on the plate's own card, which is where somebody deciding whether to accept
+     it is looking. */
   if (allowHingeSide && awayFrom != null && roomOnRun(run, awayFrom, -dir, need)) {
     const t = awayFrom - dir * (gap + along / 2);
-    return plateAt(add(frame.origin, mul(frame.u, t)), frame, pxPerFt, {
-      wall: { a: run.a, b: run.b, index: run.index }, t, turnedCorner: false,
-      poor: 'behind the open leaf',
-    });
+    const at = walk(frame, run, t, -dir, { turnedCorner: false, poor: 'behind the open leaf' });
+    if (at) return at;
   }
   return null;
 }
@@ -944,6 +1280,18 @@ export function planSwitchboards({
      `assignDoors` exists to arbitrate — while a bed is standing in exactly one
      room and the caller already knows which. */
   bedRect = null,
+  /* JOINERY THIS ROOM'S PLATES MUST KEEP OFF, as rectangles in plan pixels —
+     today that is the wardrobes the accent pass found, handed in by the caller
+     the way `bedRect` is. RAW RECTANGLES, NOT INFLATED ONES: the six inches of
+     clear plaster either side is this file's rule, not the caller's, so the
+     margin is applied in here (see `keepOutsFor`) and a second caller cannot
+     arrive with a different idea of how much clearance a wardrobe wants.
+     WHY A WARDROBE AT ALL. A switch plate on a wardrobe wall is not merely
+     awkward: a full-height unit puts the plate behind the carcass, and an open
+     shutter puts it behind the door. Either way the drawing shows a switch the
+     room does not have — and unlike a plate near a corner, nobody notices on
+     the sheet, because the wardrobe is not drawn on OUR drawing at all. */
+  keepOff = [],
   pxPerFt = null,
   /* WHERE SOMEBODY DRAGGED A BOARD TO: board id -> distance round this room's
      walls, in feet. See `slideBoardTo` for the coordinate and why it is feet.
@@ -988,6 +1336,9 @@ export function planSwitchboards({
   const scale = roomScale(polygon);
   const runs = wallRuns(polygon, o);
   const all = rooms.length ? rooms : [room];
+  // The joinery, once, with its margin on — every rule below tests against
+  // this rather than re-deriving a clearance of its own.
+  const keeps = keepOutsFor(keepOff, pxPerFt);
   /* AN ID THAT SAYS WHICH BOARD IT IS, and it used to be a counter.
      THE COUNTER WAS FINE WHILE NOTHING OUTSIDE ONE RENDER KNEW THESE IDS. It is
      not fine now that a person can delete a plate: a dismissal has to be stored
@@ -1050,6 +1401,7 @@ export function planSwitchboards({
       const placed = placeBoard({
         run: entry.run, frame: entry.frame, runs, polygon, pxPerFt,
         fromT: latchT, awayFrom: hingeT, gapMm: SB_MM.fromDoor, scale,
+        keepOff: keeps,
       })
         // LAST RESORT: put it on the wall anyway. Every rung of placeBoard's
         // ladder having failed means the door and its returns fill the wall,
@@ -1063,6 +1415,19 @@ export function planSwitchboards({
           entry.frame, pxPerFt,
           { wall: { a: entry.run.a, b: entry.run.b, index: entry.run.index },
             t: latchT, clamped: true });
+      /* THE LAST RESORT IS ALLOWED TO BE AWKWARD AND IS NOT ALLOWED TO BE
+         UNREACHABLE. Its whole argument is that a board 300mm from the latch,
+         clamped onto the wall, beats a sentence — and that argument holds
+         against a corner and fails against a wardrobe: a plate behind a shutter
+         is not a switch in an awkward place, it is a switch that was never
+         built. The ladder above already tried every rung and every position
+         along them, so reaching here with the clamp blocked means this door's
+         walls genuinely have nowhere. That is a sentence. */
+      if (blocked(placed, keeps)) {
+        boards.push({ ...base,
+          rejected: 'Every position beside this door is taken up by joinery,'
+            + ' so there is no board here.' });
+      } else {
       boards.push({
         ...base, ...placed,
         shortWhy: `${SB_MM.fromDoor}mm past the latch jamb`,
@@ -1072,8 +1437,19 @@ export function planSwitchboards({
               + ' of this space\'s floor is that side of it'
             : confidence === 'double' ? ' — a double door, so the board clears its centre'
             : ' — the floor is even either side, so the leaf parks against the nearer corner')
-          + (fellBack ? '. The nearest door box to this space was used.' : ''),
+          + (fellBack ? '. The nearest door box to this space was used.' : '')
+          /* WHY IT IS NOT WHERE THE RULE SAYS, SAID IN THE RULE'S OWN
+             SENTENCE. Two different departures, and they read differently on
+             the drawing: `pastSwing` means the board is on the OTHER side of
+             the opening — a reader looking for it 300mm past the latch will not
+             find it there and needs to be told why — where `slid` means it is
+             on the side they expect, further along. */
+          + (placed.pastSwing
+            ? '. The latch side is joinery, so the board is on the hinge side,'
+              + ' clear of the leaf when the door is open'
+            : placed.slid ? ' It stands clear of the joinery on that wall.' : ''),
       });
+      }
     }
   }
 
@@ -1094,10 +1470,25 @@ export function planSwitchboards({
       serves: 'a bedside sconce', servesShort: 'Bedside',
     };
     if (!scaled) { boards.push({ ...base, rejected: NO_SCALE }); continue; }
+    const at = plateAt(z.point, { u: z.along, inward: z.inward, origin: z.point }, pxPerFt,
+      { wall: z.wall, t: z.t });
+    /* NO SLIDE HERE, AND THAT IS THE DIFFERENCE BETWEEN THIS RULE AND THE
+       DOOR'S. The door's board is "300mm from a thing", so a foot further along
+       the same wall is the same board doing the same job. This one IS the
+       sconce's position — a bedside switch is the switch you reach from the
+       pillow — and a plate slid clear of a wardrobe is no longer beside the
+       bed, it is a plate on a wall with a story attached. The honest answer is
+       that this bedside cannot have one, said in a sentence somebody can act
+       on. */
+    if (blocked(at, keeps)) {
+      boards.push({ ...base,
+        rejected: 'The wall beside this bed is joinery where the switch would go,'
+          + ' so there is no bedside board here.' });
+      continue;
+    }
     boards.push({
       ...base,
-      ...plateAt(z.point, { u: z.along, inward: z.inward, origin: z.point }, pxPerFt,
-        { wall: z.wall, t: z.t }),
+      ...at,
       shortWhy: `at the sconce ${z.what ?? 'beside the bed'}`,
       why: `at the sconce ${z.what ?? 'beside the bed'}`,
     });
@@ -1138,7 +1529,9 @@ export function planSwitchboards({
   } else {
     const base = {
       id: id('facing'), roomId: room.id, role: 'facing',
-      plates: FACING_PLATES,
+      // `plates` IS NOT SET HERE ANY MORE. It is stamped from the role's height
+      // list on the way out — see `spec` at the end of this function — because
+      // the count and the heights are one fact and were two literals.
       serves: 'the television wall',
       servesShort: 'Facing the bed',
     };
@@ -1179,16 +1572,30 @@ export function planSwitchboards({
       } else {
         const t = clamp(tHit, keep, run.length - keep);
         const moved = Math.abs(t - tHit) > 1e-6;
+        const at = plateAt(add(frame.origin, mul(frame.u, t)), frame, pxPerFt, {
+          wall: { a: run.a, b: run.b, index: run.index }, t, clamped: moved,
+        });
+        /* AND THIS RULE CANNOT STEP ASIDE EITHER, for the reason stated two
+           paragraphs up about corners: the position is not "near" anything, it
+           IS the bed's centreline, and there is one of those. A television wall
+           whose centreline is a wardrobe is a real plan — a wall of fitted
+           units with the bed facing it — and the answer to it is to say so,
+           not to put the socket for the television a metre to one side of the
+           television. */
+        if (blocked(at, keeps)) {
+          boards.push({ ...base,
+            rejected: 'The wall facing the bed is joinery where the centreline'
+              + ' meets it, so there is no board on it.' });
+        } else {
         boards.push({
           ...base,
-          ...plateAt(add(frame.origin, mul(frame.u, t)), frame, pxPerFt, {
-            wall: { a: run.a, b: run.b, index: run.index }, t, clamped: moved,
-          }),
+          ...at,
           shortWhy: 'on the bed\'s centreline',
           why: 'on the wall facing the bed, where the bed\'s centreline meets it'
             + (moved ? ' — moved along to clear the corner' : ''),
           ...(moved ? { poor: 'the centreline lands in a corner, so it was moved along' } : {}),
         });
+        }
       }
     }
   }
@@ -1202,11 +1609,24 @@ export function planSwitchboards({
      taken from its answer. By id and not by index: this file does not get to
      assume a pass it calls preserves array order. */
   const drawn = new Map(markClashes(moved.map(asDrawn), pxPerFt).map((d) => [d.id, d]));
+  /* THE HEIGHTS GO ON HERE, ONCE, AND NOT AT THE FOUR PLACES A BOARD IS PUSHED.
+     Every board carries a `role` from the moment it is made, and the height is a
+     property of the role and of nothing else — so stamping it at the door of
+     this function is both the shortest way to say it and the only way that
+     cannot be forgotten by the fifth rule somebody writes. `plates` comes off
+     the same list for the same reason; see FACING_PLATES.
+     A REFUSED BOARD GETS ITS HEIGHT TOO. It has no position and never will, but
+     it is still a plate of a known kind, and a note saying "no bedside board
+     here" reads better beside the spec than without it. */
+  const spec = (b) => {
+    const heightsMm = heightsFor(b.role);
+    return { ...b, heightsMm, plates: heightsMm.length };
+  };
   return {
     boards: moved.map((b) => {
       const d = drawn.get(b.id);
-      if (!b.hand) return d ?? b;
-      return { ...b, clash: d?.clash ?? null, poor: d?.poor ?? b.poor };
+      if (!b.hand) return spec(d ?? b);
+      return spec({ ...b, clash: d?.clash ?? null, poor: d?.poor ?? b.poor });
     }),
     notes,
   };
@@ -1357,6 +1777,12 @@ export function bayWalls(rect, runs, polygon, scale = 1, touch = Infinity, opts 
  */
 export function planChunkBoards({
   room, bays = [], boards = [], pxPerFt = null,
+  /* THE SAME JOINERY THE RULES PASS KEEPS OFF, and it has to be told separately
+     because this is a separate pass over the same walls. A bay plate is a
+     switchboard on the drawing — same rectangle, same blue — so a bay plate on
+     a wardrobe is exactly the fault the rules pass now avoids, arrived at by a
+     different route. Raw rectangles, margin applied in here. */
+  keepOff = [],
   /* A BAY PLATE CAN BE DRAGGED TOO, and it has to be: on the drawing it is a
      switchboard like any other, so a cursor that says "grab me" over one and a
      plate that then refuses to move is worse than no drag at all.
@@ -1379,6 +1805,7 @@ export function planChunkBoards({
 
   const scale = roomScale(polygon);
   const runs = wallRuns(polygon, o);
+  const keeps = keepOutsFor(keepOff, pxPerFt);
   const along = px(SB_MM.along, pxPerFt);
   const end = px(SB_MM.clearEnd, pxPerFt) + along / 2;
   const touch = px(o.touchMm, pxPerFt);
@@ -1456,6 +1883,28 @@ export function planChunkBoards({
       at = add(w.frame.origin, mul(w.frame.u, tAt));
     }
 
+    /* ...AND IF IT LANDS ON JOINERY, THE SAME STEP ALONG THE WALL. The bay's
+       plate is wanted "opposite the middle of the bay, where a hand reaches for
+       it", which is a preference and not a position — so unlike the bedside and
+       the television wall, this one genuinely can move and still be the thing
+       it was. It walks toward whichever end of the wall has more room, in
+       half-plate steps, exactly as `placeBoard` does.
+       A BAY WHOSE WALL IS ALL WARDROBE BORROWS, which is a path this pass
+       already has for "nowhere on its walls for a plate" — see the run-length
+       test above. No new outcome, no new sentence to write: the bay's lights
+       run off the nearest board, which is what happens to every small bay. */
+    if (keeps.length) {
+      const stepPx = Math.max(along / 2, 1e-6);
+      const dir = tAt <= w.run.length / 2 ? 1 : -1;
+      let clearAt = null;
+      for (let ts = tAt; ts >= end && ts <= w.run.length - end; ts += dir * stepPx) {
+        const cand = plateAt(add(w.frame.origin, mul(w.frame.u, ts)), w.frame, pxPerFt, {});
+        if (!blocked(cand, keeps)) { clearAt = { ts, at: cand.point }; break; }
+      }
+      if (!clearAt) { small.push(bay); continue; }
+      tAt = clearAt.ts; at = clearAt.at;
+    }
+
     // The last resort, and it is a sentence rather than a plate on top of
     // somebody else's: a wall with a dedicated board and no room beside it.
     //
@@ -1474,6 +1923,9 @@ export function planChunkBoards({
 
     const board = {
       id: id(`bay-${bay.key}`), roomId: room.id, role: 'bay', bayKey: bay.key,
+      // Switch height, from the same table the rules pass reads. A bay board is
+      // the switch for a piece of ceiling, operated standing.
+      heightsMm: heightsFor('bay'), plates: heightsFor('bay').length,
       serves: bay.label ? `the ${bay.label}` : 'the lights in this bay',
       servesShort: 'Bay',
       shortWhy: `${Math.round(sqft(bay.rect))} sqft of ceiling, switched on its own`,

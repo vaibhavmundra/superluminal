@@ -136,6 +136,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        so a canvas that does not pass it is one whose objects are always
        grabbable, which is the right default for a canvas with no tools. */
     placing = false,
+    /* PUT THE PLAN ITSELF DOWN, so our own line work is what reads. Set while a
+       reverse cove is being aimed and at no other time — see the scrim below,
+       and `canvasLayers` in App.jsx for why the cove and nothing else. */
+    wash = false,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [], switchboards = [],
     /* WHICH PLATE IS PICKED, AND HOW ONE GETS PICKED. Optional, like every
@@ -172,6 +176,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     // question asked at a different moment — and it is the question, because
     // every dimension on the sheet hangs off one of these boxes.
     auditDoors = false, doorBoxes = [], doorRejects = [], doorPickId = null,
+    /* THE BEDS THE DETECTOR FOUND, on a switch of their own like the doors.
+       Empty unless somebody asked, so this list IS the switch — see the group
+       that draws it for why they came off the general audit overlay and what
+       brought them back. */
+    bedBoxes = [],
     /* --- CONFIRMING THE DOORS ------------------------------------------------
        A DIFFERENT LAYER FROM `auditDoors` ABOVE, THOUGH IT DRAWS THE SAME
        BOXES, and the difference is who it is for. That one is an owner asking
@@ -210,12 +219,38 @@ const PlanCanvas = forwardRef(function PlanCanvas(
   // needs is a screen position this component would otherwise have to invent.
   const [hot, setHot] = useState(null);
   /**
+   * WHAT A FITTING IS WHILE SOMETHING IS BEING PLACED: nothing to hover, nothing
+   * to click, and no cursor of its own.
+   *
+   * THE COVE IS WHAT FOUND THIS. Its gesture is a drag ALONG A WALL, which is
+   * exactly where the fittings that hug walls already are — a cove, a strip, a
+   * sconce — and every one of them carries a hit band ten line-widths wide with
+   * `cursor: pointer` on it. Aiming at the wall put the pointer on an existing
+   * run instead: the crosshair that says "this click will place something"
+   * turned into a hand that says "this click will select something else", and
+   * the press it invited was the wrong one. The same was true of every fitting
+   * on the sheet for every armed tool; the cove is only where it became
+   * unmissable, because the cove has to be aimed AT the line rather than at
+   * open ceiling.
+   *
+   * `pointerEvents: 'none'` AND NOT MERELY A DIFFERENT CURSOR. Getting the
+   * cursor right and leaving the target live would fix the lie and keep the
+   * theft — the click would still land on the fitting. What is wanted is for
+   * the fittings to not be there for the duration of the gesture, which is what
+   * this says.
+   *
+   * IT IS THE SAME `placing` THE CEILING OBJECTS' MOVE TARGETS ALREADY OBEY —
+   * see the note by them — so this is that rule applied to the rest of the
+   * drawing rather than a new one.
+   */
+  const INERT = { style: { pointerEvents: 'none' } };
+  /**
    * The hover contract for one fitting: warm its stroke and hand the tooltip
    * enough to draw itself. Enter and leave only — following the pointer with
    * mousemove made the card jitter under the cursor and told nobody anything
    * they did not already have.
    */
-  const feel = (id, spec) => ({
+  const feel = (id, spec) => (placing ? INERT : {
     onMouseEnter: (e) => {
       setHot(id);
       if (spec) onFixture?.({ ...spec, x: e.clientX, y: e.clientY });
@@ -273,6 +308,23 @@ const PlanCanvas = forwardRef(function PlanCanvas(
    * and the draft is that same rect mid-drag.
    */
   const zoneInk = layers.invert ? C.object : C.zone;
+
+  /**
+   * THE SPACE OUTLINE, AND IT FOLLOWS THE GROUND FOR THE ZONE'S OWN REASON.
+   *
+   * `C.region` is pure black — "the strongest thing we draw", which is exactly
+   * right on white paper and is the page's own background on the negative. The
+   * layer was force-OFF in night mode for most of this app's life, so nothing
+   * ever painted it there and the collision never showed. It paints there now:
+   * the cove step turns the outlines on precisely BECAUSE the drag has to be
+   * aimed at one (see `canvasLayers` in App.jsx), and an outline drawn in the
+   * ground colour would have made that step worse than the state it fixes —
+   * the plan faded, and the line it was faded for invisible.
+   *
+   * WHITE, LIKE THE ZONES AND THE CEILING OBJECTS. Not the accent: the accent
+   * on this canvas means "ours and it emits light", and an outline is neither.
+   */
+  const regionInk = layers.invert ? C.object : C.region;
 
   const s = pxPerFt || 1;
   /**
@@ -340,7 +392,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
    * piece of ceiling has.
    */
   const HIT_BAND = lw * 10;
-  const bandStyle = { cursor: 'pointer', pointerEvents: 'stroke' };
+  const bandStyle = placing ? INERT.style : { cursor: 'pointer', pointerEvents: 'stroke' };
 
   const laid = plans.filter((r) => r.plan?.ok);
   /**
@@ -657,6 +709,37 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             opacity={layers.dim ? 0.42 : 1} />
       )}
 
+      {/* --- THE PLAN, PUT DOWN WHILE SOMETHING IS BEING AIMED AT A LINE -----
+          A SCRIM OF THE GROUND'S OWN COLOUR, AND NOT OPACITY ON THE PLAN.
+          Fading the plan element is the obvious way to do this and it is the
+          wrong one: opacity makes a drawing SEE-THROUGH rather than quiet, and
+          what is behind it here is the page — which carries this app's
+          graph-paper wallpaper. The DXF branch above already paints a black
+          sheet against exactly that hole. Paint is safe where transparency is
+          not: this rect covers the plan with the colour the plan is sitting on,
+          so the scan recedes and nothing else can appear.
+
+          BOTH GROUNDS, FROM ONE RULE. On paper the ground is white and on the
+          negative it is black, which is the whole of the mode difference — and
+          it is the same `layers.invert` every other night decision on this
+          canvas is taken from.
+
+          HERE IN THE PAINT ORDER, WHICH IS THE POINT OF IT. Everything above
+          this line is somebody else's drawing; everything below is ours — the
+          cells, the outlines, the fittings, the guides. So the scan goes quiet
+          and not one mark we make goes with it.
+
+          HALF, RATHER THAN NEARLY ALL. The plan still has to be READABLE while
+          a cove is aimed at it: you are looking for the wall of a particular
+          room, and a sheet washed to a whisper would mean aiming at our polygon
+          with no idea which room it is. Half is enough for a 2.4-weight outline
+          to sit clearly on top of the scan's own wall lines. */}
+      {wash && (
+        <rect x="0" y="0" width={width} height={height}
+          fill={layers.invert ? '#000000' : '#FFFFFF'} opacity="0.5"
+          pointerEvents="none" />
+      )}
+
       {/* Cells, grid and outline, room by room. All three under the lights, so
           no light is ever obscured by a grid line drawn after it. */}
       {laid.map((r, i) => (
@@ -678,7 +761,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           )}
           {layers.region && (
             <polygon points={points(r.plan.polygonPx)}
-              fill="none" stroke={C.region}
+              fill="none" stroke={regionInk}
               /* The room the panel is talking about is drawn heavier. With eight
                  outlines on one sheet, "which one is Bedroom 2" is otherwise a
                  question the drawing cannot answer. */
@@ -2493,8 +2576,21 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             (b.plates ?? 1) > 1
               ? ['Plates', `${b.plates} × ${SB_MM.along} x ${SB_MM.deep} mm, stacked`]
               : ['Plate', `${SB_MM.along} x ${SB_MM.deep} mm`],
+            /* HOW HIGH IT IS SET, which is the one thing about a switchboard
+               that a plan view cannot show. Both numbers where the board is two
+               plates — that IS what makes it two, see SB_HEIGHT_MM — and the
+               row is dropped rather than guessed for a board that carries no
+               heights, which today is none of them. */
+            ...(b.heightsMm?.length
+              ? [['Height', `${b.heightsMm.join(' + ')} mm from floor`]] : []),
             ['Serves', b.serves || '—'],
             ...(b.turnedCorner ? [['Note', 'turned the corner — the wall ran out']] : []),
+            /* THE SWING, WHICH IS NOT A `poor` AND NOT A FAULT. A board past
+               the open leaf is in the RIGHT place — the rule moved it there so
+               it would be reachable — but it is not where a reader looking
+               300mm past the latch expects to find it, and a plate whose
+               position cannot be accounted for is one somebody redraws. */
+            ...(b.pastSwing ? [['Note', 'past the open leaf — the latch side is joinery']] : []),
             ...(b.poor ? [['Note', b.poor]] : []),
           ],
         };
@@ -2520,9 +2616,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                fitting whose card is the only thing a click gets you; a plate
                slides along its walls, and the cursor is the only place that says
                so before somebody tries. Spread AFTER `feel` so this wins. */
-            style={onBoardPointerDown
-              ? { cursor: flying ? 'grabbing' : 'grab' }
-              : { cursor: 'pointer' }}>
+            style={placing ? INERT.style
+              : onBoardPointerDown
+                ? { cursor: flying ? 'grabbing' : 'grab' }
+                : { cursor: 'pointer' }}>
             {/* White under the fill, so the plan's own line work cannot show
                 through a solid we are claiming is a solid. */}
             <polygon points={poly} fill="#fff" />
@@ -2631,6 +2728,49 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               </g>
             );
           })}
+        </g>
+      )}
+
+      {/* --- THE BEDS THE DETECTOR FOUND -------------------------------------
+          BACK ON THE DRAWING, AND ON A SWITCH OF THEIR OWN. They used to be
+          part of the general audit overlay and came off it when that overlay
+          started opening by default: a magenta box round the bed on every plan,
+          every time, next to the fittings it had pushed out of the way. The
+          reasoning for drawing them at all never went away, and it is the
+          strongest of any mark on this canvas — the planner OBEYS a bed (a
+          downlight never lands over a mattress) while `drawnZones` deliberately
+          excludes it, so a bed in the wrong place is invisible except as an
+          unexplained hole in the grid. Its own checkbox is what that wants: off
+          by default, on while somebody is asking why a room came out like this.
+
+          THE OPERATOR HUE, like the doors and the wall cells. #C026D3 appears
+          nowhere in the design, which is the whole of what it says: you are
+          looking at a reading, not at the drawing. The task surfaces above gave
+          it up because a lit surface genuinely is about lighting; a bed box is
+          not, and it keeps it.
+
+          THE SOURCE IS ON THE CAPTION because two different passes put beds on
+          this plan — the whole-sheet detector and the GPT bedroom crop — and
+          "which one found this" is the first question asked of a bed that is
+          wrong. `cls` where a zone carries no source is the honest fallback.
+
+          `pointerEvents="none"`, like every audit group: it is drawn over the
+          room and there is nothing here to click. */}
+      {bedBoxes.length > 0 && (
+        <g className="audit" pointerEvents="none">
+          {bedBoxes.map((z) => (
+            <g key={'bed' + z.id}>
+              <rect x={z.x0} y={z.y0} width={z.x1 - z.x0} height={z.y1 - z.y0}
+                fill="#C026D3" fillOpacity="0.06" stroke="#C026D3"
+                strokeWidth={lw * 1.8} strokeDasharray={`${lw * 6} ${lw * 4}`} />
+              <text x={z.x0 + lw * 3} y={z.y0 - lw * 2} fill="#C026D3"
+                fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
+                {z.cls || 'bed'}
+                {z.source && z.source !== 'detected' ? ` · ${z.source}` : ''}
+                {Number.isFinite(z.confidence) ? ` · ${z.confidence.toFixed(2)}` : ''}
+              </text>
+            </g>
+          ))}
         </g>
       )}
 
