@@ -541,6 +541,12 @@ export default function Planner() {
       planId={plan.id ?? planId}
       initialFile={file}
       initialProjectType={plan.project_type ?? projectType}
+      /* WHERE THE BUILDING IS, for the switchboards and nothing else. A plate's
+         modules, its switch ratings and the frames you can order are all a
+         property of the country — see src/lib/switchboards.js — and null is a
+         perfectly good value: the registry reads it as India. A standalone plan
+         with no project row has no answer either, and gets the same default. */
+      country={project?.country ?? null}
       initialPdfPage={chosen.state?.pdfPage ?? null}
       restore={chosen.state}
       saveState={canEdit ? saveState : 'idle'}

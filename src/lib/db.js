@@ -26,7 +26,12 @@ const PLAN_CARD_COLS =
 // on `projects` can return rows the caller does not own — that is the whole
 // point of a share — so every screen that draws a project has to be able to ask
 // whose it is. It is one uuid per card.
-const PROJECT_COLS = 'id, owner, name, project_type, created_at, updated_at';
+// `country` IS IN THE LIST FOR ONE READER, and it is the switchboards. What a
+// plate is made of — modules or gangs, which ratings exist, how wide a socket
+// is — is decided entirely by where the building is; see src/lib/switchboards.js.
+// It is one short string per project and it is read on the editor's own route,
+// so paying for it in the project fetch beats a second query from the planner.
+const PROJECT_COLS = 'id, owner, name, project_type, country, created_at, updated_at';
 
 const must = () => {
   if (!supabase) throw new Error('Supabase is not configured');

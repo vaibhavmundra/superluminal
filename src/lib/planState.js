@@ -227,6 +227,18 @@ export function serialiseEditor(s) {
        somebody re-traces a corner. `runTrims` above is stored in feet for the
        first of those reasons and this is the second one as well. */
     boardMoves: s.boardMoves ?? {},
+    /* ...AND WHAT THEY PUT ON ONE: board id -> `[{ id, kind, amps, label }]`.
+
+       THE SAME ARGUMENT A THIRD TIME. A plate's composition is derived from the
+       flows that run back to it (see switchboards.js), so a 16A socket somebody
+       added for an air conditioner exists nowhere in the derivation and is gone
+       on the next render unless it is stored. Deletions, positions, additions:
+       three stores, one reason.
+
+       THE POINT'S OWN ID IS IN THE RECORD and is generated when it is added,
+       because two 6A sockets on one plate are two rows a person can remove
+       independently and `{kind, amps}` cannot tell them apart. */
+    boardPoints: s.boardPoints ?? {},
 
     // --- view preferences. Cheap, and jarring to lose.
     ui: { layers: s.layers, zoom: s.zoom, view: s.view },
@@ -312,6 +324,7 @@ export function applyEditor(p, set) {
   set.setRenderRefs?.(p.renderRefs ?? {});
   set.setBoardsOff?.(p.boardsOff ?? []);
   set.setBoardMoves?.(p.boardMoves ?? {});
+  set.setBoardPoints?.(p.boardPoints ?? {});
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);

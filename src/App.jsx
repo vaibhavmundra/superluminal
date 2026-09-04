@@ -62,6 +62,11 @@ import { planSwitchboards, planChunkBoards, markClashes, asDrawn, slideBoardTo,
 // two of them in one room — see the note by `bedRect` below.
 import { bedZoneIn } from './lib/bedGrid.js';
 import { planFlows } from './lib/flows.js';
+// WHAT IS ON THE PLATE, as against where the plate is. electrical.js above
+// answers the second; this answers the first, and it is a different question in
+// every country — see its header.
+import { composeSwitchboard, countryFor, addablePoints } from './lib/switchboards.js';
+import SwitchboardCard from './components/SwitchboardCard.jsx';
 import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
          radiusFt, resizeFromCorner, rotateTo, isRect,
          halfExtents, isUniform, applyResize, FAN_SWEEPS, sweepMm, withSweep,
@@ -598,6 +603,15 @@ export default function App({
   initialProjectType = null, initialPdfPage = null, uploadState = null, isAdmin = false,
   onRename = null, onPersist = null, onMilestone = null, onBack = null,
   onRetryUpload = null,
+  /* WHERE THE BUILDING IS — an ISO code, a country name, or nothing.
+     THE ONE THING IT DECIDES IS WHAT A SWITCHBOARD IS MADE OF: modules or
+     gangs, which switch ratings exist, how wide a socket is, and which frames
+     you can actually order. See src/lib/switchboards.js, which holds the
+     registry and is deliberately forgiving about what arrives here.
+     NULL IN THE STANDALONE EDITOR AND IN EVERY TEST, and the registry reads
+     that as India — which is the answer the brief asked for and, more to the
+     point, is an answer rather than an empty plate. */
+  country = null,
   // WHERE THE RENDERS LIVE, and the only storage this component is given.
   // `{ put(blob, { roomId, index }) -> path, url(path) -> href }`, supplied by
   // routes/Planner.jsx. Null in the standalone editor and in the tests, and
@@ -1036,6 +1050,23 @@ export default function App({
      electrical.js: a run index renumbers when somebody re-traces a corner, and a
      point in plan pixels moves when somebody corrects the scale. */
   const [boardMoves, setBoardMoves] = useState({});
+  /* ...AND WHAT THEY PUT ON ONE: board id -> the points somebody added by hand,
+     `[{ id, kind, amps, label }]`, in the order they added them.
+
+     A THIRD STORE OF THE SAME SHAPE, and the shape is the point. A plate's
+     composition is derived from the flows that come back to it — the rules know
+     how many switches a ceiling needs and nobody should have to count them —
+     but the rules cannot know that this wall wants a 16A socket for an air
+     conditioner or a data point for a desk. So the derivation stands and the
+     additions live beside it, exactly as `boardsOff` and `boardMoves` do for the
+     other two things a person genuinely knows better than a rule.
+
+     THE LABEL IS STORED WITH THE POINT, and it is the one field here that is
+     redundant: `switchboards.js` can name a `{kind, amps}` pair on its own. It
+     is stored because the chip that removes an addition has to say what it is
+     removing, and a plan whose project moves country would otherwise print a
+     15A socket's chip using India's word for it. */
+  const [boardPoints, setBoardPoints] = useState({});
   const [selBoardId, setSelBoardId] = useState(null);
   const [boardDrag, setBoardDrag] = useState(null);   // {id, roomId, origin, live}
   // The image that is actually sent. Held in state rather than made at call
@@ -1321,7 +1352,8 @@ export default function App({
     setAccentRoomId(null); setAccentResults({});
     // The plates somebody threw away go with the plan they were on: a board id
     // names a room and a rule, and neither means anything on a fresh sheet.
-    setBoardsOff([]); setBoardMoves({}); setSelBoardId(null); setBoardDrag(null);
+    setBoardsOff([]); setBoardMoves({}); setBoardPoints({});
+    setSelBoardId(null); setBoardDrag(null);
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
     setRenders({}); setRenderRefs({});
     setWallResults({}); setWallTranscripts({}); setRunTrims({});
@@ -1683,7 +1715,7 @@ export default function App({
     setCeilingObjs, setChunkPicks, setCeilingKinds, setDesignPicks,
     setAccentResults, setAccentDismissed, setManualAccents,
     setSurfaceResults, setSurfaceDismissed, setManualSurfaces, setArtDismissed,
-    setBoardsOff, setBoardMoves,
+    setBoardsOff, setBoardMoves, setBoardPoints,
     // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
     // are a few hundred bytes of JSON and the renders are megabytes of
     // somebody's photographs, which do not belong in a jsonb column.
@@ -4426,6 +4458,65 @@ export default function App({
   }, [rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx,
       outdoorFeeds, pxPerFt, baysOf]);
 
+  /* --- WHAT IS ON THE PLATE -------------------------------------------------
+
+     THE COUNTRY, FIRST AND ONCE. `country` arrives as whatever is in the
+     project's column — a code, a name, nothing — and every reader below wants
+     the registry's record rather than the string. Resolved here so the panel,
+     the add buttons and the composition cannot disagree about which country
+     this is. See switchboards.js: it never returns nothing.
+
+     THEN THE PLATE SOMEBODY SELECTED, AND ONLY THAT ONE. Composing every board
+     on the sheet would be a parts list for a drawing nobody is looking at; the
+     card exists because a person clicked a rectangle and wants to know what is
+     behind it, and that is one plate at a time.
+
+     THE FLOWS ARE HANDED IN WHOLE and the composition filters them by board id.
+     That is deliberate rather than lazy: a flow can name a SECOND plate as well
+     as its own (two-way switching — see `also` in flows.js), so "the flows on
+     this board" is not a partition of the list and cannot be pre-grouped
+     without deciding, here, a question switchboards.js already answers. */
+  const sbCountry = useMemo(() => countryFor(country), [country]);
+
+  const selBoard = useMemo(
+    () => switchboardsPx.find((b) => b.id === selBoardId) ?? null,
+    [switchboardsPx, selBoardId]);
+
+  /* The points somebody added to THIS plate. Its own memo because it is a
+     dependency of the composition, and `boardPoints[id]` computed inline would
+     be a fresh array reference on every render of a component that re-renders
+     on every pointermove. */
+  const selBoardExtras = useMemo(
+    () => (selBoardId ? boardPoints[selBoardId] ?? [] : []),
+    [boardPoints, selBoardId]);
+
+  const selBoardParts = useMemo(() => (selBoard
+    ? composeSwitchboard({
+      country: sbCountry, flows: flowsPx, boardId: selBoard.id, extras: selBoardExtras,
+    })
+    : null), [selBoard, sbCountry, flowsPx, selBoardExtras]);
+
+  /** A point added by hand, onto the selected plate. See `boardPoints`. */
+  const addBoardPoint = useCallback((p) => {
+    if (!selBoardId) return;
+    /* AN ID PER PRESS, AND NOT A KEY MADE OF THE POINT. Two 16A sockets on one
+       plate is an ordinary thing to want, and they have to be removable one at
+       a time — which `socket:16` used as a key cannot express. */
+    const id = `bp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    setBoardPoints((m) => ({
+      ...m,
+      [selBoardId]: [...(m[selBoardId] ?? []),
+        { id, kind: p.kind, amps: p.amps ?? null, label: p.label }],
+    }));
+  }, [selBoardId]);
+
+  const removeBoardPoint = useCallback((pid) => {
+    if (!selBoardId) return;
+    setBoardPoints((m) => ({
+      ...m, [selBoardId]: (m[selBoardId] ?? []).filter((e) => e.id !== pid),
+    }));
+  }, [selBoardId]);
+
   /**
    * The layout, in the one number a lighting drawing is actually judged on.
    *
@@ -5542,6 +5633,15 @@ export default function App({
     if (addTool || zoneMode || armed) return;
     e.preventDefault();
     setSelBoardId(id);
+    /* AND THE PANEL COMES WITH IT. Selecting a plate puts its composition in the
+       panel — see the Switchboard section — and that section lives in the Design
+       tab, so a click made from the BOQ or the spaces list would otherwise open
+       a card on a surface nobody can see. The tab follows the selection because
+       the selection is what the tab is now about.
+       NOT FROM `admin`, WHICH IS NOT A STEP IN THIS WORK. It is a different
+       audience's tab and yanking an operator out of it because they clicked the
+       drawing would lose whatever they were reading. */
+    setView((v) => (v === 'admin' ? v : 'design'));
     // ONE SELECTION ON THIS CANVAS. A plate and a fitting both picked would be
     // two things Delete could mean.
     setSelSpotId(null); setSelAccId(null); setSelObjId(null);
@@ -7794,7 +7894,7 @@ export default function App({
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
     wallResults, runTrims, manualCoves, renderRefs,
-    boardsOff, boardMoves,
+    boardsOff, boardMoves, boardPoints,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
@@ -7802,7 +7902,7 @@ export default function App({
        ceilingObjs, chunkPicks, designPicks, ceilingKinds,
        accentResults, accentDismissed, manualAccents,
        surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-       wallResults, runTrims, manualCoves, renderRefs, boardsOff, boardMoves,
+       wallResults, runTrims, manualCoves, renderRefs, boardsOff, boardMoves, boardPoints,
        layers, zoom, view]);
 
   // --- UNDO, THE HALF THAT NEEDS THE DOCUMENT -------------------------------
@@ -9568,6 +9668,39 @@ export default function App({
               over for as long as it lasts, and the button that starts it sits in
               the palette with the fittings. See `zoneEdit`. */}
           {panelView === 'design' && <>
+          {/* --- THE PLATE YOU CLICKED, ABOVE EVERYTHING ------------------
+              FIRST IN THE TAB AND NOT LAST, because it is not a control over
+              the drawing — it is the ANSWER to a gesture that has just been
+              made, and an answer three sections below the fold is a click that
+              appeared to do nothing. It is also the only section here that is
+              conditional on a selection, so it takes the top slot without
+              permanently displacing anything: with no plate selected the
+              Lighting palette is the first section, exactly as before.
+
+              A SECTION AND NOT A STEP. Boxing a zone or tracing an outline
+              takes the whole panel over, because both are gestures on the
+              canvas that the panel cannot help with. Reading a switchboard is
+              the opposite: the plate stays selected on the drawing, the
+              palettes below stay live, and the card is one more thing the panel
+              is saying. See SwitchboardCard for why it is an elevation. */}
+          {selBoardParts && (
+            <div className={SEC}>
+              <h3 className={H3}>Switchboard</h3>
+              <SwitchboardCard composition={selBoardParts} extras={selBoardExtras}
+                onRemove={removeBoardPoint} />
+              {/* WHAT ELSE CAN GO ON IT, generated from the country rather than
+                  listed — see addablePoints. A socket's chip prints the width of
+                  the PAIR, because that is what pressing it costs the plate. */}
+              <div className="flex flex-wrap gap-1 mt-2.5">
+                {addablePoints(sbCountry).map((p) => (
+                  <button key={`${p.kind}:${p.amps ?? ''}`} type="button"
+                    className={BTN_TINY} onClick={() => addBoardPoint(p)}>
+                    + {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className={SEC}>
             <h3 className={H3}>Lighting</h3>
             <LightPalette tool={addTool} objArmed={armed}
