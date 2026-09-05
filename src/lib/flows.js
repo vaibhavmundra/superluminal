@@ -111,6 +111,28 @@ export const FLOW_DEFAULTS = {
  */
 export const WIRE_CHAIN = '#8A8A8A';
 
+/**
+ * ...AND GREEN FOR THE ONE YOU ARE POINTING AT.
+ *
+ * A THIRD HUE AND NOT A HEAVIER BLUE, because what selection has to survive here
+ * is a THICKET. A bay with three rows and a fan is four loops crossing each
+ * other over the same ceiling, all of them blue and grey; a selected one drawn
+ * in the same colours one and a half times thicker is findable only by
+ * comparison, which means tracing every wire on the sheet to be sure which one
+ * got thicker. A different colour is findable at a glance, which is the whole
+ * job.
+ *
+ * GREEN BECAUSE NOTHING ELSE ON THIS CANVAS IS. The fittings are amber, the
+ * plates and their feeds are blue, the chain is grey and the accent is the
+ * cream ramp — so green cannot be mistaken for a kind of thing, only for a
+ * state, which is what it is.
+ *
+ * IT IS THE SAME SELECTION THE PANEL SHOWS. Clicking a module on a switchboard
+ * lights its wire green out here; clicking the wire fills that module in. One
+ * `selFlowId`, two views of it — see `pickFlow` in App.jsx.
+ */
+export const WIRE_PICKED = '#22C55E';
+
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const r2 = (v) => Math.round(v * 100) / 100;
 const centroid = (pts) => ({

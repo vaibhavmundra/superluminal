@@ -259,11 +259,12 @@ export function socketWithSwitch(country, { amps = null, source = 'design', what
  * If a country turns up whose regulators integrate the switch, that flag goes in
  * the table and this branch reads it — the same shape `moduleOverrides` has.
  *
- * THE SWITCH JOINS THE SWITCH ROW AND THE REGULATOR FOLLOWS IT, which falls out
- * of `composeSwitchboard`'s existing ordering rather than needing anything here:
- * the design's switches first, then its regulators, then the sockets. That IS
- * how a plate is laid out — a row of rockers, then the knobs, then the outlets —
- * so the fan's two modules are not adjacent and should not be.
+ * THE TWO ARE EMITTED TOGETHER AND STAY TOGETHER. `composeSwitchboard` keeps a
+ * flow's points adjacent when it orders the plate — see the note there — so the
+ * fan's switch sits immediately left of its regulator. That is what makes the
+ * plate operable without reading it: the module you press and the module you
+ * turn are one pair under one hand, and separating them into a rocker row and a
+ * knob row means hunting for which knob belongs to the switch you just used.
  *
  * A TWO-WAY POINT IS A SWITCH AND NOT A SECOND REGULATOR. `also` on a flow is
  * the same switch reached from a second plate (see flows.js), so when THIS
@@ -308,6 +309,30 @@ export function pointsFromFlows(country, flows = [], boardId = null) {
       }));
     }
   }
+  return out;
+}
+
+/**
+ * A HAND ORDER, APPLIED OVER THE RULES' OWN.
+ *
+ * WHAT IS NOT MENTIONED KEEPS ITS PLACE AFTER WHAT IS, which is the behaviour
+ * that makes a stored arrangement survive the drawing changing under it. The
+ * alternatives are both worse: dropping unknown units loses a fitting from the
+ * plate, and rebuilding the order from scratch throws away the arrangement the
+ * moment anything is added.
+ *
+ * AND A KEY FOR A UNIT THAT NO LONGER EXISTS IS SKIPPED, so deleting the fitting
+ * a module was for does not strand the order that named it.
+ */
+export function orderUnits(units, order = []) {
+  if (!order?.length) return units;
+  const left = new Map(units.map((u) => [u.key, u]));
+  const out = [];
+  for (const k of order) {
+    const u = left.get(k);
+    if (u) { out.push(u); left.delete(k); }
+  }
+  for (const u of units) if (left.has(u.key)) { out.push(u); left.delete(u.key); }
   return out;
 }
 
@@ -364,10 +389,25 @@ export function frameFor(country, used) {
  * THE ORDER IS THE ORDER A PLATE IS BUILT IN, and it is deliberate rather than
  * incidental: the switches the design asked for first (a person reaching for
  * the light switch by the door is reaching for the leftmost module), then the
- * fan's regulator, then the sockets and anything added by hand, then the
- * blanks. Sorting by module width, or by amperage, would put the fan regulator
- * in the middle of the light switches and make the plate unreadable in exactly
- * the way a real one is not.
+ * fan, then the sockets and anything added by hand, then the blanks. Sorting by
+ * module width, or by amperage, would scatter those and make the plate
+ * unreadable in exactly the way a real one is not.
+ *
+ * AND NOTHING SEPARATES A MODULE FROM THE ONE IT WORKS WITH. Three pairs on this
+ * plate are two modules doing one job — a fan's switch and its regulator, a
+ * socket and the switch that controls it, and the same again for every socket
+ * added by hand — and each pair is laid out as a pair.
+ *
+ * IT WAS NOT, AND THE FAN IS WHY THIS SECTION EXISTS. The split used to be by
+ * KIND: every switch, then every regulator. That reads fine on a plate with one
+ * fan on it and falls apart on a plate with two, because the second rocker and
+ * the second knob end up three modules apart with somebody else's switch between
+ * them — so operating the fan means working out which of two identical knobs
+ * belongs to the switch you just pressed. Grouping by FLOW instead is the same
+ * ordering wherever there is one of a thing and the correct one wherever there
+ * are two. The sockets were already adjacent, because `socketWithSwitch` emits
+ * the pair; this makes that a rule the ordering keeps rather than an accident of
+ * how they happen to be built.
  *
  * `spare` IS ON BY DEFAULT AND IT IS AN ARGUMENT rather than a constant, for
  * the "almost" in "almost every switchboard": the caller knows things this file
@@ -393,13 +433,44 @@ export function composeSwitchboard({
      point on the way through a conversion that was supposed to be about where
      the SWITCH lives. */
   spareAmps = null,
+  /* WHERE SOMEBODY DRAGGED THE MODULES TO: an array of UNIT KEYS, left to right.
+
+     UNITS AND NOT MODULES, WHICH IS THE WHOLE OF WHY THIS IS NOT A LIST OF
+     POINTS. Three things on a plate are two modules doing one job — a fan's
+     switch and its regulator, a socket and the switch that controls it, and the
+     same for every socket added by hand — and a plate where those can be
+     separated is a plate a person has to be careful with. Ordering the pairs
+     rather than the parts makes them inseparable by construction: there is no
+     arrangement this can express in which a fan's knob is not beside its rocker.
+
+     AN OVERRIDE, LIKE EVERY OTHER HAND DECISION IN THIS APP. The rules still
+     compose the plate and still decide what is on it; this permutes what came
+     out. A key it does not mention keeps its natural place after the ones it
+     does — so a row of downlights added tomorrow appears at the end of a plate
+     somebody arranged, rather than the arrangement being thrown away.
+
+     AND A KEY THAT NO LONGER EXISTS IS SKIPPED, so deleting a fitting does not
+     strand the order that mentioned it. */
+  order = [],
 } = {}) {
   const country = typeof code === 'string' ? countryFor(code) : (code ?? COUNTRIES[DEFAULT_COUNTRY]);
   const a = lightSwitchA(country);
 
+  /* THE DESIGN'S POINTS, GROUPED BY THE FLOW EACH SERVES.
+     A FLOW CAN BE MORE THAN ONE MODULE — a fan is a switch and a regulator — and
+     those modules have to stay side by side on the plate: the thing you press
+     and the thing you turn are one pair under one hand. `pointsFromFlows` emits
+     them consecutively, so a run of points sharing a `flowId` IS the group, and
+     nothing has to be re-derived from what kind each one is. */
   const design = pointsFromFlows(country, flows, boardId);
-  const switches = design.filter((p) => p.kind !== 'fan');
-  const fans = design.filter((p) => p.kind === 'fan');
+  const runs = [];
+  for (const p of design) {
+    const last = runs[runs.length - 1];
+    if (last && p.flowId && last.points[0].flowId === p.flowId) last.points.push(p);
+    else runs.push({ key: `flow:${p.flowId ?? `x${runs.length}`}`, points: [p] });
+  }
+  const switches = runs.filter((u) => !u.points.some((p) => p.kind === 'fan'));
+  const fans = runs.filter((u) => u.points.some((p) => p.kind === 'fan'));
 
   const added = [];
   for (const e of extras) {
@@ -415,15 +486,25 @@ export function composeSwitchboard({
        one press to take away. Stamping it out here rather than inside
        `socketWithSwitch` keeps that function about wiring and this loop about
        what a person did. */
-    for (const p of made) added.push({ ...p, extraId: e?.id ?? null });
+    added.push({
+      key: `extra:${e?.id ?? added.length}`,
+      points: made.map((p) => ({ ...p, extraId: e?.id ?? null })),
+    });
   }
 
   const spares = spare
-    ? socketWithSwitch(country, { amps: spareAmps ?? a, source: 'spare',
-                                  what: 'a spare outlet' })
+    ? [{ key: 'spare',
+         points: socketWithSwitch(country, { amps: spareAmps ?? a, source: 'spare',
+                                             what: 'a spare outlet' }) }]
     : [];
 
-  const wanted = [...switches, ...fans, ...spares, ...added];
+  const units = orderUnits([...switches, ...fans, ...spares, ...added], order);
+  /* THE UNIT'S KEY AND ITS PLACE, STAMPED ON EVERY MODULE IN IT. The card drags
+     a module and has to know which pair it belongs to and where that pair
+     currently sits; carrying it on the point is what saves every reader from
+     re-deriving the grouping the way this function just did. */
+  const wanted = units.flatMap((u, i) => u.points.map(
+    (p) => ({ ...p, unitKey: u.key, unitIndex: i })));
   const bins = packBoards(country, wanted);
 
   const boards = bins.map((bin, i) => {
@@ -444,6 +525,19 @@ export function composeSwitchboard({
 
   return {
     country,
+    /* THE UNITS, IN THE ORDER THEY CAME OUT — what a caller needs to move one.
+       Keys and not indices, because an index means nothing the moment the plate
+       gains a fitting; see `order`. */
+    units: units.map((u) => ({
+      key: u.key,
+      label: u.points[0].label,
+      // THE WIRE IT IS ON, WHERE IT IS ON ONE. A caller that has just moved a
+      // unit uses this to light that wire too, so the panel and the drawing say
+      // the same thing about the same press. Null for the spare pair and for
+      // anything added by hand — they are on no flow at all.
+      flowId: u.points[0].flowId ?? null,
+      modules: u.points.reduce((n, p) => n + p.modules, 0),
+    })),
     // NOT AN OUTLET, SAID OUT LOUD. The card reads this to decide which of two
     // plates it is drawing, and `composeOutlet` says the opposite — so the field
     // is present on both answers rather than absent on one, which is the
@@ -479,10 +573,15 @@ export function composeSwitchboard({
  * draws both.
  */
 export function composeOutlet({ country: code = DEFAULT_COUNTRY, amps = null,
-                                switchedFrom = null } = {}) {
+                                switchedFrom = null, flowId = null } = {}) {
   const country = typeof code === 'string' ? countryFor(code) : (code ?? COUNTRIES[DEFAULT_COUNTRY]);
   const a = amps ?? lightSwitchA(country);
-  const sock = point(country, { kind: 'socket', amps: a, source: 'outlet' });
+  /* `flowId` ON THE SOCKET, which is the only reason this function takes one. A
+     point carries the id of the wire it is on so that picking either lights the
+     other — see `pickFlow` in App.jsx. Every module `pointsFromFlows` makes has
+     one by construction; an outlet's socket is built here instead, so it has to
+     be told. */
+  const sock = point(country, { kind: 'socket', amps: a, source: 'outlet', flowId });
   const size = frameFor(country, sock.modules);
   const blanks = Math.max(0, size - sock.modules);
   return {

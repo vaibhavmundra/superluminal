@@ -14,7 +14,8 @@
 
 import { COUNTRIES, DEFAULT_COUNTRY, LIGHT_MAX_A, countryFor, lightSwitchA,
          modulesFor, labelFor, socketWithSwitch, pointsFromFlows, packBoards,
-         frameFor, composeSwitchboard, composeOutlet, addablePoints, tally }
+         frameFor, composeSwitchboard, composeOutlet, addablePoints, tally,
+         orderUnits }
   from '../src/lib/switchboards.js';
 
 let fail = 0;
@@ -106,6 +107,22 @@ console.log('\n-- a flow is a switch, and a fan is a switch AND a regulator --')
   ok(pointsFromFlows(US, [fan()], B).reduce((n, p) => n + p.modules, 0) === 2,
     '...and two gangs in the US');
 
+  /* TWO FANS ON ONE PLATE, WHICH IS THE CASE THE PAIRING EXISTS FOR. Split by
+     KIND — every switch, then every regulator — the second rocker and the second
+     knob end up modules apart with somebody else's switch between them, and
+     operating a fan means working out which of two identical knobs belongs to
+     the switch you just pressed. */
+  const two = composeSwitchboard({
+    country: 'IN', spare: false, boardId: B,
+    flows: [...lights(1), fan('fl-fan-a'), fan('fl-fan-b')],
+  });
+  const TL = labels(two.boards[0]);
+  ok(TL.filter((q) => q === 'Fan regulator').length === 2, 'two regulators on the plate');
+  ok(TL.every((q, i) => q !== 'Fan regulator' || TL[i - 1] === '6A switch'),
+    'and each one has its own switch immediately before it');
+  ok(TL.indexOf('Fan regulator') === 2,
+    `the lone light switch still leads the plate (got ${TL.join(', ')})`);
+
   // The count is flows and not fittings — the whole premise.
   const big = [{ id: 'f', kind: 'row', label: 'Downlights', boardId: B, count: 18 }];
   ok(pointsFromFlows(IN, big, B).length === 1, 'eighteen lamps on one row is one switch');
@@ -182,6 +199,69 @@ console.log('\n-- the socket outlet, and the switch it puts somewhere else --');
     'without a second socket appearing on the board with it');
 }
 
+console.log('\n-- moving the modules about, in pairs --');
+{
+  const flows = [...lights(2), fan()];
+  const base = composeSwitchboard({ country: 'IN', flows, boardId: B });
+  const keys = base.units.map((u) => u.key);
+  ok(keys.length === 4, `four units: two rows, the fan and the spare (got ${keys.length})`);
+  ok(keys[keys.length - 1] === 'spare', 'the spare pair is last to begin with');
+  ok(base.units.find((u) => u.key === 'spare').modules === 3,
+    'and a unit knows its own width — a socket and its switch is three modules');
+
+  // THE SPARE PAIR TO THE FRONT. Both of its modules move, in their own order.
+  const moved = composeSwitchboard({ country: 'IN', flows, boardId: B,
+                                     order: ['spare', ...keys.filter((k) => k !== 'spare')] });
+  const L = labels(moved.boards[0]);
+  ok(L[0] === '6A switch' && L[1] === '6A socket',
+    `the pair leads the plate, still a pair (got ${L.slice(0, 2).join(' | ')})`);
+  ok(L[L.length - 1] === 'Fan regulator', 'and the fan is now at the end');
+  ok(L[L.length - 2] === '6A switch', '...with its own switch still beside it');
+  ok(moved.boards[0].used === base.boards[0].used,
+    'moving things about cannot change what the plate costs');
+
+  /* AN ORDER CANNOT SEPARATE A PAIR, and this is why it is a list of UNITS. The
+     only thing an arrangement can name is the pair; there is no value of `order`
+     that puts a switch between a fan and its regulator. */
+  const fanKey = base.units.find((u) => u.key.startsWith('flow:fl-fan')).key;
+  const wedged = composeSwitchboard({ country: 'IN', flows, boardId: B,
+                                      order: [fanKey, 'spare'] });
+  const WL = labels(wedged.boards[0]);
+  ok(WL[WL.indexOf('Fan regulator') - 1] === '6A switch',
+    'the fan keeps its switch however the plate is arranged');
+
+  // WHAT THE ORDER DOES NOT MENTION KEEPS ITS PLACE AFTER WHAT IT DOES.
+  const partial = composeSwitchboard({ country: 'IN', flows, boardId: B,
+                                       order: ['spare'] });
+  ok(partial.units[0].key === 'spare' && partial.units.length === 4,
+    'a partial order moves what it names and keeps the rest');
+  // ...AND A KEY WHOSE FITTING HAS GONE IS SKIPPED RATHER THAN STRANDING IT.
+  const stale = composeSwitchboard({ country: 'IN', flows, boardId: B,
+                                     order: ['flow:gone', 'spare'] });
+  ok(stale.units.length === 4 && stale.units[0].key === 'spare',
+    'a key for something that no longer exists is skipped');
+  ok(orderUnits([{ key: 'a' }, { key: 'b' }], []).map((u) => u.key).join() === 'a,b',
+    'and no order at all leaves the rules\' own');
+
+  /* A UNIT SAYS WHICH WIRE IT IS ON, where it is on one. The card lights what
+     was just dropped by its unit key; this is what lets the drawing light the
+     same thing's wire at the same moment. */
+  ok(base.units.every((u) => (u.key.startsWith('flow:') ? !!u.flowId : u.flowId === null)),
+    'a unit built from a flow names it, and the spare pair names nothing');
+  ok(base.units.find((u) => u.key === 'spare').flowId === null,
+    'so a unit on no wire cannot light one');
+
+  /* AND EVERY MODULE KNOWS ITS UNIT AND WHERE THAT UNIT SITS, which is what the
+     drawing drags and animates. Without these it would have to re-derive the
+     grouping the composer just did, from the kinds. */
+  const pts = base.boards[0].points.filter((q) => q.kind !== 'blank');
+  ok(pts.every((q) => !!q.unitKey && Number.isInteger(q.unitIndex)),
+    'every module carries its unit key and the unit\'s place');
+  ok(base.boards[0].points.filter((q) => q.kind === 'blank')
+    .every((q) => !q.unitKey),
+    '...and a blank carries neither, because it is not part of the arrangement');
+}
+
 console.log('\n-- frames you can buy --');
 {
   ok(frameFor(IN, 5) === 6, 'five modules go in a six-module frame');
@@ -209,14 +289,17 @@ console.log('\n-- the composition, India --');
   ok(howMany(b, 'Blank plate') === 0, 'which it fills exactly, so there is no blank');
   ok(b.points.reduce((s, p) => s + p.modules, 0) === b.size,
     'the parts add up to the frame exactly');
-  /* THE ORDER A PLATE IS BUILT IN: a row of rockers, then the knobs, then the
-     outlets. The fan's switch joins the rockers and its regulator follows them,
-     which is how a real plate is laid out and is not an accident — see the
-     ordering in composeSwitchboard. */
-  ok(labels(b).indexOf('Fan regulator') > labels(b).indexOf('6A switch'),
-    'the regulator sits after the switches');
-  ok(labels(b).lastIndexOf('6A socket') === labels(b).length - 1,
-    'and the socket is last');
+  /* THE ORDER A PLATE IS BUILT IN: the design's switches, then the fan, then the
+     sockets. AND NOTHING SEPARATES A MODULE FROM THE ONE IT WORKS WITH — the
+     thing you press and the thing you turn are one pair under one hand. */
+  const L = labels(b);
+  ok(L.indexOf('Fan regulator') > L.indexOf('6A switch'),
+    'the fan sits after the design\'s own switches');
+  ok(L[L.indexOf('Fan regulator') - 1] === '6A switch',
+    'and its switch is the module immediately before it');
+  ok(L[L.lastIndexOf('6A socket') - 1] === '6A switch',
+    'the socket\'s switch is immediately before the socket');
+  ok(L.lastIndexOf('6A socket') === L.length - 1, 'and the socket is last');
 }
 
 console.log('\n-- the composition, the US --');

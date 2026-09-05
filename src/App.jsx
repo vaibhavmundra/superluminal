@@ -1180,6 +1180,19 @@ export default function App({
      turn a two-plate board into a one-plate board, which is a change to what
      gets ORDERED made by editing a dimension. */
   const [boardHeights, setBoardHeights] = useState({});
+
+  /* --- AND THE ORDER THE MODULES SIT IN: `{ [boardId]: [unitKey, ...] }` -----
+     THE RULES DECIDE WHAT IS ON A PLATE AND A PERSON DECIDES WHERE. Which
+     switch is leftmost is not a fact anything can derive — it is which one your
+     hand finds first walking through the door, and that depends on which side
+     the door is on, which lamp matters most and what the client is used to.
+
+     KEYS AND NOT INDICES, AND UNITS AND NOT MODULES. An index means nothing the
+     moment the plate gains a fitting; a key survives. And what is ordered is the
+     PAIR — a fan's switch with its regulator, a socket with its switch — so
+     there is no arrangement this can express in which the thing you press is
+     separated from the thing it works. See `order` in switchboards.js. */
+  const [boardOrders, setBoardOrders] = useState({});
   /* IS THE SWITCHBOARD TOOL OPEN? A step, like the door editor and the zone
      editor — it takes the panel over and stays open across placements, because
      somebody putting a board on one wall is usually putting one on three. */
@@ -1470,7 +1483,8 @@ export default function App({
     setBoardsOff([]); setBoardMoves({}); setBoardPoints({});
     setSelBoardId(null); setBoardDrag(null);
     setFlowBoards({}); setFlowBends({}); setSelFlowId(null); setFlowDrag(null);
-    setManualBoards([]); setBoardKinds({}); setBoardHeights({}); setBoardPlace(false);
+    setManualBoards([]); setBoardKinds({}); setBoardHeights({}); setBoardOrders({});
+    setBoardPlace(false);
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
     setRenders({}); setRenderRefs({});
     setWallResults({}); setWallTranscripts({}); setRunTrims({});
@@ -1833,7 +1847,7 @@ export default function App({
     setAccentResults, setAccentDismissed, setManualAccents,
     setSurfaceResults, setSurfaceDismissed, setManualSurfaces, setArtDismissed,
     setBoardsOff, setBoardMoves, setBoardPoints, setFlowBoards, setFlowBends,
-    setManualBoards, setBoardKinds, setBoardHeights,
+    setManualBoards, setBoardKinds, setBoardHeights, setBoardOrders,
     // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
     // are a few hundred bytes of JSON and the renders are megabytes of
     // somebody's photographs, which do not belong in a jsonb column.
@@ -4835,9 +4849,49 @@ export default function App({
      as its own (two-way switching — see `also` in flows.js), so "the flows on
      this board" is not a partition of the list and cannot be pre-grouped
      without deciding, here, a question switchboards.js already answers. */
-  const selBoard = useMemo(
-    () => switchboardsPx.find((b) => b.id === selBoardId) ?? null,
-    [switchboardsPx, selBoardId]);
+  /**
+   * THE PLATE THE PANEL IS SHOWING — the one somebody picked, or failing that
+   * the one the picked WIRE runs to.
+   *
+   * THE FALLBACK IS THE WHOLE OF "CLICK A WIRE, SEE ITS SWITCH". Selecting a
+   * wire clears the board selection (one selection on this canvas), so without
+   * this the card would close at the exact moment there was something in it
+   * worth looking at — and the module that ought to light up would not be on
+   * screen to light. Falling back to the wire's own board means clicking any
+   * loop on the drawing opens the plate it is switched from, with its module
+   * filled in.
+   *
+   * AND PICKING A MODULE KEEPS `selBoardId`, which is why the explicit
+   * selection comes first rather than the two being merged. A two-way point on
+   * plate X belongs to a flow whose board is plate Y; pressing it must not throw
+   * you over to Y's card, because X is the plate you are reading.
+   */
+  const selBoard = useMemo(() => {
+    const byFlow = selFlowId
+      ? flowsPx.find((f) => f.id === selFlowId)?.boardId ?? null
+      : null;
+    const want = selBoardId ?? byFlow;
+    return want ? switchboardsPx.find((b) => b.id === want) ?? null : null;
+  }, [switchboardsPx, selBoardId, selFlowId, flowsPx]);
+
+  /**
+   * PICK A WIRE FROM ITS MODULE — the other direction of the same selection.
+   *
+   * IT DOES NOT CLEAR `selBoardId`, and that is the one thing separating it from
+   * `flowPointerDown`. Pressing a module is a gesture made INSIDE the card, so
+   * closing the card would take away the surface the gesture was made on; a
+   * press on the drawing has no such problem and clears everything, as every
+   * other selection there does.
+   *
+   * PRESSING THE LIT ONE AGAIN LETS GO. A module is the only place in this app
+   * where the selected thing and the control for it are the same object, so
+   * without a toggle there would be no way to put a wire down again without
+   * finding somewhere empty to click.
+   */
+  const pickFlow = useCallback((id) => {
+    setSelFlowId((cur) => (cur === id ? null : id));
+    setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+  }, [setSelObjId]);
 
   /* The points somebody added to THIS plate. Its own memo because it is a
      dependency of the composition, and `boardPoints[id]` computed inline would
@@ -4863,6 +4917,9 @@ export default function App({
       return composeOutlet({
         country: sbCountry, amps: selBoard.amps,
         switchedFrom: mine?.boardLabel ?? null,
+        // ...AND THE WIRE IT IS ON, so the socket lights with everything else on
+        // that flow. Its switch is on another plate; this is the same point.
+        flowId: mine?.id ?? null,
       });
     }
     /* `spareAmps` IS WHAT SURVIVES A CONVERSION. Every board carries one socket
@@ -4874,8 +4931,46 @@ export default function App({
     return composeSwitchboard({
       country: sbCountry, flows: flowsPx, boardId: selBoard.id,
       extras: selBoardExtras, spareAmps: selBoard.amps ?? null,
+      order: boardOrders[selBoard.id] ?? [],
     });
-  }, [selBoard, sbCountry, flowsPx, selBoardExtras]);
+  }, [selBoard, sbCountry, flowsPx, selBoardExtras, boardOrders]);
+
+  /**
+   * MOVE A PAIR ALONG THE PLATE.
+   *
+   * REWRITTEN FROM THE CURRENT ARRANGEMENT AND NOT PATCHED INTO THE STORED ONE.
+   * The stored order may be empty (nobody has moved anything yet) or stale (it
+   * predates a fitting being added), and in both cases the list a person is
+   * actually looking at is `units` — so the move is applied to THAT and the
+   * result stored whole. A stored order that only ever gets appended to drifts
+   * from what is on screen the first time the rules add something.
+   */
+  const reorderBoardUnit = useCallback((key, toIndex) => {
+    const id = selBoard?.id;
+    const units = selBoardParts?.units;
+    if (!id || !units) return;
+    const keys = units.map((u) => u.key);
+    const from = keys.indexOf(key);
+    if (from < 0) return;
+    const next = keys.filter((k) => k !== key);
+    // THE TARGET IS AN INDEX IN THE LIST WITH THE UNIT STILL IN IT, which is
+    // what the drawing measured — so dropping to the right of where it started
+    // has to lose the slot it vacated, or a unit dragged one place right would
+    // land back where it was.
+    next.splice(Math.max(0, Math.min(next.length, toIndex > from ? toIndex - 1 : toIndex)),
+      0, key);
+    setBoardOrders((m) => ({ ...m, [id]: next }));
+    /* AND THE THING JUST MOVED IS WHAT IS SELECTED, where it is on a wire. The
+       card lights the dropped unit by its own key — see `movedKey` there, which
+       is what a unit with no flow needs — and this is the other half of it: the
+       wire goes green on the drawing at the same moment, so the two views do not
+       disagree about what was just touched. */
+    const flowId = units[from]?.flowId ?? null;
+    if (flowId) {
+      setSelFlowId(flowId);
+      setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+    }
+  }, [selBoard, selBoardParts, setSelObjId]);
 
   /**
    * A PLATE IS A SOCKET OUTLET, OR IT IS A SWITCHBOARD.
@@ -4961,6 +5056,7 @@ export default function App({
             : composeSwitchboard({
               country: sbCountry, flows: flowsPx, boardId: b.id,
               extras: boardPoints[b.id] ?? [], spareAmps: b.amps ?? null,
+              order: boardOrders[b.id] ?? [],
             });
           return {
             id: b.id,
@@ -4981,7 +5077,7 @@ export default function App({
     }
     return groups;
   }, [rooms, boardsFor, bayBoardsFor, placedBoardsFor, boardNames, heightOf,
-      sbCountry, flowsPx, boardPoints]);
+      sbCountry, flowsPx, boardPoints, boardOrders]);
 
   /** A point added by hand, onto the selected plate. See `boardPoints`. */
   const addBoardPoint = useCallback((p) => {
@@ -8686,7 +8782,7 @@ export default function App({
     surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
     wallResults, runTrims, manualCoves, renderRefs,
     boardsOff, boardMoves, boardPoints, flowBoards, flowBends, manualBoards, boardKinds,
-    boardHeights,
+    boardHeights, boardOrders,
     layers, zoom, view,
   }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
@@ -8695,7 +8791,7 @@ export default function App({
        accentResults, accentDismissed, manualAccents,
        surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
        wallResults, runTrims, manualCoves, renderRefs, boardsOff, boardMoves, boardPoints,
-       flowBoards, flowBends, manualBoards, boardKinds, boardHeights,
+       flowBoards, flowBends, manualBoards, boardKinds, boardHeights, boardOrders,
        layers, zoom, view]);
 
   // --- UNDO, THE HALF THAT NEEDS THE DOCUMENT -------------------------------
@@ -10657,9 +10753,18 @@ export default function App({
                   onChange={(mm) => setBoardHeight(selBoard.id, mm)} />
               </div>
 
+              {/* THE MODULES ARE PICKABLE, AND THE PICKED ONE IS FILLED IN. One
+                  selection seen from two sides: press a module and its wire goes
+                  green on the drawing, press a wire and its module fills here.
+                  A fan lights both of its modules — the switch and the regulator
+                  are one flow — which is right rather than incidental. */}
               <SwitchboardCard composition={selBoardParts}
                 extras={selBoardParts.outlet ? [] : selBoardExtras}
-                onRemove={selBoardParts.outlet ? null : removeBoardPoint} />
+                onRemove={selBoardParts.outlet ? null : removeBoardPoint}
+                selectedFlowId={selFlowId} onPickFlow={pickFlow}
+                /* AND THEY CAN BE DRAGGED ALONG THE PLATE. Not on an outlet:
+                   one socket has no arrangement to have. */
+                onReorder={selBoardParts.outlet ? null : reorderBoardUnit} />
 
               {/* --- THE RATING, AND ONLY ON AN OUTLET -----------------------
                   "CAN BE ANY POWER RATING" IS THE WHOLE OF WHAT VARIES BETWEEN

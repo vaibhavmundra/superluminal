@@ -87,7 +87,12 @@ function Plate({ entry, onHeight }) {
       {/* EVERY FRAME, NOT JUST THE FIRST. Drawn in ink, because this is paper. */}
       <div className="flex flex-col gap-1.5">
         {entry.composition.boards.map((b) => (
-          <BoardFrame key={b.index} board={b} ink="#0A0A0A" />
+          /* NO `onPickFlow` HERE, and the ground is stated anyway. There is no
+             canvas beside this sheet for a wire to turn green on, so a module
+             has nothing to pick — but `ground` is what a lit module's glyph is
+             drawn in, and leaving it at the panel's dark default would put a
+             black mark on a black fill the day this sheet grows a selection. */
+          <BoardFrame key={b.index} board={b} ink="#0A0A0A" ground="#FFFFFF" />
         ))}
       </div>
 

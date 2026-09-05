@@ -300,6 +300,21 @@ export function serialiseEditor(s) {
        heights, which is what makes it two; an override replaces the first of
        that list and leaves the second alone. See `withMode` in App.jsx. */
     boardHeights: s.boardHeights ?? {},
+    /* ...AND THE ORDER ITS MODULES SIT IN: board id -> an array of unit keys,
+       left to right.
+
+       WHICH SWITCH IS LEFTMOST IS NOT DERIVABLE. It is which one your hand finds
+       walking through the door, and that depends on the side the door is on, on
+       which lamp matters most, and on what the client is used to. The rules pick
+       an order that reads well; this is the one somebody chose.
+
+       UNIT KEYS AND NOT MODULE INDICES. A fan's switch and its regulator are one
+       unit, and so are a socket and the switch that controls it, so what is
+       stored cannot express an arrangement in which either pair comes apart. A
+       key also survives the plate gaining a fitting, where an index would not —
+       see `orderUnits` in switchboards.js for what happens to keys it has never
+       heard of and keys whose fitting has gone. */
+    boardOrders: s.boardOrders ?? {},
 
     // --- view preferences. Cheap, and jarring to lose.
     ui: { layers: s.layers, zoom: s.zoom, view: s.view },
@@ -391,6 +406,7 @@ export function applyEditor(p, set) {
   set.setManualBoards?.(p.manualBoards ?? []);
   set.setBoardKinds?.(p.boardKinds ?? {});
   set.setBoardHeights?.(p.boardHeights ?? {});
+  set.setBoardOrders?.(p.boardOrders ?? {});
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);

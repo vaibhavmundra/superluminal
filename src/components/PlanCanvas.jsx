@@ -6,7 +6,7 @@ import { STRIP_STYLE, THROW_STYLE, GLINT_STYLE, PILL_STYLE,
          COVE_BAND_STYLE } from '../lib/settings.js';
 import { TRACK_DIMS_IN } from '../lib/track.js';
 import { SB_COLOUR, SB_MM } from '../lib/electrical.js';
-import { WIRE_CHAIN } from '../lib/flows.js';
+import { WIRE_CHAIN, WIRE_PICKED } from '../lib/flows.js';
 import { doorWidthAt } from '../lib/doors.js';
 
 // ---------------------------------------------------------------------------
@@ -1400,7 +1400,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               return {
                 key: l.key,
                 d: l.d,
-                stroke: feed ? SB_COLOUR : WIRE_CHAIN,
+                /* GREEN WHEN IT IS THE PICKED ONE, AND NOT A HEAVIER BLUE. The
+                   weight still doubles — feed and chain keep telling each other
+                   apart — but weight alone cannot carry selection in a thicket
+                   of four loops crossing one ceiling: "thicker than the others"
+                   is findable only by comparing it with the others. See
+                   WIRE_PICKED in flows.js for why green in particular. */
+                stroke: picked ? WIRE_PICKED : feed ? SB_COLOUR : WIRE_CHAIN,
                 width: (feed ? lw * 1.5 : lw * 0.95) * (picked ? 1.6 : 1),
                 dash: feed ? `${lw * 1.5} ${lw * 3.2}` : `${lw * 1.2} ${lw * 2.4}`,
                 halo: feed ? lw * 3.4 : lw * 2.4,
@@ -1450,6 +1456,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   return (
                     <line key={i} x1={q.x - uy * t} y1={q.y + ux * t}
                       x2={q.x + uy * t} y2={q.y - ux * t}
+                      stroke={picked ? WIRE_PICKED : SB_COLOUR}
                       strokeWidth={lw * 1.5} strokeLinecap="round" />
                   );
                 })}
@@ -3715,9 +3722,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 the two overlap — on a short feed leg they are a few pixels
                 apart, and the one somebody means when they press on the plate is
                 this one. */}
+            {/* THE GRIPS ARE THE PICKED WIRE'S OWN, so they take its colour: they
+                only ever appear on it, and a blue handle on a green wire would
+                read as belonging to something else. */}
             {onFlowGripDown && f.from && (
               <circle className="hit" cx={f.from.x} cy={f.from.y} r={lw * 4.4}
-                fill={SB_COLOUR} stroke="#fff" strokeWidth={lw * 1.5}
+                fill={WIRE_PICKED} stroke="#fff" strokeWidth={lw * 1.5}
                 style={{ cursor: 'grab' }}
                 onPointerDown={(e) => {
                   e.stopPropagation(); e.preventDefault();
@@ -3731,12 +3741,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 because the assignment is not committed until the drop. */}
             {flowGrab?.id === f.id && f.nodes[0] && (
               <g pointerEvents="none">
+                {/* THE BAND IS THIS WIRE BEING CARRIED, so it is this wire's
+                    colour — the drag only ever happens on the picked one. */}
                 <line x1={f.nodes[0].x} y1={f.nodes[0].y}
                   x2={flowGrab.at.x} y2={flowGrab.at.y}
-                  stroke={SB_COLOUR} strokeWidth={lw * 1.5}
+                  stroke={WIRE_PICKED} strokeWidth={lw * 1.5}
                   strokeDasharray={`${lw * 2} ${lw * 2}`} strokeLinecap="round" />
                 <circle cx={flowGrab.at.x} cy={flowGrab.at.y} r={lw * 3}
-                  fill={SB_COLOUR} stroke="#fff" strokeWidth={lw * 1.2} />
+                  fill={WIRE_PICKED} stroke="#fff" strokeWidth={lw * 1.2} />
               </g>
             )}
           </g>
