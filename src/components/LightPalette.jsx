@@ -1,4 +1,5 @@
 import React from 'react';
+import PaletteButton from './PaletteButton.jsx';
 
 // ---------------------------------------------------------------------------
 // LightPalette — the three fittings you add by hand, as three symbols.
@@ -48,6 +49,23 @@ import React from 'react';
  * this table and nothing else.
  */
 export const LIGHT_TOOLS = [
+  /* THE COVE IS FIRST, AND THE ORDER IS THE ORDER THE WORK HAPPENS IN. A
+     reverse cove is not a fitting you mount on a ceiling, it is a change to
+     what the ceiling IS — it re-cuts the grid, so every downlight after it is
+     placed inside an answer this gesture gave. Offering it below the fittings
+     would be offering to change the ceiling once somebody had finished laying
+     out the lights on it. Same argument for the two hand-written cells that
+     bracket it in the row.
+
+     `surface: true` IS WHICH GROUP THE BUTTON SITS IN, not a second machine —
+     it arms `addTool` like the fittings do. It exists so the two coves end up
+     side by side: the row is drawn as [cove shape][surface tools][no-light
+     zone][fittings], and without the flag the map would have put the reverse
+     cove and the shape tool at opposite ends of the group they belong to. */
+  { id: 'cove',   label: 'Reverse cove', surface: true,
+    stepTitle: 'Span the wall the cove runs along',
+    hint: 'Press at one end and drag along the wall.',
+    consequence: 'It follows the wall you started on.' },
   { id: 'strip',  label: 'LED strip',
     hint: 'Click the two ends of the run.' },
   { id: 'sconce', label: 'Sconce',
@@ -77,10 +95,6 @@ export const LIGHT_TOOLS = [
     // like a fan does, so the grid moves out of its way — which looks like the
     // lights having been deleted if you did not know it was coming.
     consequence: 'The ambient grid keeps clear of it.' },
-  { id: 'cove',   label: 'Reverse cove',
-    stepTitle: 'Span the wall the cove runs along',
-    hint: 'Press at one end and drag along the wall.',
-    consequence: 'It follows the wall you started on.' },
 ];
 
 /**
@@ -198,108 +212,82 @@ export const GESTURE = {
  * ask which of them a button is lit by.
  */
 /**
- * `zoneOn` / `onZones` ARE THE SIXTH CELL, AND IT IS NOT A FITTING.
+ * `shapeOn` / `onShape` AND `zoneOn` / `onZones` ARE THE TWO CELLS THAT ARE NOT
+ * TOOLS, and they come in as their own props rather than as rows in
+ * `LIGHT_TOOLS` because neither one arms a placer.
  *
- * The grid is three wide and the table above it holds five tools, so the second
- * row has always carried two buttons and a hole. What belongs in that hole is
- * the one thing on this panel that is about the ABSENCE of light: a no-light
- * zone. It used to be the middle tab of an "Edit" toolbox — Ceiling objects /
- * No-light zones / Lighting — which put "keep the light off this" two clicks
- * away from every control that puts light on something.
+ * Every entry in that table arms a tool and then waits for a gesture on the
+ * canvas with the panel still standing. These two open a STEP: the cove shape
+ * tool hands the drawing its own bar (see ShapeMenu), and the no-light zone
+ * empties the panel down to an instruction and a list, the way confirming the
+ * doors does. Folding them into the table would have meant a `kind` field on
+ * five rows that do not need one, and an `onPick` that sometimes arms and
+ * sometimes navigates.
  *
- * IT IS NOT A ROW IN `LIGHT_TOOLS`, and that is the whole reason it arrives as
- * its own pair of props. Every entry in that table arms a tool and then waits
- * for a gesture on the canvas with the panel still standing; this one opens a
- * STEP — the panel empties down to the instruction and the list of zones, the
- * way confirming the doors does. Folding it into the table would have meant a
- * `kind` field on five rows that do not need one, and an `onPick` that
- * sometimes arms and sometimes navigates.
+ * THEY WERE A "CEILING" SECTION OF THEIR OWN, ABOVE THIS ONE, and the split did
+ * not survive being looked at. The argument for it was that a cove and a zone
+ * are statements about the SURFACE where the rest of the row is things mounted
+ * on it — which is true, and is a reason to put them FIRST, not a reason to put
+ * a heading between them. Two headings meant two palettes, and somebody
+ * laying out light had to know which of them owned "keep the light off this"
+ * before they could look for it. One section, ordered surface-first.
  *
- * It renders only when it is wired. The read-only panel does not pass it, and a
- * palette with a dead sixth button would be a claim that an operator can draw
- * on somebody else's plan.
+ * Each renders only when it is wired. The read-only panel passes neither, and a
+ * palette with dead buttons on it would be a claim that an operator can draw on
+ * somebody else's plan.
  */
 export default function LightPalette({ tool, objArmed = null, onPick, disabled = false,
+                                       shapeOn = false, onShape = null,
                                        zoneOn = false, onZones = null }) {
   const isOn = (t) => (t.arms === 'object' ? objArmed === t.id : tool === t.id);
   const live = LIGHT_TOOLS.find(isOn);
+  /* THE ROW IN TWO HALVES — see `surface` on the cove. Filtered rather than
+     sliced by index so adding a second surface tool is one field. */
+  const surfaces = LIGHT_TOOLS.filter((t) => t.surface);
+  const fittings = LIGHT_TOOLS.filter((t) => !t.surface);
+  const cell = (t) => (
+    /* THE CELL IS SHARED — see PaletteButton. What is left here is this
+       palette's own part: which of the two machines a press arms. */
+    <PaletteButton key={t.id} icon={ICON[t.id]} label={t.label}
+      on={isOn(t)} disabled={disabled}
+      title={`${t.label} — ${t.hint}`}
+      onClick={() => onPick(isOn(t) ? null : t.id, t.arms ?? 'tool')} />
+  );
   return (
     <>
-      {/* SIX IN A THREE-WIDE GRID, WHICH IS TWO FULL ROWS. It was five and a
-          gap; the sixth is the No Light Zone button — see the note on `onZones`
-          for why it is not a row in `LIGHT_TOOLS`. Three columns and not six,
-          for the reason the gap was tolerated in the first place: six columns
-          shrinks every button to fit the narrowest panel and makes the artwork
-          — the whole point of a palette whose symbols are its names — too small
-          to recognise. */}
-      <div className="grid grid-cols-3 gap-[5px] mt-2">
-        {LIGHT_TOOLS.map((t) => (
-          <button key={t.id} type="button" disabled={disabled}
-            className={'flex flex-col items-center gap-[3px] pt-[7px] px-[2px] pb-[5px] '
-              + 'rounded-[8px] border cursor-pointer transition-colors duration-[120ms] '
-              + 'disabled:opacity-45 disabled:cursor-not-allowed '
-              /* ARMED TAKES THE ACCENT RAMP AS A 1px RING, exactly as the
-                 ceiling palette does — see the note there for the mechanism.
-                 It was `shadow-[inset_0_0_0_1px_currentColor]` over
-                 `text-accent`, which is the flat amber, and a flat amber ring
-                 beside a ceiling palette whose armed ring is the ramp made two
-                 rows of the same panel disagree about what "armed" looks like.
-                 `text-accent` GOES WITH IT. It used to colour the glyph through
-                 `currentColor`; the artwork carries its own colour now, and the
-                 ring is a paint server rather than a text colour, so nothing was
-                 left for it to feed.
-                 ONE `bg-*` PER BRANCH. The base string used to carry `bg-surface`
-                 and the armed suffix added `bg-input-bg` on top — two utilities
-                 on one property, which is the ordering trap this codebase warns
-                 about at the top of App.jsx. Each state now names its own. */
-              + (isOn(t)
-                ? 'border-transparent bg-input-bg gradient-ring'
-                : 'border-border/10 bg-surface enabled:hover:bg-input-bg')}
-            title={`${t.label} — ${t.hint}`}
-            aria-pressed={isOn(t)}
-            onClick={() => onPick(isOn(t) ? null : t.id, t.arms ?? 'tool')}>
-            {/* alt="" ON PURPOSE, same as the ceiling palette: the label below
-                is the accessible name, and a screen reader saying "sconce"
-                twice is worse than not describing the picture at all.
-                GUARDED, so a tool listed in LIGHT_TOOLS without artwork degrades
-                to its label instead of rendering a broken image. */}
-            {ICON[t.id] && (
-              <img src={ICON[t.id]} alt="" width="40" height="40"
-                className="w-10 h-10 object-contain select-none" draggable="false" />
-            )}
-            <span className={'text-[9.5px] leading-[1.15] text-center tracking-[0.01em] ' +
-              /* THE SAME FIX AS THE CEILING PALETTE, and the same reason: this
-                 row sits on the same dark panel, so `text-ink` made an armed
-                 tool's name vanish rather than stand out. Two palettes side by
-                 side that answer "which one is armed" differently would be worse
-                 than either answer. */
-              (isOn(t) ? 'text-white' : 'text-subtle')}>{t.label}</span>
-          </button>
-        ))}
-        {/* THE SIXTH CELL. Deliberately the same button — same size, same
-            artwork slot, same armed ring — because it is the same question the
-            other five answer: what do I put on this drawing by hand. A zone is
-            one of the things you put on it; that it is drawn as a hole rather
-            than as a fitting is what the picture is for.
+      {/* SEVEN CELLS IN A THREE-WIDE GRID — everything you can put on a
+          ceiling by hand, in one row rather than in two sections with a heading
+          between them. See the note on `onShape`/`onZones` for why the split
+          came out.
 
-            `aria-pressed` AND THE RING WHILE THE STEP IS OPEN, so the button
-            says where you are. It is not `disabled` with the rest: the five
-            tools need a scale and a lit space before they can place anything at
-            real size, and a zone is a box over the drawing — it needs neither. */}
-        {onZones && (
-          <button type="button" onClick={onZones} aria-pressed={zoneOn}
-            title="No Light Zone — box out anything the light should keep off."
-            className={'flex flex-col items-center gap-[3px] pt-[7px] px-[2px] pb-[5px] '
-              + 'rounded-[8px] border cursor-pointer transition-colors duration-[120ms] '
-              + (zoneOn
-                ? 'border-transparent bg-input-bg gradient-ring'
-                : 'border-border/10 bg-surface hover:bg-input-bg')}>
-            <img src="/icons/no_light_zone.png" alt="" width="40" height="40"
-              className="w-10 h-10 object-contain select-none" draggable="false" />
-            <span className={'text-[9.5px] leading-[1.15] text-center tracking-[0.01em] '
-              + (zoneOn ? 'text-white' : 'text-subtle')}>No Light Zone</span>
-          </button>
+          THE ORDER IS SURFACE FIRST, FITTINGS AFTER. The three cells that say
+          what the ceiling IS — the cove shape tool, the reverse cove, the
+          no-light zone — fill the first line; the four things you mount on it
+          follow. That is the order the work happens in, and it happens to make
+          the two hand-written cells and the table's first row one clean line.
+
+          THREE COLUMNS AND NOT SEVEN, which leaves two holes at the end and is
+          worth them: seven columns shrinks every button to fit the narrowest
+          panel and makes the artwork — the whole point of a palette whose
+          symbols are its names — too small to recognise. */}
+      <div className="grid grid-cols-3 gap-[5px] mt-2">
+        {/* THE CEILING'S OWN SHAPE. It does not arm a placer: it opens a bar on
+            the DRAWING, which is where its primitives live. See ShapeMenu. */}
+        {onShape && (
+          <PaletteButton icon="/icons/cove.png" label="Cove" title="Cove"
+            on={shapeOn} disabled={disabled} onClick={onShape} />
         )}
+        {surfaces.map(cell)}
+        {/* THE ABSENCE OF LIGHT, and the one cell here that is not `disabled`
+            with the rest: the tools need a scale and a lit space before they can
+            place anything at real size, and a zone is a box over the drawing —
+            it needs neither. */}
+        {onZones && (
+          <PaletteButton icon="/icons/no_light_zone.png" label="No Light Zone"
+            title="No Light Zone — box out anything the light should keep off."
+            on={zoneOn} onClick={onZones} />
+        )}
+        {fittings.map(cell)}
       </div>
       {/* WHAT THE ARMED TOOL WANTS FROM YOU. Only while one is armed: three
           gesture descriptions on screen at rest is a manual, and one at the

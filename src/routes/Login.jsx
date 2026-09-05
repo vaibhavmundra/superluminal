@@ -109,7 +109,16 @@ export default function Login() {
 
   return (
     <div className="min-h-full flex flex-col items-center">
-      <div className="w-full h-14 flex items-center px-[22px] border-b border-border/10 bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px]"><Wordmark /></div>
+      {/* BLACK, AND OPAQUE — not the 5% white glass the rest of this app wears.
+          Two reasons, and the second is the binding one. The page's ground is
+          #000 under a 24px graph-paper grid, and glass lets that grid run
+          straight through the header and behind the wordmark. And the logo is a
+          PLATED asset — white ink on an opaque black rectangle, chosen because
+          it is a tenth the weight of the transparent cut (see Wordmark.jsx) —
+          so anything but #000 behind it shows the plate as a box round the
+          mark. The hairline underneath is then what separates the bar from the
+          page rather than a change in tone. */}
+      <div className="w-full h-14 flex items-center px-[22px] border-b border-border/10 bg-[var(--bg)]"><Wordmark /></div>
 
       <div className="w-[min(420px,92%)] m-auto bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-lg py-[30px] px-7 shadow-pop">
         {!configured ? (

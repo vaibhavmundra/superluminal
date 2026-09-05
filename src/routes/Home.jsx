@@ -75,9 +75,12 @@ export default function Home() {
           wears. The page's own ground is #000 with a 24px graph-paper grid drawn
           over it, and glass lets that grid run straight through the header and
           behind the wordmark. A logotype with ruled lines showing through it is
-          a logotype nobody chose. Flat black gives the mark a ground of its own,
-          and the hairline underneath is then what separates the bar from the
-          page rather than a change in tone.
+          a logotype nobody chose. And the logo is a PLATED asset — white ink on
+          an opaque black rectangle, chosen because it is a tenth the weight of
+          the transparent cut (see Wordmark.jsx) — so anything but #000 behind it
+          shows the plate as a box round the mark. The hairline underneath is
+          then what separates the bar from the page rather than a change in
+          tone.
 
           `bg-[var(--bg)]` AND NOT `bg-bg`, WHICH IS A TRAP IN THIS STYLESHEET.
           There are two tokens a foot apart with almost the same name: `--bg` on

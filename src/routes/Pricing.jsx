@@ -104,7 +104,16 @@ export default function Pricing() {
 
   return (
     <div className="min-h-full flex flex-col">
-      <header className="h-14 flex-none flex items-center gap-3.5 max-[640px]:gap-2 px-[22px] max-[640px]:px-3.5 border-b border-border/10 bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px]">
+      {/* BLACK, AND OPAQUE — not the 5% white glass the rest of this app wears.
+          Two reasons, and the second is the binding one. The page's ground is
+          #000 under a 24px graph-paper grid, and glass lets that grid run
+          straight through the header and behind the wordmark. And the logo is a
+          PLATED asset — white ink on an opaque black rectangle, chosen because
+          it is a tenth the weight of the transparent cut (see Wordmark.jsx) —
+          so anything but #000 behind it shows the plate as a box round the
+          mark. The hairline underneath is then what separates the bar from the
+          page rather than a change in tone. */}
+      <header className="h-14 flex-none flex items-center gap-3.5 max-[640px]:gap-2 px-[22px] max-[640px]:px-3.5 border-b border-border/10 bg-[var(--bg)]">
         <Wordmark />
         <div className="flex-1" />
         <button className={BTN_BASE + ' ' + BTN_DEFAULT} onClick={() => nav('/')}>Upload a plan</button>

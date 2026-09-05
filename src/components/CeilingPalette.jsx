@@ -1,5 +1,6 @@
 import React from 'react';
 import { CEILING_BY_ID } from '../lib/ceilingObjects.js';
+import PaletteButton from './PaletteButton.jsx';
 
 // ---------------------------------------------------------------------------
 // CeilingPalette — three symbols in a row, not a dropdown.
@@ -72,7 +73,6 @@ const GROUPS = [
     label: 'Socket', arms: 'board' },
   { key: 'ac',         ids: ['ac'],        icon: '/icons/casette.png' },
   { key: 'split_ac',   ids: ['split_ac'],  icon: '/icons/split_ac.png' },
-  { key: 'geyser',     ids: ['geyser'],    icon: '/icons/geyser.png' },
   // The crossed square, which is the mark everyone already knows for a hatch.
   { key: 'trapdoor',   ids: ['trapdoor'],  icon: '/icons/trap.png' },
 ];
@@ -101,53 +101,12 @@ export default function CeilingPalette({ armed, onArm, disabled = false }) {
         // one row that carries its own label.
         const label = g.label ?? CEILING_BY_ID[g.ids[0]]?.label ?? g.key;
         return (
-          <button key={g.key} type="button" disabled={disabled}
-            className={
-              'flex flex-col items-center gap-[4px] pt-[9px] px-0.5 pb-[6px] rounded-[8px] cursor-pointer transition-colors duration-[120ms] disabled:opacity-[.45] disabled:cursor-not-allowed text-accent border ' +
-              /* NO INLINE COLOUR. A type's `colour` is the ink the GHOST is
-                 drawn in on the plan — an obstacle is somebody else's object
-                 and stays grey there — and it was doing double duty as the
-                 glyph's colour here. Two jobs, one field: turning the palette
-                 blue would have turned the ghost blue with it. `text-accent`
-                 is what the armed border and the label read, and `colour`
-                 means the one thing again. */
-              /* ARMED TAKES THE ACCENT RAMP AS A 1px RING.
-                 It was `border-current` plus an inset 1px shadow in the same
-                 colour — two declarations painting one edge, in a flat hue,
-                 because a border cannot hold a gradient.
-                 `gradient-ring` is the utility that can: a `::before` inset to
-                 the button, filled with `--gradient-accent` and masked to its
-                 own 1px padding so only the rim survives. Defined in styles.css
-                 beside the gradient it reads. `border-transparent` keeps the
-                 button's SIZE identical armed and not — the border box is still
-                 1px, it just stops painting, so nothing shifts when you arm it.
-                 The ring is `pointer-events: none`, so it cannot eat the click
-                 that disarms the button it is drawn on. */
-              (on
-                ? 'border-transparent bg-input-bg gradient-ring'
-                : 'border-border/10 bg-surface backdrop-blur-md enabled:hover:bg-input-bg')
-            }
-            title={label}
-            onClick={() => onArm(on ? null : armId, g.arms ?? 'object')}>
-            {/* alt="" ON PURPOSE: the label below is the accessible name, and a
-                screen reader reading "fan" twice is worse than not drawing the
-                picture for it at all. */}
-            <img src={g.icon} alt="" width="40" height="40"
-              className="w-10 h-10 object-contain select-none" draggable="false" />
-            {/* SUBTLE AT REST, WHITE WHEN ARMED — and `text-ink` was the bug.
-                Ink is #000000, which is right on paper and all but invisible on
-                this panel's frosted glass over a black page: arming a fan made
-                its name DISAPPEAR, which is the opposite of what a latched
-                control should do. White is the strongest thing a dark panel can
-                say, and it is what the panel's tabs and its checked boxes
-                already say it with.
-                `text-subtle` rather than `text-muted` for the resting state —
-                #7A7A7A against #525252. The label is a caption under a picture
-                that already names the thing; muted was competing with the
-                artwork for the same job. */}
-            <span className={'text-[9.5px] leading-[1.15] text-center tracking-[0.01em] '
-              + (on ? 'text-white' : 'text-subtle')}>{label}</span>
-          </button>
+          /* THE CELL IS SHARED — see PaletteButton. What is left here is the
+             only part that is this palette's: which id a press arms, and which
+             machine it arms it on. */
+          <PaletteButton key={g.key} icon={g.icon} label={label} on={on}
+            disabled={disabled}
+            onClick={() => onArm(on ? null : armId, g.arms ?? 'object')} />
         );
       })}
     </div>

@@ -12109,51 +12109,25 @@ export default function App({
               )}
             </div>
           )}
-          {/* --- THE CEILING ITSELF, ABOVE THE THINGS ON IT ------------------
-              FIRST OF THE THREE PALETTES, and the order is the order the work
-              happens in rather than a ranking. What the ceiling IS comes before
-              what is mounted in it: a cove re-cuts the grid, so every downlight
-              below it is placed inside an answer this section gave. Putting it
-              under the fittings would be offering to change the ceiling after
-              somebody had finished laying out the lights on it.
-
-              ONE BUTTON, WHICH IS NOT A PALETTE WAITING TO GROW. A cove is the
-              only thing you can DRAW onto a ceiling here; the coffers and the
-              drops that would join it are not implemented, and a row of one
-              looks like a row of one because that is what it is. What the button
-              opens is a palette — it is just not in this column. See ShapeMenu
-              for why the shapes live on the drawing. */}
-          <div className={SEC}>
-            <h3 className={H3}>Ceiling</h3>
-            <div className="grid grid-cols-3 gap-[5px] mt-2">
-              <button type="button" disabled={!pxPerFt || !rooms.length}
-                className={
-                  'flex flex-col items-center gap-[4px] pt-[9px] px-0.5 pb-[6px] '
-                  + 'rounded-[8px] cursor-pointer transition-colors duration-[120ms] '
-                  + 'disabled:opacity-[.45] disabled:cursor-not-allowed text-accent border '
-                  + (shapeMenuOn
-                    ? 'border-transparent bg-input-bg gradient-ring'
-                    : 'border-border/10 bg-surface backdrop-blur-md enabled:hover:bg-input-bg')}
-                title="Cove"
-                onClick={() => (shapeMenuOn ? closeShapeTool() : openShapeTool())}>
-                <img src="/icons/cove.png" alt="" width="40" height="40"
-                  className="w-10 h-10 object-contain select-none" draggable="false" />
-                <span className={'text-[9.5px] leading-[1.15] text-center tracking-[0.01em] '
-                  + (shapeMenuOn ? 'text-white' : 'text-subtle')}>Cove</span>
-              </button>
-            </div>
-          </div>
-
           <div className={SEC}>
             <h3 className={H3}>Lighting</h3>
             <LightPalette tool={addTool} objArmed={armed}
               disabled={!pxPerFt || !rooms.length}
-              /* THE SIXTH CELL, AND IT IS NOT A FITTING. See the palette's own
-                 note: the row had five tools and a hole in the second line, and
-                 the thing that belongs in that hole is the ABSENCE of light. It
-                 opens a step rather than arming a tool, which is why it comes in
-                 as its own pair of props instead of a sixth row in
-                 `LIGHT_TOOLS`. */
+              /* THE TWO CELLS THAT ARE NOT TOOLS. See the palette's own note:
+                 the cove shape tool and the no-light zone open STEPS rather
+                 than arming a placer, which is why they come in as their own
+                 pairs of props instead of rows in `LIGHT_TOOLS`.
+
+                 THEY HAD A "CEILING" SECTION OF THEIR OWN DIRECTLY ABOVE THIS
+                 ONE, on the argument that a cove and a zone are statements
+                 about the SURFACE where the rest of the row is things mounted
+                 on it. That is true, and it is a reason to put them FIRST in
+                 the row — which the palette does — rather than a reason to put
+                 a heading between them: two headings meant two palettes, and
+                 somebody laying out light had to know which of them owned "keep
+                 the light off this" before they could go looking for it. */
+              shapeOn={shapeMenuOn}
+              onShape={() => (shapeMenuOn ? closeShapeTool() : openShapeTool())}
               zoneOn={zoneEdit} onZones={openZoneEdit}
               onPick={(t, arms) => {
                 /* TWO MACHINES BEHIND ONE ROW. Four of these buttons arm
