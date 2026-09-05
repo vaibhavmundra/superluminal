@@ -123,6 +123,34 @@ export function serialiseEditor(s) {
     // — is gone with the question: a cove is set out in a CHUNK now, and the
     // chunk is the thing that was picked.)
     ceilingKinds: s.ceilingKinds,
+    /* THE COVES SOMEBODY DREW. Plan-space FEET, so a plan reopened after its
+       scale was corrected has its shapes at the size they were set out at
+       rather than at the size they happened to be on screen.
+
+       IT HAS TO BE KEPT FOR THE SAME REASON `designPicks` does, and the failure
+       is worse: the layout is a memo over this list, so a plan reopened without
+       it comes back with the grid un-cut, the strips gone from the schedule, and
+       no mark on the drawing to say anything was ever there. A cove that was
+       chosen from a pill can at least be seen to be missing.
+       Optional on read — see applyEditor — because every plan saved before this
+       existed has no key here. */
+    ceilingShapes: s.ceilingShapes,
+    /* WHERE SOMEBODY DRAGGED A LIGHT TO: outline id -> cell key -> offset from
+       that cell's own centre, in feet.
+
+       AN OVERRIDE AND NOT A LAYOUT. The lights themselves are never saved —
+       they are a memo over everything else in this file, and re-deriving them is
+       what makes a reopened plan agree with the rules rather than with a
+       snapshot. This is the small set of places a person overruled the rules,
+       and it is exactly the same kind of record `boardMoves` and `runTrims` are.
+
+       KEYED BY THE CELL'S GEOMETRY, which is what makes it safe to keep: a plan
+       reopened after its grid was re-cut simply finds no cell of that name and
+       the offset lapses, rather than moving some other lamp by a foot. See
+       `cellKey` in planner.js.
+       Optional on read — see applyEditor — because every plan saved before this
+       existed has no key here. */
+    lightMoves: s.lightMoves,
 
     // --- the two model-proposed layers, and the fittings added by hand
     accentResults: s.accentResults,
@@ -395,6 +423,8 @@ export function applyEditor(p, set) {
   set.setWallResults?.(p.wallResults ?? {});
   set.setRunTrims?.(p.runTrims ?? {});
   set.setManualCoves?.(p.manualCoves ?? []);
+  set.setCeilingShapes?.(p.ceilingShapes ?? []);
+  set.setLightMoves?.(p.lightMoves ?? {});
   // THE POINTERS, NOT THE PIXELS. App fetches the bytes back from the bucket
   // afterwards and only for the space that is open — see the rehydrate effect.
   set.setRenderRefs?.(p.renderRefs ?? {});

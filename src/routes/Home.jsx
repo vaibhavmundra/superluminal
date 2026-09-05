@@ -71,7 +71,22 @@ export default function Home() {
 
   return (
     <div className="min-h-full flex flex-col">
-      <header className="h-14 flex-none flex items-center gap-3.5 px-[22px] border-b border-border/10 bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px]">
+      {/* BLACK, AND OPAQUE — not the 5% white glass every other bar in this app
+          wears. The page's own ground is #000 with a 24px graph-paper grid drawn
+          over it, and glass lets that grid run straight through the header and
+          behind the wordmark. A logotype with ruled lines showing through it is
+          a logotype nobody chose. Flat black gives the mark a ground of its own,
+          and the hairline underneath is then what separates the bar from the
+          page rather than a change in tone.
+
+          `bg-[var(--bg)]` AND NOT `bg-bg`, WHICH IS A TRAP IN THIS STYLESHEET.
+          There are two tokens a foot apart with almost the same name: `--bg` on
+          `:root` is the page's ground and is #000000, while `--color-bg` in the
+          `@theme` block — which is what Tailwind builds `bg-bg` out of — is
+          #FAFAFA, a leftover from the light palette. `bg-bg` here would have
+          painted the header very nearly white. Reading the page's own token
+          also means the bar follows the ground if the ground ever moves. */}
+      <header className="h-14 flex-none flex items-center gap-3.5 px-[22px] border-b border-border/10 bg-[var(--bg)]">
         <Wordmark />
         <div className="flex-1" />
         <button className="text-[12px] py-[7px] px-1.5 border-0 bg-transparent text-subtle cursor-pointer no-underline transition-colors duration-[120ms] hover:text-white hover:underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 focus-visible:rounded-[3px]" onClick={() => nav('/pricing')}>Pricing</button>

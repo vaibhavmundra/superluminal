@@ -51,13 +51,30 @@ export default function FixtureTip({ tip }) {
       }}>
       <h4 className="m-0 mb-[7px] text-xs text-ink tracking-[-0.01em] leading-[1.25]">{tip.label}</h4>
       <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-[3px]">
-        {tip.rows.map(([k, v]) => (
+        {(tip.rows ?? []).map(([k, v]) => (
           <div key={k} style={{ display: 'contents' }}>
             <dt className="text-[11px] text-muted whitespace-nowrap">{k}</dt>
             <dd className="m-0 font-sans text-[11px] text-ink text-right tabular-nums">{v}</dd>
           </div>
         ))}
       </dl>
+      {/* --- SENTENCES, WHERE `rows` HOLDS FIGURES ------------------------
+          A row is a NAME AND A NUMBER — right-aligned, tabular, one line — which
+          is right for "7 W" and "36°" and wrong for "two runs across need 8 ft
+          clear of the walls; there is 5.5 ft". Those want the left margin and
+          they want to wrap, so they are their own list rather than rows with a
+          paragraph crammed into the value column.
+          NOT `note` EITHER: that is one <p>, and several reasons folded into one
+          paragraph is a wall of text where the whole point is that each line is
+          one refusal you can read on its own. */}
+      {tip.lines?.length > 0 && (
+        <ul className="list-none m-0 mt-2 pt-[7px] p-0 border-t border-black/[0.08]
+          grid gap-[3px]">
+          {tip.lines.map((l) => (
+            <li key={l} className="text-[10.5px] leading-[1.35] text-subtle">{l}</li>
+          ))}
+        </ul>
+      )}
       {tip.note && (
         <p className="mt-2 pt-[7px] border-t border-black/[0.08] text-[10.5px] leading-[1.4] text-subtle">
           {tip.note}

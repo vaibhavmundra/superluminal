@@ -144,8 +144,17 @@ say('2b. THE COVE GOES IN A CHUNK, AND THE CHUNKS COME FROM THE OUTLINE');
              { x: 8, y: 21 }, { x: 8, y: 14 }, { x: 0, y: 14 }];
   const d = designChunking(L, [], PLAN_OPTIONS, []);
   ok(d.chunks.length === 2, `${d.chunks.length} chunks, each one a piece of ceiling to decide about`);
-  ok(d.chunks.every((c) => optionsForChunk(c, PLAN_OPTIONS).some((o) => o.id === 'cove')),
-    '...and a cove is offered in every one of them, not just the biggest');
+  /* THE CLAIM USED TO BE "a cove is offered in every one of them, not just the
+     biggest", and it was the point of moving the decision from the SPACE to the
+     CHUNK. It has been overtaken: a cove is not offered on any chunk now, because
+     coves are drawn rather than picked — see optionsForChunk. What survives, and
+     is the half that still matters, is that the chunks are INDEPENDENT pieces of
+     ceiling with a decision each; the ladder below still runs per cove. */
+  ok(d.chunks.every((c) => optionsForChunk(c, PLAN_OPTIONS).length >= 1
+                        && optionsForChunk(c, PLAN_OPTIONS)[0].id === 'standard'),
+    '...and each one is a piece of ceiling with its own list of what it can be');
+  ok(d.chunks.every((c) => !optionsForChunk(c, PLAN_OPTIONS).some((o) => o.id === 'cove')),
+    '...none of which is a cove any more: a cove is drawn on the ceiling, not picked');
   const area = d.chunks.reduce((t, c) => t + c.area, 0);
   ok(near(area, 26 * 14 + 18 * 7, 1e-6), '...and together they are the whole ceiling');
 
@@ -169,14 +178,14 @@ say('2b. THE COVE GOES IN A CHUNK, AND THE CHUNKS COME FROM THE OUTLINE');
     'no chunk crosses a shaft that goes all the way through the ceiling');
 }
 {
-  // A CHUNK CAN BE TOO NARROW TO BE WORTH COVING even when the geometry would
-  // technically close: two 2 ft bands in a 5 ft chunk leave a one-foot ribbon.
-  ok(!optionsForChunk({ x0: 0, y0: 0, x1: 20, y1: 5 }, PLAN_OPTIONS)
-      .some((o) => o.id === 'cove'),
-    'a 5 ft chunk is offered no cove — the higher ceiling left in the middle would be a ribbon');
-  ok(optionsForChunk({ x0: 0, y0: 0, x1: 20, y1: 12 }, PLAN_OPTIONS)
-      .some((o) => o.id === 'cove'),
-    '...and a 12 ft one is');
+  /* A CHUNK CAN BE TOO NARROW TO BE WORTH COVING, and the rule survives the
+     option going away — it is what decides whether a cove a saved plan already
+     carries is honoured. See the grandfather clause in resolvePick, and
+     test-ceiling-design section 3b, which tests it end to end. */
+  const inner = (c) => { const g = coveGeometry(c); return g ? Math.min(g.line.w, g.line.h) : 0; };
+  ok(inner({ x0: 0, y0: 0, x1: 20, y1: 5 }) < 3,
+    'a 5 ft chunk leaves a ribbon, not a cove — two 2 ft bands and a foot between');
+  ok(inner({ x0: 0, y0: 0, x1: 20, y1: 12 }) >= 3, '...and a 12 ft one leaves a ceiling');
 }
 
 // --- 3. nothing crowds the line -------------------------------------------

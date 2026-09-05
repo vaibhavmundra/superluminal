@@ -255,6 +255,36 @@ export const WALL_CLEAR_FT = 1;
 export const MIN_SPAN_FT = 2;
 
 /**
+ * THE LEAST CEILING A SINGLE RUN NEEDS ACROSS IT, measured on the CHUNK.
+ *
+ * THIS USED TO BE `2 * ABSORB_FT` — six feet of the USABLE region — and the
+ * argument for it was: any less and the absorption zone reaches wall to wall,
+ * so every fitting in the chunk is dragged onto the one line, which is "not a
+ * track through a grid, it is a grid replaced by a line".
+ *
+ * THAT ARGUMENT IS SOUND AND ITS CONCLUSION WAS WRONG. A grid replaced by a
+ * line is exactly the right answer on a narrow band of ceiling: a corridor, a
+ * galley, the strip between a run of units and a wall. Nobody lays a grid there
+ * — they run one profile down it and hang the heads off that, which is the
+ * whole reason magnetic track exists. The old rule refused a track precisely
+ * where a track is the obvious detail, and offered it only once the chunk was
+ * wide enough to want a grid instead.
+ *
+ * FOUR FEET, AND IT IS A DESIGNER'S FIGURE RATHER THAN A DERIVED ONE. Under
+ * about four feet the ceiling is a reveal or a bulkhead, not a band anybody sets
+ * a profile out in. It is measured on the chunk and not on the usable region
+ * because it is a question about the piece of CEILING — whether there is a band
+ * here worth tracking — where the clearance is a question about where the
+ * profile may sit, which is asked separately and still asked.
+ *
+ * WHAT IS NOT RELAXED IS THE PAIR. Two runs whose absorption zones cover each
+ * other gather the same fittings twice and draw as tramlines; that argument
+ * survives untouched, so a pair still wants `2 * ABSORB_FT + MIN_SPAN_FT` of
+ * usable region and the four-sided arrangement still wants it on both axes.
+ */
+export const SINGLE_ACROSS_FT = 4;
+
+/**
  * THE SEVEN ARRANGEMENTS.
  *
  * `sides` is which edges of the chunk carry a run, and it is the whole
@@ -420,38 +450,94 @@ export function trackBounds(chunk, site = null, clear = WALL_CLEAR_FT) {
  * returns null and the chunk falls back to Standard. Same shape as
  * `coveGeometry` refusing a narrow chunk, one step further down.
  *
- * A SINGLE RUN NEEDS `2 * ABSORB_FT` ACROSS. Any less and the absorption zone
- * covers the whole chunk from wall to wall, so every fitting in it is dragged
- * onto one line — which is not a track through a grid, it is a grid replaced by
- * a line, and if that is what the room wants it wants one run and one row of
- * lights, which is a different decision from this one.
+ * A SINGLE RUN NEEDS `SINGLE_ACROSS_FT` OF CHUNK, in both directions — a band
+ * of ceiling worth setting a profile out in, and something for that profile to
+ * run along. See SINGLE_ACROSS_FT, which records why this is four feet of chunk
+ * rather than the six feet of usable region it used to be.
  *
- * A PAIR NEEDS `2 * ABSORB_FT + MIN_SPAN_FT` — the two zones may touch but the
- * runs must be far enough apart to be two runs. See MIN_SPAN_FT.
+ * A PAIR NEEDS `2 * ABSORB_FT + MIN_SPAN_FT` OF USABLE REGION — the two zones
+ * may touch but the runs must be far enough apart to be two runs — and
+ * `2 * ABSORB_FT` along, so the pair has somewhere to go. See MIN_SPAN_FT.
+ *
+ * THE TWO ARE MEASURED ON DIFFERENT THINGS AND THAT IS DELIBERATE. "Is there a
+ * band here worth tracking" is a question about the piece of CEILING; "will two
+ * absorption zones fit side by side without covering each other" is a question
+ * about the room a run may actually occupy, which is the chunk less its wall
+ * clearance. Measuring both on the usable region was what made a 30 x 7 corridor
+ * — the most obvious track in any flat — offer nothing at all.
  */
+/**
+ * WHY ONE ARRANGEMENT DOES OR DOES NOT FIT — null when it does, a sentence with
+ * the measurement in it when it does not.
+ *
+ * ONE FUNCTION FOR BOTH ANSWERS, and that is the point of it existing at all.
+ * `trackArrangementsFor` keeps the ones this returns null for and
+ * `trackRefusalsFor` keeps the rest, so an explanation offered to somebody
+ * cannot drift from the test that produced it. Two implementations of "why not"
+ * — one that decides and one that describes — is how a UI ends up confidently
+ * giving the wrong reason.
+ *
+ * THE SENTENCE CARRIES THE NUMBERS. "Too narrow" is not actionable and "needs
+ * 8 ft across; this has 6.4" is: it says which way to go and by how much.
+ */
+function arrangementFit(t, dims) {
+  const { cw, ch, uw, uh } = dims;
+  const along = 2 * ABSORB_FT;
+  const pair = 2 * ABSORB_FT + MIN_SPAN_FT;
+  const ft = (v) => `${Math.round(v * 10) / 10} ft`;
+  const needH = t.sides.filter((s) => AXIS[s] === 'h').length;  // runs across
+  const needV = t.sides.filter((s) => AXIS[s] === 'v').length;
+  const band = Math.min(cw, ch);
+  if (band < SINGLE_ACROSS_FT) {
+    return `a run needs a band ${ft(SINGLE_ACROSS_FT)} across; this chunk is ${ft(band)}`;
+  }
+  if (uw <= 0 || uh <= 0) {
+    return `the wall clearance leaves nowhere for a profile to sit`;
+  }
+  if (needH > 1 && uh < pair) {
+    return `two runs across need ${ft(pair)} clear of the walls; there is ${ft(uh)}`;
+  }
+  if (needV > 1 && uw < pair) {
+    return `two runs along need ${ft(pair)} clear of the walls; there is ${ft(uw)}`;
+  }
+  if (needH > 1 && uw < along) {
+    return `a pair across needs ${ft(along)} to run along; there is ${ft(uw)}`;
+  }
+  if (needV > 1 && uh < along) {
+    return `a pair along needs ${ft(along)} to run down; there is ${ft(uh)}`;
+  }
+  return null;
+}
+
+/** The dimensions every test above is asked of: the chunk, and the part of it a
+ *  profile may actually occupy. */
+const trackDims = (chunk, site) => {
+  const b = trackBounds(chunk, site);
+  return { cw: chunk.x1 - chunk.x0, ch: chunk.y1 - chunk.y0,
+           uw: b.x1 - b.x0, uh: b.y1 - b.y0 };
+};
+
 export function trackArrangementsFor(chunk, site = null) {
   if (!chunk) return [];
-  // THE USABLE REGION AND NOT THE CHUNK, because the wall clearance is taken off
-  // before any of these tests mean anything: a 7 ft chunk with walls both sides
-  // has 5 ft a run may actually sit in, and offering it a pair of runs on the
-  // strength of the 7 would be offering an arrangement that then declines.
-  const b = trackBounds(chunk, site);
-  const w = b.x1 - b.x0, h = b.y1 - b.y0;
-  if (w <= 0 || h <= 0) return [];
-  const single = 2 * ABSORB_FT;
-  const pair = 2 * ABSORB_FT + MIN_SPAN_FT;
-  return TRACK_ARRANGEMENTS.filter((t) => {
-    const needH = t.sides.filter((s) => AXIS[s] === 'h').length;  // runs across
-    const needV = t.sides.filter((s) => AXIS[s] === 'v').length;
-    if (needH && h < (needH > 1 ? pair : single)) return false;
-    if (needV && w < (needV > 1 ? pair : single)) return false;
-    // A run has to have somewhere to run TO, as well as room across it: a
-    // horizontal run in a chunk one foot wide is nine inches of overhang and
-    // nothing else.
-    if (needH && w < single) return false;
-    if (needV && h < single) return false;
-    return true;
-  });
+  const dims = trackDims(chunk, site);
+  return TRACK_ARRANGEMENTS.filter((t) => arrangementFit(t, dims) === null);
+}
+
+/**
+ * THE ONES THIS CHUNK CANNOT HAVE, each with the measurement that refused it.
+ *
+ * FOR THE PERSON MAINTAINING THE RULES, not for the person drawing a plan. A
+ * pill that listed everything it was not would be a control explaining itself
+ * at length to somebody who only wanted to pick a ceiling; the offer is the
+ * answer, and the reasoning behind an absence is an operator's question. See
+ * where this is rendered.
+ */
+export function trackRefusalsFor(chunk, site = null) {
+  if (!chunk) return [];
+  const dims = trackDims(chunk, site);
+  return TRACK_ARRANGEMENTS
+    .map((t) => ({ id: t.id, label: t.label, why: arrangementFit(t, dims) }))
+    .filter((r) => r.why !== null);
 }
 
 /**

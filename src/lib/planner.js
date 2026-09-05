@@ -1286,6 +1286,52 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   }
   const { lights, used, ceded } = result;
 
+  /* --- 5b. THE POSITIONS SOMEBODY CHOSE BY HAND ---------------------------
+     BEFORE THE ALIGNMENT PASS AND NOT AFTER IT, and the ordering is the whole
+     of why this is three lines rather than a fight. Applied afterwards, the
+     rows would already have formed up ignoring the light that was moved, and
+     the hand-placed lamp would end up the one fitting on the drawing out of
+     line with everything — the exact opposite of what somebody moving it was
+     trying to achieve. Applied here, it is in the pass as a PINNED light, and
+     the pass already knows what to do with one of those: `isForced` says the
+     row forms up on it. Move one light and its neighbours come to it.
+
+     KEYED BY THE CELL'S GEOMETRY, so a move is dropped when the grid it was
+     made on no longer exists. See `cellKey`.
+
+     STORED AS AN OFFSET FROM THE CELL CENTRE rather than as a position, because
+     the centre is what the band is measured from: "a foot to the right of
+     centre" survives the cell moving a hair, where a pair of absolute
+     coordinates would silently fall outside the band it was legal in.
+
+     CLAMPED AGAIN HERE, AND THAT IS NOT BELT AND BRACES. The drag clamped
+     against the layout as it stood at the time; by now a fan may have been
+     dropped on the spot, a cove drawn round it or the grid re-cut under it, and
+     an offset that was legal then may not be now. This is the only place that
+     can be the last word on it. */
+  const hand = options.handMoves;
+  if (hand) {
+    for (const l of lights) {
+      if (l.kind !== 'small' || !l.cell) continue;
+      const m = hand[cellKey(l.cell)];
+      if (!m) continue;
+      const p = clampLightMove(l.cell,
+        { x: l.cell.cx + (m.dx || 0), y: l.cell.cy + (m.dy || 0) },
+        { polygon, fans, zones, options: opt,
+          others: lights.filter((q) => q !== l) });
+      if (!p) continue;
+      l.x = p.x; l.y = p.y;
+      l.hand = true;
+      // `nudged` IS "NOT AT ITS CELL CENTRE", which is what the stats count and
+      // what the drawing reads. A hand move is one, whoever made it.
+      l.nudged = Math.abs(p.x - l.cell.cx) > 1e-9 || Math.abs(p.y - l.cell.cy) > 1e-9;
+      // `slid` names the ONE axis a fan pushed a light along. A hand move has
+      // no such axis — both coordinates were chosen — and leaving a stale one
+      // here would tell `isForced` the other axis was free.
+      l.slid = null;
+    }
+  }
+
   // 6. alignment pass — cluster into rows and columns, across chunks too
   alignAxis(lights, 'x', polygon, opt, fans, zones, wallDist);
   alignAxis(lights, 'y', polygon, opt, fans, zones, wallDist);
@@ -1452,6 +1498,101 @@ function findSmallSpot(cell, polygon, fans, zones, opt, maxFrac) {
 }
 
 /**
+ * THE NAME OF A CELL, AND IT IS ITS GEOMETRY.
+ *
+ * `cell.id` is an index into the array they were built in, which is fine inside
+ * one layout and worthless between two: change the target cell size, add a fan,
+ * draw a cove, and cell 14 is a different piece of ceiling. Anything STORED
+ * against a cell — a position somebody dragged a light to — has to survive a
+ * re-render and must NOT survive the grid being re-cut, because a hand position
+ * inherited by whatever cell landed on index 14 is a light moved somewhere
+ * nobody asked for.
+ *
+ * The rectangle is the identity, exactly as `chunkKey` is for a chunk: a cell
+ * that is still there keeps what was done to it, and one that is gone loses it.
+ */
+export function cellKey(c) {
+  return [c.x0, c.y0, c.x1, c.y1]
+    .map((v) => (Math.round(v * 1e4) / 1e4).toFixed(3)).join(',');
+}
+
+/**
+ * HOW FAR A SMALL LIGHT MAY GO FROM ITS OWN CELL CENTRE, as a rectangle.
+ *
+ * This is `centreBand` said out loud. It is a FRACTION of the cell and not a
+ * distance in feet, so it scales with the grid: ±20% of a 7 ft cell is ±1.4 ft,
+ * ±20% of a 5 ft one is ±1 ft. The same box `slideLimit` enforces one axis at a
+ * time, in the one shape a drawing can put on the sheet — which is what lets
+ * somebody SEE the tolerance instead of being told about it.
+ */
+export function centreBandBox(cell, opt) {
+  const o = resolveOptions({ ...DEFAULTS, ...opt });
+  const dx = cell.w * o.centreBand, dy = cell.h * o.centreBand;
+  return { x0: cell.cx - dx, y0: cell.cy - dy, x1: cell.cx + dx, y1: cell.cy + dy };
+}
+
+/**
+ * WHERE A LIGHT SOMEBODY IS DRAGGING IS ACTUALLY ALLOWED TO LAND.
+ *
+ * THE BAND IS THE FIRST ANSWER AND NOT THE ONLY ONE. Inside its own centre band
+ * a light is still subject to every rule that governed where it was put in the
+ * first place — it may not leave the room, sit in a no-light zone, crowd a fan
+ * or a large light, or fall in the dead band either side of a cove line. The
+ * band says how much freedom the GRID allows; these say whether that particular
+ * point is a place a fitting can go.
+ *
+ * IT CLAMPS AND WALKS BACK RATHER THAN REFUSING. A drag that simply stops
+ * responding when it crosses a fan's clearance reads as the app having frozen;
+ * one that slides back along its own line to the last legal point reads as the
+ * light having hit something, which is what has happened. So the want is
+ * clamped into the band, and if THAT is illegal the segment from the cell
+ * centre out to it is walked and the furthest legal point on it is taken.
+ *
+ * `others` is every other light in the space, kinds included. Spacing is
+ * enforced against the LARGE ones only, which is not an omission: two small
+ * lights are spaced by the grid that made their cells, and `spacingOK` in the
+ * placement pass draws the same distinction for the same reason.
+ */
+export function clampLightMove(cell, wantFt, { polygon, fans = [], zones = [],
+                                               others = [], options = {} } = {}) {
+  const opt = resolveOptions({ ...DEFAULTS, ...options });
+  /* THE COVE LINES HAVE TO BE PREPARED, NOT JUST PASSED. `coveDepth` reads
+     `inside` and `outside` off each cove, and `prepareCoves` is what puts them
+     there from the options — a caller handing over bare rectangles (which is
+     every caller, since a cove line IS a rectangle) leaves both undefined, and
+     `d < undefined` is false, so every point tests clear. The dead band would
+     have been silently switched off for hand-dragged lights only: a downlight
+     could be parked in the pocket the whole detail exists to hide, on the one
+     path where nothing else was checking. */
+  const covesReady = prepareCoves(opt.coves, opt);
+  const b = centreBandBox(cell, opt);
+  const want = {
+    x: Math.max(b.x0, Math.min(b.x1, wantFt.x)),
+    y: Math.max(b.y0, Math.min(b.y1, wantFt.y)),
+  };
+  const legal = (q) => {
+    if (polygon && !pointInPolygon(q, polygon)) return false;
+    if (inAnyZone(q, zones)) return false;
+    if (coveDepth(q, covesReady) > 1e-9) return false;
+    if (fans.some((f) => surfaceDistance(f, q) < opt.fanClearance)) return false;
+    return !others.some((l) => l.kind === 'large'
+      && Math.hypot(l.x - q.x, l.y - q.y) < opt.minLightSpacing - 1e-9);
+  };
+  if (legal(want)) return want;
+  const c = { x: cell.cx, y: cell.cy };
+  const N = 24;
+  for (let k = N - 1; k >= 1; k--) {
+    const t = k / N;
+    const q = { x: c.x + (want.x - c.x) * t, y: c.y + (want.y - c.y) * t };
+    if (legal(q)) return q;
+  }
+  // The centre itself can be illegal — that is what an "awkward" cell is — and
+  // in that case the light was never at the centre to begin with. Staying put
+  // is the honest answer to a drag with nowhere legal to go.
+  return legal(c) ? c : null;
+}
+
+/**
  * Guarantee the post-condition: every small light shares either its cell's
  * centre x or its centre y. Off-axis by a hair is fine (the alignment pass
  * earns that), off-axis in both directions is not.
@@ -1553,6 +1694,19 @@ function gapAround(light, lights) {
  */
 function isForced(light, axis) {
   if (light.kind !== 'small' || !light.cell) return false;
+  /* A LIGHT SOMEBODY PUT THERE BY HAND IS THE MOST PINNED THING ON THE SHEET,
+     and it is pinned on BOTH axes — which is why this returns before the `slid`
+     test below rather than joining it. A fan pushes a light along one centre
+     line, so it is forced on one axis and free on the other; a hand move is two
+     coordinates chosen at once, and letting the alignment pass reclaim either of
+     them would be the app arguing with the person who moved it.
+     FORCED AND NOT LOCKED, WHICH IS THE WHOLE POINT. A locked light is dropped
+     from `movable` and never joins a row, so nothing would form up on it. Forced
+     means it stays in the group, offers its own coordinate as the line to take
+     (rank 0 in `flush`), and is skipped when the group moves — so moving one
+     light by hand tidies its neighbours onto it instead of leaving it the one
+     thing out of line. */
+  if (light.hand) return true;
   if (!light.nudged && !light.clash) return false;
   // findSmallSpot searches one centre line at a time, so a pushed light is off
   // centre on exactly ONE axis and `slid` records which. Without that check a

@@ -65,7 +65,7 @@
 import { planLights, COVE_LUMENS_PER_FT, DEFAULTS, resolveOptions } from './planner.js';
 import { enumerateChunkings, findChunking } from './chunking.js';
 import { coveGeometry, bandFixtureFor, COVE_TOLERANCE } from './cove.js';
-import { planTrack, isTrackPick, trackArrangementsFor,
+import { planTrack, isTrackPick, trackArrangementsFor, trackRefusalsFor,
          TRACK_ARRANGEMENTS, ABSORB_FT, WALL_CLEAR_FT } from './track.js';
 import { FIXTURE_BY_ID } from './boq.js';
 
@@ -130,18 +130,45 @@ const sideWords = (sides) => (sides.length === 4 ? 'all four sides'
   : `the ${sides.slice(0, -1).join(', ')} and ${sides[sides.length - 1]}`);
 
 export function optionsForChunk(chunk, opt = {}, site = null) {
+  /* --- A CHUNK THAT IS ALREADY A DECISION -------------------------------
+     A DRAWN COVE SHAPE HAS NO OPTIONS, and that is not a gap in the picker.
+     Every other chunk here is a piece of ceiling the room's own outline
+     produced, and the question "what is this piece" is genuinely open. A shape
+     somebody drew is the ANSWER to that question already given, by hand, in a
+     gesture whose entire purpose was to say "a cove goes here" — so offering to
+     flip it to Standard would be offering to delete the thing they drew while
+     leaving it on the drawing.
+     It carries its geometry rather than having it derived, because the line is
+     the shape's own bounding box and not an inset of anything. See
+     ceilingShapes.js, and `coveGeo` in planCeilingDesign. */
+  if (chunk?.coveGeo) {
+    return [{
+      id: 'cove', label: OPTION_LABEL.cove, offset: chunk.coveGeo.offset,
+      blurb: 'A cove set out to a shape drawn on this ceiling.',
+    }];
+  }
   const out = [{
     id: 'standard', label: OPTION_LABEL.standard,
     blurb: 'A flat ceiling with the ambient grid on it.',
   }];
-  const geo = coveGeometry(chunk);
-  if (geo && Math.min(geo.line.w, geo.line.h) >= MIN_INNER_FT) {
-    out.push({
-      id: 'cove', label: OPTION_LABEL.cove, offset: geo.offset,
-      blurb: `A dropped band ${Math.round(geo.offset)} ft wide round this chunk, `
-           + 'with a concealed strip washing the higher ceiling inside it.',
-    });
-  }
+  /* --- A COVE IS NOT ON OFFER HERE ANY MORE, AND IT WAS FOR A LONG TIME.
+     What used to be here: a cove set out by INSETTING this chunk, by a figure
+     from OFFSET_STEPS. It went because it was never the automatic answer people
+     assumed it was — nothing in this app ever picked it; `designPicks` starts
+     empty, so every cove on every plan was already somebody pressing the pill.
+     So there were two MANUAL ways to place a cove, and this was the one that
+     could only ever be the whole chunk, inset uniformly, at a width from a
+     table. A drawn cove is any shape, any size, anywhere, and it grids the same
+     way. Keeping both meant two cove geometries, two meanings of `offset`, two
+     band-fixture paths and two resize gestures, for one detail.
+
+     WHAT THIS LIST IS NOW is what an AUTOMATIC pass can decide about a piece of
+     ceiling: leave it flat, or run a track through the grid it produces. A cove
+     is a thing somebody draws. See ceilingShapes.js.
+
+     THE GEOMETRY STAYS. `coveGeometry` is still here and still correct, because
+     a plan saved before this change may carry a coved chunk and must keep it —
+     see the grandfather clause in `resolvePick`. Nothing can create a new one. */
   // THE TRACKS, AND THEY ARE THE SAME KIND OF ANSWER AS THE COVE ABOVE: what
   // this piece of ceiling IS. Offered on size alone, because the option list
   // has to exist before the layout does — a chunk big enough for a run whose
@@ -160,12 +187,106 @@ export function optionsForChunk(chunk, opt = {}, site = null) {
   return out;
 }
 
+/**
+ * WHAT THIS CHUNK CANNOT BE, AND WHY — one entry per option it was not offered.
+ *
+ * FOR AN OPERATOR AND NOT FOR A DESIGNER. The pill offers what a piece of
+ * ceiling CAN be, and that is the whole of what somebody laying out a plan
+ * needs; a control that also recited everything it had ruled out would be
+ * arguing with its own user. But when the offer looks wrong — a chunk that
+ * plainly ought to take a track and does not — there is currently no way to find
+ * out which figure refused it, and the only recourse is to read the source with
+ * a ruler. This is that answer, behind the admin switch.
+ *
+ * IT IS DERIVED FROM THE SAME PREDICATES THAT DECIDE, never from a second
+ * reading of them — see `arrangementFit` in track.js. An explanation computed
+ * separately from the rule it explains is an explanation that will eventually be
+ * confidently wrong.
+ */
+export function omittedOptionsFor(chunk, opt = {}, site = null) {
+  if (!chunk) return [];
+  if (chunk.coveGeo) return [];       // a drawn cove was never offered a choice
+  /* NO COVE REASON, BECAUSE A COVE IS NOT REFUSED — it is not offered on any
+     chunk at all, so there is nothing to explain about its absence. Reporting
+     "this chunk is too narrow for a cove" on every chunk in the job would be
+     explaining a rule that no longer exists. See optionsForChunk. */
+  return trackRefusalsFor(chunk, site);
+}
+
+/**
+ * THE NEXT OPTION AN ARROW ON THE PILL SHOULD LAND ON.
+ *
+ * PURE, AND HERE RATHER THAN IN THE COMPONENT, because it is the one piece of
+ * this decision that used to be wrong in a way nothing could catch: it lived
+ * inline in a click handler, indexed the wrong list by the wrong value, and the
+ * symptom — "the right arrow never reaches the track, the left one does" — is
+ * not something a test of the layout would ever see.
+ *
+ * TWO LISTS, TWO JOBS.
+ *   `order`    every option this chunk's GEOMETRY allows, in a sequence that
+ *              never changes shape. The arrows always mean the same traversal.
+ *   `options`  what the finished LAYOUT can actually deliver — smaller, because
+ *              an arrangement with nowhere to sit is gone and two that draw the
+ *              same profile have collapsed into one. Nothing may be landed on
+ *              that is not in here.
+ *
+ * AND IT STEPS FROM WHAT WAS ASKED FOR, not from what was built. An arrangement
+ * that declines leaves `pick` reading 'standard' — correctly, that is what is on
+ * the drawing — so stepping from `pick` put the cursor back at the top of the
+ * list every time one declined, and the next press repeated the second entry.
+ *
+ * Returns null when there is nowhere else to go.
+ */
+export function nextChunkOption(chunk, dir = 1) {
+  const options = chunk?.options ?? [];
+  if (options.length < 2) return null;
+  const order = chunk.order?.length ? chunk.order : options.map((x) => x.id);
+  const avail = new Set(options.map((x) => x.id));
+  const from = chunk.requested ?? chunk.pick;
+  let i = order.indexOf(from);
+  if (i < 0) i = Math.max(0, order.indexOf(chunk.pick));
+  for (let k = 1; k <= order.length; k++) {
+    const cand = order[(((i + dir * k) % order.length) + order.length) % order.length];
+    if (avail.has(cand)) return cand === from ? null : cand;
+  }
+  return null;
+}
+
 /** Which option a chunk actually has, tolerating a stale or unknown pick. */
 export function resolvePick(chunk, picks = {}, opt = {}, site = null) {
   const options = optionsForChunk(chunk, opt, site);
   const key = chunk.key ?? chunkKey(chunk);
-  const wanted = picks[key];
-  const pick = options.some((o) => o.id === wanted) ? wanted : 'standard';
+  let wanted = picks[key];
+  /* --- A COVE A SAVED PLAN ALREADY HAS -------------------------------------
+     `optionsForChunk` no longer offers one, and without this a plan drawn before
+     that change would reopen with every cove silently gone: the pick would not
+     be in the list, `resolvePick` would fall back to Standard, and there would
+     be no mark on the drawing to say a cove had ever been there. That is
+     somebody's work disappearing on load.
+
+     SO A STORED COVE IS HONOURED, AND ONLY A STORED ONE. The option is put back
+     into the list for this chunk alone, so the pill still reads Cove and still
+     flips through everything else the chunk can be — and once it is flipped
+     away it is gone, because nothing offers it again. Grandfathered rather than
+     migrated: converting somebody's saved design into drawn shapes on load is a
+     rewrite of their data to save them one gesture. */
+  if (wanted === 'cove' && !options.some((o) => o.id === 'cove')) {
+    const geo = coveGeometry(chunk);
+    if (geo && Math.min(geo.line.w, geo.line.h) >= MIN_INNER_FT) {
+      options.splice(1, 0, {
+        id: 'cove', label: OPTION_LABEL.cove, offset: geo.offset, legacy: true,
+        blurb: `A dropped band ${Math.round(geo.offset)} ft wide round this chunk. `
+             + 'Set out before coves were drawn by hand; flip away and it is gone.',
+      });
+    } else { wanted = null; }
+  }
+  /* THE FALLBACK IS THE FIRST OPTION AND NOT THE WORD "standard". They are the
+     same thing on every chunk the chunker produced — Standard is always first
+     in that list — and they part company on a chunk that has only one option,
+     which is what a drawn cove shape is. Falling back to a literal 'standard'
+     there would resolve a shape to a ceiling design it does not offer, and the
+     branch below would then grid it as a flat slab with no cove on it. */
+  const pick = options.some((o) => o.id === wanted) ? wanted : (options[0]?.id ?? 'standard');
   return { key, options, pick };
 }
 
@@ -236,6 +357,16 @@ export function planCeilingDesign({
   builtZonesFt = [],
   designChunks = [], picks = {},
   opt = {}, chunkOpt = null, strategy = null,
+  /* WHERE SOMEBODY DRAGGED A LIGHT TO, cell key -> offset from that cell's own
+     centre. Passed through untouched: this file decides what a piece of ceiling
+     IS, and where one fitting sits inside a cell is the planner's business. See
+     `handMoves` in planner.js. */
+  handMoves = null,
+  /* ASK FOR THE REASONING. Off by default: `omittedOptionsFor` is seven
+     predicates and a formatted string per chunk, on every room, on every
+     re-layout, and nothing on a designer's screen reads it. See the note there
+     for who it is for. */
+  explain = false,
   criteria = 20,
   // `(kind, cellSqft) => catalogueId`. The second argument is what lets a
   // bedroom's shallow cells be priced as the 5 W lamp they are actually bought
@@ -265,10 +396,23 @@ export function planCeilingDesign({
   // --- 1. what each design chunk is -----------------------------------------
   const parts = designChunks.map((chunk) => {
     const { key, options, pick } = resolvePick(chunk, picks, o, site);
+    // HERE AND NOT AT THE CALL SITE, because `site` is built in this function
+    // and rebuilding it outside would be two readings of "the room as built"
+    // that can disagree — which is the exact bug the chunking enumeration had.
+    const omitted = explain ? omittedOptionsFor(chunk, o, site) : null;
     if (pick === 'cove') {
-      const geo = coveGeometry(chunk);
+      /* THE SHAPE'S OWN GEOMETRY WINS WHERE THERE IS ONE. A cove set out by
+         this app is an INSET of the chunk it lives in, so its geometry is
+         derived; a cove somebody drew is a shape, and the rectangle here is the
+         box that shape fits in — the line IS that box, the band is empty
+         because the ceiling outside it is the room's own chunks, and the strip
+         is the outline that was drawn. Everything below this line then treats
+         the two identically, which is the point: the ladder, the clearance, the
+         grid cut and the schedule all read `geo` and none of them has to learn
+         that a cove can be round. */
+      const geo = chunk.coveGeo ?? coveGeometry(chunk);
       return {
-        key, chunk, options, pick: 'cove', kind: 'cove', geo,
+        key, chunk, options, omitted, pick: 'cove', kind: 'cove', geo,
         bandFixture: bandFixtureFor(geo.offset),
         // Two feet of clearance either side of the cove line eats 4 ft of the
         // middle, so a line under about that across encloses no lightable
@@ -294,7 +438,7 @@ export function planCeilingDesign({
     // which arrangement was asked for. See track.js, and step 3b below.
     const track = isTrackPick(pick) ? pick : null;
     return {
-      key, chunk, options,
+      key, chunk, options, omitted,
       pick: track ?? 'standard', kind: track ? 'track' : 'standard',
       arrangement: track,
       chunks: best?.chunks ?? [], omitted: best?.omitted ?? [],
@@ -316,8 +460,17 @@ export function planCeilingDesign({
         chunks.push({ ...p.geo.line, design: p.key, cove: 'inner',
                       dark: p.stage === 'cove' });
         for (const b of p.geo.band) {
+          /* THE PIECE'S OWN LAMP WHERE IT HAS ONE. A derived cove's band is one
+             uniform inset, so every piece of it is the same width and one answer
+             does for all four — which is what `bandFixture` is. A DRAWN cove's
+             ring is not uniform: each side is grown as far as that side of the
+             room allows, so a four-foot piece and a one-foot piece can face each
+             other across the same shape, and giving both the same lamp would put
+             a 7 W cone across a one-foot strip on the strength of the other
+             side's width. See coveHostFor. */
           chunks.push({ ...b, design: p.key, cove: 'band',
-                        coveFixture: p.bandFixture, dark: p.stage !== 'band' });
+                        coveFixture: b.fixture ?? p.bandFixture,
+                        dark: p.stage !== 'band' });
         }
       } else {
         for (const c of p.chunks) chunks.push({ ...c, design: p.key });
@@ -328,7 +481,7 @@ export function planCeilingDesign({
   };
 
   const run = () => planLights(polygonFt, fixturesFt, {
-    ...o,
+    ...o, handMoves,
     chunkPlan: buildPlan(),
     // EVERY COVE LINE IS A LINE NOTHING MAY CROWD, and they are handed over
     // together: a downlight in one chunk sitting two feet from the cove in the
@@ -440,6 +593,83 @@ export function planCeilingDesign({
     }
   }
 
+  /* --- 3c. THE OPTIONS A CHUNK CAN ACTUALLY CARRY -------------------------
+     `optionsForChunk` answers on GEOMETRY ALONE, because it has to: the list
+     exists before the layout does. Now the layout has run, and two of its
+     answers turn out to be wrong in ways a person flipping through the pill
+     feels immediately.
+
+     ONE: AN ARRANGEMENT THAT DECLINES IS STILL IN THE LIST. Flip to it, planTrack
+     refuses, the chunk falls back to Standard and the pill reads STANDARD —
+     honestly, because that is what is on the drawing. But the pill INDEXES the
+     list by what it currently reads, so the next press starts from Standard
+     again and you bounce between the first two entries forever. Pressing the
+     other arrow walks backwards to the last entry, which is why a track could be
+     reached going left and never going right. That is not a cycling bug to be
+     patched in the caller; the list contained things that were never available.
+
+     TWO: TWO NAMES FOR ONE DRAWING. A chunk whose fittings make a single column
+     has one candidate line, so "Track · left" and "Track · right" both put the
+     profile on it and produce the same four coordinates. Offering both is
+     offering a choice that does not exist, and the person flipping cannot tell
+     the two apart because there is nothing to tell apart.
+
+     SO THE LIST IS RE-ASKED OF THE LAYOUT. Every offered arrangement is planned
+     against the fittings that are actually in the chunk; the ones that refuse
+     are dropped, and the ones that come out to the same profile collapse to one.
+     THE PICKED ONE IS EVALUATED FIRST, so when two collapse it is the one
+     somebody chose that survives — otherwise the pill would read STANDARD over a
+     chunk with a track on it.
+
+     AND A LONE SURVIVOR LOSES ITS SIDE. "Track · left" names the side so that
+     seven of them can be told apart while flipping; with one there is nothing to
+     tell apart, and the side is then a detail of the answer rather than a
+     description of the choice. See the note on `label` in TRACK_ARRANGEMENTS,
+     which makes the same argument the other way round. */
+  if (res?.ok) {
+    const designOf2 = (l) => res.chunks[chunkOf(l)]?.design ?? null;
+    for (const p of parts) {
+      if (!p.options.some((x) => isTrackPick(x.id))) continue;
+      /* THE ORDER IS KEPT BEFORE ANYTHING IS TAKEN OUT OF IT, and it is what the
+         pill steps through — see `order` in cycleChunkOption. The DISPLAYED list
+         shrinks with the layout; the order a person flips in must not, or the
+         arrows would mean something different depending on what the chunk
+         currently is. */
+      p.optionOrder = p.options.map((x) => x.id);
+      /* AND A COVED CHUNK IS NOT PRUNED. Its fittings are the ones inside the
+         cove line — none at all on rung 1 — so every track would refuse, and the
+         pill would come out [Standard, Cove] with no way to reach a track from
+         either of them. The question "could this piece of ceiling carry a track"
+         is about the ceiling gridded normally, which is what a chunk currently
+         wearing a cove is not. It keeps the geometric list; one press lands on a
+         track, the chunk grids itself, and the press after that is answered by a
+         pruned list like any other. */
+      if (p.kind === 'cove') continue;
+      const mine = res.lights.filter((l) => designOf2(l) === p.key);
+      const order = [...p.options].sort(
+        (a, b) => (b.id === p.pick ? 1 : 0) - (a.id === p.pick ? 1 : 0));
+      const seen = new Set(), keep = new Set();
+      for (const o of order) {
+        if (!isTrackPick(o.id)) { keep.add(o.id); continue; }
+        const t = planTrack(p.chunk, o.id, mine, o, site);
+        if (!t) continue;
+        // The profile itself, to three decimals, as the identity. Two
+        // arrangements that draw the same four segments ARE the same answer.
+        const sig = t.runs
+          .map((r) => [r.a.x, r.a.y, r.b.x, r.b.y].map((v) => v.toFixed(3)).join(','))
+          .sort().join('|');
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+        keep.add(o.id);
+      }
+      // Back into the list's own order — the sort above was only to give the
+      // picked arrangement first refusal on a shared profile.
+      p.options = p.options.filter((x) => keep.has(x.id));
+      const tracksLeft = p.options.filter((x) => isTrackPick(x.id));
+      if (tracksLeft.length === 1) tracksLeft[0].label = 'Track';
+    }
+  }
+
   // The layout, with the absorbed fittings sitting on the profile they are
   // clipped into. `gridPos` keeps where the grid actually put each one, so the
   // drawing can show the move and nobody has to take the claim above on trust.
@@ -485,6 +715,17 @@ function coveReport(p, res, x) {
     host: p.geo.host,     // the chunk the cove was set out in
     line: p.geo.line,     // the setting-out line: drawn, and what cuts the grid
     strip: p.geo.strip,   // the tape, 3 in outside it: installed, and billed
+    /* --- AND THE SHAPE, WHERE THERE WAS ONE ------------------------------
+       NULL ON EVERY COVE THIS APP SET OUT, which is the common case: those are
+       rectangles and `line` and `strip` describe them completely. A cove drawn
+       by hand is a rectangle to the GRID and an outline to the EYE, and these
+       two lists are the outline — the setting-out line as drawn, and the tape
+       three inches outside it. The canvas draws these where they exist and the
+       rectangles where they do not; the schedule reads `perimeterFt`, which is
+       the outline's own length either way and needs no branch at all. */
+    shapeId: p.geo.shapeId ?? null,
+    outline: p.geo.outline ?? null,
+    stripOutline: p.geo.stripOutline ?? null,
     band: p.geo.band,
     perimeterFt: p.geo.perimeterFt,
     chunkAreaSqft: p.geo.chunkAreaSqft,

@@ -24,7 +24,8 @@
 // ---------------------------------------------------------------------------
 
 import { designChunking, planCeilingDesign, optionsForChunk, chunkKey,
-         resolvePick, MIN_INNER_FT, OPTION_LABEL } from '../src/lib/ceilingDesign.js';
+         resolvePick, nextChunkOption, MIN_INNER_FT, OPTION_LABEL }
+  from '../src/lib/ceilingDesign.js';
 import { coveGeometry } from '../src/lib/cove.js';
 import { planLights } from '../src/lib/planner.js';
 import { PLAN_OPTIONS } from '../src/lib/settings.js';
@@ -103,34 +104,64 @@ say('2. A CHUNK IS NAMED BY ITS GEOMETRY');
 // --- 3. every piece offers what it can carry -----------------------------
 say('3. EVERY PIECE OFFERS WHAT IT CAN CARRY');
 {
+  const ids = (c, site = null) => optionsForChunk(c, opt, site).map((o) => o.id);
   const labels = (c) => optionsForChunk(c, opt).map((o) => o.label);
-  // BY MEMBERSHIP AND NOT BY COUNT. These were length checks, and the seven
-  // track arrangements are what showed the difference: what this claim is about
-  // is whether a COVE is on offer, and a count says that only for as long as
-  // nothing else is ever added to the list. See test-track.mjs for the tracks'
-  // own gating.
-  const ids = (c) => optionsForChunk(c, opt).map((o) => o.id);
   ok(labels({ x0: 0, y0: 0, x1: 4, y1: 4 })[0] === OPTION_LABEL.standard,
     'standard is always first, and always available');
-  ok(!ids({ x0: 0, y0: 0, x1: 4, y1: 4 }).includes('cove'),
-    'a chunk you could not stand a cove in is not offered one');
-  ok(ids({ x0: 0, y0: 0, x1: 4, y1: 4 }).length === 1,
-    '...and a chunk too small for anything else is offered standard alone');
-  ok(ids({ x0: 0, y0: 0, x1: 20, y1: 12 }).includes('cove'),
-    'a 20 x 12 chunk is offered a cove');
-  // The break is stated in terms of what is LEFT in the middle, so it moves
-  // correctly with the inset table rather than being a second hard-coded figure.
-  let least = null;
-  for (let h = 4; h < 20; h += 0.25) {
-    const c = { x0: 0, y0: 0, x1: 40, y1: h };
-    if (optionsForChunk(c, opt).some((o) => o.id === 'cove')) { least = h; break; }
+  ok(ids({ x0: 0, y0: 0, x1: 3, y1: 3 }).length === 1,
+    'a chunk too small for anything else is offered standard alone');
+  ok(ids({ x0: 0, y0: 0, x1: 4, y1: 4 }).some((id) => id.startsWith('track-')),
+    '...where a four-foot band is wide enough for one run');
+
+  /* --- AND A COVE IS NOT ON THE LIST, ON ANY CHUNK -------------------------
+     THIS SECTION USED TO ASSERT THE OPPOSITE and the reversal is the point. A
+     cove set out by insetting a chunk was never the automatic answer it looked
+     like — nothing ever picked it, so it was one of two MANUAL ways to place a
+     cove, and the one that could only be the whole chunk at a width from a
+     table. Coves are drawn now. See optionsForChunk. */
+  let anyCove = false;
+  for (const [w, h] of [[12, 10], [20, 12], [24, 18], [40, 30], [60, 45]]) {
+    if (ids({ x0: 0, y0: 0, x1: w, y1: h }).includes('cove')) anyCove = true;
   }
-  const g = coveGeometry({ x0: 0, y0: 0, x1: 40, y1: least });
-  ok(Math.min(g.line.w, g.line.h) >= MIN_INNER_FT - 1e-9,
-    `the narrowest chunk offered a cove (${least} ft) still leaves ${MIN_INNER_FT} ft of higher ceiling`);
-  const under = { x0: 0, y0: 0, x1: 40, y1: least - 0.25 };
-  ok(!optionsForChunk(under, opt).some((o) => o.id === 'cove'),
-    '...and a hair under that is offered none');
+  ok(!anyCove, 'no chunk of any size is offered a cove — a cove is drawn, not picked');
+
+  const big = { x0: 0, y0: 0, x1: 24, y1: 18 };
+  ok(coveGeometry(big) && Math.min(coveGeometry(big).line.w, coveGeometry(big).line.h)
+       >= MIN_INNER_FT,
+    '...though the geometry that set one out is still here and still correct');
+}
+
+// --- 3b. a cove a saved plan already has ----------------------------------
+say('3b. A COVE A SAVED PLAN ALREADY HAS IS KEPT, AND ONLY THAT ONE');
+{
+  const ROOM = box(24, 18);
+  const g = designChunking(ROOM, [], opt, []);
+  const c = g.chunks[0], key = c.key;
+  const site = { polygon: ROOM, holes: [] };
+
+  const fresh = resolvePick(c, {}, opt, site);
+  ok(!fresh.options.some((o) => o.id === 'cove') && fresh.pick === 'standard',
+    'a chunk nobody coved is offered no cove and resolves to standard');
+
+  const kept = resolvePick(c, { [key]: 'cove' }, opt, site);
+  ok(kept.pick === 'cove', 'a STORED cove still resolves to a cove');
+  ok(kept.options.some((o) => o.id === 'cove'),
+    '...and is put back in the list, so the pill reads Cove rather than lying');
+  ok(kept.options.find((o) => o.id === 'cove')?.legacy === true,
+    '...marked as what it is: grandfathered, not on offer');
+  ok(kept.options.filter((o) => o.id.startsWith('track-')).length > 0,
+    '...beside everything else the chunk can still be flipped to');
+
+  const laid = planCeilingDesign({ polygonFt: ROOM, designChunks: g.chunks,
+                                   picks: { [key]: 'cove' }, opt });
+  ok(laid.parts[0].kind === 'cove' && laid.coves.length === 1 && laid.plan.ok,
+    'and it lays out as the cove it always was — the geometry did not change');
+
+  // A chunk too narrow to have carried one in the first place does not get one
+  // back: the grandfather honours a decision, it does not invent geometry.
+  const thin = { x0: 0, y0: 0, x1: 30, y1: 6, key: 'thin' };
+  ok(resolvePick(thin, { thin: 'cove' }, opt).pick === 'standard',
+    'a stored cove on a chunk that could never hold one still falls back');
 }
 
 // --- 4. the pieces are independent ---------------------------------------
@@ -227,6 +258,67 @@ say('6. EVERY FITTING KNOWS WHICH DECISION PUT IT THERE');
     'one part per chunk comes back, whatever each one was set to');
   ok(p.parts.every((x) => x.options.length >= 1 && x.pick),
     '...each carrying what it is and what else it could be — which is the pill');
+}
+
+// --- 7. the pill's arrows reach everything ---------------------------------
+//
+// THE BUG THIS EXISTS FOR was reported as "pressing right gives me Standard and
+// Cove forever, pressing left gives me the track". Its cause was that the step
+// indexed the list by what the chunk currently READS, and an arrangement that
+// declines reads 'standard' — so every press from a declined track started again
+// from the top. Nothing about the layout was wrong, which is why nothing here
+// caught it until the step became a function of its own.
+say('7. THE ARROWS REACH EVERY OPTION, IN BOTH DIRECTIONS');
+{
+  // The handler's whole job, and the same call the canvas makes.
+  const press = (poly, chunks, key, picks, dir) => {
+    const built = planCeilingDesign({ polygonFt: poly, designChunks: chunks, picks, opt });
+    const p = built.parts.find((q) => q.key === key);
+    const px = { pick: p.pick, requested: p.declined ?? p.pick,
+                 order: p.optionOrder ?? p.options.map((x) => x.id),
+                 options: p.options.map((x) => ({ id: x.id, label: x.label })) };
+    const next = nextChunkOption(px, dir);
+    return { next, shown: px.options.find((o) => o.id === px.pick)?.label ?? null,
+             avail: px.options.map((o) => o.id) };
+  };
+  const walk = (w, h, dir, presses) => {
+    const poly = box(w, h);
+    const g = designChunking(poly, [], opt, []);
+    const key = g.chunks[0].key;
+    let picks = {}, seen = new Set(), stuck = false;
+    for (let n = 0; n < presses; n++) {
+      const r = press(poly, g.chunks, key, picks, dir);
+      r.avail.forEach((id) => seen.add(id));
+      if (!r.next) { stuck = true; break; }
+      picks = r.next === 'standard' ? {} : { [key]: r.next };
+      seen.add(r.next);
+    }
+    return { seen, stuck };
+  };
+
+  for (const [w, h] of [[10, 14], [12, 9], [14, 14], [24, 18]]) {
+    for (const dir of [1, -1]) {
+      const { seen, stuck } = walk(w, h, dir, 14);
+      const tracks = [...seen].filter((id) => id.startsWith('track-'));
+      ok(!stuck, `a ${w} x ${h} chunk never runs out of somewhere to go (${dir > 0 ? 'right' : 'left'})`);
+      ok(tracks.length > 0,
+        `...and a track is reachable going ${dir > 0 ? 'right' : 'left'}, not only one way`);
+    }
+  }
+
+  // AND THE STEP ITSELF, on the shapes that used to break it.
+  const declined = { pick: 'standard', requested: 'track-4',
+                     order: ['standard', 'cove', 'track-4', 'track-1t'],
+                     options: [{ id: 'standard' }, { id: 'cove' }, { id: 'track-1t' }] };
+  ok(nextChunkOption(declined, 1) === 'track-1t',
+    'stepping on from an arrangement that declined goes FORWARD, not back to the top');
+  ok(nextChunkOption(declined, -1) === 'cove',
+    '...and backwards from it lands on the entry before it, not on the last one');
+  ok(nextChunkOption({ pick: 'standard', order: ['standard', 'cove', 'track-4'],
+                       options: [{ id: 'standard' }, { id: 'cove' }] }, 1) === 'cove',
+    'an option the layout cannot deliver is stepped OVER, never landed on');
+  ok(nextChunkOption({ pick: 'standard', options: [{ id: 'standard' }] }, 1) === null,
+    'a chunk with one option has nowhere to go, and says so');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

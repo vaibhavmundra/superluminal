@@ -149,6 +149,27 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        the only edit there is on one is removal; there is no drag, and hence no
        pointer-move or pointer-up pair to go with this. */
     selBoardId = null, onBoardPointerDown = null,
+    /* --- COVES SOMEBODY DREW -------------------------------------------------
+       ONE ENTRY PER SHAPE, already in plan pixels — this file draws geometry and
+       does not compute it. `lit` says whether the layout took the shape up as a
+       cove: a shape over a lit space is already on the sheet twice over (its
+       setting-out line in `plan.covesPx`, its tape among the accents), so all
+       this layer owes it is a way to grab it. One that is NOT lit — drawn over a
+       space that has not been laid out, or too small to carry a pocket — has
+       nothing else drawing it, and would otherwise be an object that vanished
+       the moment it was committed.
+
+       `draftShape` is the gesture in flight and `penDraft` the pen's path so
+       far; both are drawn by this file and go no further, exactly as the reverse
+       cove's own draft does. Nothing downstream can see a shape that has not
+       been ticked. */
+    coveShapes = [], selShapeId = null, onShapePointerDown = null,
+    /* WHICH SHAPE IS SHOWING ITS DIMENSIONS, and the press on one of its grips.
+       Narrower than `selShapeId` on purpose: selection is one press and gets the
+       contextual bar, dimensions are a second press and get eight handles. See
+       `shapeEditId` in App.jsx. */
+    shapeEditId = null, onShapeHandleDown = null,
+    draftShape = null, penDraft = null,
     /* WHICH PLATE IS IN FLIGHT, if any. Told rather than derived: a board moved
        yesterday and a board being moved right now are the same geometry and want
        different cursors, and there is nothing on the board itself that separates
@@ -239,6 +260,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        sheet, the thumbnail, the tests — is exactly as it was. */
     showGrid = false,
     onFixture = null, draftRun = null,
+    /* --- MOVING A LIGHT INSIDE ITS OWN CELL ---------------------------------
+       `selLightId` is `${roomId}|${cellKey}` — a light is named by the cell it
+       serves, because its own id is an index into an array rebuilt on every
+       layout. `movingLight` is the one in flight, carried rather than committed:
+       the store is written on release (see `lightPointerMove` in App.jsx for why
+       a solver must not run in a mousemove), so for the length of the gesture
+       this prop is the only thing that knows where the fitting is. */
+    selLightId = null, onLightPointerDown = null, movingLight = null,
     // WHICH PIECE OF CEILING IS BEING DECIDED, and the two things that can be
     // done about it. `optionPick` is { roomId, key }; `plans[i].design` carries
     // the chunks themselves. See the pill at the foot of this file.
@@ -969,7 +998,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               and pointer-transparent because there is nothing here to grab —
               the cove follows the ceiling, and the ceiling is set in the panel. */}
           {(r.plan.covesPx ?? []).map((cv) => (
-            <polygon key={cv.key} points={points(cv.line)}
+            <g key={cv.key}>
+            <polygon points={points(cv.line)}
               /* AND IT IS THE WAY BACK — THE WHOLE OF WHAT IT ENCLOSES, not a
                  band along the line, and that is deliberate rather than
                  accidental. A chunk whose cove carries it on its own has NO
@@ -987,11 +1017,20 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  THE TRACK PROFILE IS DELIBERATELY DIFFERENT — see below. It
                  keeps its heads, so it always has something better to click and
                  takes a band instead. */
-              className={pickable ? 'hit' : undefined}
-              style={pickable ? { cursor: 'pointer' } : undefined}
-              onClick={pickable
+              /* EXCEPT ROUND A COVE SOMEBODY DREW, WHICH HAS NO OPTIONS TO
+                 OPEN. Its chunk offers one ceiling design and no other (see
+                 optionsForChunk), so a pill on it would be a control that
+                 cannot do anything; and the press means something else here —
+                 it picks the shape up. That is handled in the shapes layer
+                 further down, which is painted later and therefore takes the
+                 press first. Leaving the pill wired as well would make a click
+                 on the line do two things. */
+              className={pickable && !cv.shapeId ? 'hit' : undefined}
+              style={pickable && !cv.shapeId ? { cursor: 'pointer' } : undefined}
+              onClick={pickable && !cv.shapeId
                 ? (e) => { e.stopPropagation(); onPickChunk(r.id, cv.key); }
                 : undefined}
+
               /* DOTTED, WHITE AND FINER — a setting-out line, drawn like one.
                  It was a 1.6-weight DASHED line in the fittings' accent, which
                  said the wrong thing twice over. A dash at that weight reads as
@@ -1019,6 +1058,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               strokeWidth={lw}
               strokeDasharray={`${lw} ${lw * 3}`} strokeLinecap="round"
               strokeLinejoin="round" opacity="0.85" />
+            </g>
           ))}
 
           {/* --- THE TRACK PROFILE ------------------------------------------
@@ -1547,7 +1587,22 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           from. */}
       {layers.lights && laid.map((r) => (
         <g key={'l' + r.id}>
-          {r.plan.lightsPx.map((l, li) => {
+          {r.plan.lightsPx.map((l0, li) => {
+            /* --- THE ONE IN FLIGHT, DRAWN WHERE THE POINTER HAS IT -----------
+               A light's position is INSIDE the layout, and the layout is a
+               solver — so a drag cannot commit per frame and the store is still
+               saying where this fitting was when the press landed. For the
+               length of the gesture this substitution is the only thing that
+               knows better. Everything below draws `l` and does not care which
+               of the two it got.
+               THE POOL AND THE RING TRAVEL WITH IT, because they are computed
+               from `l.x/l.y` a few lines down. That is the whole reason this is
+               a substitution at the top rather than a transform on the symbol:
+               a fitting whose glow stayed behind would read as two lights. */
+            const l = (movingLight && movingLight.roomId === r.id
+                       && movingLight.cellKey === l0.cellKey)
+              ? { ...l0, x: movingLight.at.x, y: movingLight.at.y }
+              : l0;
             // THE SYMBOL IS SIZED BY THE PRODUCT, NOT BY THE GEOMETRY. A
             // toilet's grid light is the same `kind: 'small'` as a bedroom's —
             // one per cell — but it is a 5 W 30-degree lamp rather than a 7 W
@@ -1636,6 +1691,46 @@ const PlanCanvas = forwardRef(function PlanCanvas(
 
             return (
               <g key={l.id} {...feel(l.id, specsFor(fx))}>
+                {/* --- HOW FAR THIS ONE MAY GO ------------------------------
+                    `centreBand` DRAWN. A small light may sit anywhere within
+                    ±20% of its own cell, and until now that was a number in a
+                    config object: the layout spent the freedom and nobody could
+                    see there had been any. As a rectangle under the fitting you
+                    are holding it is a rule with an edge you can watch the light
+                    stop against — which is why the drag needs no message saying
+                    it has hit the limit, and why the limit needs no explaining
+                    before you reach it.
+
+                    A FRACTION OF THE CELL AND NOT A FIXED DISTANCE, so this box
+                    is a different size on a 5 ft cell and a 9 ft one. That is
+                    worth being able to see too: it is the honest picture of a
+                    grid where the cells are not all the same.
+
+                    ONLY ON THE ONE BEING TOUCHED. Forty of these on a finished
+                    sheet would be a drawing about the tolerance rather than
+                    about the lighting.
+
+                    THE TICK IS WHERE THE RULE PUT IT — the cell's own centre —
+                    so the offset can be read off the drawing rather than taken
+                    on trust, and so there is something to aim at when putting a
+                    light back by hand. */}
+                {l.bandPx && (selLightId === `${r.id}|${l.cellKey}`) && (
+                  <g pointerEvents="none">
+                    <rect x={l.bandPx.x0} y={l.bandPx.y0}
+                      width={l.bandPx.x1 - l.bandPx.x0}
+                      height={l.bandPx.y1 - l.bandPx.y0}
+                      fill={C.lit} fillOpacity="0.06" stroke={C.lit} strokeWidth={lw}
+                      strokeDasharray={`${lw * 3} ${lw * 3}`} opacity="0.8" />
+                    {l.centrePx && (<>
+                      <line x1={l.centrePx.x - R * 0.7} y1={l.centrePx.y}
+                        x2={l.centrePx.x + R * 0.7} y2={l.centrePx.y}
+                        stroke={C.lit} strokeWidth={lw} opacity="0.7" />
+                      <line x1={l.centrePx.x} y1={l.centrePx.y - R * 0.7}
+                        x2={l.centrePx.x} y2={l.centrePx.y + R * 0.7}
+                        stroke={C.lit} strokeWidth={lw} opacity="0.7" />
+                    </>)}
+                  </g>
+                )}
                 {/* THE POOL OF LIGHT. Under the symbol, wider than it, and
                     breathing. The stagger is deliberate and it is the whole
                     difference between a lit ceiling and a blinking one: forty
@@ -1666,6 +1761,21 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   onClick={pickable && l.design
                     ? (e) => { e.stopPropagation(); onPickChunk(r.id, l.design); }
                     : undefined}
+                  /* ...AND PRESSING ONE PICKS IT UP, WHICH IS NOT THE SAME ACT.
+                     Both handlers are live on the same circle and they do not
+                     compete: the press starts a drag that only becomes a move
+                     once the pointer has travelled a few pixels, and a press
+                     that never travels is still the click above. So a light
+                     answers "what is this ceiling?" and "put it here" with the
+                     same target, told apart by whether you moved.
+                     ONLY WHERE THERE IS FREEDOM TO SPEND. `bandPx` is null on a
+                     large light and on a head a track has absorbed — see the
+                     note where it is built — and a grip on one of those would
+                     be a cursor promising a drag that cannot happen. */
+                  onPointerDown={onLightPointerDown && l.bandPx
+                    ? (e) => onLightPointerDown(e, r.id, l) : undefined}
+                  style={onLightPointerDown && l.bandPx && !placing
+                    ? { cursor: 'move' } : undefined}
                   /* CUT FROM THE RAMP AND NOTHING ELSE, like the spots.
                      ONE FILL FOR BOTH SIZES. A small downlight was flat white
                      and a large one was solid accent — the fill was carrying the
@@ -3430,6 +3540,195 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       })()}
 
 
+      {/* --- COVES SOMEBODY DREW -------------------------------------------
+          OVER THE FITTINGS AND UNDER THE PILL, which is where a selectable
+          object belongs: the grab has to beat a downlight that happens to be
+          under the pointer, and it must not beat a control.
+
+          A BAND ALONG THE OUTLINE, NOT THE WHOLE INTERIOR, and this is the one
+          place a drawn cove parts company with the cove line drawn one layer up.
+          That line takes its whole interior because it has to: a chunk carried
+          by its strip alone has no downlight left to click, so the rectangle is
+          the only mark the design left and it must be reliably hittable. It can
+          afford to, too — it is painted BEFORE the fittings, so a light inside
+          it still takes the press.
+
+          This layer is painted AFTER them, because a selectable object has to
+          beat a downlight that happens to be under the pointer. An interior
+          target here would therefore swallow every click inside the cove: the
+          lights, the fan in the middle of it, the ceiling objects, the accent
+          runs — a twenty-foot hole in the drawing where nothing can be touched.
+
+          So it takes the TRACK PROFILE's answer instead, for the track's own
+          reason: there is always something better to click inside, so the thing
+          itself is grabbed by its line. `pointer-events: stroke` on a
+          transparent stroke eight line-weights wide is a band you can hit
+          without aiming, and it scales with the sheet like every other weight
+          here.
+
+          TWO BANDS AND NOT ONE: the setting-out line, and the tape three inches
+          outside it. They are one object to anybody looking at the sheet, so
+          both have to answer the press — see `tape` in coveShapesPx. */}
+      {(coveShapes.length > 0 || draftShape || penDraft) && (() => {
+        const path = (pts) =>
+          pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ') + ' Z';
+        // WHITE WHERE WHITE READS, following the cove line and the ceiling
+        // objects rather than inventing a third answer. See the note by `col`
+        // in the fansPx block.
+        const ink = layers.invert ? C.object : rim;
+        const dot = `${lw} ${lw * 3}`;
+        return (
+          <g>
+            {coveShapes.map((sh) => (
+              <g key={sh.id}>
+                {/* A SHAPE THE LAYOUT DID NOT TAKE UP still has to be visible,
+                    or committing one over an unlit space would look like the
+                    tick having thrown it away. Drawn as the setting-out line it
+                    will become the moment the space is lit. */}
+                {!sh.lit && (
+                  <path d={path(sh.pts)} fill="none" stroke={ink} strokeWidth={lw}
+                    strokeDasharray={dot} strokeLinecap="round" strokeLinejoin="round"
+                    opacity="0.55" pointerEvents="none" />
+                )}
+                {selShapeId === sh.id && (
+                  <path d={path(sh.pts)} fill="none" stroke={C.lit}
+                    strokeWidth={lw * 2.2} strokeLinejoin="round"
+                    opacity="0.95" pointerEvents="none" />
+                )}
+                {onShapePointerDown && [sh.pts, sh.tape].filter(Boolean).map((band, i) => (
+                  <path key={i} className="hit" d={path(band)} fill="none"
+                    stroke="transparent" strokeWidth={Math.max(lw * 8, 6)}
+                    strokeLinejoin="round"
+                    style={{ pointerEvents: 'stroke', cursor: 'move' }}
+                    onPointerDown={(e) => onShapePointerDown(e, sh.id)}
+                    /* AND THE CLICK IS STOPPED TOO, WHICH IS NOT THE SAME ACT
+                       AS STOPPING THE PRESS AND WAS THE BUG. A click is its own
+                       event: `stopPropagation` on `pointerdown` does nothing to
+                       the `click` the browser synthesises after the release, so
+                       it bubbled to the canvas's own handler, which reads "a
+                       click on empty plan" and clears the selection. The shape
+                       was being selected and deselected by one press, forty
+                       milliseconds apart, which looks exactly like a shape that
+                       cannot be selected at all.
+                       The cove line above stops its click for the same reason;
+                       every control on this canvas has to stop both. */
+                    onClick={(e) => e.stopPropagation()} />
+                ))}
+                {/* THE GRIPS ARE PAINTED LAST, WHICH IS LOAD-BEARING RATHER
+                    THAN TIDY. On a rectangle the frame and the outline are the
+                    same four lines, so every corner grip sits directly under
+                    the grab band that follows that outline — and later paint
+                    takes the press. Drawn before it, a grip would be visible,
+                    would show its resize cursor, and would hand every press to
+                    the band underneath: the shape would move instead of
+                    resizing, which is the one failure that looks like the
+                    feature not existing. */}
+                {shapeEditId === sh.id && sh.frame && (() => {
+                  /* --- THE FRAME AND ITS GRIPS -----------------------------
+                     THE BOX AND NOT THE OUTLINE, and on a circle or a triangle
+                     the two are visibly different — which is the honest
+                     picture. A resize acts on the box: the grips move its
+                     sides, and the shape is refitted into whatever box they
+                     leave. Drawing them on the outline instead would put a
+                     corner grip in mid-air beside a curve and claim you were
+                     dragging the curve.
+                     IT IS ALSO THE BOX THE GRID IS CUT ON — see coveRectFt —
+                     so the frame is telling you the other true thing about a
+                     drawn cove at the moment you are changing its size.
+                     THE GRIPS ARE WHITE SQUARES WITH A DARK EDGE, which is what
+                     a handle looks like in every editor anybody has used, and
+                     is deliberately not the accent: the accent on this canvas
+                     means "this emits light", and a grip does not. */
+                  const F = sh.frame;
+                  const R = Math.max(lw * 3, 3);
+                  const at = (h) => ({
+                    x: h.sx > 0 ? F.x1 : h.sx < 0 ? F.x0 : (F.x0 + F.x1) / 2,
+                    y: h.sy > 0 ? F.y1 : h.sy < 0 ? F.y0 : (F.y0 + F.y1) / 2,
+                  });
+                  // The cursor a grip offers is the axis it moves, which is the
+                  // only wordless way to say what an edge grip does differently
+                  // from the corner beside it.
+                  const cur = (h) => (h.sx && h.sy
+                    ? (h.sx === h.sy ? 'nwse-resize' : 'nesw-resize')
+                    : h.sx ? 'ew-resize' : 'ns-resize');
+                  return (
+                    <g>
+                      <rect x={F.x0} y={F.y0} width={F.x1 - F.x0} height={F.y1 - F.y0}
+                        fill="none" stroke={C.lit} strokeWidth={lw}
+                        strokeDasharray={`${lw * 4} ${lw * 3}`}
+                        opacity="0.75" pointerEvents="none" />
+                      {(sh.handles ?? []).map((h, i) => {
+                        const q = at(h);
+                        return (
+                          <rect key={i} className={onShapeHandleDown ? 'hit' : undefined}
+                            x={q.x - R} y={q.y - R} width={R * 2} height={R * 2}
+                            fill="#fff" stroke={C.lit} strokeWidth={lw * 1.4}
+                            style={onShapeHandleDown ? { cursor: cur(h) } : undefined}
+                            onPointerDown={onShapeHandleDown
+                              ? (e) => onShapeHandleDown(e, sh.id, h) : undefined}
+                            onClick={(e) => e.stopPropagation()} />
+                        );
+                      })}
+                    </g>
+                  );
+                })()}
+              </g>
+            ))}
+
+            {/* THE SHAPE BEING SPANNED. In the fittings' own accent and not in
+                the ink the committed line takes, because it is not a line on
+                the drawing yet — it is a gesture, and the accent is what every
+                other gesture on this canvas is drawn in. A pale wash inside it
+                so a shape being dragged out over a busy plan reads as an AREA
+                rather than as four more lines crossing the ones already there. */}
+            {draftShape && (
+              <g pointerEvents="none">
+                <path d={path(draftShape.pts)} fill={C.lit} opacity="0.07" />
+                <path d={path(draftShape.pts)} fill="none" stroke={C.lit}
+                  strokeWidth={lw * 1.8} strokeLinejoin="round"
+                  strokeDasharray={`${lw * 5} ${lw * 4}`} strokeLinecap="round" />
+              </g>
+            )}
+
+            {/* THE PEN'S PATH SO FAR: the committed segments solid, the segment
+                under the pointer rubber-banded, and the run home to the first
+                point drawn as the dashed CLOSURE it will become. The last of the
+                three is the whole reason this is drawn separately from
+                `draftShape` — the shape auto-closes, and showing the closing leg
+                while it is still open is the only way to say so before the
+                click that commits it. */}
+            {penDraft && penDraft.pts.length > 0 && (() => {
+              const pts = penDraft.at ? [...penDraft.pts, penDraft.at] : penDraft.pts;
+              const open = pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ');
+              const first = pts[0], last = pts[pts.length - 1];
+              const R = Math.max(lw * 2.6, 2.5);
+              return (
+                <g pointerEvents="none">
+                  {pts.length > 1 && (
+                    <path d={open} fill="none" stroke={C.lit} strokeWidth={lw * 1.8}
+                      strokeLinejoin="round" strokeLinecap="round" />
+                  )}
+                  {pts.length > 2 && (
+                    <line x1={last.x} y1={last.y} x2={first.x} y2={first.y}
+                      stroke={C.lit} strokeWidth={lw * 1.4}
+                      strokeDasharray={`${lw * 4} ${lw * 4}`} opacity="0.7" />
+                  )}
+                  {penDraft.pts.map((q, i) => (
+                    <circle key={i} cx={q.x} cy={q.y} r={R} fill="#fff"
+                      stroke={C.lit} strokeWidth={lw * 1.4} />
+                  ))}
+                  {/* THE FIRST POINT, RINGED, because it is a target: clicking it
+                      closes the path, and nothing else on the run does anything
+                      when clicked. */}
+                  <circle cx={penDraft.pts[0].x} cy={penDraft.pts[0].y} r={R * 2}
+                    fill="none" stroke={C.lit} strokeWidth={lw} opacity="0.8" />
+                </g>
+              );
+            })()}
+          </g>
+        );
+      })()}
+
       {/* --- THE CEILING DESIGN, CHOSEN ON THE DRAWING ----------------------
           A cove is a thing you judge by looking at it, so the choice belongs on
           the drawing and not in a panel three inches away from the only view
@@ -3503,7 +3802,33 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // seams across a single control. There is only ever one pill on the
         // canvas (it is drawn for `optionPick` and nothing else), so a fixed id
         // is safe here where the strips and rails needed one per run.
+        /* --- WHY THE LIST IS THE LENGTH IT IS -----------------------------
+            AN OWNER'S CARD AND NOBODY ELSE'S. `ch.omitted` is null for every
+            other reader — see `explain` in planCeilingDesign — so nothing is
+            raised on a designer's screen and the pill stays what it is: a
+            control that offers what a piece of ceiling can be.
+
+            IT WAS A NATIVE SVG <title> AND THAT DID NOT WORK. The argument for
+            one was good — the browser already has somewhere to put text that
+            appears when you rest on a thing, and it costs no layout on an
+            element that must not resize. The argument does not survive Safari,
+            which does not reliably render a tooltip for a `<title>` inside an
+            <svg> at all. A hover hint nobody can see is worse than none.
+
+            SO IT USES THE CARD THIS CANVAS ALREADY HAS. `onFixture` raises
+            FixtureTip — an HTML card positioned from the pointer in viewport
+            coordinates — which is what every fitting on this sheet already does
+            on hover, works in every browser, and can leave the drawing instead
+            of being clipped to it. One hover mechanism on this canvas, not two.
+
+            THE SIZE IS THE HEADING, because it is the first thing anybody asks
+            when an option is missing and the one number the drawing never
+            states. */
         const P = PILL_STYLE;
+        const why = ch.omitted ? {
+          label: `Chunk ${ch.sizeFt}`,
+          lines: ch.omitted.length ? ch.omitted : ['Every option is on offer here.'],
+        } : null;
         const pillFill = P.stops ? 'url(#lp-pill)' : P.fill;
         const pillGrad = { x1: cx - w / 2, y1: cy, x2: cx + w / 2, y2: cy };
         // THE ARROW BUTTONS ARE HIT TARGETS AND NOTHING ELSE — `transparent`,
@@ -3567,7 +3892,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               width={w} height={h}
               rx={h / 2} ry={h / 2} fill={pillFill}
               stroke={P.edge} strokeWidth={lw * P.edgeWeight}
-              onClick={(e) => e.stopPropagation()} />
+              onClick={(e) => e.stopPropagation()}
+              /* ON THE BODY AND NOT ON THE GROUP, so resting on an arrow does
+                 not raise it: those two have a job of their own and no need to
+                 explain the geometry. `onFixture` is the same channel every
+                 fitting's hover card comes through — see `feel` at the head of
+                 this file — so there is one card and one way of raising it. */
+              onMouseEnter={why && onFixture
+                ? (e) => onFixture({ ...why, x: e.clientX, y: e.clientY }) : undefined}
+              onMouseLeave={why && onFixture ? () => onFixture(null) : undefined} />
             <text x={cx} y={cy + fs * 0.36} textAnchor="middle" fontSize={fs}
               fontFamily="The Neue Montreal, sans-serif" fill={P.ink}
               letterSpacing={fs * 0.1}>{label}</text>

@@ -53,7 +53,8 @@ import { designChunking, planCeilingDesign, optionsForChunk } from '../src/lib/c
 import { TRACK_ARRANGEMENTS, ABSORB_FT, MODULE_JOINT_FT, MIN_SPAN_FT,
          HEAD_LEN_FT, SPOT_LEN_FT, TRACK_DIMS_IN, OVERHANG_FT, END_MARGIN_FT,
          WALL_CLEAR_FT, moduleGap, fittingSlack,
-         absorbPoints, trackArrangementsFor, planTrack,
+         absorbPoints, trackArrangementsFor, trackRefusalsFor, planTrack,
+         SINGLE_ACROSS_FT,
          trackBounds, wallSides } from '../src/lib/track.js';
 import { buildBOQ, trackFixtureFor, trackMetres, FIXTURE_BY_ID } from '../src/lib/boq.js';
 import { PLAN_OPTIONS } from '../src/lib/settings.js';
@@ -123,10 +124,65 @@ say('1. SEVEN ARRANGEMENTS, OFFERED ON WHAT A CHUNK CAN CARRY');
   ok(narrow.includes('track-2v'),
     '...and a pair ALONG it is fine, because along it there is 30 ft');
 
-  ok(trackArrangementsFor({ x0: 0, y0: 0, x1: 5, y1: 5 }).length === 0,
-    'a chunk a single absorption zone would swallow whole is offered no track');
+  /* --- A NARROW BAND IS THE TRACK'S BEST CASE, NOT ITS WORST ---------------
+     THIS TEST USED TO ASSERT THE OPPOSITE, and it is worth saying why it turned
+     round. A chunk a single absorption zone would swallow whole was offered no
+     track at all, on the reasoning that pulling every fitting onto one line is
+     "a grid replaced by a line". True — and a grid replaced by a line is the
+     right answer on a corridor, a galley, or the strip between a run of units
+     and a wall, which is the one place a magnetic track is the obvious detail.
+     The old rule refused it exactly there. See SINGLE_ACROSS_FT. */
+  const strip = trackArrangementsFor({ x0: 0, y0: 0, x1: 20, y1: 5 },
+    { polygon: box(20, 5), holes: [] }).map((t) => t.id);
+  ok(strip.includes('track-1t') && strip.includes('track-1l'),
+    `a 20 x 5 strip — 3 ft clear of its walls — is offered one run: ${strip.join(' ')}`);
+  ok(!strip.includes('track-2h') && !strip.includes('track-4'),
+    '...and still no PAIR, because two zones that cover each other are tramlines');
+
+  ok(trackArrangementsFor({ x0: 0, y0: 0, x1: 20, y1: SINGLE_ACROSS_FT - 0.1 }).length === 0,
+    `under ${SINGLE_ACROSS_FT} ft across, the ceiling is a reveal and gets nothing`);
+  ok(trackArrangementsFor({ x0: 0, y0: 0, x1: 20, y1: SINGLE_ACROSS_FT }).length > 0,
+    `...and at ${SINGLE_ACROSS_FT} ft it is a band, and gets a run`);
+  /* THE BAND TEST IS ON THE CHUNK AND THE PAIR TEST IS ON THE USABLE REGION,
+     which is the one asymmetry in this function. A 4 ft chunk walled both sides
+     has 2 ft a profile may sit in — enough for a run, nowhere near enough for
+     two — and measuring both questions on the same rectangle is what made the
+     corridor above offer nothing. */
+  ok(trackArrangementsFor({ x0: 0, y0: 0, x1: 20, y1: 4 },
+       { polygon: box(20, 4), holes: [] }).length > 0,
+    'a 4 ft chunk walled both sides still has somewhere for one profile to sit');
+  ok(trackArrangementsFor({ x0: 0, y0: 0, x1: 20, y1: 2 },
+       { polygon: box(20, 2), holes: [] }).length === 0,
+    '...where a 2 ft one has none at all, and the usable region says so');
+
   ok(2 * ABSORB_FT + MIN_SPAN_FT === 8,
-    `and the figures behind that are stated, not magic: ${ABSORB_FT} ft each side`);
+    `and the figures behind the pair are stated, not magic: ${ABSORB_FT} ft each side`);
+
+  /* --- THE EXPLANATION CANNOT DISAGREE WITH THE DECISION -------------------
+     `trackArrangementsFor` and `trackRefusalsFor` read the same predicate, and
+     this is the assertion that keeps them doing so: across every shape and every
+     wall arrangement, the two lists must PARTITION the seven — no arrangement in
+     both, none in neither, and every refusal carrying a reason with a
+     measurement in it. An explanation derived separately from the rule it
+     explains is one that will eventually be confidently wrong, and the place
+     that would surface is an operator reading a tooltip. */
+  let partitioned = true, reasoned = true;
+  for (const [w, h] of [[3, 3], [4, 4], [5, 20], [8, 8], [14, 7.5], [30, 7],
+                        [24, 18], [2, 30], [4, 30], [10, 10]]) {
+    for (const st of [null, { polygon: box(w, h), holes: [] }]) {
+      const c = { x0: 0, y0: 0, x1: w, y1: h };
+      const on = trackArrangementsFor(c, st).map((t) => t.id);
+      const off = trackRefusalsFor(c, st);
+      const ids = new Set([...on, ...off.map((r) => r.id)]);
+      if (ids.size !== ALL.length || on.some((id) => off.some((r) => r.id === id))) {
+        partitioned = false;
+      }
+      if (off.some((r) => !r.why || !/\d/.test(r.why))) reasoned = false;
+    }
+  }
+  ok(partitioned,
+    'offered and refused partition the seven exactly, at every size and wall set');
+  ok(reasoned, '...and every refusal states a measurement, not just a verdict');
 }
 
 // --- 2. the runs go through the fixtures ----------------------------------
