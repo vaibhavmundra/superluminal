@@ -89,13 +89,22 @@ console.log('\n-- every socket comes with a switch --');
   ok(socketWithSwitch(IN)[0].amps === 6, 'and with no rating asked for, the light switch');
 }
 
-console.log('\n-- a flow is a switch, a fan is a regulator --');
+console.log('\n-- a flow is a switch, and a fan is a switch AND a regulator --');
 {
   const pts = pointsFromFlows(IN, [...lights(2), fan()], B);
-  ok(pts.length === 3, 'three flows, three points');
-  ok(pts.filter((p) => p.kind === 'switch').length === 2, 'two of them switches');
+  /* THE FAN IS THE ONE FLOW THAT IS TWO POINTS. A regulator on its own means
+     winding the speed to zero every time you leave the room; the switch turns it
+     off and the regulator keeps the speed you liked. Three flows, four points. */
+  ok(pts.length === 4, `three flows, four points (got ${pts.length})`);
+  ok(pts.filter((p) => p.kind === 'switch').length === 3,
+    'three of them switches — two rows and the fan\'s');
   ok(pts.filter((p) => p.kind === 'fan').length === 1, 'and one a regulator');
+  ok(pts.filter((p) => p.forFan).length === 1, 'one switch says which is the fan\'s');
   ok(pts.every((p) => p.kind !== 'switch' || p.amps === 6), 'the switches are 6A');
+  ok(pointsFromFlows(IN, [fan()], B).reduce((n, p) => n + p.modules, 0) === 3,
+    'so a fan point is three modules in India');
+  ok(pointsFromFlows(US, [fan()], B).reduce((n, p) => n + p.modules, 0) === 2,
+    '...and two gangs in the US');
 
   // The count is flows and not fittings — the whole premise.
   const big = [{ id: 'f', kind: 'row', label: 'Downlights', boardId: B, count: 18 }];
@@ -114,8 +123,10 @@ console.log('\n-- two-way switching is a switch, not a second regulator --');
   ok(there.length === 1, 'the second plate gets a point');
   ok(there[0].kind === 'switch', '...and it is a switch');
   ok(there[0].modules === 1, '...one module, not the regulator\'s two');
-  ok(pointsFromFlows(IN, twoWay, B)[0].kind === 'fan',
+  ok(pointsFromFlows(IN, twoWay, B).some((p) => p.kind === 'fan'),
     'while the plate that owns it still gets the regulator');
+  ok(pointsFromFlows(IN, twoWay, B).length === 2,
+    '...and the switch beside it, which the second plate does not duplicate');
 }
 
 console.log('\n-- the socket outlet, and the switch it puts somewhere else --');
@@ -188,19 +199,24 @@ console.log('\n-- the composition, India --');
   const parts = composeSwitchboard({ country: 'IN', flows: [...lights(2), fan()], boardId: B });
   ok(parts.boards.length === 1, 'one frame');
   const b = parts.boards[0];
-  ok(howMany(b, '6A switch') === 3,
-    `three 6A switches — two for the rows and one for the spare socket (got ${howMany(b, '6A switch')})`);
+  ok(howMany(b, '6A switch') === 4,
+    'four 6A switches — two rows, the fan\'s, and the spare socket\'s'
+    + ` (got ${howMany(b, '6A switch')})`);
   ok(howMany(b, 'Fan regulator') === 1, 'one fan regulator, at two modules');
   ok(howMany(b, '6A socket') === 1, 'one spare socket');
-  ok(b.used === 7, `seven modules of points (got ${b.used})`);
+  ok(b.used === 8, `eight modules of points (got ${b.used})`);
   ok(b.size === 8, `in an eight-module frame (got ${b.size})`);
-  ok(howMany(b, 'Blank plate') === 1, 'and one blank fills it');
+  ok(howMany(b, 'Blank plate') === 0, 'which it fills exactly, so there is no blank');
   ok(b.points.reduce((s, p) => s + p.modules, 0) === b.size,
     'the parts add up to the frame exactly');
-  // The order a plate is built in.
-  ok(labels(b).indexOf('Fan regulator') > labels(b).lastIndexOf('6A switch') - 3,
-    'the regulator sits after the design\'s own switches');
-  ok(labels(b)[labels(b).length - 1] === 'Blank plate', 'and the blank is last');
+  /* THE ORDER A PLATE IS BUILT IN: a row of rockers, then the knobs, then the
+     outlets. The fan's switch joins the rockers and its regulator follows them,
+     which is how a real plate is laid out and is not an accident — see the
+     ordering in composeSwitchboard. */
+  ok(labels(b).indexOf('Fan regulator') > labels(b).indexOf('6A switch'),
+    'the regulator sits after the switches');
+  ok(labels(b).lastIndexOf('6A socket') === labels(b).length - 1,
+    'and the socket is last');
 }
 
 console.log('\n-- the composition, the US --');
@@ -211,10 +227,10 @@ console.log('\n-- the composition, the US --');
   // count off `boards[0]` would be counting half a switchboard.
   const all = parts.boards.flatMap((b) => b.points);
   const every = (label) => all.filter((p) => p.label === label).length;
-  ok(every('15A switch') === 3, `three 15A switches (got ${every('15A switch')})`);
+  ok(every('15A switch') === 4, `four 15A switches (got ${every('15A switch')})`);
   ok(every('Fan regulator') === 1 && every('15A socket') === 1,
     'one regulator and the spare outlet');
-  ok(parts.total === 5, `five gangs of devices (got ${parts.total})`);
+  ok(parts.total === 6, `six gangs of devices (got ${parts.total})`);
   ok(parts.boards.length === 2,
     `which is past the four-gang ceiling, so it is two boxes (got ${parts.boards.length})`);
   ok(counts(parts).every((s) => s <= 4), 'and neither is bigger than a four-gang');

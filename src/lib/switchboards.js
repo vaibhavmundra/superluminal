@@ -239,8 +239,31 @@ export function socketWithSwitch(country, { amps = null, source = 'design', what
  * each is one module at the light rating, because each is one thing somebody
  * turns on. Nothing here counts fittings.
  *
- * A FAN IS THE EXCEPTION AND IT IS A REGULATOR. Two modules in India, one gang
- * in the US, and it is not a switch — you do not switch a fan, you set it.
+ * A FAN IS THE EXCEPTION AND IT IS TWO POINTS: A SWITCH AND A REGULATOR.
+ *
+ * IT USED TO BE THE REGULATOR ALONE, on the reasoning that you do not switch a
+ * fan, you set it — and that is how a modular regulator is sold, with an off
+ * position at the bottom of its travel. It is not how boards are built. A fan
+ * point is a switch and a regulator side by side: the switch is what turns it
+ * on and off, and the regulator is what the speed is left set to between times,
+ * so that turning the fan on tomorrow gives you the speed you liked yesterday.
+ * A plate with a regulator and no switch means winding the speed down to zero
+ * every time you leave the room.
+ *
+ * THREE MODULES IN INDIA, TWO GANGS IN THE US — the switch at the light rating
+ * (nothing about a ceiling fan is above 15A) and then the regulator's own width.
+ *
+ * NOT COUNTRY-VARYING, AND THIS IS WHERE IT WOULD BECOME SO. Both countries
+ * build a fan point the same way today, and inventing a `fanSwitch` flag for
+ * COUNTRIES that both entries would set to true is a knob nobody can populate.
+ * If a country turns up whose regulators integrate the switch, that flag goes in
+ * the table and this branch reads it — the same shape `moduleOverrides` has.
+ *
+ * THE SWITCH JOINS THE SWITCH ROW AND THE REGULATOR FOLLOWS IT, which falls out
+ * of `composeSwitchboard`'s existing ordering rather than needing anything here:
+ * the design's switches first, then its regulators, then the sockets. That IS
+ * how a plate is laid out — a row of rockers, then the knobs, then the outlets —
+ * so the fan's two modules are not adjacent and should not be.
  *
  * A TWO-WAY POINT IS A SWITCH AND NOT A SECOND REGULATOR. `also` on a flow is
  * the same switch reached from a second plate (see flows.js), so when THIS
@@ -266,12 +289,18 @@ export function pointsFromFlows(country, flows = [], boardId = null) {
          switch, and the flow carries the rating precisely so this does not have
          to guess. Move the wire to another board and the switch moves with it,
          at the same rating, because both are derived from where the flow lands. */
-      out.push(f.kind === 'socket'
-        ? point(country, { kind: 'switch', amps: f.amps ?? a, flowId: f.id,
-                           what: f.label, forOutlet: true })
-        : f.kind === 'object' && f.label === 'Fan'
-          ? point(country, { kind: 'fan', flowId: f.id, what: f.label })
-          : point(country, { kind: 'switch', amps: a, flowId: f.id, what: f.label }));
+      if (f.kind === 'socket') {
+        out.push(point(country, { kind: 'switch', amps: f.amps ?? a, flowId: f.id,
+                                  what: f.label, forOutlet: true }));
+      } else if (f.kind === 'object' && f.label === 'Fan') {
+        // BOTH, AND IN THIS ORDER. See the header: the switch turns it on, the
+        // regulator is what the speed is left set to.
+        out.push(point(country, { kind: 'switch', amps: a, flowId: f.id,
+                                  what: f.label, forFan: true }));
+        out.push(point(country, { kind: 'fan', flowId: f.id, what: f.label }));
+      } else {
+        out.push(point(country, { kind: 'switch', amps: a, flowId: f.id, what: f.label }));
+      }
     } else if (boardId && f.also?.boardId === boardId) {
       out.push(point(country, {
         kind: 'switch', amps: a, flowId: f.id, twoWay: true,

@@ -4665,16 +4665,16 @@ export default function App({
     for (const r of rooms) {
       out.push(...boardsFor(r), ...bayBoardsFor(r), ...placedBoardsFor(r));
     }
-    /* AND NOT THE SOCKET OUTLETS AMONG THEM. This list is what a dragged wire
-       may be dropped ON, and a light cannot be switched from a socket — an
-       outlet has no switch on it at all, which is the whole of what makes it
-       one. They are still drawn, still selectable and still have a card; they
-       are simply not somewhere a circuit can end.
-       FILTERED HERE RATHER THAN LEFT OUT OF THE GATHERING, because which plates
-       are outlets is now a thing that CHANGES: tick the box on a hand-placed
-       plate and it becomes a legitimate drop target, tick it on the door's board
-       and it stops being one. */
-    return out.filter((b) => !b.socketOnly);
+    /* EVERY PLATE, SOCKET OUTLETS INCLUDED. This list is what a dragged wire may
+       be dropped ON, and dropping one on an outlet is a perfectly clear thing to
+       mean: it says this appliance is switched from that plate. An outlet cannot
+       switch anything — it has no switch on it — so what the drop does is
+       CONVERT it, in the same gesture, exactly as adding a point does. See
+       `flowPointerUp`.
+       IT USED TO BE FILTERED HERE, which made an outlet inert to a drag: the
+       ring never lit, the release did nothing, and nothing said why. Refusing a
+       gesture whose meaning is obvious is worse than acting on it. */
+    return out;
   }, [rooms, boardsFor, bayBoardsFor, placedBoardsFor]);
 
   const flowsPx = useMemo(() => {
@@ -4745,7 +4745,14 @@ export default function App({
            is "the nearest plate" and must not reach across a party wall — while
            an assignment is somebody having said outright which plate they mean.
            See the note on `boardPool` in flows.js. */
-        boardPool: allBoardsPx,
+        /* THE POOL EXCLUDES OUTLETS EVEN THOUGH THE DROP TARGETS DO NOT, and
+           the two lists differ for one reason: this one is the INVARIANT.
+           Nothing may ever be switched from a plate that has no switch on it, so
+           an assignment naming an outlet resolves to nothing and falls back to
+           the rules. The canvas converts the plate on the drop, so by the next
+           render there is no outlet to resolve — and if that ever failed to
+           happen, the wire would sit on a real board rather than on a socket. */
+        boardPool: allBoardsPx.filter((b) => !b.socketOnly),
         owner,
         assign: flowBoards,
         bends: flowBends,
@@ -6329,6 +6336,18 @@ export default function App({
     if (flowDrag.kind === 'board' && flowDrag.live && flowDrag.overId) {
       const flow = flowsPx.find((f) => f.id === flowDrag.id);
       const home = !flow?.assigned && flow?.boardId === flowDrag.overId;
+      /* A WIRE DROPPED ON A SOCKET OUTLET CONVERTS IT, in the same gesture.
+         An outlet is one socket and no switch — that is the definition — so
+         "this appliance is switched from that plate" is a statement that the
+         plate is not an outlet any more, exactly as pressing "+ 16A switch" on
+         one is. Refusing the drop instead would be refusing a gesture whose
+         meaning is not in doubt; converting it is the reading that does what
+         the person plainly meant.
+         WHAT THEY GET IS A BOARD SERVING THAT APPLIANCE: the switch for the
+         flow, plus the socket that was on the wall and its own switch — see
+         `spareAmps`, which is why the rating survives. */
+      const target = allBoardsPx.find((b) => b.id === flowDrag.overId);
+      if (target?.socketOnly) setBoardOutlet(target, false);
       setFlowBoards((m) => {
         if (home) {
           if (!(flowDrag.id in m)) return m;

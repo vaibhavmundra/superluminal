@@ -806,6 +806,19 @@ console.log('\n-- a socket outlet wires itself --');
   ok(wire(g, { boards: [A, B], outlets: [{ id: 'x' }] }).flows
     .some((f) => f.kind === 'socket') === false,
     'an outlet with no position makes no flow rather than a flow at NaN');
+
+  /* NOTHING IS EVER SWITCHED FROM A PLATE WITH NO SWITCH ON IT, and that is the
+     invariant this file guards rather than the gesture. On the canvas, dropping
+     a wire on an outlet CONVERTS it — so by the time this pass runs again the
+     plate is a board and the assignment resolves. If that conversion ever failed
+     to happen, an assignment naming a plate that is still in `outlets` must fall
+     back to the rules rather than leaving an appliance fed by a socket. */
+  const stray = wire(g, { boards: [A, B], boardPool: [A, B], outlets: [outlet],
+                          assign: { 'fl-r1-row-0-1': outlet.id } }).flows;
+  ok(stray.every((f) => f.boardId !== outlet.id),
+    'an assignment naming a plate that is still an outlet is not honoured');
+  ok(stray.every((f) => f.kind === 'socket' || f.boardId === A.id || f.boardId === B.id),
+    '...it falls back to a plate that can actually switch it');
 }
 
 console.log('\n-- outlet and switchboard, converted both ways --');
