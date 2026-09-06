@@ -203,6 +203,11 @@ export function serialiseEditor(s) {
        Optional on read — see applyEditor — because every plan saved before this
        existed has no key here, and an empty list is the honest reading. */
     manualCoves: s.manualCoves,
+    /* THE DRAWN TRACKS, kept for the reason `manualCoves` is and with the same
+       shape of argument: a run has no finding behind it to be re-derived from,
+       so the path IS the record. It is stored in the plan's own feet, which is
+       what makes it survive a scale correction — see `manualTracks` in App. */
+    manualTracks: s.manualTracks,
     // ...and where the views went.
     //
     // A PATH AND ITS DIMENSIONS, which is about ninety bytes per render, and it
@@ -423,6 +428,7 @@ export function applyEditor(p, set) {
   set.setWallResults?.(p.wallResults ?? {});
   set.setRunTrims?.(p.runTrims ?? {});
   set.setManualCoves?.(p.manualCoves ?? []);
+  set.setManualTracks?.(p.manualTracks ?? []);
   set.setCeilingShapes?.(p.ceilingShapes ?? []);
   set.setLightMoves?.(p.lightMoves ?? {});
   // THE POINTERS, NOT THE PIXELS. App fetches the bytes back from the bucket

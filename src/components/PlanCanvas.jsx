@@ -169,6 +169,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        contextual bar, dimensions are a second press and get eight handles. See
        `shapeEditId` in App.jsx. */
     shapeEditId = null, onShapeHandleDown = null,
+    /* --- THE POINTS OF A DRAWN TRACK, WHILE THEY ARE BEING EDITED ------------
+       `trackEdit` is `{ id, pts }` in plan pixels, or null. Deliberately NOT
+       read off `tracksPx`: those runs are clipped to each room's polygon and
+       totalled per room (see `trackRunsInRoom`), so a path crossing three
+       spaces appears three times there with its corners cut off at the walls.
+       The points being edited are the ONE path somebody clicked, which lives in
+       the plan's own feet and belongs to no room. */
+    trackEdit = null, onTrackPointDown = null, selTrackPt = null,
+    onEditTrack = null,
     draftShape = null, penDraft = null,
     /* WHICH PLATE IS IN FLIGHT, if any. Told rather than derived: a board moved
        yesterday and a board being moved right now are the same geometry and want
@@ -496,6 +505,42 @@ const PlanCanvas = forwardRef(function PlanCanvas(
   // `chunksPx` GUARDED, because a plan that laid no chunks is a real state —
   // see the same `?? []` on the coves below — and this now renders on demand
   // rather than only where the caller already knew there was a grid.
+  //
+  // AND WHAT EACH CELL MEASURES, because a grid you can see but cannot read
+  // answers only half the question. "Why did the light land there" is a cell
+  // that came out narrow, and a drawn line says a cell split — it does not say
+  // it split at 900 where its neighbour got 1500. Millimetres, like every other
+  // dimension this canvas prints (the object readout, the door widths).
+  //
+  // IN THE CORNER, NOT THE CENTRE. The centre of a cell is where the downlight
+  // is, and the grid is drawn UNDER the fittings — a number there would sit
+  // beneath the very symbol it is explaining.
+  //
+  // DROPPED WHERE IT WOULD NOT FIT. A cell narrower than its own label is a
+  // cell whose label overlaps the next one's, and two overlapping numbers are
+  // worse than none: the room the grid is being read on may be zoomed out, or
+  // the split may be genuinely tiny. The line work still says a cell is there.
+  const cellSizes = (ch) => {
+    if (!(pxPerFt > 0)) return null;
+    const fs = pxPerFt * 0.28;
+    const out = [];
+    for (let i = 0; i < ch.xLines.length - 1; i++) {
+      for (let j = 0; j < ch.yLines.length - 1; j++) {
+        const x0 = ch.xLines[i], y0 = ch.yLines[j];
+        const w = ch.xLines[i + 1] - x0, h = ch.yLines[j + 1] - y0;
+        if (w < fs * 6 || h < fs * 2.4) continue;
+        out.push(
+          <text key={i + '.' + j} x={x0 + fs * 0.6} y={y0 + fs * 1.3}
+            fontSize={fs} fontFamily="The Neue Montreal, sans-serif"
+            fill={C.audit} opacity="0.85">
+            {`${Math.round((w / pxPerFt) * 304.8)}\u00D7${Math.round((h / pxPerFt) * 304.8)}`}
+          </text>
+        );
+      }
+    }
+    return out;
+  };
+
   const gridPath = (plan) => (
     <g pointerEvents="none">
       {(plan.chunksPx ?? []).map((ch, k) => (
@@ -506,6 +551,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {ch.xLines.slice(1, -1).map((x, i) => <line key={'x' + i} x1={x} y1={ch.y0} x2={x} y2={ch.y1} />)}
             {ch.yLines.slice(1, -1).map((y, i) => <line key={'y' + i} x1={ch.x0} y1={y} x2={ch.x1} y2={y} />)}
           </g>
+          {cellSizes(ch)}
         </g>
       ))}
     </g>
@@ -1086,9 +1132,30 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               they sit ON it, so the profile is the larger and more obvious
               target for "what else could this ceiling be". */}
           {(r.plan.tracksPx ?? []).map((t, ti) => {
-            const click = pickable && onPickChunk
-              ? (e) => { e.stopPropagation(); onPickChunk(r.id, t.key); }
+            /* A CHOSEN RAIL OPENS ITS CHUNK'S OPTIONS, A DRAWN ONE OPENS
+               NOTHING ON A SINGLE CLICK. There is no chunk behind a drawn track
+               — see `drawn` — so the pill would have nothing to offer, and a
+               click that visibly does nothing is worse than a click that is not
+               offered. What a drawn rail answers is the DOUBLE click. */
+            /* A DRAWN RAIL IS SELECTED BY ONE CLICK, AND THAT IS THE WHOLE OF
+               ITS SINGLE-CLICK MEANING. A chosen rail opens its chunk's
+               options; a drawn one has no chunk, so the click is free — and it
+               has to be spent on selection, because "click the thing, press
+               Delete" is how everything else on this canvas is removed and a
+               track that could only be reached by a double click was a track
+               nobody could select. Opening it shows its points, which is the
+               same act: the path IS what a drawn track is. */
+            const pick = pickable && onEditTrack && t.drawn
+              ? (e) => { e.stopPropagation(); onEditTrack(t.key); }
               : undefined;
+            const click = t.drawn ? pick
+              : (pickable && onPickChunk
+                 ? (e) => { e.stopPropagation(); onPickChunk(r.id, t.key); }
+                 : undefined);
+            // ...AND THE DOUBLE CLICK LANDS ON THE SAME PLACE, so the gesture
+            // people reach for on a path does what they expect rather than
+            // toggling something on the second press.
+            const dbl = pick;
             // --- THE RAIL IS OUTLINED NOW, NOT FILLED ------------------------
             //
             // It was a solid one-inch band of accent, which read as a filled
@@ -1165,7 +1232,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             // The closed arrangement is a closed path, and `all` would make it
             // live over the whole rectangle it encloses — the same fault the
             // cove strip had. See `bandStyle`.
-            const cur = pickable ? bandStyle : undefined;
+            const cur = (pickable && click) ? bandStyle : undefined;
             // A CLOSED TRACK IS ONE PATH, NOT FOUR LINES. Mitred corners are the
             // difference between a rectangle and four strokes that overlap at
             // the ends, and at a real width the overlap shows — as a lump at
@@ -1185,7 +1252,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     className="real-width" strokeLinejoin="miter" pointerEvents="none" />
                   <path d={d} fill="none" stroke={C.ink} strokeWidth={core}
                     className="real-width" strokeLinejoin="miter" pointerEvents="none" />
-                  <path className={railHit} style={cur} onClick={click} d={d}
+                  <path className={railHit} style={cur} onClick={click}
+                    onDoubleClick={dbl} d={d}
                     fill="none" stroke="transparent" strokeWidth={grab} />
                 </g>
               );
@@ -1213,6 +1281,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       stroke={C.ink} strokeWidth={core} strokeLinecap="butt"
                       className="real-width" pointerEvents="none" />
                     <line className={railHit} style={cur} onClick={click}
+                      onDoubleClick={dbl}
                       x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
                       stroke="transparent" strokeWidth={grab} strokeLinecap="butt" />
                   </g>
@@ -1222,6 +1291,49 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           })}
         </g>
       ))}
+
+      {/* --- THE POINTS OF A DRAWN TRACK ------------------------------------
+          THE SAME GRIPS A DRAWN COVE'S FRAME USES — white squares with a dark
+          edge — and deliberately not the accent, for the reason given there:
+          the accent on this canvas means "this emits light", and a handle does
+          not.
+
+          ABOVE THE ROOMS AND OUTSIDE THEM. A path belongs to no room (see
+          `trackEdit`), and a grip drawn inside a room's group would be clipped
+          to it and painted under the next room's fittings.
+
+          THE PATH IS REDRAWN UNDER THEM, dashed and faint. The rail itself is
+          on the sheet already — in as many pieces as there are rooms it crosses
+          — and this is the one mark that shows the whole run as one object,
+          which is what is being edited. It is what makes a leg that fell
+          outside every room visible at all.
+
+          THE SELECTED POINT IS FILLED, because Delete acts on it and a key with
+          no visible target is a key that deletes something at random. */}
+      {trackEdit && trackEdit.pts.length > 0 && (() => {
+        const R = Math.max(lw * 3, 3);
+        const d = trackEdit.pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
+          + (trackEdit.closed ? ' Z' : '');
+        return (
+          <g>
+            {trackEdit.pts.length > 1 && (
+              <path d={d} fill="none" stroke={C.lit} strokeWidth={lw}
+                strokeDasharray={`${lw * 4} ${lw * 3}`} opacity="0.75"
+                pointerEvents="none" />
+            )}
+            {trackEdit.pts.map((q, i) => (
+              <rect key={i} className={onTrackPointDown ? 'hit' : undefined}
+                x={q.x - R} y={q.y - R} width={R * 2} height={R * 2}
+                fill={selTrackPt === i ? C.lit : '#fff'}
+                stroke={C.lit} strokeWidth={lw * 1.4}
+                style={onTrackPointDown ? { cursor: 'move' } : undefined}
+                onPointerDown={onTrackPointDown
+                  ? (e) => onTrackPointDown(e, trackEdit.id, i) : undefined}
+                onClick={(e) => e.stopPropagation()} />
+            ))}
+          </g>
+        );
+      })()}
 
       {layers.zones && (
         <g>
@@ -3702,13 +3814,22 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               const open = pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ');
               const first = pts[0], last = pts[pts.length - 1];
               const R = Math.max(lw * 2.6, 2.5);
+              /* `closed` IS WHETHER THIS PEN'S PATH ENCLOSES ANYTHING, and it is
+                 the only thing that differs between the two pens that use this
+                 drawing. A cove's does — so the leg back to the first point is
+                 drawn dashed, and that point is ringed as the target it is. A
+                 track's does not: clicking the first point of a run again is an
+                 ordinary click, and both marks would be promising a gesture
+                 that does nothing. Defaulted true because the cove pen is the
+                 one that had this drawing to itself. */
+              const closed = penDraft.closed !== false;
               return (
                 <g pointerEvents="none">
                   {pts.length > 1 && (
                     <path d={open} fill="none" stroke={C.lit} strokeWidth={lw * 1.8}
                       strokeLinejoin="round" strokeLinecap="round" />
                   )}
-                  {pts.length > 2 && (
+                  {closed && pts.length > 2 && (
                     <line x1={last.x} y1={last.y} x2={first.x} y2={first.y}
                       stroke={C.lit} strokeWidth={lw * 1.4}
                       strokeDasharray={`${lw * 4} ${lw * 4}`} opacity="0.7" />
@@ -3720,8 +3841,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   {/* THE FIRST POINT, RINGED, because it is a target: clicking it
                       closes the path, and nothing else on the run does anything
                       when clicked. */}
-                  <circle cx={penDraft.pts[0].x} cy={penDraft.pts[0].y} r={R * 2}
-                    fill="none" stroke={C.lit} strokeWidth={lw} opacity="0.8" />
+                  {closed && (
+                    <circle cx={penDraft.pts[0].x} cy={penDraft.pts[0].y} r={R * 2}
+                      fill="none" stroke={C.lit} strokeWidth={lw} opacity="0.8" />
+                  )}
                 </g>
               );
             })()}

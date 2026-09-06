@@ -390,6 +390,14 @@ export function planCeilingDesign({
         // one thing in this app that moves a fitting after the grid is settled,
         // so it is the one thing that has to ask.
         keepOff: zonesFt,
+        /* ...AND THE THINGS A PROFILE CANNOT PASS THROUGH, which is a fourth
+           list and not any of the other three. `keepOff` is where a FITTING may
+           not land — a bed is on it, and a run may cross a bed all day because
+           a carrier emits nothing. These are the bodies: a fan's sweep, a
+           cassette, a hatch, a chandelier's drop. A track through one of them
+           is not a layout that reads oddly, it is aluminium through a blade.
+           See `runObstruction` in track.js. */
+        obstacles: fixturesFt ?? [],
       }
     : null;
 
@@ -507,8 +515,14 @@ export function planCeilingDesign({
         // alone would name. A bedroom whose shallow rows buy the 450 lm lamp
         // and whose ladder counted them at 900 would talk a cove out of half
         // its fittings.
+        // AND THE PLANNER'S NARROW VERDICT WITH IT, for the same reason: a cell
+        // the grid could not size for the ordinary lamp buys the 450 lm one,
+        // and a ladder counting it at 900 would talk a cove out of half its
+        // fittings on light that is not there. See `cellMeetsGates`.
         + lumensOf(ch.coveFixture
-                   ?? fixtureFor(l.kind, l.kind === 'small' && l.cell ? l.cell.w * l.cell.h : 0)));
+                   ?? fixtureFor(l.kind,
+                                 l.kind === 'small' && l.cell ? l.cell.w * l.cell.h : 0,
+                                 !!(l.kind === 'small' && l.cell?.narrow))));
     }
     return m;
   };

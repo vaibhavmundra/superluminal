@@ -62,6 +62,16 @@ export const LIGHT_TOOLS = [
      side by side: the row is drawn as [cove shape][surface tools][no-light
      zone][fittings], and without the flag the map would have put the reverse
      cove and the shape tool at opposite ends of the group they belong to. */
+  /* THE TRACK, AND IT IS THE ONE TOOL HERE THAT PLACES NO FITTING. A track is
+     a CARRIER: a profile clicked out across a ceiling that has already been
+     laid out, which then swallows the downlights it can reach and turns them
+     into modules on itself. Nothing about the grid changes — see the doctrine
+     at the top of track.js — so it belongs with the fittings and not with the
+     surface tools, even though it is drawn with a pen like the cove is. */
+  { id: 'track',  label: 'Track', pen: true,
+    stepTitle: 'Click out the run',
+    hint: 'Click each corner. Runs lock square.',
+    consequence: 'Lights within three feet clip onto it.' },
   { id: 'cove',   label: 'Reverse cove', surface: true,
     stepTitle: 'Span the wall the cove runs along',
     hint: 'Press at one end and drag along the wall.',
@@ -108,6 +118,7 @@ const ICON = {
   spot:   '/icons/directional.png',
   chandelier: '/icons/chandelier.png',
   cove:   '/icons/reverse_cove.png',
+  track:  '/icons/track.png',
 };
 
 /**
@@ -199,6 +210,47 @@ export const GESTURE = {
       <g transform="translate(55 26)">
         <path d="M0,0 L0,15 L4,11.2 L6.8,17.6 L9.6,16.4 L6.8,10.2 L12,10 Z"
           fill="var(--accent)" stroke="#fff" strokeWidth="1.1" strokeLinejoin="round" />
+      </g>
+    </svg>
+  ),
+  /* THE TRACK'S GESTURE. It earns a picture for a third reason again: the pen
+     is the only tool on this panel that takes MORE THAN ONE CLICK, and a
+     sentence saying so is read once and then forgotten halfway through the
+     path. Three dots with the run bending through them says "keep clicking" at
+     a glance, and the square corner says the segments lock.
+
+     THE ABSORPTION IS THE OTHER HALF, and it is the half nobody guesses. Two
+     downlights are drawn ON the profile with their grid positions ghosted
+     beside them, which is the whole claim the tool makes: the layout did not
+     change, the fittings slid onto the run. Without it a person expects a track
+     to be a line and is surprised by their lights moving. */
+  track: (
+    <svg viewBox="0 0 72 46" className="w-[72px] h-[46px] block overflow-visible" aria-hidden="true">
+      {/* The room. */}
+      <rect x="5" y="7" width="62" height="32" rx="1.5"
+        fill="none" stroke="var(--text-subtle)" strokeWidth="1" strokeOpacity="0.45" />
+      {/* Where the fittings were, before the profile reached them. */}
+      <g fill="none" stroke="var(--text-subtle)" strokeWidth="1" strokeOpacity="0.55">
+        <circle cx="27" cy="18.5" r="2.4" strokeDasharray="1.6 1.6" />
+        <circle cx="45" cy="30.5" r="2.4" strokeDasharray="1.6 1.6" />
+      </g>
+      {/* The run: two clicked corners and the leg between them, locked square. */}
+      <path d="M15 13 L47 13 L47 34" fill="none" stroke="var(--accent)" strokeWidth="2"
+        strokeLinejoin="round" strokeLinecap="round" />
+      {/* ...and the two heads, now on it. The short move each one made is the
+          picture's point, so it is drawn. */}
+      <g stroke="var(--text-subtle)" strokeWidth="0.9" strokeDasharray="1.5 1.5">
+        <line x1="27" y1="18.5" x2="27" y2="13" />
+        <line x1="45" y1="30.5" x2="47" y2="30.5" />
+      </g>
+      <g fill="var(--accent)">
+        <circle cx="27" cy="13" r="2.6" />
+        <circle cx="47" cy="30.5" r="2.6" />
+      </g>
+      {/* The points that were clicked, ringed the way the pen rings them. */}
+      <g fill="#fff" stroke="var(--accent)" strokeWidth="1.4">
+        <circle cx="15" cy="13" r="2.1" />
+        <circle cx="47" cy="13" r="2.1" />
       </g>
     </svg>
   ),

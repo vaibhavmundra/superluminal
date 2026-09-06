@@ -74,16 +74,160 @@ export { normalizeZone, prepareZones, enumerateChunkings };
  */
 export const COVE_LUMENS_PER_FT = 120;
 
-export const MIN_SIDE_RATIO = 2 / 3;
-export const MAX_SIDE_RATIO = 4 / 3;
+/**
+ * THE SHORT SIDE'S BOUND, AND IT IS HALF THE LONG ONE — NOT A FIGURE OF ITS OWN.
+ *
+ * THE 2:1 RELATION IS LOAD-BEARING AND IT IS EASY TO BREAK BY ACCIDENT. It used
+ * to be 2/3 against 4/3, which is 2:1, and that was the whole reason every
+ * length divided cleanly: with `max = 2 x min` the division ranges tile the
+ * number line — some n always puts L/n inside [min, max] — so a chunk of any
+ * dimension has a legal grid.
+ *
+ * Drop the long side to 8 ft and leave the short one at 4.71 and the ranges
+ * stop meeting: nothing between 8.01 and 9.41 ft can be divided at all. One
+ * piece is too long and two are too short. A ten-by-nine room hits it, and what
+ * happens then is not a slightly worse grid — the chunk falls out of its tier
+ * entirely and is re-gridded for a smaller lamp it never needed, six fittings
+ * where four would do. It is written as a division here so the relation cannot
+ * be broken by editing one number.
+ *
+ * FOUR FEET IS NOT THE LAMP'S LIMIT, and nothing here claims it is. It is the
+ * smallest cell the GRID may cut. Which lamp a four-foot cell then buys is a
+ * different question with its own threshold — see `NARROW_SIDE_RATIO`.
+ */
+export const MIN_SIDE_RATIO = () => MAX_SIDE_RATIO / 2;
+/**
+ * THE LONG SIDE'S BOUND, AND IT IS NO LONGER SYMMETRIC WITH THE SHORT ONE.
+ *
+ * 8 FT AT THE DEFAULT 50 SQFT CELL, which is what this ratio is: 8 / sqrt(50).
+ * It was 4/3, giving 9.43 ft, and a nine-foot cell under a six-foot pool is the
+ * case that made the whole tier ladder necessary — the middle of the cell is
+ * served and its two far ends are not. Eight is the length a 36-degree cone at
+ * a nine-foot ceiling can be asked to carry with the corners overlapping into
+ * their neighbours, and past it the honest answer is to divide the cell rather
+ * than to accept it.
+ *
+ * STILL A RATIO AND NOT EIGHT FEET. Everything about a cell's sides derives
+ * from `targetArea` so that the ASPECT envelope is the same whatever the area
+ * is — see `sidesForArea`. Written as a flat 8, the narrow tier's 18 sqft cell
+ * would inherit it and admit a 2.25 x 8 box, which is the exact fault this
+ * change exists to remove, one lamp size down. As a ratio the narrow tier's
+ * long side comes out at 4.8 ft, in proportion.
+ *
+ * THE SHORT SIDE KEEPS 2/3, deliberately. The two bounds answer different
+ * questions — see `cellWantsNarrow` — and the short one is about the cone
+ * spilling onto walls rather than about reach, so tightening the long side is
+ * no argument for moving it. What it does mean is that the envelope is now
+ * asymmetric about the square: 0.67 to 1.13 rather than 0.67 to 1.33, and the
+ * worst oblong the bounds admit falls from 2.0:1 to about 1.70:1.
+ */
+export const MAX_SIDE_RATIO = 8 / Math.sqrt(50);
+
+/**
+ * THE SHORT SIDE BELOW WHICH THE ORDINARY LAMP IS THE WRONG PRODUCT.
+ *
+ * ITS OWN NUMBER, because it answers its own question. `MIN_SIDE_RATIO` is how
+ * small a cell the grid may CUT — a bound on the geometry, tied to the long
+ * side so that every length divides. This is how narrow a cell the 7 W lamp
+ * can LIGHT: below it a 36-degree cone puts most of itself on the walls, and
+ * the tighter 5 W lamp is straightforwardly better.
+ *
+ * 2/3, WHICH IS 4.71 FT AT THE DEFAULT CELL — the figure the short side used to
+ * be before it was tied to the long one, kept deliberately so that tightening
+ * the long side changed nothing about which lamp a cell buys. It also sits just
+ * above the 4.2 ft square that roomTypes.js already calls too small for the
+ * ordinary cone, which is the same claim arrived at from the product end.
+ */
+export const NARROW_SIDE_RATIO = 2 / 3;
+
+/**
+ * THE CELL A 5 W NARROW LAMP IS FOR, in sqft.
+ *
+ * NOT A NEW NUMBER. It is the toilet's own cell — `TARGET_AREA_BY_TYPE.toilet`
+ * in roomTypes.js — and the argument for it there is an argument about THE
+ * CELL rather than about the room: a 36-degree cone over a 4.2 ft square throws
+ * most of itself at the walls, whatever the walls are made of. A grid that
+ * cannot make cells the ordinary lamp suits is in exactly that position, so it
+ * is lit by the lamp that suits the cells it CAN make.
+ *
+ * The two are stated in two files and must not drift; this is the one the grid
+ * reads and that is the one the schedule reads.
+ */
+export const NARROW_AREA = 18;
+
+/**
+ * DOES THIS CELL MEET THE GATES ITS ROOM'S ORDINARY LAMP IS JUDGED BY?
+ *
+ * ONE STATEMENT OF THE RULE, because it is now asked twice and the two askings
+ * must not be able to disagree. `gridCost` asks it to decide which division of
+ * a chunk to prefer; the fixture stamp asks it to decide what to buy for the
+ * cell that division produced. Written out separately in each place, the day
+ * somebody widened the area band would be the day a cell became acceptable to
+ * the grid and still bought the narrow lamp.
+ *
+ * BOTH HALVES, AND THE SIDES ARE THE HALF PEOPLE FORGET. 48 sqft sits
+ * comfortably inside a 37.5–62.5 band and 4 x 12 is nobody's idea of a lighting
+ * grid; the side bounds are what say so.
+ */
+export function cellMeetsGates(w, h, opt) {
+  const area = w * h;
+  if (area < opt.targetArea * (1 - opt.areaTol)) return false;
+  if (area > opt.targetArea * (1 + opt.areaTol)) return false;
+  return cellSidesOk(w, h, opt);
+}
+
+/**
+ * THE SIDES ALONE — CAN THIS ROOM'S ORDINARY LAMP SERVE A CELL THIS SHAPE?
+ *
+ * SEPARATE FROM THE AREA BAND, AND THE SEPARATION IS THE WHOLE DESIGN. The two
+ * failures are not the same kind of failure. A cell a few feet under target is
+ * lit MORE than the brief asked for — a real answer, just a denser one, and
+ * degrading gracefully into it is what this planner has always done. A cell
+ * outside the side bounds is lit WRONGLY: too long and the middle of it is
+ * beyond the cone, too narrow and most of the cone is on the walls.
+ *
+ * So this is what decides whether to reach for a different lamp, and the area
+ * band is only ever a preference between grids that already pass it. Judged the
+ * other way round — drop a tier the moment nothing is exactly in band — an
+ * 11 x 13 room whose best grid is four 5.5 x 6.5 cells, three per cent under
+ * the band and perfectly serviceable, would be re-gridded into nine narrow
+ * ones. That was the first version of this and it was wrong.
+ */
+export function cellSidesOk(w, h, opt) {
+  return Math.min(w, h) >= opt.minCell - 1e-9
+      && Math.max(w, h) <= opt.maxCell + 1e-9;
+}
+
+/**
+ * IS THE ORDINARY LAMP THE WRONG PRODUCT FOR THIS CELL?
+ *
+ * THE SHORT SIDE ONLY, AND NOT BOTH BOUNDS. A cell narrower than the lamp is
+ * for throws its 36-degree cone at the walls instead of the floor, and a
+ * tighter, smaller lamp is straightforwardly better — that is the argument
+ * roomTypes.js already makes for the toilet and for a bedroom's shallow rows.
+ *
+ * A CELL THAT IS TOO LONG IS NOT DOWNGRADED, and it would be easy to write the
+ * symmetric rule by accident. Length is a failure of REACH: the middle of a
+ * ten-foot cell is past the edge of a six-foot pool, and answering it with a
+ * five-foot pool makes it worse, not better. The grid handles that case by
+ * dividing further — see the ladder in `chooseChunkGrid` — and where it cannot,
+ * the honest answer is the ordinary lamp and a cell that is frankly too big,
+ * not a weaker one hiding the problem.
+ */
+export const cellWantsNarrow = (w, h, opt) =>
+  Math.min(w, h) < (opt.narrowBelow ?? opt.minCell) - 1e-9;
 
 /** The side lengths implied by a target cell area. */
 export function sidesForArea(area) {
   const side = Math.sqrt(area);
   return {
     targetCell: Math.round(side * 100) / 100,
-    minCell: Math.round(side * MIN_SIDE_RATIO * 100) / 100,
+    minCell: Math.round(side * MIN_SIDE_RATIO() * 100) / 100,
     maxCell: Math.round(side * MAX_SIDE_RATIO * 100) / 100,
+    // WHICH LAMP, NOT WHICH GRID. Carried alongside the two bounds because it
+    // is derived from the same target and read by the same callers — see
+    // NARROW_SIDE_RATIO for why it is not simply `minCell`.
+    narrowBelow: Math.round(side * NARROW_SIDE_RATIO * 100) / 100,
   };
 }
 
@@ -95,6 +239,7 @@ export function resolveOptions(o) {
     targetCell: o.targetCell ?? derived.targetCell,
     minCell: o.minCell ?? derived.minCell,
     maxCell: o.maxCell ?? derived.maxCell,
+    narrowBelow: o.narrowBelow ?? derived.narrowBelow,
   };
 }
 
@@ -561,7 +706,7 @@ function gridCost(cx, cy, opt) {
   const loA = opt.targetArea * (1 - opt.areaTol);
   const hiA = opt.targetArea * (1 + opt.areaTol);
   const bandWidth = Math.max(1e-9, hiA - loA);
-  let pen = 0, n = 0, ok = true;
+  let pen = 0, n = 0, ok = true, sides = true;
   for (const w of cx.sizes) {
     for (const h of cy.sizes) {
       const area = w * h;
@@ -584,6 +729,12 @@ function gridCost(cx, cy, opt) {
         if (s < opt.minCell) { pen += 3 * (opt.minCell - s); ok = false; }
         if (s > opt.maxCell) { pen += 3 * (s - opt.maxCell); ok = false; }
       }
+      // TWO VERDICTS, BECAUSE THE CALLER ASKS TWO QUESTIONS. `ok` is "in band
+      // AND serviceable", which is what a grid is preferred on; `sides` is
+      // "serviceable at all", which is what decides whether to reach for a
+      // different lamp. See `cellSidesOk`.
+      if (!cellMeetsGates(w, h, opt)) ok = false;
+      if (!cellSidesOk(w, h, opt)) sides = false;
       n++;
     }
   }
@@ -592,7 +743,7 @@ function gridCost(cx, cy, opt) {
   // side bounds gate the preferred tier alongside the area band — otherwise a
   // 3:1 oblong that happens to land in the band would beat a near-square cell
   // a foot and a half short of it.
-  return { cost: n ? pen / n : 0, inBand: ok };
+  return { cost: n ? pen / n : 0, inBand: ok, sidesOk: sides };
 }
 
 /**
@@ -611,11 +762,85 @@ function gridCost(cx, cy, opt) {
  * cells whose centres are each half a diagonal away, while a fan on a single
  * line can still sit level with the centres of the two cells it divides.
  */
+/**
+ * THE NARROW TIER'S OPTIONS — the same grid rules, sized for the 5 W lamp.
+ *
+ * DERIVED AND NOT DECLARED. Everything about a cell's sides already follows
+ * from `targetArea` (see `sidesForArea`), so a tier is that one number and
+ * nothing else: change the ratios and both tiers move together, which is the
+ * property the derivation exists to hold.
+ *
+ * NEVER COARSER THAN THE ROOM'S OWN BRIEF. A toilet already asks for an 18 sqft
+ * cell and an office for 25; handing either of them a "narrow tier" bigger than
+ * the target they stated would be answering a request to light a space harder
+ * by lighting it less. The min is the only coherent reading — it is the same
+ * argument `targetAreaFor` makes about two overlapping density rules.
+ */
+const narrowOptions = (opt) => resolveOptions({
+  ...opt,
+  targetArea: Math.min(NARROW_AREA, opt.targetArea),
+  // CLEARED SO THEY ARE RE-DERIVED. `resolveOptions` fills in only what is
+  // absent, and these three are present by the time a grid is being chosen —
+  // left in, the narrow tier would carry the ordinary tier's sides and the
+  // whole retry would be the same rules under a different name.
+  targetCell: undefined, minCell: undefined, maxCell: undefined,
+  narrowBelow: undefined,
+});
+
 function chooseChunkGrid(ch, softX, softY, fans, opt) {
   const inside = fans.filter((f) =>
     f.x > ch.x0 + 1e-6 && f.x < ch.x1 - 1e-6 && f.y > ch.y0 + 1e-6 && f.y < ch.y1 - 1e-6);
   const solo = inside.length === 1 ? inside[0] : null;
 
+  /* --- THE TIERS, TRIED COARSEST FIRST -------------------------------------
+     A CHUNK THAT CANNOT BE GRIDDED FOR THE 7 W LAMP IS NOT A CHUNK WITH A BAD
+     GRID, it is a chunk for a different lamp. Until now the chooser had one set
+     of gates and, when nothing met them, took the least-bad thing on offer —
+     which is where a 4 x 12 cell under a single 7 W came from. It was never
+     accepted; the rules simply ran out. A four-foot corridor cannot make a cell
+     4.7 ft wide however it is divided, and no amount of re-scoring changes that.
+
+     So the answer is a smaller lamp and the grid that suits it: at 18 sqft the
+     sides run 2.83 to 5.66 ft, a four-foot width is legal, and the corridor
+     divides at about five-foot pitch — which is what anybody would draw by
+     hand.
+
+     COARSEST FIRST, AND THE FIRST TIER THAT QUALIFIES WINS. Not the best score
+     across both: a grid of 50 sqft cells and a grid of 18 sqft cells are not
+     comparable on cost, because each is scored against its own target. The
+     ladder is the comparison. */
+  const tiers = [opt];
+  const narrow = narrowOptions(opt);
+  if (narrow.targetArea < opt.targetArea - 1e-9) tiers.push(narrow);
+
+  let fallback = null;
+  for (const tier of tiers) {
+    const got = rateChunkGrids(ch, softX, softY, fans, tier, solo);
+    if (!got) continue;
+    // IN BAND AND SERVICEABLE — the answer this tier was asked for.
+    if (got.pool.length) return best(got.pool);
+    /* SERVICEABLE BUT OUT OF BAND, AND THIS TIER STILL KEEPS IT. A grid whose
+       cells are a few feet under target is lit denser than the brief asked
+       for, which is a real answer and the one this planner has always degraded
+       into. Dropping a lamp size for it would be answering "slightly more light
+       than requested" with "a different product", and it is how an 11 x 13 room
+       ended up with nine narrow lamps instead of four ordinary ones.
+       See `cellSidesOk` for why length and narrowness are not the same failure. */
+    if (got.usable.length) return best(got.usable);
+    // NOTHING SERVICEABLE AT THIS TIER: the cells cannot be a shape the lamp
+    // can light however the chunk is divided. That is what the next tier is
+    // for. Keep this tier's least-bad in case there is no next one — and keep
+    // the FIRST tier's, because it is scored against the room's own brief.
+    fallback = fallback ?? (got.rated.length ? best(got.rated) : null);
+  }
+  return fallback;
+}
+
+/** The best of a set of rated grids. */
+const best = (list) => list.reduce((a, b) => (b.score > a.score ? b : a));
+
+/** Every division of this chunk at one tier, rated. */
+function rateChunkGrids(ch, softX, softY, fans, opt, solo) {
   const xs = bandCandidates(ch.x0, ch.x1, softX, opt, solo ? solo.x : null);
   const ys = bandCandidates(ch.y0, ch.y1, softY, opt, solo ? solo.y : null);
 
@@ -634,24 +859,28 @@ function chooseChunkGrid(ch, softX, softY, fans, opt) {
           if (cellIsAwkward(cell, fans, opt)) awk++;
         }
       }
-      const { cost, inBand } = gridCost(cx, cy, opt);
+      const { cost, inBand, sidesOk } = gridCost(cx, cy, opt);
       const hits = (cx.anchored ? 1 : 0) + (cy.anchored ? 1 : 0);
       const anchorBonus = opt.fanLineWeight * hits
         + (hits === 2 ? opt.fanCornerBonus : 0);
       const score = cx.align + cy.align + anchorBonus - cost
         - opt.awkwardGridPenalty * awk;
-      rated.push({ score, inBand, xLines: cx.lines, yLines: cy.lines,
-                   awkward: awk, fanOnLines: hits });
+      rated.push({ score, inBand, sidesOk, xLines: cx.lines, yLines: cy.lines,
+                   awkward: awk, fanOnLines: hits,
+                   // WHICH TIER MADE IT, carried so the caller knows what the
+                   // cells it is about to build were sized for.
+                   opt });
     }
   }
+  if (!rated.length) return null;
 
   // The area band comes first and the fan second. Every grid whose cells all
   // sit inside the band is preferred outright to every grid that leaves it —
   // no amount of fan alignment buys a 22 sqft cell when a 36 sqft one is
-  // available. Only when NOTHING fits the band does the soft penalty above
-  // decide, which is the case a corridor two feet wider than a cell presents.
-  const pool = rated.filter((r) => r.inBand);
-  return (pool.length ? pool : rated).reduce((a, b) => (b.score > a.score ? b : a));
+  // available. Only when NOTHING fits the band at ANY tier does the soft
+  // penalty above decide — see the ladder in `chooseChunkGrid`.
+  return { rated, pool: rated.filter((r) => r.inBand),
+           usable: rated.filter((r) => r.sidesOk) };
 }
 
 /**
@@ -786,6 +1015,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   for (const ch of chunks) {
     if (ch.bedFoot) continue;
     const grid = chooseChunkGrid(ch, softX, softY, fans, opt);
+    if (!grid) continue;
     ch.xLines = grid.xLines;
     ch.yLines = grid.yLines;
   }
@@ -794,6 +1024,7 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
     // The ordinary grid first: the run axis keeps whatever the chooser decided,
     // because nothing about the flanks says anything about it.
     const grid = chooseChunkGrid(ch, softX, softY, fans, opt);
+    if (!grid) { ch.bedFoot = null; continue; }
     ch.xLines = grid.xLines;
     ch.yLines = grid.yLines;
     const geo = footGeometry({ polygon, zones, chunks, opt });
@@ -809,13 +1040,74 @@ export function planLights(polygon, fixtures = [], options = {}, noLightZones = 
   }
   chunks.forEach((ch, ci) => {
     ch.cellAt = new Map(); // "i,j" -> cell, local to this chunk
+    /* --- ONE LAMP PER CHUNK, DECIDED BY ITS SMALLEST CELL --------------------
+       PER CELL WAS THE FIRST VERSION AND IT PRODUCED SPLIT CEILINGS. A chunk's
+       rows are equal until something anchors them: a chunk with one fan puts a
+       grid line ON the fan (see `bandCandidates`), and an off-centre fan leaves
+       one row deeper than the other. A living room 11.35 x 9.26 with its fan
+       half a foot off centre came out 5.16 ft and 4.09 ft deep — straddling the
+       4.71 ft threshold — so two of its four downlights were 7 W and two were
+       5 W. Two products across one open ceiling, decided by where somebody hung
+       a fan, and 26 lm/sqft where the same room without the fan gets 17.
+
+       THE SMALLEST CELL DECIDES, and the asymmetry is the point. The two errors
+       are not the same size: an ordinary lamp over a cell narrower than it is
+       for throws most of its cone at the walls, where a narrow lamp over a
+       slightly wider cell is merely a tighter pool in the middle of it. The
+       definite error loses to the mild one. It also keeps the density honest —
+       the room above comes out at 17 lm/sqft, which is what the 50 sqft brief
+       asks for, rather than 26.
+
+       WITHIN A CHUNK AND NOT ACROSS THE ROOM, which is what keeps the
+       foot-of-bed rule intact: the shallow rows at the foot of a bed are their
+       own chunk (see bedGrid.js), so they still buy the lamp their own depth
+       calls for while the flanks keep theirs. That mixing is deliberate and
+       between two pieces of ceiling a person can see are different. This one
+       was between two halves of one flat ceiling. */
+    let chunkNarrow = false;
+    for (let i = 0; i < ch.xLines.length - 1; i++) {
+      for (let j = 0; j < ch.yLines.length - 1; j++) {
+        if (cellWantsNarrow(ch.xLines[i + 1] - ch.xLines[i],
+                            ch.yLines[j + 1] - ch.yLines[j], opt)) chunkNarrow = true;
+      }
+    }
     for (let i = 0; i < ch.xLines.length - 1; i++) {
       for (let j = 0; j < ch.yLines.length - 1; j++) {
         const rect = { x0: ch.xLines[i], x1: ch.xLines[i + 1], y0: ch.yLines[j], y1: ch.yLines[j + 1] };
+        const w = rect.x1 - rect.x0, h = rect.y1 - rect.y0;
         const cell = {
           id: cells.length, chunk: ci, i, j, ...rect,
           cx: (rect.x0 + rect.x1) / 2, cy: (rect.y0 + rect.y1) / 2,
-          w: rect.x1 - rect.x0, h: rect.y1 - rect.y0,
+          w, h,
+          /* --- WHICH LAMP THIS CELL IS FOR -----------------------------
+             `narrow` IS "THE ORDINARY LAMP IS THE WRONG ONE HERE", decided
+             against the ROOM'S OWN gates and not against the tier that
+             produced the cell. Those are two different questions and only
+             this one is about the product: a chunk gridded at the narrow
+             tier has cells that meet the narrow tier's gates by
+             construction, so asking the tier would always answer "fine".
+
+             IT CATCHES MORE THAN THE TIER DOES, which is the point. A grid
+             can fail every tier — a two-foot strip beside a wardrobe has no
+             division that puts a cell in any band — and those cells are the
+             ones that most need the smaller lamp. Failing the gates is the
+             test, not passing some other set.
+
+             THE SHORT SIDE IS THE TEST, not the whole gate — see
+             `cellWantsNarrow`. A cell merely under target area is lit more
+             than asked for by the ordinary lamp, which is fine; a cell
+             narrower than that lamp is for is lit wrongly by it.
+
+             IT IS THE CHUNK'S ANSWER AND NOT THIS CELL'S — see `chunkNarrow`
+             above. Stamped on every cell rather than kept on the chunk because
+             the cell is what travels: a light carries its cell, and the
+             schedule, the drawing and the cove ladder all read the lamp off it.
+
+             A LARGE LIGHT IS NOT ASKED. It sits on the line two cells share
+             and answers for both, so "the area of its cell" is not a
+             quantity it has — see fixtureForCell, which says the same thing
+             from the other side. */
+          narrow: chunkNarrow,
         };
         cells.push(cell);
         byId.set(cell.id, cell);

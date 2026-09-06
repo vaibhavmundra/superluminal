@@ -45,7 +45,8 @@ const bboxOf = (poly) => {
  * asked to align with itself, and without this the drag would lock solid the
  * moment it started.
  */
-export function collectTargets({ rooms = [], objects = [], exclude = null } = {}) {
+export function collectTargets({ rooms = [], objects = [], points = [],
+                                 exclude = null } = {}) {
   /* `exclude` TAKES ONE ID, A LIST OF THEM, OR A SET. It was a single id
      compared with `===`, which was right while only one object could ever be
      dragged. A multi-selection moves as a group, and a group that can snap to
@@ -68,6 +69,39 @@ export function collectTargets({ rooms = [], objects = [], exclude = null } = {}
                label: `${name} centre` });
     out.push({ axis: 'y', value: cy, span: [b.x0, b.x1], kind: 'room-centre',
                label: `${name} centre` });
+    /* AND THE WALLS, WHICH ARE THE LINES ANYBODY IS ACTUALLY AIMING AT. The
+       centre of a room is one alignment in each direction and it is the one
+       people want least often: a fitting, a run or a corner is lined up with a
+       WALL, and until now no source offered one. Every vertex of the outline
+       contributes its own x and y, which for a rectangular room is the four
+       walls and for an L is the six — the outline is traced on the inner face,
+       so these are the faces themselves.
+       DE-DUPED BY VALUE, because a rectangle's four corners would otherwise
+       push eight targets describing four lines, and the tie-break in
+       `snapPoint` would be choosing between two identical answers. */
+    const seen = new Set();
+    for (const q of poly) {
+      for (const [axis, value, lo, hi] of
+           [['x', q.x, b.y0, b.y1], ['y', q.y, b.x0, b.x1]]) {
+        const tag = `${axis}:${value.toFixed(2)}`;
+        if (seen.has(tag)) continue;
+        seen.add(tag);
+        out.push({ axis, value, span: [lo, hi], kind: 'room-edge', label: name });
+      }
+    }
+  }
+
+  /* WHATEVER THE CALLER IS ALREADY HOLDING. The pen's own points come in here:
+     clicking out a rectangle means the fourth corner has to line up with the
+     first, and no source above knows anything about a path that does not exist
+     yet. `span` is the point itself, so the guide is drawn from the point it
+     came from to the one being placed rather than across the whole sheet. */
+  for (const q of points) {
+    if (!q || !Number.isFinite(q.x) || !Number.isFinite(q.y)) continue;
+    out.push({ axis: 'x', value: q.x, span: [q.y, q.y], kind: 'point',
+               label: q.label ?? '' });
+    out.push({ axis: 'y', value: q.y, span: [q.x, q.x], kind: 'point',
+               label: q.label ?? '' });
   }
 
   for (const o of objects) {
@@ -95,7 +129,12 @@ export function collectTargets({ rooms = [], objects = [], exclude = null } = {}
  * the drawing, another object's position is just where somebody happened to put
  * it.
  */
-const RANK = { 'room-centre': 0, 'object-centre': 1 };
+/* A POINT THE GESTURE ITSELF PUT DOWN OUTRANKS EVERYTHING. When the fourth
+   corner of a rectangle is within tolerance of both the first corner and a wall
+   behind it, the first corner is what is meant — the path is the thing being
+   drawn, and the wall is scenery. Below it, a room's own geometry beats an
+   object somebody happened to place. */
+const RANK = { point: -1, 'room-centre': 0, 'room-edge': 1, 'object-centre': 2 };
 
 export function snapPoint(p, targets, { tol = SNAP_DEFAULTS.tolScreenPx } = {}) {
   let bx = null, by = null;

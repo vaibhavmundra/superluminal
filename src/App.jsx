@@ -18,7 +18,11 @@ import { designChunking, planCeilingDesign, chunkKey, nextChunkOption }
          from './lib/ceilingDesign.js';
 import { STRIP_OFFSET_FT, coveHostFor, bandBetween, bandFixtureFor, COVE_GAP_FT,
          coveClearOfOutline } from './lib/cove.js';
-import { absorbPoints, SPOT_LEN_FT, DODGE_FT } from './lib/track.js';
+import { absorbPoints, planDrawnTrack, drawnTrackRefusal,
+         TRACK_REFUSALS, SPOT_LEN_FT, DODGE_FT } from './lib/track.js';
+import usePen from './hooks/usePen.js';
+import { penSegments, penLengthFt, penRelock, penMovePoint, penAim,
+         MIN_SEG_FT } from './lib/pen.js';
 import { newHistory, record, stepBack, stepForward, historyDepth,
          QUIET_MS } from './lib/undo.js';
 import { bbox, pointInPolygon } from './lib/geometry.js';
@@ -911,6 +915,31 @@ export default function App({
      a banner. Only ever set by the cove tool, and cleared by the next thing that
      happens. */
   const [coveNote, setCoveNote] = useState('');
+  /* --- TRACKS SOMEBODY DREW --------------------------------------------------
+     A LIST OF PATHS IN PLAN FEET, and the same kind of state `manualCoves` is:
+     a real object of a real size, held in feet so that correcting the scale
+     underneath it does not resize it.
+
+     PLAN FEET AND NOT THE ROOM'S. A track is clicked out over the drawing and
+     nothing about the gesture knows or cares which space it crosses; the room
+     is worked out afterwards, once, where the absorption happens — see the
+     drawn-track pass in the layout memo. Storing room-local points would have
+     meant deciding which room owned a path at the moment it was drawn, and a
+     path that runs from a bedroom into its dressing has no answer to give. */
+  const [manualTracks, setManualTracks] = useState([]);
+  /* --- EDITING A DRAWN TRACK'S POINTS ----------------------------------------
+     WHICH PATH IS OPEN, WHICH OF ITS POINTS IS PICKED, AND THE DRAG IN FLIGHT.
+     Three pieces rather than one for the reason the shape editor keeps three:
+     they have three different lifetimes. The path stays open while somebody
+     moves four corners in a row; the selection survives a drag and is what
+     Delete acts on; the drag lives for one press.
+
+     THE PATH IS OPENED BY A DOUBLE CLICK ON THE RAIL and closed by Escape or by
+     a press on empty plan, which is the same two-stage back-out every other
+     selection on this canvas has. */
+  const [trackEditId, setTrackEditId] = useState(null);
+  const [selTrackPt, setSelTrackPt] = useState(null);
+  const [trackGrip, setTrackGrip] = useState(null);
   const [manualAccents, setManualAccents] = useState([]);
   const [manualSurfaces, setManualSurfaces] = useState([]);
 
@@ -961,7 +990,31 @@ export default function App({
   const [shapeSides, setShapeSides] = useState(POLY_SIDES.initial);
   const [shapeAskSides, setShapeAskSides] = useState(false);
   const [shapeSpan, setShapeSpan] = useState(null);        // { aFt, uniform }
-  const [penPts, setPenPts] = useState([]);                // feet, plan space
+  /* --- THE TWO PENS, WHICH ARE ONE PEN TWICE ---------------------------------
+     `penPts` AND ITS RUBBER BAND USED TO LIVE LOOSE HERE, beside the shape
+     drag's state, and adding a second pen for the track would have meant a
+     second point list, a second live segment and a second undo kept in step by
+     hand. They are one hook now — see hooks/usePen.js — and the two tools
+     differ in the two options they pass and in nothing else.
+
+     THE COVE PEN CLOSES AND IS FREE-ANGLED, because a cove is an OUTLINE: the
+     path has to come back to where it started or it encloses nothing, and a
+     ceiling is not obliged to be rectilinear. Shift locks a segment square for
+     the walls that are.
+
+     THE TRACK PEN IS OPEN AND ALWAYS LOCKED, because a track is a RUN: it goes
+     from somewhere to somewhere and stops, and a profile is set out along the
+     building. There is no shift to hold — every segment is square, which is
+     what makes an L or a C the natural thing to draw and a diagonal impossible
+     to draw by accident. */
+  const covePen = usePen({ lock: 'shift', closes: true });
+  /* IT CLOSES TOO, WHICH THE FIRST VERSION OF THIS GOT WRONG. The argument for
+     an open-only pen was that a track is a RUN — it goes from somewhere to
+     somewhere and stops — and that is true of most of them and not of the one
+     everybody draws first, which is a rectangle round a room. Clicking the
+     first point again placed a second point on top of it and left the loop
+     open. A track is closed when somebody closes it. */
+  const trackPen = usePen({ lock: 'always', closes: true });
   const [shapeAt, setShapeAt] = useState(null);            // feet, plan space
   /* THE SHAPE THE DRAG LEFT BEHIND, waiting for the tick. A released drag does
      NOT commit — see the note on `commitShape` — so this is where it sits in
@@ -1608,13 +1661,16 @@ export default function App({
     // a rectangle in ONE plan's feet and means nothing in another's.
     setLightMoves({}); setSelLightId(null); setLightDrag(null);
     setShapeMenuOn(false); setShapeTool(null);
-    setShapeSpan(null); setPenPts([]); setShapeAt(null); setShapeHeld(null);
+    setShapeSpan(null); covePen.reset(); setShapeAt(null); setShapeHeld(null);
     setShapeAskSides(false);
+    // AND THE DRAWN TRACKS, which go for the same reason the shapes do: a path
+    // is clicked out in ONE plan's feet.
+    setManualTracks([]); trackPen.reset();
     setArmed(null); setGuides([]); setGhost(null);
     setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
     setOutlinesOpen(false); setDirtyIds([]);
     setUnitId(null);
-  }, [initialProjectType, setSelObjId]);
+  }, [initialProjectType, setSelObjId, covePen, trackPen]);
 
   /**
    * Render one page of an open PDF and become a raster plan.
@@ -1953,7 +2009,7 @@ export default function App({
     setWallResults,
     // ...and the lengths somebody dragged. Two numbers per run, and the only
     // thing about these derived fittings a person actually chose.
-    setRunTrims, setManualCoves,
+    setRunTrims, setManualCoves, setManualTracks,
     // ...and where the views themselves are. The bytes are fetched back out
     // of the bucket by the effect below, lazily and per space.
     setRenderRefs,
@@ -2985,10 +3041,15 @@ export default function App({
        *  36-degree cone over a shallow one lands on the wall. `cellSqft` is 0
        *  for a large light, which has no single cell, and the room-level answer
        *  stands for it. */
-      const roomFixture = (kind, cellSqft = 0) =>
-        fixtureForCell(projectId, roomTypes[o.id]?.type, kind, cellSqft);
+      const roomFixture = (kind, cellSqft = 0, narrow = false) =>
+        fixtureForCell(projectId, roomTypes[o.id]?.type, kind, cellSqft, narrow);
       const cellSqftOf = (l) =>
         (l.kind === 'small' && l.cell ? l.cell.w * l.cell.h : 0);
+      /* THE PLANNER'S VERDICT ON THE CELL, not this file's. `narrow` says the
+         cell failed the gates this room's ordinary lamp's grid is judged by —
+         see `cellMeetsGates` — and re-deriving it here from `w * h` would be a
+         second copy of a rule that has side bounds as well as an area band. */
+      const cellNarrowOf = (l) => !!(l.kind === 'small' && l.cell?.narrow);
 
       // --- THE CEILING ITSELF -------------------------------------------
       //
@@ -3134,6 +3195,90 @@ export default function App({
         // drawing a profile through nothing.
         tracks = [];
       }
+
+      /* --- THE TRACKS SOMEBODY DREW ------------------------------------------
+         AFTER THE LAYOUT AND NOT BEFORE IT, which is not an implementation
+         detail — it is the doctrine at the top of track.js, applied to a run
+         whose position came from a hand rather than from a score. A cove
+         changes the grid and has to be consulted first; a track changes
+         nothing about it. The room is lit by exactly the downlights it would
+         have had, and the profile is then drawn THROUGH them.
+
+         THE PATH IS CLIPPED TO THIS ROOM'S FEET AND NOT TO THIS ROOM. A run
+         drawn from the bedroom across the threshold into the dressing is one
+         profile on site, and it is offered to both spaces here — each absorbs
+         the fittings it owns and neither knows about the other's. What that
+         costs is a length billed twice; what it buys is that the stretch over
+         each room actually carries that room's lights. The length is settled
+         below, per room, by the part of the path inside its polygon.
+
+         IT CAN REACH NOTHING, AND THEN THERE IS NO TRACK HERE. `planDrawnTrack`
+         returns null for a path that swallows no fitting, exactly as
+         `planTrack` does — a profile with no head on it is a line, and billing
+         one for a run that crossed a corner of this room on its way somewhere
+         else would turn a geometric accident into an order. */
+      if (res?.ok && manualTracks.length) {
+        // THE PLAN'S FEET ARE NOT THE ROOM'S. A path is stored in the drawing's
+        // own feet (see `manualTracks`) and the layout works from this room's
+        // bounding box, so it converts once, here, rather than asking
+        // absorbPoints to know about two coordinate spaces — the same move the
+        // spot pass makes one screenful down.
+        const toRoomFt = (q) => geo.toFt({ x: q.x * pxPerFt, y: q.y * pxPerFt });
+        for (const mt of manualTracks) {
+          /* A FITTING ALREADY ON A PROFILE IS NOT ON OFFER TO THE NEXT ONE, and
+             two drawn runs crossing the same stretch of ceiling is an ordinary
+             thing to draw. Nulled rather than filtered so the answer stays
+             index-parallel to `res.lights` — `absorbPoints` skips a null point
+             and returns a null verdict for it, which is exactly the reading
+             wanted here. Whichever run was drawn first keeps the light. */
+          const offer = res.lights.map((l) => (l.track ? null : l));
+          // THE CLIP HAPPENS INSIDE, AGAINST `site.polygon`, so what follows is
+          // numbered against the runs that are actually over this ceiling — see
+          // `drawnRuns`. Nothing here re-derives the geometry.
+
+          const t = planDrawnTrack(mt.ptsFt.map(toRoomFt), offer, roomOpt,
+                                   /* THE SAME `site` THE CHOSEN TRACKS GET, and
+                                      for the same three reasons: the polygon is
+                                      what the run is cut down to, a head may
+                                      not land in a keep-off zone, and no run
+                                      may pass through a fan. A drawn run is
+                                      held to the rules a derived one is held
+                                      to — the hand chose where, not whether. */
+                                   { polygon: geo.polygonFt,
+                                     keepOff: geo.zonesFt,
+                                     obstacles: geo.fixturesFt },
+                                   { key: mt.id, id: mt.id, closed: !!mt.closed });
+          if (!t) continue;
+          /* THE FITTINGS MOVE ONTO THE PROFILE HERE, before the stamping below
+             reads them. `lightFixture` swaps a recessed head for a module the
+             moment it sees `track`, `gridPx` is drawn from `gridPos`, and a
+             light on a run gets no drag band — all three already work off these
+             fields, because this is the same shape `planTrack` leaves behind on
+             a chunk that chose one. Nothing downstream learns that a person
+             drew this one. */
+          res = { ...res, lights: res.lights.map((l, i) => {
+            const a = t.absorbed[i];
+            if (!a) return l;
+            /* `trackAxis` AND `trackAlong` ARE NOT DECORATION. A head is a
+               300 x 38 mm module lying ALONG the profile, so the axis is what
+               turns the mark through ninety degrees — without it every head on
+               a vertical run is drawn across the run it is clipped into, which
+               is a fitting that could not be installed. The exporters read the
+               same field for the same reason. It was missing here while the
+               chosen tracks set it in ceilingDesign.js, so drawn runs came out
+               with their heads crossing them. */
+            return { ...l, x: a.x, y: a.y, track: t.key, trackRun: a.run,
+                     trackAxis: t.runs[a.run].axis, trackAlong: a.along,
+                     // WHERE THE GRID PUT IT, kept for the reason the chosen
+                     // track keeps it: the drawing shows the move, so the claim
+                     // that nothing was re-planned is checkable rather than
+                     // asserted.
+                     gridPos: l.gridPos ?? { x: l.x, y: l.y } };
+          }) };
+          tracks = [...tracks, { ...t, drawn: true }];
+        }
+      }
+
       // WHAT EACH CHUNK IS, AND WHAT ELSE IT COULD BE, in plan pixels — the one
       // thing the canvas needs to draw the option pill. `pick` and `options`
       // ride along so the pill never has to ask the geometry anything.
@@ -3201,7 +3346,7 @@ export default function App({
        */
       const lightFixture = (l) => {
         const base = res.chunks?.[chunkIndexOf(l)]?.coveFixture
-          ?? roomFixture(l.kind, cellSqftOf(l));
+          ?? roomFixture(l.kind, cellSqftOf(l), cellNarrowOf(l));
         return l.track ? trackFixtureFor(base) : base;
       };
       /**
@@ -3320,6 +3465,13 @@ export default function App({
         // whose fittings have all been absorbed and are therefore drawn ON it.
         tracksPx: tracks.map((t) => ({
           key: t.key, id: t.id, label: t.label, short: t.short,
+          /* WHETHER A HAND PUT IT THERE, and it is the one thing about a track
+             the canvas has to know the provenance of. A chosen track's rail
+             opens its chunk's options when you click it — the way back for a
+             piece of ceiling whose fittings are all on the profile — and a
+             drawn one has no chunk and no options: what it has is a path, and
+             double-clicking it opens the points. See `trackEditId`. */
+          drawn: !!t.drawn,
           closed: t.closed, corners: t.corners, pieces: t.pieces,
           lengthFt: t.lengthFt,
           runs: t.runs.map((rn) => ({ a: toPx(rn.a), b: toPx(rn.b),
@@ -3381,7 +3533,7 @@ export default function App({
     return out;
   }, [source, pxPerFt, litOutlines, useBoundingRect, ceilingObstaclesPx, zoneList, zones,
       reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes, projectId,
-      designPicks, ceilingKinds, ceilingShapes, lightMoves, isAdmin]);
+      designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks, isAdmin]);
 
   // What the canvas draws: every zone, whoever it belongs to. The planner sees
   // the per-room subsets above; this is only for the eye.
@@ -6299,6 +6451,62 @@ export default function App({
   // is no layout.
   const showTrace = step === 'trace' && !readOnly;
 
+  /* --- WHY A DRAWN RUN IS NOT ON THE PLAN -----------------------------------
+     A RUN THAT WAS REFUSED USED TO VANISH IN SILENCE, and that is the whole of
+     what this fixes. Somebody clicks out a path in a bedroom, presses the
+     button, and nothing appears — no track, no line, no message — which reads
+     as the tool being broken rather than as the answer it actually is (the run
+     reaches no fitting, or it crosses the fan). The path is still there, in
+     `manualTracks`; what was missing was anybody saying so.
+
+     ASKED PER ROOM AND ANSWERED ONCE. A run is offered to every space it
+     crosses — see the drawn-track pass — so "it was refused" means every one of
+     them refused it, and the reason to report is the most specific of theirs.
+     A run over no lit space at all is refused by nobody, which is why `outside`
+     is the answer when no room had an opinion.
+
+     THE SAME FUNCTION THE LAYOUT USED. `drawnTrackRefusal` is what
+     `planDrawnTrack` itself asks before building anything, so the sentence
+     under the button cannot describe a refusal that did not happen. */
+  const trackNotes = useMemo(() => {
+    if (!pxPerFt || !manualTracks.length) return [];
+    const placed = new Set(rooms.flatMap((r) => (r.tracks ?? []).map((t) => t.key)));
+    // MOST SPECIFIC WINS. "It crosses the fan" is something to act on; "it is
+    // not over a lit space" is the answer of a room that never saw it.
+    const RANK = { fan: 3, reach: 2, short: 1, outside: 0 };
+    const out = [];
+    for (const mt of manualTracks) {
+      if (placed.has(mt.id)) continue;
+      let why = 'outside';
+      for (const r of rooms) {
+        if (!r.geo || !r.plan?.ok) continue;
+        const pts = mt.ptsFt.map((q) => r.geo.toFt({ x: q.x * pxPerFt, y: q.y * pxPerFt }));
+        // ONLY A ROOM THE RUN ACTUALLY REACHES HAS AN OPINION WORTH HAVING.
+        // Every other room would say `reach` about a path nowhere near it,
+        // which is true and useless.
+        if (!pts.some((q) => pointInPolygon(q, r.geo.polygonFt))) continue;
+        const got = drawnTrackRefusal(pts, r.plan.lights ?? [], opt,
+                                      { polygon: r.geo.polygonFt,
+                                        keepOff: r.geo.zonesFt,
+                                        obstacles: r.geo.fixturesFt },
+                                      { closed: !!mt.closed });
+        if (got && RANK[got] > RANK[why]) why = got;
+      }
+      out.push({ id: mt.id, why });
+    }
+    return out;
+  }, [pxPerFt, manualTracks, rooms, opt]);
+
+  /* THE REFUSALS, ONE LINE PER REASON. Three runs refused for the same reason
+     is one sentence and a count, not three identical sentences — and two runs
+     refused for two different reasons are two lines, because the thing to do
+     about each is different. */
+  const trackNoteLines = useMemo(() => {
+    const by = {};
+    for (const n of trackNotes) by[n.why] = (by[n.why] ?? 0) + 1;
+    return Object.entries(by).map(([why, n]) => ({ why, n, text: TRACK_REFUSALS[why] }));
+  }, [trackNotes]);
+
   /* WHAT THIS STEP HAS PUT ON THE PLAN, AND HOW TO TAKE IT BACK. Two tools, two
      lists, one readout — kept as a table rather than as a pair of ternaries in
      the markup, because the noun and the list it counts have to stay together:
@@ -6306,11 +6514,18 @@ export default function App({
      spot branch in `onZoneUp`) and a cove's drag makes a cove, and reading
      the wrong one would report a plausible number that is about something
      else. The next tool to earn a step adds a row here or renders no count. */
-  const placedHere = stepTool?.id === 'cove'
-    ? { n: manualCoves.length, one: 'cove', many: 'coves',
-        clear: () => setManualCoves([]) }
-    : { n: manualSurfaces.length, one: 'spot', many: 'spots',
-        clear: () => setManualSurfaces([]) };
+  const PLACED = {
+    cove:  { n: manualCoves.length, one: 'cove', many: 'coves',
+             clear: () => setManualCoves([]) },
+    track: { n: manualTracks.length, one: 'run', many: 'runs',
+             // AND THE EDITOR GOES WITH THEM. It is open on one of these paths
+             // by id, and clearing the list would leave it holding an id that
+             // no longer names anything.
+             clear: () => { setManualTracks([]); closeTrackEdit(); } },
+  };
+  const placedHere = PLACED[stepTool?.id]
+    ?? { n: manualSurfaces.length, one: 'spot', many: 'spots',
+         clear: () => setManualSurfaces([]) };
 
   /* --- ARRIVING AT THE DESIGN SCREEN TURNS THE PLAN DARK -------------------
      THE TWO STEPS WANT OPPOSITE GROUNDS AND THAT IS NOT AN INCONSISTENCY.
@@ -6603,7 +6818,56 @@ export default function App({
     setAddTool(null); setStripFrom(null); setAddAt(null);
     setAddSnap(null); setAddGhost(null);
     setCoveFrom(null); setCoveNote('');
-  }, []);
+    // A HALF-CLICKED RUN IS NOT A TRACK. Putting the tool away throws the path
+    // away with it, exactly as `abandonShape` does for the cove pen: the
+    // alternative is a set of points with no tool armed to finish them.
+    trackPen.reset(); setGuides([]);
+  }, [trackPen]);
+
+  /* --- FINISHING A DRAWN TRACK ------------------------------------------------
+     A RUN ENDS WHEN SOMEBODY SAYS IT DOES, and that is the one way the track pen
+     differs from the cove pen as a GESTURE rather than as a setting. A cove
+     path closes on its own first point, so the last click both places a point
+     and says "done"; an open run has no such click to borrow — the point you
+     want last looks exactly like a point in the middle — so there has to be a
+     separate act. There are three of them, all saying the same thing: Enter, a
+     double-click, and the button on the step. Three ways in because a pen is
+     held with one hand and the mouse is the other, and which one is free
+     depends on where in the path you are.
+
+     THE TOOL STAYS ARMED. Finishing a run is not finishing with the tool, for
+     the reason the step gives generally: this panel is the screen while it is
+     open, and a tool that put itself away after one run would empty and refill
+     the screen under somebody who was drawing three.
+
+     TWO POINTS IS THE MINIMUM AND IT IS NOT ARBITRARY. One point is a click, not
+     a run — and `penSegments` drops anything shorter than a few inches, so a
+     path of two points a hair apart finishes as nothing at all rather than as a
+     profile of no length. */
+  const finishTrack = useCallback((closed = false) => {
+    // THE GUIDES GO WITH THE GESTURE. They are momentary by definition — see
+    // the note over them in PlanCanvas — and a dotted line left on the sheet
+    // after the run is finished is a drawn line, which is the one thing they
+    // must never become.
+    setGuides([]);
+    const segs = penSegments(trackPen.pts, { minFt: MIN_SEG_FT, closed });
+    if (!segs.length) { trackPen.reset(); return; }
+    /* THE MERGED PATH AND NOT THE CLICKS. `penSegments` has already thrown away
+       the doubled points and joined the two halves of a leg drawn in two goes,
+       so this is the run as it will be BUILT rather than as it was drawn.
+       A CLOSED PATH KEEPS ITS POINTS AND NOT ITS LAST SEGMENT. `penSegments`
+       was given the closing leg so it could merge across the join — a rectangle
+       whose first and last legs are collinear is one leg — and the stored path
+       is the corners alone, with `closed` saying the leg back exists. Storing
+       the repeat of the first point would make it a corner in its own right. */
+    const pts = closed ? segs.map((sg) => sg.a) : [segs[0].a, ...segs.map((sg) => sg.b)];
+    setManualTracks((l) => [...l, {
+      id: `mtrack-${Date.now().toString(36)}-${l.length}`,
+      ptsFt: pts, closed,
+      lengthFt: penLengthFt(pts, { closed }),
+    }]);
+    trackPen.reset();
+  }, [trackPen]);
 
   /* --- DRAWING A COVE ---------------------------------------------------------
      THE SAME SHAPE AS THE OTHER STEPS ON THIS SCREEN — it owns the pointer, it
@@ -6616,9 +6880,9 @@ export default function App({
      the bar calls only this, because throwing a shape away is not the same act
      as putting the pen down. */
   const abandonShape = useCallback(() => {
-    setShapeSpan(null); setPenPts([]); setShapeAt(null); setShapeHeld(null);
-    setShapeAskSides(false);
-  }, []);
+    setShapeSpan(null); covePen.reset(); setShapeAt(null); setShapeHeld(null);
+    setShapeAskSides(false); setGuides([]);
+  }, [covePen]);
 
   const closeShapeTool = useCallback(() => {
     setShapeMenuOn(false); setShapeTool(null); setShapeDrag(null);
@@ -7031,13 +7295,16 @@ export default function App({
       // Closed the whole way through, including while it is being drawn: the
       // shape auto-closes, so a preview with a gap in it would be promising
       // something that cannot be committed.
-      const pts = shapeAt ? [...penPts, shapeAt] : penPts;
+      // THE PEN'S OWN AIMED POINT AND NOT `shapeAt`. `at` is the pointer with
+      // the axis lock already applied, so the outline being drawn and the point
+      // a click would commit are one value. See usePen.
+      const pts = covePen.path;
       return pts.length >= 3 ? penShape(pts) : null;
     }
     if (!shapeSpan || !shapeAt) return null;
     return shapeFromDrag(shapeTool, shapeSpan.aFt, shapeAt,
                          { sides: shapeSides, uniform: shapeSpan.uniform });
-  }, [shapeHeld, shapeMenuOn, shapeTool, penPts, shapeAt, shapeSpan, shapeSides]);
+  }, [shapeHeld, shapeMenuOn, shapeTool, covePen.path, shapeAt, shapeSpan, shapeSides]);
 
   /** The shape the contextual bar is talking about. */
   const selShape = useMemo(
@@ -7052,7 +7319,7 @@ export default function App({
      would be a row where half the buttons act on the thing under the cursor and
      half on the thing you drew last. */
   const shapeMode = shapeMenuOn
-    ? (shapeAskSides ? 'sides' : ((shapeDraft || penPts.length) ? 'draw' : 'pick'))
+    ? (shapeAskSides ? 'sides' : ((shapeDraft || !covePen.isEmpty) ? 'draw' : 'pick'))
     : (selShape ? 'edit' : null);
 
   /**
@@ -7091,9 +7358,9 @@ export default function App({
      draft. */
   const shapeToCommit = useMemo(() => {
     if (shapeHeld) return shapeHeld;
-    if (shapeMenuOn && shapeTool === 'pen') return penShape(penPts);
+    if (shapeMenuOn && shapeTool === 'pen') return penShape(covePen.pts);
     return shapeDraft;
-  }, [shapeHeld, shapeMenuOn, shapeTool, penPts, shapeDraft]);
+  }, [shapeHeld, shapeMenuOn, shapeTool, covePen.pts, shapeDraft]);
 
   const canCommitShape = !!shapeToCommit && bigEnough(shapeToCommit);
 
@@ -7460,6 +7727,98 @@ export default function App({
    * thing you drag, and a press on one that goes nowhere resizes the shape to
    * exactly the size it already is. There is nothing to protect against.
    */
+  /* --- A DRAWN TRACK'S POINTS, PICKED UP AND MOVED --------------------------
+     THE SAME SHAPE AS `shapeHandleDown` DIRECTLY BELOW, and deliberately: a
+     grip is a grip. The press selects the point, takes the pointer, and marks
+     `shapeTook` so the click it synthesises on release is not read as a press
+     on bare plan — which would close the path being edited on every drag.
+
+     THE POINT MOVES WITH ITS TWO LEGS. See `penMovePoint`: the corner goes
+     where the pointer is and the two neighbours follow it onto their own axes,
+     so a path that was square stays square without the far end of the run
+     swinging about behind the hand. */
+  const trackPointDown = (e, id, i) => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    shapeTook.current = true;
+    setTrackEditId(id); setSelTrackPt(i);
+    svgRef.current?.setPointerCapture?.(e.pointerId);
+    setTrackGrip({ id, i });
+  };
+
+  /** ...and dragged. Written straight into the list on every move, exactly as a
+   *  shape's resize is: the answer depends only on where the pointer is now. */
+  const trackGripMove = (e) => {
+    if (!trackGrip || !pxPerFt) return;
+    const p = svgPoint(e);
+    const at = { x: p.x / pxPerFt, y: p.y / pxPerFt };
+    setManualTracks((l) => l.map((t) => {
+      if (t.id !== trackGrip.id) return t;
+      const pts = penMovePoint(t.ptsFt, trackGrip.i, at);
+      return { ...t, ptsFt: pts, lengthFt: penLengthFt(pts) };
+    }));
+  };
+
+  /**
+   * A WHOLE DRAWN RUN, TAKEN OFF THE PLAN.
+   *
+   * IT PUTS THE LIGHTS BACK, AND THERE IS NOTHING HERE THAT DOES SO. That is
+   * the point worth stating: a track never moved a light out of the layout, it
+   * only carried one that was already there — see the doctrine at the top of
+   * track.js — so removing the path is the whole of the undo. The layout memo
+   * re-runs with one fewer entry in `manualTracks`, the absorption that
+   * relabelled those fittings simply does not happen, and every one of them is
+   * back on its own grid position as a recessed downlight. Same as deleting a
+   * cove, and for a simpler reason: a cove had to re-cut the grid to be
+   * removed, and this only has to stop being consulted.
+   */
+  const deleteTrack = useCallback((id) => {
+    setManualTracks((l) => l.filter((t) => t.id !== id));
+    setTrackEditId(null); setSelTrackPt(null); setTrackGrip(null);
+  }, []);
+
+  /**
+   * A POINT TAKEN OUT, AND THE PATH PUT BACK ON ITS AXES BEHIND IT.
+   *
+   * Removing a corner leaves the two points that were either side of it joined
+   * by a diagonal, and a track cannot be built along one — so the tail is
+   * re-squared from the cut. See `penRelock` for why it cascades.
+   *
+   * Below the minimum the whole track goes instead — see the guard.
+   */
+  const deleteTrackPoint = useCallback((id, i) => {
+    const t = manualTracks.find((q) => q.id === id);
+    if (!t) return;
+    /* A CIRCUIT NEEDS THREE POINTS AND A RUN NEEDS TWO. Below that there is no
+       path left to have, so the whole track goes rather than being left as a
+       line doubled back on itself — which is what a two-point closed loop is —
+       and the editor closes with it, because there is nothing to keep open. */
+    if (t.ptsFt.length <= (t.closed ? 3 : 2)) { deleteTrack(id); return; }
+    const cut = [...t.ptsFt.slice(0, i), ...t.ptsFt.slice(i + 1)];
+    const pts = penRelock(cut, Math.max(1, i));
+    setManualTracks((l) => l.map((q) => (q.id === id
+      ? { ...q, ptsFt: pts, lengthFt: penLengthFt(pts, { closed: !!q.closed }) } : q)));
+    setSelTrackPt(null);
+  }, [manualTracks, deleteTrack]);
+
+  /**
+   * OPENING A PATH FROM A RAIL SOMEBODY CLICKED.
+   *
+   * The canvas hands over the track's `key`, which for a drawn run IS the
+   * manual track's id — stamped in the layout pass — so this is a lookup rather
+   * than a hit test. Guarded anyway: a key that matches nothing would open an
+   * editor with no points in it, which reads as the feature being broken.
+   */
+  const openTrackEdit = useCallback((key) => {
+    if (!manualTracks.some((t) => t.id === key)) return;
+    setTrackEditId(key); setSelTrackPt(null);
+  }, [manualTracks]);
+
+  /** Shut the point editor. One place, because three keys and a press reach it. */
+  const closeTrackEdit = useCallback(() => {
+    setTrackEditId(null); setSelTrackPt(null); setTrackGrip(null);
+  }, []);
+
   const shapeHandleDown = (e, id, handle) => {
     if (e.button != null && e.button !== 0) return;
     e.preventDefault();
@@ -7512,13 +7871,18 @@ export default function App({
     if (!shapeMenuOn || !shapeTool || !pxPerFt) return false;
     e.preventDefault();
     const p = svgPoint(e);
-    const at = { x: p.x / pxPerFt, y: p.y / pxPerFt };
+    const at = shapeTool === 'pen'
+      // THE POINT THE GUIDES ARE PROMISING. `penSnap` is what the rubber band
+      // was drawn from a moment ago, so running it again on the press is the
+      // only way the click can land where the preview said it would.
+      ? penSnap(p, covePen)
+      : { x: p.x / pxPerFt, y: p.y / pxPerFt };
     if (shapeTool === 'pen') {
       // A NEW PATH REPLACES WHATEVER WAS HELD, exactly as a new span does
       // below: the first click of a second outline means "not that one, this
       // one". Without it the held shape would keep winning in `shapeDraft` and
       // the clicks would appear to do nothing at all.
-      if (shapeHeld && !penPts.length) setShapeHeld(null);
+      if (shapeHeld && covePen.isEmpty) setShapeHeld(null);
       /* CLICKING THE FIRST POINT CLOSES IT, which is the gesture everybody
          already knows from Figma — and the shape closes on its own anyway, so
          this is a way to say "done" rather than the only way to get a closed
@@ -7526,16 +7890,17 @@ export default function App({
          about how accurately a person can hit a dot on screen, which does not
          change when the drawing is scaled. */
       const closeFt = Math.max(6, pxPerFt * 0.4) / pxPerFt;
-      if (penPts.length >= 3
-          && Math.hypot(at.x - penPts[0].x, at.y - penPts[0].y) < closeFt) {
-        setShapeHeld(penShape(penPts));
+      /* THE PEN ANSWERS WHICH OF THE TWO THINGS THE CLICK WAS, rather than this
+         branch testing the first point itself and the hook testing it again on
+         the way in. Two tests of one question is how they come to disagree. */
+      if (covePen.add(at, { shiftHeld: e.shiftKey, tolFt: closeFt }) === 'closed') {
+        setShapeHeld(penShape(covePen.pts));
         // THE PATH GOES WITH IT. `penDraft` and the held shape are two drawings
         // of the same outline, and leaving both up would draw it twice — the
         // dots and the rubber band over the shape they made.
-        setPenPts([]); setShapeAt(null);
+        covePen.reset(); setShapeAt(null);
         return true;
       }
-      setPenPts((l) => [...l, at]);
       setShapeAt(at);
       return true;
     }
@@ -7596,11 +7961,42 @@ export default function App({
     () => (shapeDraft && pxPerFt ? { pts: shapePts(shapeDraft) } : null),
     [shapeDraft, shapePts, pxPerFt]);
 
-  const penDraftPx = useMemo(() => {
-    if (!pxPerFt || !shapeMenuOn || shapeTool !== 'pen' || !penPts.length) return null;
+  /* THE DRAWN RUN IN FLIGHT, IN THE PEN DRAWING THE COVE PEN ALREADY HAS.
+     `closed: false` is the whole difference: no dashed closing leg back to the
+     first point, and no ring round it, because clicking it does nothing. See
+     the canvas — one drawing, two pens, which is the same argument usePen
+     makes about the state behind them. */
+  const trackDraftPx = useMemo(() => {
+    if (!pxPerFt || addTool !== 'track' || trackPen.isEmpty) return null;
     const toPlanPx = (q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt });
-    return { pts: penPts.map(toPlanPx), at: shapeAt ? toPlanPx(shapeAt) : null };
-  }, [pxPerFt, shapeMenuOn, shapeTool, penPts, shapeAt]);
+    /* CLOSED, NOW THAT THE TRACK PEN CLOSES. The dashed leg back to the first
+       point and the ring round it are both promises about a click that works —
+       which is exactly what they were not while this said `false`. */
+    return { pts: trackPen.pts.map(toPlanPx), closed: true,
+             at: trackPen.at ? toPlanPx(trackPen.at) : null };
+  }, [pxPerFt, addTool, trackPen.pts, trackPen.at, trackPen.isEmpty]);
+
+  /* THE OPEN PATH IN PLAN PIXELS. The one drawing on this canvas that shows a
+     drawn run whole: `tracksPx` carries it clipped to each room it crosses (see
+     `trackRunsInRoom`), and a corner that fell in a doorway appears in neither
+     room's copy. */
+  const trackEditPx = useMemo(() => {
+    if (!pxPerFt || !trackEditId) return null;
+    const t = manualTracks.find((q) => q.id === trackEditId);
+    if (!t) return null;
+    return { id: t.id, closed: !!t.closed,
+             pts: t.ptsFt.map((q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt })) };
+  }, [pxPerFt, trackEditId, manualTracks]);
+
+  const penDraftPx = useMemo(() => {
+    if (!pxPerFt || !shapeMenuOn || shapeTool !== 'pen' || covePen.isEmpty) return null;
+    const toPlanPx = (q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt });
+    /* CLOSED, because a cove pen's path encloses something and the canvas
+       draws the closing leg dashed to say so before the click that commits it.
+       The track pen hands the same drawing `closed: false`. */
+    return { pts: covePen.pts.map(toPlanPx), closed: true,
+             at: covePen.at ? toPlanPx(covePen.at) : null };
+  }, [pxPerFt, shapeMenuOn, shapeTool, covePen.pts, covePen.at, covePen.isEmpty]);
 
 
   /**
@@ -7673,9 +8069,13 @@ export default function App({
     ? doors.map((d) => (d.id === doorDrag.id ? { ...d, rect: doorDrag.rect } : d))
     : doors), [doors, doorDrag]);
 
-  const snapTargets = useCallback((excludeId) => collectTargets({
+  const snapTargets = useCallback((excludeId, points = []) => collectTargets({
     rooms: rooms.map((r) => ({ id: r.id, name: r.outline.name, polygonPx: r.plan?.polygonPx || r.geo?.polygonPx })),
     objects: obstaclesPx.filter((o) => o.source === 'placed'),
+    /* WHATEVER THE GESTURE IS ALREADY HOLDING — the pen's own points. Passed
+       per call rather than collected here because they are not a fact about the
+       drawing: they exist for the length of one path. */
+    points,
     exclude: excludeId,
   }), [rooms, obstaclesPx]);
 
@@ -7743,6 +8143,56 @@ export default function App({
       rect: { x0: p.x - r, y0: p.y - r, x1: p.x + r, y1: p.y + r } }, poly);
     return z?.point ? z : null;
   }, [roomAt, pxPerFt]);
+
+  /**
+   * A PEN POINT, SNAPPED, WITH THE GUIDES TO SAY WHY.
+   *
+   * THE SAME BLUE DOTTED LINES THE TRACER DRAWS, and pointed at the same
+   * targets — the space outlines and the objects on them. Clicking out a run
+   * along a wall is the same problem as clicking out the wall was: a point a
+   * hair off the line it was aimed at is wrong in exactly the way a traced
+   * corner is, and a guide is the only thing on screen that says the aim has
+   * been taken. Without them the pen was the one placing tool on this screen
+   * with no alignment feedback at all.
+   *
+   * THE LOCK IS APPLIED FIRST AND THE SNAP SECOND, and the order is the whole
+   * of the tricky part. The pen decides which axis a segment runs along; the
+   * snap may then only move the point ALONG that axis. Snapping first would let
+   * a wall three feet away pull the point off the line the pen had locked it
+   * to, and the segment would come out crooked or the lock would silently be
+   * undone.
+   *
+   * ...AND NO GUIDE IS DRAWN FOR THE FROZEN AXIS. Same rule `applySnap` states
+   * below: a guide is a claim that the point took an alignment, and drawing one
+   * for a coordinate the lock is about to overwrite would be a line that lies
+   * about where the point is going.
+   */
+  /* A PLAIN FUNCTION, LIKE `applySnap` BELOW IT AND FOR ITS REASON: it is only
+     ever called from a pointer handler, so there is nothing for a memo to buy
+     and `snapTol` reads the live zoom rather than a captured one. */
+  const penSnap = (rawPx, pen) => {
+    const raw = { x: rawPx.x / pxPerFt, y: rawPx.y / pxPerFt };
+    const aim = penAim(pen.pts, raw, { lock: pen.locked });
+    const last = pen.pts[pen.pts.length - 1];
+    // WHICH COORDINATE THE LOCK FROZE, read off the answer rather than
+    // re-derived: the pen already decided, and asking again is a second rule
+    // that can disagree with the first.
+    const lock = (pen.locked && last)
+      ? (Math.abs(aim.y - last.y) < 1e-9 ? 'y' : 'x') : null;
+    const at = { x: aim.x * pxPerFt, y: aim.y * pxPerFt };
+    /* THE PATH'S OWN POINTS ARE TARGETS, which is what makes clicking out a
+       rectangle possible: the fourth corner lines up with the first, and no
+       source in `collectTargets` knows anything about a path that is still
+       being drawn. THE LAST POINT IS LEFT OUT — the segment in flight starts
+       there, so on a locked pen it is already exactly aligned on one axis and
+       offering it would jam the free axis onto it too, which is a pen that
+       cannot leave the point it is standing on. */
+    const own = pen.pts.slice(0, -1).map((q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt }));
+    const r = snapPoint(at, snapTargets(null, own), { tol: snapTol() });
+    setGuides(r.guides.filter((g) => g.axis !== lock));
+    return { x: (lock === 'x' ? at.x : r.x) / pxPerFt,
+             y: (lock === 'y' ? at.y : r.y) / pxPerFt };
+  };
 
   /**
    * Snap a point, publish the guides for it, and hand back where it landed.
@@ -8330,6 +8780,68 @@ export default function App({
         if (e.key === 'Escape') { e.preventDefault(); closeZoneEdit(); return; }
         return;
       }
+      /* --- THE TRACK PEN ANSWERS THREE KEYS AND RETURNS ---------------------
+         The same argument the zone step makes above it: while the step is open
+         the panel holds one question, and these keys mean things about the path
+         in flight — they cannot also be allowed to mean "drop the selection I
+         had before I got here", which is what the branch at the foot of this
+         handler does with Escape and Delete.
+
+         ENTER FINISHES, which is what Enter does at the end of a path in every
+         drawing tool there is. BACKSPACE TAKES THE LAST POINT BACK, likewise —
+         and it is why a mis-clicked corner is not a reason to start again.
+
+         ESCAPE THROWS THE PATH AWAY BUT KEEPS THE PEN, and that two-stage
+         back-out is deliberate: it is the same shape as the door editor's
+         below, and the alternative — one Escape that both drops the path and
+         disarms — means a person who wanted to redraw one leg loses the tool as
+         well. With nothing drawn, Escape falls through to the ordinary way out.
+
+         `addTool` AND NOT `stepTool`, because the keys are about the pen rather
+         than about the panel: the step is what `stepTool` describes, and it
+         happens to be open whenever this tool is armed. */
+      /* --- THE POINT EDITOR ANSWERS BOTH KEYS FIRST, AND IT RETURNS ---------
+         The same argument every step above it makes: while a path is open the
+         canvas is about that path, and Delete has to mean "this corner" rather
+         than "the space I had selected before I opened it", which is what the
+         branch at the foot of this handler would do with the same keypress.
+         Escape drops the point if one is picked and closes the editor if not —
+         the two-stage back-out the door editor has. */
+      if (trackEditId) {
+        /* DELETE MEANS THE POINT IF ONE IS PICKED AND THE WHOLE RUN IF NOT, and
+           it RETURNS either way. That last part is the bug this fixes: the
+           branch only claimed the key while a point was selected, so pressing
+           Delete on a track you had just opened fell all the way through to the
+           space branch at the foot of this handler — and took the room's entire
+           layout out with it. A key pressed with a track open cannot be allowed
+           to mean anything about the space behind it; that is the rule every
+           step above states, and this branch was the one that did not keep it.
+
+           DELETING THE RUN IS NOT DELETING ANY LIGHT. See `deleteTrack`: the
+           fittings were never the track's, and they come straight back onto the
+           grid the moment it stops being consulted. */
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          if (trackGrip) return;
+          if (selTrackPt != null) deleteTrackPoint(trackEditId, selTrackPt);
+          else deleteTrack(trackEditId);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          if (selTrackPt != null) setSelTrackPt(null); else closeTrackEdit();
+          return;
+        }
+      }
+      if (addTool === 'track') {
+        if (e.key === 'Enter') { e.preventDefault(); finishTrack(); return; }
+        if (e.key === 'Backspace' && !trackPen.isEmpty) {
+          e.preventDefault(); trackPen.undo(); return;
+        }
+        if (e.key === 'Escape' && !trackPen.isEmpty) {
+          e.preventDefault(); trackPen.reset(); return;
+        }
+      }
       if (doorEdit) {
         if (e.key === 'Escape') {
           e.preventDefault();
@@ -8357,7 +8869,7 @@ export default function App({
            down — which is what the cross in the bar and the cove button in the
            panel do, in that order. */
         if (shapeMenuOn) {
-          if (shapeDraft || penPts.length || shapeSpan) abandonShape();
+          if (shapeDraft || !covePen.isEmpty || shapeSpan) abandonShape();
           else closeShapeTool();
           return;
         }
@@ -8498,11 +9010,13 @@ export default function App({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [objMode, armed, selObjId, selObjIds, setSelObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
+      finishTrack, trackPen, trackEditId, selTrackPt, trackGrip,
+      deleteTrackPoint, deleteTrack, closeTrackEdit,
       manualAccents, focusId, readOnly, selSpotId, deleteSpot,
       selBoardId, deleteBoard, selFlowId, flowDrag, boardPlace, closeBoardPlace,
       doorEdit, selDoorId, doorDrag, deleteDoor, closeDoorEdit,
       zoneEdit, closeZoneEdit,
-      shapeMenuOn, shapeDraft, penPts, shapeSpan, abandonShape, closeShapeTool,
+      shapeMenuOn, shapeDraft, covePen.isEmpty, shapeSpan, abandonShape, closeShapeTool,
       selShapeId, shapeDrag, deleteShape, shapeEditId,
       selLightId, lightDrag, resetLightMove]);
 
@@ -8724,6 +9238,11 @@ export default function App({
     if (lightMoved.current) { lightMoved.current = false; return; }
     if (selShapeId) setSelShapeId(null);
     if (shapeEditId) setShapeEditId(null);
+    // AND THE TRACK'S POINTS, which are a selection like any other: a path left
+    // open with its grips on the drawing reads as part of the drawing. A press
+    // that came off a grip never reaches here — see `shapeTook` above, which
+    // the grip sets for exactly this.
+    if (trackEditId) closeTrackEdit();
     if (selLightId) setSelLightId(null);
     // THE SCALE IS SETTLED BY THE TIME WE ARE HERE. Measuring belongs to the
     // tracer screen, where the scale is actually being decided; leaving the
@@ -9045,6 +9564,35 @@ export default function App({
          room with a tolerance instead; see `coveRoomAt`. A press with no
          outline near it does nothing at all: no seat, and no disarm either,
          because the step's way out is its Done button. */
+      /* THE TRACK PEN, AHEAD OF THE OUT-OF-ROOM GUARD AND AHEAD OF THE COVE.
+         A run is set out over the DRAWING and not inside one space: it crosses a
+         doorway into the dressing room as often as not, and a leg that reaches
+         the wall lands within a pixel of being outside the polygon. The guard
+         would throw away exactly the clicks that were aimed best — which is the
+         same argument the cove makes one branch down, arrived at from the other
+         side: the cove resolves its own room with a tolerance because it needs
+         one, and this needs none at all. Which space each stretch belongs to is
+         worked out once, later, where the absorption happens.
+
+         `detail > 1` IS THE DOUBLE-CLICK, and it finishes the run rather than
+         placing a fourth point on top of the third. The second click of a
+         double lands on the same pixel as the first, so the hook would refuse
+         it as a zero-length segment anyway — but "refused" and "finished" are
+         different answers and the gesture has to give the second one. */
+      if (addTool === 'track') {
+        e.preventDefault();
+        if (e.detail > 1) { finishTrack(); return; }
+        /* CLICKING THE FIRST POINT CLOSES THE RUN, which is the gesture the
+           cove pen already answers and the one everybody tries on a rectangle.
+           The tolerance is in PIXELS and converted, not in feet: it is about
+           how accurately a person can hit a dot on screen, which does not
+           change when the drawing is scaled. */
+        const closeFt = Math.max(6, pxPerFt * 0.4) / pxPerFt;
+        if (trackPen.add(penSnap(p, trackPen), { tolFt: closeFt }) === 'closed') {
+          finishTrack(true);
+        }
+        return;
+      }
       if (addTool === 'cove') {
         const seatRoom = coveRoomAt(p);
         if (!seatRoom) return;
@@ -9195,11 +9743,19 @@ export default function App({
     /* THE PEN'S RUBBER BAND. No press to wait for — the path is a run of
        clicks — so the segment from the last point to the pointer is drawn
        whenever there is a point to draw it from. */
-    if (shapeMenuOn && shapeTool === 'pen' && penPts.length && pxPerFt) {
-      const p = svgPoint(e);
-      setShapeAt({ x: p.x / pxPerFt, y: p.y / pxPerFt });
+    if (shapeMenuOn && shapeTool === 'pen' && pxPerFt) {
+      // SHIFT IS READ LIVE, exactly as the drag primitives read it: holding it
+      // halfway along a segment straightens that segment under your hand rather
+      // than only affecting the next one. The pen is handed a point that is
+      // already snapped — see `penSnap` — so the guides on screen, the rubber
+      // band and the click all describe one place.
+      covePen.move(penSnap(svgPoint(e), covePen), e.shiftKey);
       return;
     }
+    // A TRACK POINT BEING DRAGGED, with the rest of the in-flight gestures and
+    // for their reason: a gesture that has the pointer owns it until it is
+    // released, whatever else is armed.
+    if (trackGrip) { trackGripMove(e); return; }
     // A GRIP ON A SHAPE'S FRAME, ahead of the shape's own drag: a gesture
     // already in flight owns the pointer until it is released, and these two
     // start from the same press on the same object.
@@ -9290,6 +9846,14 @@ export default function App({
         setAddAt(raw);
         return;
       }
+      /* THE TRACK'S RUBBER BAND, and it is the pen's own aimed point that gets
+         drawn — the pointer with the axis lock already on it. Nothing is shown
+         before the first click, because a locked segment has to be locked TO
+         something. */
+      if (addTool === 'track') {
+        trackPen.move(penSnap(raw, trackPen));
+        return;
+      }
       // The spot draws an area, so the plain cursor position is the truth; the
       // grid decides where the fitting goes once the area exists.
       setAddAt(raw);
@@ -9313,6 +9877,11 @@ export default function App({
       if (held && bigEnough(held)) setShapeHeld(held); else abandonShape();
       return;
     }
+    /* A TRACK POINT IS LET GO, and there is nothing to commit: `trackGripMove`
+       wrote every frame straight into the list, exactly as a shape's resize
+       does, so the release only has to put the gesture away. The path is
+       re-measured on each write, so the schedule is already right. */
+    if (trackGrip) { setTrackGrip(null); return; }
     if (shapeResize) { setShapeResize(null); return; }
     if (shapeDrag) { shapePointerUp(); return; }
     if (lightDrag) { lightPointerUp(); return; }
@@ -9962,7 +10531,7 @@ export default function App({
     lightMoves,
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-    wallResults, runTrims, manualCoves, renderRefs,
+    wallResults, runTrims, manualCoves, manualTracks, renderRefs,
     boardsOff, boardMoves, boardPoints, flowBoards, flowBends, manualBoards, boardKinds,
     boardHeights, boardOrders,
     layers, zoom, view,
@@ -9973,7 +10542,7 @@ export default function App({
        lightMoves,
        accentResults, accentDismissed, manualAccents,
        surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-       wallResults, runTrims, manualCoves, renderRefs, boardsOff, boardMoves, boardPoints,
+       wallResults, runTrims, manualCoves, manualTracks, renderRefs, boardsOff, boardMoves, boardPoints,
        flowBoards, flowBends, manualBoards, boardKinds, boardHeights, boardOrders,
        layers, zoom, view]);
 
@@ -10715,6 +11284,12 @@ export default function App({
                    reporting on the anchor rather than on the gesture. */
                 : (shapeMenuOn && shapeTool) ? 'crosshair'
                 : shapeDrag ? 'grabbing'
+                /* THE TRACK PEN, FOR THE COVE'S REASON ONE LINE DOWN: a run is
+                   set out over the drawing, and a leg deliberately taken to the
+                   wall lands a pixel outside the polygon. A pointer that turned
+                   back into an arrow there would be saying the click will do
+                   nothing, and the click works. */
+                : addTool === 'track' ? 'crosshair'
                 : addTool === 'cove' ? 'crosshair'
                 : (armed || addTool) ? (overRoom ? 'crosshair' : 'pointer')
                 : null}
@@ -10830,7 +11405,17 @@ export default function App({
               onShapePointerDown={readOnly || armed || addTool || boardPlace || zoneMode
                 || (shapeMenuOn && shapeTool) ? null : shapePointerDown}
               draftShape={readOnly ? null : draftShapePx}
-              penDraft={readOnly ? null : penDraftPx}
+              /* ONE PEN DRAWING, WHICHEVER PEN IS HOLDING THE POINTER. The two
+                  cannot both be live — arming the track tool closes the shape
+                  menu and vice versa — so this is a choice and not a merge. */
+              penDraft={readOnly ? null : (penDraftPx ?? trackDraftPx)}
+              trackEdit={readOnly ? null : trackEditPx} selTrackPt={selTrackPt}
+              onTrackPointDown={readOnly ? null : trackPointDown}
+              /* NOT WHILE THE PEN IS ARMED. A double click on the drawing is
+                 how a run is FINISHED — see `finishTrack` — so letting it also
+                 open the points of a run underneath would give one gesture two
+                 meanings at the moment somebody is most likely to make it. */
+              onEditTrack={readOnly || addTool === 'track' ? null : openTrackEdit}
               draftRun={!readOnly && addTool === 'strip' && stripFrom && addAt
                 ? [stripFrom, addAt] : null}
               placeSnap={!readOnly && addTool === 'strip' ? addSnap : null}
@@ -11691,7 +12276,46 @@ export default function App({
                 </div>
               )}
 
-              <button className={`${BTN_EXIT} w-full`} onClick={disarmAdd}>Done</button>
+              {/* FINISHING THE RUN IS NOT FINISHING WITH THE PEN, so it is its
+                  own button and it only exists while there is a path to finish.
+                  Enter and a double-click say the same thing on the drawing —
+                  see `finishTrack` — and this is the one that is visible: a
+                  keyboard shortcut nobody is told about is not a way out.
+                  ABOVE `Done`, because in the middle of a path it is the thing
+                  somebody means. Done still disarms, and it drops what is
+                  half-drawn, which is what putting a pen down does. */}
+              {/* WRAPPED AND NOT PASSED. `finishTrack` takes `closed` as its
+                  first argument now, and handing it straight to onClick would
+                  hand it the click event — which is truthy, so every run
+                  finished from this button would come out as a closed
+                  circuit. */}
+              {stepTool.id === 'track' && !trackPen.isEmpty && (
+                <button className={`${BTN_FULL} w-full`} onClick={() => finishTrack()}>
+                  Finish run
+                </button>
+              )}
+              {/* DONE FINISHES WHAT IS IN FLIGHT FIRST, and it did not, which
+                  is the bug that made this tool look broken. `disarmAdd` throws
+                  a half-drawn path away — right for a pen being put down
+                  mid-stroke, and wrong for the button somebody presses when
+                  they think they are finished. Nobody clicks out four corners
+                  and then presses Done meaning "discard that": Done means done.
+                  The path still has to survive the refusals below, but it gets
+                  the chance. */}
+              <button className={`${BTN_EXIT} w-full`}
+                onClick={stepTool.id === 'track'
+                  ? () => { finishTrack(); disarmAdd(); } : disarmAdd}>Done</button>
+
+              {/* ...AND WHY A RUN IS NOT ON THE DRAWING. Under the button on
+                  purpose: it is the answer to the press that was just made, and
+                  it is the last thing on the panel because it is only ever
+                  there when something did not work. See `trackNotes`. */}
+              {stepTool.id === 'track' && trackNoteLines.map((ln) => (
+                <p key={ln.why} className={`${NW} m-0 text-left w-full`}>
+                  {ln.n > 1 ? `${ln.n} runs are not on the plan. ` : 'That run is not on the plan. '}
+                  {ln.text}
+                </p>
+              ))}
             </div>
           </div>
         ) : <>
@@ -12152,6 +12776,16 @@ export default function App({
                 }
                 setAddTool(t); setStripFrom(null); setAddAt(null);
                 setCoveFrom(null); setCoveNote('');
+                // AND THE HALF-CLICKED RUN, for the reason `disarmAdd` throws
+                // one away: leaving the points behind would mean coming back to
+                // the track tool later and finding a path somebody abandoned
+                // three tools ago, with no way to tell it from a fresh one.
+                trackPen.reset();
+                // ...AND THE POINT EDITOR, for the reason every step on this
+                // canvas disarms the others on the way in: one pointer
+                // pipeline, one owner. A grip live under a pen is a press with
+                // two meanings.
+                closeTrackEdit();
                 setArmed(null); setGhost(null);
               }} />
             {/* `coveNote` WAS RENDERED HERE and is now in the cove's step. It

@@ -85,7 +85,7 @@
 // PURE. No React, no DOM. Feet in, feet out.
 // ---------------------------------------------------------------------------
 
-import { distanceToBoundary } from './geometry.js';
+import { distanceToBoundary, pointInPolygon } from './geometry.js';
 
 /**
  * THE PRODUCT'S OWN DIMENSIONS, IN INCHES.
@@ -588,7 +588,7 @@ function candidateLines(values) {
  *      arrangement come out as a rectangle round the outer ring of fittings,
  *      which is the drawing in the sketch.
  */
-function placeLine(chunk, side, lights, bounds) {
+function placeLine(chunk, side, lights, bounds, obstacles = []) {
   const axis = AXIS[side];
   const key = axis === 'h' ? 'y' : 'x';
   // THE HALVES ARE THE CHUNK'S; THE LEGAL RANGE IS THE BOUNDS'. Two different
@@ -635,8 +635,28 @@ function placeLine(chunk, side, lights, bounds) {
   const pool = half.length ? half : all;
   if (!pool.length) return null;
 
+  /* A LINE THAT WOULD PUT THE PROFILE THROUGH A FAN IS NOT A CANDIDATE.
+     STEERED HERE AND REFUSED AGAIN IN `trackGeometry`, which is two tests of one
+     rule and deliberately so. Here it is a CHOICE — a chunk with three
+     plausible rows picks one of the other two and the arrangement still gets
+     built, which is what somebody flipping to Track wants. There it is a
+     REFUSAL, because a chunk whose only row is under the fan has no honest
+     answer and must fall back to Standard rather than draw a clash.
+     THE WHOLE CHUNK'S WIDTH, because the run's span is not known until every
+     side has a line — it is derived from the spread of the fittings once they
+     are all placed. Testing the chunk is the conservative reading: it can
+     reject a line whose run would have stopped short of the fan, which costs a
+     candidate, where the other way round costs a drawing that cannot be built. */
+  const blocked = obstacles?.length ? (at) => {
+    const run = axis === 'h'
+      ? { a: { x: chunk.x0, y: at }, b: { x: chunk.x1, y: at } }
+      : { a: { x: at, y: chunk.y0 }, b: { x: at, y: chunk.y1 } };
+    return !!runObstruction(run, obstacles);
+  } : null;
+
   let best = null;
   for (const c of pool) {
+    if (blocked?.(c.at)) continue;
     const on = lights.filter((l) => Math.abs(l[key] - c.at) <= ON_TOL_FT).length;
     // REACH, NOT THE BARE ZONE. Each fitting is counted against what IT could
     // actually come from — the zone plus its own legal band. See fittingSlack.
@@ -652,6 +672,82 @@ function placeLine(chunk, side, lights, bounds) {
   }
   return best;
 }
+
+/* --- NOTHING RUNS THROUGH A FAN --------------------------------------------
+   A TRACK IS A PHYSICAL EXTRUSION AND SO IS EVERYTHING IN THIS LIST. A run
+   drawn across a ceiling fan is not a layout that reads oddly, it is a length
+   of aluminium through a blade sweep — and the same is true of a cassette's
+   body, a hatch's frame and a chandelier's drop. They are all in `fixturesFt`
+   for this reason: the planner calls every one of them a fan because to the
+   grid they are the same fact, which is a hole in the ceiling somebody else
+   owns.
+
+   IT IS NOT THE SAME QUESTION AS `keepOff`. That list is about where a FITTING
+   may land — a profile may cross a bed all day, because a bed is a rule about
+   glare and a carrier emits nothing. This one is about where the CARRIER may
+   go, and it is answered against the object's real body rather than against a
+   zone somebody drew round it.
+
+   THE CLEARANCE IS HALF THE PROFILE, which is what makes the test about the
+   extrusion rather than about its centreline: a run whose edge grazes a fan is
+   a run through a fan.
+
+   THE RECTANGULAR ONES ARE TESTED AS RECTANGLES. A cassette is a 2 x 2 box and
+   its circumscribed circle is forty per cent bigger — refusing a run that
+   passes a foot outside a hatch would be refusing the obvious place to put it.
+   The segment is taken into the object's own frame and tested there, which is
+   the same move `distanceToBoundary` makes and is cheaper than rotating four
+   corners back. */
+
+/** Half the extrusion, which is what the run's edge is. */
+const PROFILE_HALF_FT = FT(TRACK_DIMS_IN.profile) / 2;
+
+/** Shortest distance from a point to a segment. */
+function distToSeg(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-12) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.min(1, Math.max(0, t));
+  return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+}
+
+/** Does this run pass through — or within half a profile of — this object? */
+function runHitsObstacle(run, o, clear = PROFILE_HALF_FT) {
+  if (o.shape === 'rect' && o.w && o.h) {
+    // INTO THE BOX'S OWN FRAME, so a rotated cassette is still a rectangle.
+    const c = Math.cos(-(o.rot || 0)), s = Math.sin(-(o.rot || 0));
+    const local = (p) => ({ x: (p.x - o.x) * c - (p.y - o.y) * s,
+                            y: (p.x - o.x) * s + (p.y - o.y) * c });
+    const a = local(run.a), b = local(run.b);
+    const hx = o.w / 2 + clear, hy = o.h / 2 + clear;
+    // A SEGMENT MISSES AN AXIS-ALIGNED BOX ONLY IF IT IS WHOLLY OFF ONE SIDE OF
+    // IT, or if both ends are on the same outside of one of the box's own axes
+    // after clipping. Liang-Barsky, which answers it without cases.
+    let t0 = 0, t1 = 1;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const clip = (p, q) => {
+      if (Math.abs(p) < 1e-12) return q >= 0;
+      const r = q / p;
+      if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+      else { if (r < t0) return false; if (r < t1) t1 = r; }
+      return true;
+    };
+    return clip(-dx, a.x + hx) && clip(dx, hx - a.x)
+        && clip(-dy, a.y + hy) && clip(dy, hy - a.y);
+  }
+  return distToSeg({ x: o.x, y: o.y }, run.a, run.b) < (o.r ?? 0) + clear - 1e-9;
+}
+
+/** The first object this run runs through, or null. */
+export function runObstruction(run, obstacles = []) {
+  for (const o of obstacles || []) if (runHitsObstacle(run, o)) return o;
+  return null;
+}
+
+/** Does any run of this track pass through an object? */
+export const tracksObstructed = (runs, obstacles = []) =>
+  (runs || []).some((r) => runObstruction(r, obstacles));
 
 const segment = (a, b, side) => ({
   a, b, side, axis: AXIS[side],
@@ -696,7 +792,7 @@ export function trackGeometry(chunk, arrangementId, lights = [], site = null,
 
   const at = {};
   for (const side of arr.sides) {
-    const line = placeLine(chunk, side, lights, bounds);
+    const line = placeLine(chunk, side, lights, bounds, site?.obstacles);
     if (!line) return null;
     at[side] = line.at;
   }
@@ -735,6 +831,13 @@ export function trackGeometry(chunk, arrangementId, lights = [], site = null,
       : segment({ x: at[side], y: spanY[0] }, { x: at[side], y: spanY[1] }, side)));
   }
   if (runs.some((r) => r.lengthFt < MIN_SPAN_FT)) return null;
+  /* AND NOT THROUGH A FAN. The second of the two tests — see `blocked` in
+     placeLine for why there are two. By here the runs are real segments with
+     real ends, so this is the exact question the steering above could only
+     approximate, and a closed arrangement is caught here for the first time:
+     its sides are set out to each other rather than to the fittings, so a
+     corner can swing a run across an object no candidate line was near. */
+  if (tracksObstructed(runs, site?.obstacles)) return null;
 
   const lengthFt = runs.reduce((s, r) => s + r.lengthFt, 0);
   return {
@@ -1045,3 +1148,269 @@ export function planTrack(chunk, arrangementId, lights = [], opt = {}, site = nu
     keepOff: site?.keepOff ?? [],
   };
 }
+
+/* ===========================================================================
+   A TRACK SOMEBODY DREW
+   ===========================================================================
+
+   THE SEVEN ARRANGEMENTS ABOVE ARE A CHOICE OFFERED ON A RECTANGLE. This is the
+   other way a track gets onto a ceiling: a person clicks out a path with the
+   pen and the runs are wherever they clicked. Nothing else about a track
+   changes — it is still a carrier laid over a layout that was planned without
+   it, it still absorbs what it can reach, and it is still bought by the metre
+   with a corner piece at every turn.
+
+   SO THE DIFFERENCE IS ENTIRELY IN WHERE THE RUNS COME FROM, and that is why
+   this is thirty lines at the bottom of the file rather than a file of its own.
+   `trackGeometry` derives runs by scoring candidate lines against the fittings;
+   this takes them as given. Both hand the same shape to the same
+   `absorbPoints`, and everything downstream — the schedule, the drawing, the
+   exporters, the second pass that offers the spots — cannot tell which of the
+   two made a run and does not ask.
+
+   WHAT IS DELIBERATELY NOT CHECKED HERE is whether the path is sensible: over a
+   wall, out of the room, doubling back on itself. The pen is a person's
+   statement about their own ceiling, and refusing it because a segment clipped
+   a corner would be this file second-guessing the hand that drew it. What IS
+   refused is a path that carries nothing (see `planDrawnTrack`), because a
+   profile with no head on it is decoration, and that is the same refusal
+   `planTrack` makes for the same reason. */
+
+/**
+ * A DRAWN PATH AS A TRACK, in the same shape `trackGeometry` returns.
+ *
+ * `ptsFt` is the pen's points in the room's own feet. Segments that double back
+ * along the line they came from are merged by `penSegments` before they get
+ * here, so a run is a run and the piece count is honest.
+ *
+ * `axis` IS DERIVED AND NOT ASSUMED. The track pen locks every segment to an
+ * axis, so in practice every run is 'h' or 'v' — but `absorbPoints` reads the
+ * field to decide which way a fitting comes onto the profile, and a diagonal
+ * arriving from anywhere else must not silently be treated as horizontal. The
+ * dominant direction is the honest answer for one, and it is what the
+ * perpendicular test would have found anyway.
+ */
+export function trackFromDrawn(ptsFt, { key = 'drawn', id = 'drawn',
+                                        closed = false } = {}) {
+  // A CLOSED PATH IS THE POINTS PLUS THE LEG BACK. Built here rather than by
+  // the caller so `closed` means one thing: the run returns to where it
+  // started, and every join on it is a corner.
+  const path = closed && ptsFt.length > 2 ? [...ptsFt, ptsFt[0]] : ptsFt;
+  const runs = [];
+  for (let i = 1; i < path.length; i += 1) {
+    const a = path[i - 1], b = path[i];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < 1e-9) continue;
+    runs.push({ a, b, side: null,
+                axis: Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? 'h' : 'v',
+                lengthFt: len });
+  }
+  if (!runs.length) return null;
+  const lengthFt = runs.reduce((s, r) => s + r.lengthFt, 0);
+  return {
+    key, id, sides: null, label: 'Drawn track', short: 'Drawn',
+    /* CLOSED IS SAID, NOT GUESSED. A path that happens to end near where it
+       started has not been joined; one whose last click landed ON the first
+       point has, and only the pen knows which of those happened. It is a
+       SCHEDULE fact as much as a shape one — a closed circuit has no end caps
+       and one more corner piece than an open run with the same number of legs. */
+    closed: !!closed && runs.length > 2,
+    runs, rect: null, lengthFt,
+    // A CORNER PIECE PER TURN. Every place two runs meet is a moulded corner
+    // bought separately, which is the item a schedule reporting only metres
+    // quietly leaves off the order — see the note on `corners` above. A closed
+    // circuit turns one more than it has joins between neighbours, because the
+    // last leg meets the first.
+    corners: closed && runs.length > 2 ? runs.length : Math.max(0, runs.length - 1),
+    bounds: null,
+    // ONE PIECE, NOT ONE PER RUN. A drawn track is a single profile that turns
+    // corners; the runs are its legs, not separate tracks. Two end caps and one
+    // feed, however many times it bends — and none at all when it closes.
+    pieces: 1,
+  };
+}
+
+/**
+ * A DRAWN TRACK AND WHAT IT SWALLOWS — `planTrack` for a path somebody clicked.
+ *
+ * Deliberately the same signature and the same return, so a caller holding one
+ * of these cannot tell it from a track the ceiling design chose. `lights` is the
+ * finished ambient layout in the room's feet; `taken` is parallel to it.
+ *
+ * NULL WHEN IT REACHES NOTHING, exactly as `planTrack` is: a person who draws a
+ * profile across a corner of the room where there are no fittings has drawn a
+ * line, and billing a length of track for it — and drawing it as one — would be
+ * turning a mis-click into an order.
+ */
+/* WHY A DRAWN RUN IS NOT A TRACK, IN THIS ROOM.
+   ONE FUNCTION FOR THE VERDICT AND THE REASON, because they were going to be
+   asked separately — the layout needs to know whether to build it, and the
+   panel needs to know what to say about the one that was not built — and two
+   functions answering that from two sets of rules is how a screen comes to
+   report a refusal that did not happen. `planDrawnTrack` calls this and returns
+   null on anything but `null`; the panel calls it and prints what it gets.
+
+   THE CODES ARE STABLE AND THE SENTENCES ARE NOT. A caller may want to say this
+   differently — in a step, in a tooltip, in a report — so what is returned is
+   the code and the plain reading, and the code is what anything should branch
+   on. */
+export const TRACK_REFUSALS = {
+  short:   'A run needs two points at least a few inches apart.',
+  outside: 'It is not over a space that has been lit.',
+  fan:     'A run cannot cross a fan or a ceiling object.',
+  reach:   'No fitting is within three feet of it.',
+};
+
+/**
+ * THE PART OF A DRAWN PATH THAT IS OVER THIS ROOM, and it is what every other
+ * question here is asked about.
+ *
+ * CLIPPED BEFORE ANYTHING IS ABSORBED, WHICH IS THE WHOLE POINT. It used to be
+ * clipped after, by the caller, and that was a bug with two faces. A light in
+ * this room could be pulled onto a leg of profile lying entirely over the room
+ * NEXT DOOR — three feet is three feet, and absorption was being asked about a
+ * run that is not on this ceiling — so a bedroom's downlight would jump onto
+ * the rail in the corridor and be billed as a track head there. And the run
+ * indices did not survive the clip: `occupied` and every light's `trackRun`
+ * were numbered against the unclipped list, so the second pass placed the
+ * directional spots against the wrong runs and put heads on top of each other.
+ *
+ * One clipped list, and everything downstream is numbered against it.
+ */
+const drawnRuns = (ptsFt, site, meta) => {
+  const geo = trackFromDrawn(ptsFt, meta);
+  if (!geo) return null;
+  if (!site?.polygon?.length) return geo;
+  const inside = trackRunsInRoom(geo.runs, site.polygon);
+  if (!inside.runs.length) return null;
+  /* A CIRCUIT THE WALL CUT IS NOT A CIRCUIT ANY MORE. A closed loop drawn
+     across two spaces leaves each of them an open run with two ends — which is
+     two end caps and one fewer corner piece in THAT room's schedule, and a
+     path the canvas must not close with a `Z`. `corners` and `pieces` come
+     from the clip, which counted them on what is actually here. */
+  const whole = inside.runs.length === geo.runs.length
+    && Math.abs(inside.lengthFt - geo.lengthFt) < 1e-6;
+  return whole && geo.closed
+    ? { ...geo, ...inside, closed: true, corners: geo.corners, pieces: 1 }
+    : { ...geo, ...inside, closed: false };
+};
+
+export function drawnTrackRefusal(ptsFt, lights = [], opt = {}, site = null,
+                                  meta = {}) {
+  if (!trackFromDrawn(ptsFt, meta)) return 'short';
+  // `meta` CARRIES `closed`, and it has to reach here as well as the builder:
+  // the leg back to the first point is a real length of profile that can cross
+  // a fan and can carry a head, and a refusal decided on the open version of
+  // the path would be answering about a different track.
+  const geo = drawnRuns(ptsFt, site, meta);
+  // NOT OVER THIS ROOM AT ALL, which the clip is the honest test for: a path
+  // whose every leg fell outside the polygon has nothing here to refuse.
+  if (!geo) return 'outside';
+  // THE OBSTACLE NEXT, because it is the one refusal that is about the run
+  // itself rather than about what the run happened to reach — a person who
+  // moves the path a foot off the fan may then find it carries plenty, and
+  // being told "nothing near it" first would send them the wrong way.
+  if (tracksObstructed(geo.runs, site?.obstacles)) return 'fan';
+  const withSlack = lights.map((l) => {
+    const sl = fittingSlack(l, opt);
+    return { ...l, slackX: sl.x, slackY: sl.y };
+  });
+  const taken = absorbPoints(geo.runs, withSlack, {
+    absorb: opt.trackAbsorb ?? ABSORB_FT, len: HEAD_LEN_FT,
+    keepOff: site?.keepOff ?? [],
+  });
+  return taken.some(Boolean) ? null : 'reach';
+}
+
+export function planDrawnTrack(ptsFt, lights = [], opt = {}, site = null, meta = {}) {
+  if (drawnTrackRefusal(ptsFt, lights, opt, site, meta)) return null;
+  const geo = drawnRuns(ptsFt, site, meta);
+  const absorb = opt.trackAbsorb ?? ABSORB_FT;
+  const withSlack = lights.map((l) => {
+    const sl = fittingSlack(l, opt);
+    return { ...l, slackX: sl.x, slackY: sl.y };
+  });
+  const taken = absorbPoints(geo.runs, withSlack, {
+    absorb, len: HEAD_LEN_FT, keepOff: site?.keepOff ?? [],
+  });
+  const n = taken.filter(Boolean).length;
+  return {
+    ...geo, absorb, absorbed: taken, absorbedCount: n,
+    occupied: taken.filter(Boolean).map((a) => ({ run: a.run, along: a.along,
+                                                 len: HEAD_LEN_FT })),
+    keepOff: site?.keepOff ?? [],
+  };
+}
+
+/**
+ * A DRAWN TRACK'S RUNS, CUT DOWN TO ONE ROOM.
+ *
+ * A path is clicked out over the whole drawing and every space it crosses is
+ * offered it — see the drawn-track pass in App.jsx — so each space has to be
+ * told which stretch of profile is actually over its ceiling. Without this a
+ * run drawn through three rooms would be billed at full length three times, and
+ * the drawing would carry three copies of the same line.
+ *
+ * EXACT RATHER THAN SAMPLED. The segment is cut at every place it crosses an
+ * edge of the polygon, and each resulting piece is kept or dropped on whether
+ * its own midpoint is inside — which is the only test that gets a concave room
+ * right. Sampling at a step would find the same answer for a rectangle and lose
+ * a doorway's worth of profile on an L.
+ *
+ * THE PIECE COUNT IS RECOUNTED, NOT INHERITED. A run clipped in two by a wall
+ * is two lengths of profile in this room with two sets of end caps, whatever it
+ * is on site — and the schedule is a room's schedule.
+ */
+export function trackRunsInRoom(runs, polygonFt) {
+  if (!polygonFt?.length) return { runs, lengthFt: runs.reduce((s, r) => s + r.lengthFt, 0) };
+  const out = [];
+  for (const run of runs) {
+    const dx = run.b.x - run.a.x, dy = run.b.y - run.a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) continue;
+    // EVERY CROSSING AS A PARAMETER ALONG THE RUN, plus its two ends.
+    const cuts = [0, 1];
+    for (let i = 0; i < polygonFt.length; i += 1) {
+      const p = polygonFt[i], q = polygonFt[(i + 1) % polygonFt.length];
+      const ex = q.x - p.x, ey = q.y - p.y;
+      const den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-12) continue;          // parallel: no single crossing
+      const t = ((p.x - run.a.x) * ey - (p.y - run.a.y) * ex) / den;
+      const u = ((p.x - run.a.x) * dy - (p.y - run.a.y) * dx) / den;
+      if (t > 1e-9 && t < 1 - 1e-9 && u >= -1e-9 && u <= 1 + 1e-9) cuts.push(t);
+    }
+    cuts.sort((m, n) => m - n);
+    for (let i = 1; i < cuts.length; i += 1) {
+      const t0 = cuts[i - 1], t1 = cuts[i];
+      if (t1 - t0 < 1e-6) continue;
+      const mid = { x: run.a.x + dx * (t0 + t1) / 2, y: run.a.y + dy * (t0 + t1) / 2 };
+      if (!pointInPolygon(mid, polygonFt)) continue;
+      const a = { x: run.a.x + dx * t0, y: run.a.y + dy * t0 };
+      const b = { x: run.a.x + dx * t1, y: run.a.y + dy * t1 };
+      const prev = out[out.length - 1];
+      // A CUT THAT PUT THE PATH STRAIGHT BACK IN IS NOT A CUT. Two pieces that
+      // meet end to end on the same line are one piece — the polygon touched
+      // the run without crossing it — and counting them separately would buy a
+      // pair of end caps for a joint that does not exist.
+      if (prev && Math.abs(prev.b.x - a.x) < 1e-6 && Math.abs(prev.b.y - a.y) < 1e-6
+          && prev.axis === run.axis) {
+        prev.b = b; prev.lengthFt = Math.hypot(b.x - prev.a.x, b.y - prev.a.y);
+        continue;
+      }
+      out.push({ ...run, a, b, lengthFt: Math.hypot(b.x - a.x, b.y - a.y) });
+    }
+  }
+  const lengthFt = out.reduce((s, r) => s + r.lengthFt, 0);
+  return {
+    runs: out,
+    lengthFt,
+    // CORNERS ARE JOINS BETWEEN NEIGHBOURING PIECES, so a run cut by a wall
+    // loses the corner it would have turned outside this room along with the
+    // profile that turned it.
+    corners: out.reduce((n, r, i) => (i && touching(out[i - 1], r) ? n + 1 : n), 0),
+    pieces: out.reduce((n, r, i) => (i && touching(out[i - 1], r) ? n : n + 1), 0),
+  };
+}
+
+/** Do these two runs meet, end to end? */
+const touching = (p, q) => Math.abs(p.b.x - q.a.x) < 1e-6 && Math.abs(p.b.y - q.a.y) < 1e-6;

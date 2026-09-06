@@ -373,9 +373,25 @@ export const SMALL_CELL_SQFT = 18;
  * recorded, or a plan saved before this existed — and the room-level answer
  * stands, which is what this app has always given.
  */
-export const fixtureForCell = (projectId, typeId, kind, cellSqft) =>
-  (kind === 'small' && cellSqft > 0 && cellSqft <= SMALL_CELL_SQFT
-   && expectsBed(projectId, typeId))
+export const fixtureForCell = (projectId, typeId, kind, cellSqft, narrow = false) =>
+  (kind === 'small'
+   /* --- TWO WAYS TO EARN THE NARROW LAMP, AND THE SECOND IS THE GENERAL ONE
+      `narrow` IS THE PLANNER'S OWN VERDICT — the cell failed the gates this
+      room's ordinary lamp's grid is judged by, so the ordinary lamp is the
+      wrong product for it. See `cellMeetsGates` in planner.js. It applies in
+      every room type, because it is a fact about the CELL: a two-foot strip
+      beside a wardrobe throws a 36-degree cone at the wall in a bedroom, a
+      living room and a lobby alike.
+
+      THE SIZE TEST BELOW IT STAYS, AND IS NOT REDUNDANT. It is bedrooms-only
+      and it fires on cells that are perfectly legal — the foot-of-bed rule
+      copies the rows of the chunks beside the bed, and a shallow row can be
+      in band and still want the tighter cone. The planner's verdict cannot
+      catch those, because there is nothing wrong with them. Two different
+      arguments for the same lamp; either is enough. */
+   && (narrow
+       || (cellSqft > 0 && cellSqft <= SMALL_CELL_SQFT
+           && expectsBed(projectId, typeId))))
     ? 'small-narrow'
     : fixtureFor(typeId, kind);
 
