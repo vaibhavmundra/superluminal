@@ -350,6 +350,55 @@ export function serialiseEditor(s) {
     boardOrders: s.boardOrders ?? {},
 
     // --- view preferences. Cheap, and jarring to lose.
+    /* --- WHAT EACH SPACE IS, BEFORE ANYTHING IS PUT IN IT -------------------
+       `ceilingMm` is room id -> height to the slab in millimetres, and
+       `materials` is room id -> `{ ceiling, floor, walls }` where `walls` is
+       edge index -> tone. See lib/materials.js.
+
+       BOTH ARE SPARSE, AND THAT IS THE POINT. A room with no entry is a room at
+       the defaults — 2700 and light on all three surfaces — so a plan nobody has
+       touched the finishes on stores nothing at all, and a space traced next
+       week arrives at the same defaults as the ones traced today. It is the same
+       rule `boardKinds` follows: what is stored is what somebody CHANGED.
+
+       THEY HAVE TO BE KEPT OR THE FEATURE DOES NOT EXIST. Unlike the lights,
+       which are a memo over everything else in this file and are re-derived on
+       every open, there is nothing to re-derive a finish FROM — the walls are
+       what somebody said, and losing them loses the answer rather than an
+       adjustment to it. Same argument as `manualCoves`.
+
+       Optional on read — see applyEditor — because every plan saved before this
+       existed has no key here. */
+    ceilingMm: s.ceilingMm ?? {},
+    materials: s.materials ?? {},
+    /* WHAT WATTAGE EACH FITTING IS, ROOM BY ROOM — room id -> row key -> watts.
+       THE KEY IS THE ROW AND NOT THE FAMILY, because what a row is depends on
+       what the fitting is: anything sold by the metre is one row per RUN and is
+       keyed by that run's own id, and anything sold by the piece is one row for
+       the lot and is keyed by its family. See `roomFixtureGroups` in App for who
+       decides, and FIXTURE_FAMILIES in lib/lumens.js for the defaults.
+       A RUN'S ID IS SAFE TO STORE FOR THE REASON `runTrims` AND `accentDismissed`
+       ARE — it is the same handle. A run that stops existing simply takes its
+       entry out of use; the entry lapses rather than landing on some other
+       fitting, exactly as a `lightMoves` offset does when its cell is re-cut.
+       SPARSE ON THE SAME RULE AS ITS TWO NEIGHBOURS: a row at its family's
+       default stores nothing, so a plan nobody has touched the wattages on
+       carries an empty object — and a default changed in lumens.js tomorrow
+       moves every plan that never overruled it.
+       Optional on read — every plan saved before this existed has no key. */
+    fixtureWatts: s.fixtureWatts ?? {},
+    /* THE DERIVED RUNS SOMEBODY DELETED — reverse coves and shelf strips, by
+       their own ids. See the note on the state in App.
+       IT HAS TO BE KEPT FOR THE REASON EVERY DISMISSAL IN THIS FILE DOES:
+       both are re-derived from `wallResults` on every open, so a deletion that
+       is not recorded is a run that comes back the next time the plan is
+       opened. Same argument as `accentDismissed`, `artDismissed` and
+       `boardsOff`; a different list because it is applied in a different place —
+       where the RUN is built rather than where its tape is.
+       Optional on read — every plan saved before this existed has no key, and an
+       empty list is the honest reading. */
+    runsOff: s.runsOff ?? [],
+
     ui: { layers: s.layers, zoom: s.zoom, view: s.view },
   };
 }
@@ -443,6 +492,11 @@ export function applyEditor(p, set) {
   set.setBoardKinds?.(p.boardKinds ?? {});
   set.setBoardHeights?.(p.boardHeights ?? {});
   set.setBoardOrders?.(p.boardOrders ?? {});
+
+  set.setCeilingMm?.(p.ceilingMm ?? {});
+  set.setMaterials?.(p.materials ?? {});
+  set.setFixtureWatts?.(p.fixtureWatts ?? {});
+  set.setRunsOff?.(p.runsOff ?? []);
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);

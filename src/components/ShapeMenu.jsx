@@ -60,9 +60,18 @@ const MARK = {
   polygon:  <polygon points="10,3.4 15.7,6.7 15.7,13.3 10,16.6 4.3,13.3 4.3,6.7" />,
 };
 
-const Mark = ({ id }) => (
+/**
+ * THE MARK, AND IT INVERTS WHEN ITS BUTTON IS THE LIVE ONE.
+ *
+ * The selected cell is a black chip on a white bar — see `BTN_ON` — and a mark
+ * drawn in near-black ink would disappear into it. So the two colours swap: a
+ * white outline on the chip, the same shape either way. It is the same rule
+ * PaletteButton follows for its caption, said about a symbol.
+ */
+const Mark = ({ id, on = false }) => (
   <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"
-    fill="#fff" stroke="#111" strokeWidth="1.3" strokeLinejoin="round">
+    fill={on ? '#111' : '#fff'} stroke={on ? '#fff' : '#111'}
+    strokeWidth="1.3" strokeLinejoin="round">
     {id === 'pen'
       /* THE ONE THAT IS A TOOL AND NOT A SHAPE, so it is drawn as the tool:
          a nib, and the open path it leaves behind. A closed outline here would
@@ -71,7 +80,19 @@ const Mark = ({ id }) => (
           <path d="M3.2 16.8 L6.6 8.4 L11.4 13.2 Z" />
           <path d="M6.6 8.4 L13.4 3.4 L16.4 6.4 L11.4 13.2" />
         </>)
-      : MARK[id]}
+      : id === 'line'
+        /* A LINE, AND NOTHING ELSE ON THE BUTTON. It carried two faint uprights
+           for the walls its ends land on — true about the tool, and at 20px it
+           read as a symbol nobody could name: three marks where every other cell
+           has one. The rule the row is built on is that the symbol IS the name,
+           and the plainest possible picture of "line" is a line. What its ends
+           have to touch is the panel's job to say, where there is room for a
+           drawing of the room — see SHAPE_GESTURE.
+           DIAGONAL AND NOT HORIZONTAL: a horizontal rule in a row of buttons
+           reads as a separator. */
+        ? <path d="M3.8 16.2 L16.2 3.8" fill="none" strokeWidth="1.9"
+            strokeLinecap="round" />
+        : MARK[id]}
   </svg>
 );
 
@@ -90,7 +111,16 @@ const BTN = 'flex items-center justify-center w-9 h-9 rounded-[7px] '
   + 'border-0 bg-transparent cursor-pointer p-0 '
   + 'transition-colors duration-[120ms] hover:bg-black/[0.07] '
   + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-black/40';
-const BTN_ON = 'bg-black/[0.09] hover:bg-black/[0.12]';
+/* WHICH ONE IS ARMED, AND IT IS A FILLED CHIP RATHER THAN A TINT. It was
+   `bg-black/[0.09]` — nine percent of black on a white bar, which is a shade you
+   have to go looking for, on the one control in this bar whose whole job is to
+   say what the next press on the drawing will do. The mark inverts with it (see
+   `Mark`), so the pair reads as one latched key. */
+const BTN_ON = 'bg-black hover:bg-black';
+/* THE SAME LATCH ON A BUTTON WHOSE CONTENT IS TEXT. The sides row prints a
+   number, and a number in `text-black/80` on a black chip is a number nobody can
+   read — so it takes the inversion the marks take. */
+const NUM_ON = 'bg-black hover:bg-black text-white';
 const SEP = <span className="w-px h-5 bg-black/10 mx-0.5" aria-hidden="true" />;
 const CAP = 'text-[10.5px] leading-none tracking-[0.02em] text-black/55 px-1.5 select-none';
 
@@ -156,10 +186,10 @@ export default function ShapeMenu({
       onPointerDown={(e) => e.stopPropagation()}>
 
       {mode === 'pick' && SHAPE_TOOLS.map((t) => (
-        <button key={t.id} type="button" title={t.label}
+        <button key={t.id} type="button" title={t.label} aria-pressed={tool === t.id}
           className={BTN + (tool === t.id ? ' ' + BTN_ON : '')}
           onClick={() => onTool?.(t.id)}>
-          <Mark id={t.id} />
+          <Mark id={t.id} on={tool === t.id} />
         </button>
       ))}
 
@@ -170,11 +200,11 @@ export default function ShapeMenu({
             a look at a readout between each one. */}
         {Array.from({ length: POLY_SIDES.max - POLY_SIDES.min + 1 },
           (_, i) => POLY_SIDES.min + i).map((n) => (
-          <button key={n} type="button"
+          <button key={n} type="button" aria-pressed={sides === n}
             className={'flex items-center justify-center w-7 h-9 rounded-[7px] border-0 '
-              + 'bg-transparent cursor-pointer p-0 text-[12px] text-black/80 '
+              + 'bg-transparent cursor-pointer p-0 text-[12px] '
               + 'transition-colors duration-[120ms] hover:bg-black/[0.07] '
-              + (sides === n ? BTN_ON : '')}
+              + (sides === n ? NUM_ON : 'text-black/80')}
             onClick={() => onSides?.(n)}>{n}</button>
         ))}
         {SEP}
@@ -238,3 +268,78 @@ export default function ShapeMenu({
     </div>
   );
 }
+
+/* ---------------------------------------------------------------------------
+   THE GESTURE, DRAWN — for the panel, while a cove is being set out.
+
+   THE SAME IDIOM `GESTURE` IN LightPalette USES, and it is exported for the same
+   reason: the bar on the drawing and the card in the panel must describe ONE
+   gesture, and two drawings of it would drift the first time either was
+   retouched.
+
+   ONLY THE TWO OPEN COVES GET ONE, and that is the point rather than an
+   omission. Dragging out a rectangle is a marquee — every app has one, and a
+   picture of it would be a manual. What nobody can guess is that a LINE has to
+   land on a wall at both ends, and that a pen path can be finished without
+   closing it. A hint card is worth its space where the gesture is hard to
+   imagine or its result lands somewhere surprising.
+   --------------------------------------------------------------------------- */
+
+/** The room, as the faint box both pictures are drawn inside. */
+const Room = () => (
+  <>
+    <rect x="6" y="7" width="60" height="32" rx="1.5"
+      fill="var(--accent)" fillOpacity="0.05" stroke="none" />
+    <rect x="6" y="7" width="60" height="32" rx="1.5"
+      fill="none" stroke="var(--text-subtle)" strokeWidth="1" strokeOpacity="0.45" />
+  </>
+);
+
+/** Where a run lands: a dot ON the wall, which is the whole instruction. */
+const End = ({ cx, cy, open = false }) => (
+  <circle cx={cx} cy={cy} r="2.4" fill={open ? '#fff' : 'var(--accent)'}
+    stroke="var(--accent)" strokeWidth="1.5" />
+);
+
+const Pointer = ({ x, y }) => (
+  <g transform={`translate(${x} ${y})`}>
+    <path d="M0,0 L0,15 L4,11.2 L6.8,17.6 L9.6,16.4 L6.8,10.2 L12,10 Z"
+      fill="var(--accent)" stroke="#fff" strokeWidth="1.1" strokeLinejoin="round" />
+  </g>
+);
+
+export const SHAPE_GESTURE = {
+  /* A SLOT AT AN ANGLE ON PURPOSE. Drawn square to the room it would read as
+     "along a wall", which is the one thing this is not — that detail is the
+     reverse cove and it has a tool of its own. Both ends sit exactly on the
+     line work, and the pointer is off the wall with the end left behind on it:
+     that gap is what says the ends are pinned. */
+  line: (
+    <svg viewBox="0 0 72 46" className="w-[72px] h-[46px] block overflow-visible"
+      aria-hidden="true">
+      <Room />
+      <line x1="6" y1="16" x2="66" y2="29" stroke="var(--accent)" strokeWidth="2.4"
+        strokeLinecap="round" />
+      <End cx={6} cy={16} />
+      <End cx={66} cy={29} open />
+      <line x1="66" y1="29" x2="62" y2="36" stroke="var(--text-subtle)" strokeWidth="1"
+        strokeDasharray="2 2.5" />
+      <Pointer x={60} y={35} />
+    </svg>
+  ),
+  /* THE L, WITH ITS TWO ENDS ON TWO DIFFERENT WALLS and its corner out in the
+     open — which is exactly the rule: the ends answer to the plaster, the
+     corners are wherever you put them. */
+  pen: (
+    <svg viewBox="0 0 72 46" className="w-[72px] h-[46px] block overflow-visible"
+      aria-hidden="true">
+      <Room />
+      <polyline points="6,15 44,15 44,39" fill="none" stroke="var(--accent)"
+        strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      <End cx={6} cy={15} />
+      <circle cx="44" cy="15" r="1.9" fill="#fff" stroke="var(--accent)" strokeWidth="1.3" />
+      <End cx={44} cy={39} open />
+      <Pointer x={47} y={39} />
+    </svg>
+  ),
+};

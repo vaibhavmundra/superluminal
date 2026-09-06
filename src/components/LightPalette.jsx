@@ -112,7 +112,7 @@ export const LIGHT_TOOLS = [
  * cannot fall out of step: a tool added without artwork renders no image rather
  * than a broken one — see the guard at the call site.
  */
-const ICON = {
+export const LIGHT_ICON = {
   strip:  '/icons/led_strip.png',
   sconce: '/icons/sconce.png',
   spot:   '/icons/directional.png',
@@ -300,7 +300,7 @@ export default function LightPalette({ tool, objArmed = null, onPick, disabled =
   const cell = (t) => (
     /* THE CELL IS SHARED — see PaletteButton. What is left here is this
        palette's own part: which of the two machines a press arms. */
-    <PaletteButton key={t.id} icon={ICON[t.id]} label={t.label}
+    <PaletteButton key={t.id} icon={LIGHT_ICON[t.id]} label={t.label}
       on={isOn(t)} disabled={disabled}
       title={`${t.label} — ${t.hint}`}
       onClick={() => onPick(isOn(t) ? null : t.id, t.arms ?? 'tool')} />

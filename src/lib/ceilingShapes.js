@@ -38,8 +38,8 @@
 
 /**
  * WHAT CAN BE DRAWN. The order is the order of the floating menu, and it is
- * not alphabetical: rectangle first because it is the one everybody reaches
- * for, the pen last because it is the one that takes several clicks.
+ * not alphabetical: the simplest mark first — a line is one stroke — and the pen
+ * last, because it is the one that takes several clicks.
  *
  * `centred` IS THE GESTURE AND IT IS THE ONLY THING THAT SEPARATES THESE.
  * A rectangle is dragged corner to corner, the way every marquee in this app
@@ -48,12 +48,33 @@
  * bounding box) puts the thing you are drawing somewhere you are not pointing.
  */
 export const SHAPE_TOOLS = [
+  /* --- THE SIMPLEST COVE THERE IS, AND IT LEADS THE ROW ---------------------
+     Everything below this draws an ISLAND: a pocket run round a piece of
+     ceiling, with the room's own grid outside it. A line drawn wall to wall is
+     the other cove there is — a slot straight across the slab, the kind that
+     runs along one edge of a room or divides it in two — and it has no inside.
+
+     FIRST BECAUSE IT IS THE PLAINEST, which is the same reasoning that used to
+     put the rectangle here: a menu of primitives reads from the simplest mark to
+     the most involved, and a line is one stroke where a rectangle is four. The
+     pen stays last for the other half of that rule — it is the one that takes
+     several clicks.
+
+     `open` IS THE WHOLE DIFFERENCE and it is one flag rather than a family of
+     its own, because everything else about the two kinds is identical: the same
+     tape, the same billing by the metre. See `isOpen`.
+
+     `spans` IS THE RULE THAT MAKES IT BUILDABLE. A slot has to land on something
+     at both ends — plaster stops at a wall — so both endpoints are pinned to the
+     room's outline. A line between two points in mid-air is a detail nobody can
+     set out. */
+  { id: 'line',     label: 'Line',      centred: false, open: true, spans: true },
   { id: 'rect',     label: 'Rectangle', centred: false },
   { id: 'square',   label: 'Square',    centred: true },
   { id: 'circle',   label: 'Circle',    centred: true },
   { id: 'triangle', label: 'Triangle',  centred: true },
   { id: 'polygon',  label: 'Polygon',   centred: true, asks: 'sides' },
-  { id: 'pen',      label: 'Pen',       centred: false, path: true },
+  { id: 'pen',      label: 'Pen',       centred: false, path: true, canOpen: true },
 ];
 
 export const SHAPE_BY_ID = Object.fromEntries(SHAPE_TOOLS.map((t) => [t.id, t]));
@@ -83,6 +104,11 @@ export const newShapeId = () =>
    rather than about shapes — see coveClearOfOutline. This file knows how to move
    a shape and asks that one whether the answer is allowed. */
 import { coveClearOfOutline } from './cove.js';
+/* SHIFT MEANS ONE THING IN THIS APP, and it is defined once. The cove pen and
+   the track pen both lock through `axisLock`; the slot below reads the same
+   function so a locked drag and a locked click cannot end up square to different
+   things. */
+import { axisLock } from './pen.js';
 
 // --- small vector helpers ---------------------------------------------------
 
@@ -237,7 +263,10 @@ export function maxRadiusFt(shape) {
 }
 
 /** Can this shape's corners be rounded at all? A circle has none. */
-export const roundable = (shape) => shape?.kind !== 'circle';
+/** Can this shape's corners be rounded at all? A circle has none, and a slot's
+ *  corners are where it turns rather than where it closes — rounding one would
+ *  pull its ends off the walls they are pinned to. */
+export const roundable = (shape) => shape?.kind !== 'circle' && !isOpen(shape);
 
 /**
  * THE CLOSED OUTLINE, IN PLAN FEET.
@@ -253,11 +282,33 @@ export const roundable = (shape) => shape?.kind !== 'circle';
  * it would put the tape 3 in from the flats and 3 in from a DIFFERENT centre on
  * the curves.
  */
+/**
+ * IS THIS A SLOT ACROSS THE CEILING RATHER THAN A POCKET ROUND A PIECE OF IT?
+ *
+ * Asked in a dozen places and answered here once. A `line` always is; a `pen`
+ * path is whichever it was finished as — clicking the first point closes it,
+ * and Enter with both ends on a wall leaves it open. See SHAPE_TOOLS.
+ */
+export const isOpen = (shape) =>
+  shape?.kind === 'line' || (shape?.kind === 'pen' && !!shape.open);
+
 export function outlineFt(shape, grow = 0) {
   if (!shape) return [];
   const g = grow || 0;
   const { x = 0, y = 0, rot = 0 } = shape;
   const rr = Math.max(0, shape.radiusFt || 0) + g;
+
+  /* --- AN OPEN COVE IS ITS OWN LINE, AND `grow` DOES NOTHING TO IT ----------
+     Every closed shape here has an inside and an outside, and `grow` is how the
+     tape gets three inches outside the setting-out line. A slot has neither: the
+     tape runs ALONG it, down the middle of the pocket, so there is nowhere for
+     an offset to go. Offsetting it anyway would produce a second line three
+     inches to one side — which side being an accident of the winding — and the
+     drawing would carry two parallel runs for one detail.
+     SO THE LINE IS THE TAPE, and everything that asks for the grown outline gets
+     the same points back. The caller that draws both (see `coveShapesPx`) knows
+     to draw one. */
+  if (isOpen(shape)) return place(shape.pts ?? [], x, y, rot);
 
   if (shape.kind === 'circle') {
     return circlePts(x, y, Math.max(0.05, (shape.rFt || 0) + g), 72);
@@ -292,15 +343,27 @@ export const sidesOf = (shape) => (
   : shape.kind === 'square' ? 4
   : clamp(Math.round(shape.sides || POLY_SIDES.initial), POLY_SIDES.min, POLY_SIDES.max));
 
-/** The outline's own length, which is what a strip is billed by. */
-export function pathLengthFt(pts) {
+/**
+ * The outline's own length, which is what a strip is billed by.
+ *
+ * `closed` DEFAULTS TRUE because every shape in this file was a closed one when
+ * it was written, and a run that does not come back to its start must not be
+ * billed for the leg home — on an L across a room that leg is the diagonal, and
+ * it is the longest part of what would be ordered.
+ */
+export function pathLengthFt(pts, { closed = true } = {}) {
   let l = 0;
-  for (let i = 0, n = pts.length; i < n; i++) {
+  const n = pts.length;
+  for (let i = 0; i < (closed ? n : n - 1); i++) {
     const p = pts[i], q = pts[(i + 1) % n];
     l += Math.hypot(q.x - p.x, q.y - p.y);
   }
   return l;
 }
+
+/** How long a shape's tape is, whichever kind it is. */
+export const runLengthFt = (shape) =>
+  pathLengthFt(outlineFt(shape), { closed: !isOpen(shape) });
 
 /** The box the shape fits in, in plan feet. */
 export function bboxFt(shape, grow = 0) {
@@ -329,8 +392,32 @@ export function coveRectFt(shape) {
   return { x0: r(b.x0), y0: r(b.y0), x1: r(b.x1), y1: r(b.y1) };
 }
 
-/** Is this point inside the shape? Point-in-polygon on its own outline. */
+/** How far a point is from a segment. */
+function distToSeg(p, a, b) {
+  const vx = b.x - a.x, vy = b.y - a.y;
+  const l2 = vx * vx + vy * vy;
+  if (l2 < 1e-12) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = clamp(((p.x - a.x) * vx + (p.y - a.y) * vy) / l2, 0, 1);
+  return Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t));
+}
+
+/**
+ * Is this point ON the shape?
+ *
+ * POINT-IN-POLYGON FOR A POCKET AND DISTANCE-TO-THE-LINE FOR A SLOT, and the
+ * two are not interchangeable: a slot has no interior, so the containment test
+ * answers false everywhere and an open cove would be an object nobody could
+ * pick up. `tolFt` is the grab band either side of the line, which for a closed
+ * shape is a grown outline and for this is what it says.
+ */
 export function hitShape(shape, pFt, tolFt = 0) {
+  if (isOpen(shape)) {
+    const pts = outlineFt(shape);
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (distToSeg(pFt, pts[i], pts[i + 1]) <= Math.max(tolFt, 1e-6)) return true;
+    }
+    return false;
+  }
   const pts = outlineFt(shape, tolFt);
   let inside = false;
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
@@ -425,7 +512,8 @@ export function clampCoveMove(shape, want, polygon = [], gap = 0) {
  * has. So it converts rather than refusing. See `resizeShape`.
  */
 export const stretchy = (shape) =>
-  shape?.kind === 'rect' || shape?.kind === 'pen' || shape?.kind === 'square';
+  !isOpen(shape)
+  && (shape?.kind === 'rect' || shape?.kind === 'pen' || shape?.kind === 'square');
 
 /** The box the shape's own geometry fits in, WITHOUT its corner radius.
  *  Rounding a corner pulls the outline in a little — visibly so on a triangle's
@@ -517,6 +605,12 @@ export function resizeShape(shape, handle, pointerFt, { uniform = false } = {}) 
  * a grip that silently does the same thing as the corner beside it.
  */
 export function handlesFor(shape) {
+  /* A SLOT HAS NO GRIPS AT ALL, and that is not an omission. Its ends are pinned
+     to the walls — see `spanOnOutline` — so a corner drag on its bounding box
+     would pull them off the plaster, and a slot floating in the middle of a room
+     is a detail nobody can build. It is moved and deleted; to change where it
+     goes, draw it again. */
+  if (isOpen(shape)) return [];
   const corners = [{ sx: -1, sy: -1 }, { sx: 1, sy: -1 },
                    { sx: 1, sy: 1 }, { sx: -1, sy: 1 }];
   if (!stretchy(shape)) return corners;
@@ -541,6 +635,9 @@ export const frameFt = (shape) => baseBox(shape);
 export function shapeFromDrag(kind, aFt, bFt, { sides = POLY_SIDES.initial,
                                                 uniform = false,
                                                 radiusFt = 0 } = {}) {
+  // A LINE IS THE ONE DRAG WHOSE TWO ENDS ARE BOTH REAL POINTS — not a corner
+  // and its opposite, not a centre and a radius, but the two ends of the slot.
+  if (kind === 'line') return lineShape(aFt, bFt);
   if (kind === 'rect') {
     let w = Math.abs(bFt.x - aFt.x), h = Math.abs(bFt.y - aFt.y);
     let cx = (aFt.x + bFt.x) / 2, cy = (aFt.y + bFt.y) / 2;
@@ -575,7 +672,7 @@ export function shapeFromDrag(kind, aFt, bFt, { sides = POLY_SIDES.initial,
  * Stored about its own centroid rather than about the first click, so moving a
  * pen shape moves it the way every other shape moves — from the middle.
  */
-export function penShape(ptsFt, { radiusFt = 0 } = {}) {
+export function penShape(ptsFt, { radiusFt = 0, open = false } = {}) {
   const pts = [];
   for (const p of ptsFt ?? []) {
     const last = pts[pts.length - 1];
@@ -586,20 +683,201 @@ export function penShape(ptsFt, { radiusFt = 0 } = {}) {
   while (pts.length > 2
          && Math.hypot(pts[pts.length - 1].x - pts[0].x,
                        pts[pts.length - 1].y - pts[0].y) < 1e-4) pts.pop();
-  if (pts.length < 3) return null;
+  /* TWO POINTS IS A SLOT AND THREE IS A POCKET. An open run only needs somewhere
+     to start and somewhere to stop; a closed one needs an area, and two points
+     enclose none. */
+  if (pts.length < (open ? 2 : 3)) return null;
   const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
   const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
   return {
     kind: 'pen', x: cx, y: cy, rot: 0, radiusFt,
+    ...(open ? { open: true } : null),
     pts: pts.map((p) => ({ x: p.x - cx, y: p.y - cy })),
+  };
+}
+
+/**
+ * A SLOT FROM ONE WALL TO ANOTHER — two points, and both of them are somebody
+ * else's problem: this takes the pair it is given and shapes them. Where they
+ * are allowed to be is `spanOnOutline`'s question, and it is asked before this
+ * is called so that a refused span never becomes a shape at all.
+ *
+ * Held about its own centroid like a pen path, so it moves, hit-tests and draws
+ * through the same code every other shape does.
+ */
+export function lineShape(aFt, bFt) {
+  if (!aFt || !bFt) return null;
+  if (Math.hypot(bFt.x - aFt.x, bFt.y - aFt.y) < 1e-4) return null;
+  const cx = (aFt.x + bFt.x) / 2, cy = (aFt.y + bFt.y) / 2;
+  return {
+    kind: 'line', x: cx, y: cy, rot: 0, radiusFt: 0, open: true,
+    pts: [{ x: aFt.x - cx, y: aFt.y - cy }, { x: bFt.x - cx, y: bFt.y - cy }],
   };
 }
 
 /** Big enough to be a shape? See MIN_SPAN_FT. */
 export function bigEnough(shape) {
   if (!shape) return false;
+  /* A SLOT IS MEASURED ALONG ITSELF AND NOT ACROSS ITS BOX. A cove running the
+     length of one wall is a rectangle a foot high and twenty feet long as far as
+     a bounding box is concerned, and the box test would refuse it for being thin
+     — which is the one dimension a slot does not have. */
+  if (isOpen(shape)) return runLengthFt(shape) >= MIN_SPAN_FT;
   const b = bboxFt(shape);
   return (b.x1 - b.x0) >= MIN_SPAN_FT && (b.y1 - b.y0) >= MIN_SPAN_FT;
+}
+
+/* ---------------------------------------------------------------------------
+   PINNING A SLOT'S ENDS TO THE WALLS.
+
+   A COVE THAT STOPS IN MID-AIR IS NOT A DETAIL. The pocket is formed in
+   plasterboard and the board has to land on something: a slot runs wall to wall,
+   or it runs to a bulkhead that is itself a wall. So both ends of an open cove
+   are PROJECTED onto the room's outline rather than merely checked against it —
+   the end goes where the wall is, not where the pointer was, which is the same
+   move `placeZone` makes for a sconce and for the same reason. A tolerance would
+   mean a cove that is nearly on the wall, which is a cove nobody can set out.
+
+   AND THE TWO ENDS MUST BE ON DIFFERENT WALLS. Both on one wall is not a slot
+   across the ceiling, it is a line lying along the plaster — which is a reverse
+   cove, and this app already has a tool for that. Refusing it here is what stops
+   the two details being drawn with the wrong one.
+   --------------------------------------------------------------------------- */
+
+/**
+ * The closest point on a polygon's boundary, and which edge it landed on.
+ *
+ * `{ x, y, edge, dist }`, or null for a polygon that is not one. `edge` is the
+ * index of the side it sits on — the run from point i to point i+1 — which is
+ * what "a different wall" is asked against.
+ */
+export function projectOnOutline(pFt, polygonFt) {
+  const poly = polygonFt ?? [];
+  if (poly.length < 2 || !pFt) return null;
+  let best = null;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const vx = b.x - a.x, vy = b.y - a.y;
+    const l2 = vx * vx + vy * vy;
+    if (l2 < 1e-12) continue;
+    const t = clamp(((pFt.x - a.x) * vx + (pFt.y - a.y) * vy) / l2, 0, 1);
+    const q = { x: a.x + vx * t, y: a.y + vy * t };
+    const d = Math.hypot(pFt.x - q.x, pFt.y - q.y);
+    if (!best || d < best.dist) best = { x: q.x, y: q.y, edge: i, dist: d };
+  }
+  return best;
+}
+
+/**
+ * WHERE A RAY LEAVES THE ROOM — the first wall it crosses, and which one.
+ *
+ * Only the locked span needs this, and it is the whole of why the lock can be
+ * exact. Projecting a locked pointer onto the nearest wall would put the far end
+ * NEAR the axis and ON the wall, which is not the same thing as on both: the run
+ * would come out a degree or two off square, which on a ceiling detail is the
+ * difference between a drawing and a drawing somebody has to correct. Walking
+ * the ray out to the plaster gives a point that is exactly on the axis AND
+ * exactly on the wall, because it is the intersection of the two.
+ *
+ * THE FIRST CROSSING AND NOT THE FURTHEST. An L-shaped room's outline can be
+ * crossed twice by one ray; the cove stops at the first wall it meets, the way
+ * the plasterboard would.
+ *
+ * `eps` KEEPS IT OFF ITS OWN STARTING WALL. `from` is a point already ON the
+ * boundary, so the edge it sits on intersects at t = 0 — which is the ray
+ * arriving rather than leaving.
+ */
+export function rayExit(from, dir, polygonFt) {
+  const poly = polygonFt ?? [];
+  if (poly.length < 2 || !dir) return null;
+  const eps = 1e-6;
+  let best = null;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const ex = b.x - a.x, ey = b.y - a.y;
+    const den = dir.x * ey - dir.y * ex;
+    if (Math.abs(den) < 1e-12) continue;               // parallel: never crosses
+    const t = ((a.x - from.x) * ey - (a.y - from.y) * ex) / den;
+    const u = ((a.x - from.x) * dir.y - (a.y - from.y) * dir.x) / den;
+    if (t <= eps || u < -1e-9 || u > 1 + 1e-9) continue;
+    if (!best || t < best.t) {
+      best = { t, x: from.x + dir.x * t, y: from.y + dir.y * t, edge: i };
+    }
+  }
+  return best;
+}
+
+/**
+ * BOTH ENDS OF A SLOT, PUT ON THE WALLS, or null if this span cannot be one.
+ *
+ * Takes the two points the pointer named and returns the pair that would
+ * actually be built: `{ a, b, edgeA, edgeB }`. Null means refuse, and there are
+ * three reasons — the ends came out on the same wall, the run that is left is
+ * too short to be a run, or a locked run was aimed along the wall it started
+ * from. All three are refusals a person can act on by moving the pointer, which
+ * is why this is asked on every move and not only on release.
+ *
+ * `lock` IS SHIFT, AND IT IS THE SAME LOCK THE PEN HAS — horizontal or vertical,
+ * whichever the drag is more nearly already making. See `axisLock`, which is
+ * imported rather than reimplemented so the two tools cannot come to disagree
+ * about what Shift means.
+ */
+export function spanOnOutline(aFt, bFt, polygonFt, { lock = false } = {}) {
+  const a = projectOnOutline(aFt, polygonFt);
+  if (!a) return null;
+
+  let b;
+  if (lock) {
+    const to = axisLock(a, bFt);
+    const d = { x: to.x - a.x, y: to.y - a.y };
+    const l = Math.hypot(d.x, d.y);
+    if (l < 1e-9) return null;
+    /* A LOCKED RAY ALONG THE WALL IT STARTED ON IS NOT A SLOT. It would run to
+       the far corner and be caught by whichever wall turns there — two different
+       edges by the letter of the rule, and a line lying flat on the plaster in
+       fact, which is a reverse cove. Refused here rather than let through on a
+       technicality. */
+    const w = poly2(polygonFt, a.edge);
+    if (w && Math.abs((d.x / l) * w.x + (d.y / l) * w.y) > 0.999) return null;
+    b = rayExit(a, { x: d.x / l, y: d.y / l }, polygonFt);
+  } else {
+    b = projectOnOutline(bFt, polygonFt);
+  }
+
+  if (!b || a.edge === b.edge) return null;
+  if (Math.hypot(b.x - a.x, b.y - a.y) < MIN_SPAN_FT) return null;
+  return { a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, edgeA: a.edge, edgeB: b.edge };
+}
+
+/** The unit direction of one edge of a polygon. */
+function poly2(polygonFt, i) {
+  const poly = polygonFt ?? [];
+  if (i == null || i < 0 || i >= poly.length) return null;
+  const a = poly[i], b = poly[(i + 1) % poly.length];
+  const l = Math.hypot(b.x - a.x, b.y - a.y);
+  return l < 1e-9 ? null : { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+}
+
+/**
+ * IS THIS PEN PATH A SLOT? Both ends on the outline, and enough of a run in
+ * between — the L-shaped case, where the corners are wherever somebody put them
+ * and only the two ends are answerable to the walls.
+ *
+ * `tolFt` IS REAL HERE WHERE IT IS NOT FOR A LINE, and the difference is the
+ * gesture. A line is DRAGGED, so its ends can be projected onto the wall
+ * continuously and land exactly on it. A pen path is CLICKED, and the clicks
+ * that are not ends are free points in the middle of the room — projecting the
+ * last one would move a corner somebody placed. So the path is offered as it was
+ * drawn, and this says whether it may be finished open.
+ */
+export function penSpansOutline(ptsFt, polygonFt, tolFt) {
+  const pts = ptsFt ?? [];
+  if (pts.length < 2) return false;
+  const a = projectOnOutline(pts[0], polygonFt);
+  const b = projectOnOutline(pts[pts.length - 1], polygonFt);
+  if (!a || !b) return false;
+  return a.dist <= tolFt && b.dist <= tolFt
+    && pathLengthFt(pts, { closed: false }) >= MIN_SPAN_FT;
 }
 
 /** A finished shape: whatever the draft was, plus an identity. */
@@ -610,6 +888,9 @@ export const sealShape = (draft) => ({ ...draft, id: newShapeId() });
 export function sizeLabel(shape) {
   const b = bboxFt(shape);
   const f = (v) => (Math.round(v * 10) / 10).toFixed(1);
+  // A SLOT IS A LENGTH, not a box. "18.0 x 0.0 ft" is the bounding box of a
+  // straight run and says nothing anybody wants to know about it.
+  if (isOpen(shape)) return `${f(runLengthFt(shape))} ft run`;
   if (shape.kind === 'circle') return `${f((shape.rFt || 0) * 2)} ft ⌀`;
   return `${f(b.x1 - b.x0)} × ${f(b.y1 - b.y0)} ft`;
 }

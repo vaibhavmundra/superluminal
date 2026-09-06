@@ -16,18 +16,24 @@ import React from 'react';
 // which machine a press arms — the rows own all of that, which is why three
 // quite different palettes can share it.
 //
-// THE BLACK IS THE GROUND, EDGE TO EDGE. The icon used to be a 40px stamp
-// floating in a frosted cell, which spent most of the button's area on the
-// panel showing through and left the artwork too small to read. Icon and label
-// sit on one black field now, so nothing inside draws its own box and the whole
-// square reads as the symbol.
+// THE BLACK IS THE GROUND, EDGE TO EDGE, AND NOW SO IS THE PICTURE. The icon
+// used to be a stamp floating inside a padded, bordered, rounded cell — so every
+// button drew its own box, the rail was a column of boxes on a second ground,
+// and the artwork was two thirds the width it had to play with. There is one
+// black field now: the rail's, the button's and the image's are the same black
+// and no edge separates them, so what you see down the column is the symbols.
 //
-// HOVER AND ARMED ARE BOTH EDGES, for the same reason: swapping the fill would
-// re-introduce the box the black ground exists to remove. Armed takes the
-// accent ramp as a 1px ring — `gradient-ring` is a ::before masked to its own
-// 1px padding, defined in styles.css beside the gradient it reads, because a
-// border cannot hold one. `border-transparent` keeps the button's SIZE
-// identical armed and not: the border box is still 1px, it just stops painting.
+// NO PADDING AND NO RADIUS ON THE CELL. Both existed to keep the picture off the
+// border, and there is no border. The caption keeps a few pixels under it,
+// because type against the next button's artwork is not a margin anybody
+// intended.
+//
+// HOVER AND ARMED ARE BOTH LIGHT RATHER THAN EDGES. On a bordered cell an edge
+// was the only mark available; on a full-bleed one a hairline round the picture
+// would put the box straight back. Hover lifts the ground a few percent; armed
+// takes the accent ramp as a 1px ring — `gradient-ring` is a ::before masked to
+// its own 1px padding, defined in styles.css beside the gradient it reads,
+// because a border cannot hold one, and it needs no border to sit on.
 // ---------------------------------------------------------------------------
 
 /**
@@ -40,12 +46,12 @@ export default function PaletteButton({ icon, label, on = false, disabled = fals
   return (
     <button type="button" disabled={disabled} onClick={onClick}
       title={title ?? label} aria-pressed={on}
-      className={'flex flex-col items-center gap-[4px] p-[6px] bg-black '
-        + 'rounded-[8px] border cursor-pointer transition-colors duration-[120ms] '
+      className={'flex flex-col items-center gap-[1px] p-0 pb-[5px] bg-black '
+        + 'border-0 cursor-pointer transition-colors duration-[120ms] '
         + 'disabled:opacity-[.45] disabled:cursor-not-allowed '
-        + (on
-          ? 'border-transparent gradient-ring'
-          : 'border-border/10 enabled:hover:border-border/40')}
+        + 'focus-visible:outline-2 focus-visible:outline-accent '
+        + 'focus-visible:outline-offset-[-2px] '
+        + (on ? 'gradient-ring' : 'enabled:hover:bg-white/[0.07]')}
       {...rest}>
       {/* alt="" ON PURPOSE: the label below is the accessible name, and a screen
           reader reading "fan" twice is worse than not drawing the picture for it

@@ -61,7 +61,7 @@ import PaletteButton from './PaletteButton.jsx';
    takes over the panel while it is armed — the same shape LightPalette uses for
    the chandelier, and for the same reason: the row is a row of things to place,
    not a row of one machine's tools. */
-const GROUPS = [
+export const CEILING_GROUPS = [
   { key: 'fan',        ids: ['fan'],       icon: '/icons/fan.png' },
   /* LABELLED FOR WHAT IT PLACES, WHICH IS A SOCKET. It is a switchboard — one
      socket and no switch, the one composition allowed to have none — and calling
@@ -87,7 +87,7 @@ const GROUPS = [
 export default function CeilingPalette({ armed, onArm, disabled = false }) {
   return (
     <div className="grid grid-cols-3 gap-[5px] mt-2">
-      {GROUPS.map((g) => {
+      {CEILING_GROUPS.map((g) => {
         // Armed if ANY of the group's types is, so choosing "trap door" in the
         // row below keeps this button lit rather than appearing to disarm it.
         // A disarmed group arms its first type again — the chooser row is

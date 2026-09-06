@@ -119,6 +119,17 @@ const poolFtFor = (fx) =>
  * `THROW_STYLE.day.rim`. Nothing outside this file needs it.
  */
 
+/**
+ * THE THREE WALL TONES, AS INK — see the wall step at the foot of this file.
+ *
+ * A greyscale and not the accent ramp, because these three ARE a greyscale:
+ * "light", "medium" and "dark" is what somebody says about a finish, and any
+ * hue at all would be the drawing inventing a colour for a wall it has not been
+ * told the colour of. The two ends stop short of pure white and pure black so
+ * that each still reads as paint against the casing behind it.
+ */
+const WALL_TONE_INK = { light: '#F2F2F2', medium: '#8A8A8A', dark: '#242424' };
+
 const PlanCanvas = forwardRef(function PlanCanvas(
   { src, srcAsScanned = null, vector = null, wallLayers = null,
     width, height, plans = [], focusId = null, selectedId = null,
@@ -223,7 +234,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     // WHICH SPOT IS PICKED, AND HOW ONE GETS PICKED. Optional like every other
     // handler here: a canvas given neither is a drawing whose spots cannot be
     // selected, which is what the read-only sheet wants.
-    selSpotId = null, onSpotPointerDown = null,
+    /* --- WHICH SPOT IS PICKED, AND HOW ONE GETS PICKED ----------------------
+       Optional like every other handler here: a canvas given neither is a
+       drawing whose spots cannot be selected, which is what the read-only sheet
+       wants.
+       `spotsLive` IS THE ONE EXEMPTION FROM `placing`. Every fitting on this
+       sheet goes inert while a tool is armed — see `placing` — and the spot tool
+       is the one that stays armed for a whole step, so without this a spot could
+       never be picked up during the only screen on which spots are placed. Set
+       by the caller for that tool and no other; the reasoning about why the spot
+       and not the pens is in `spotPointerDown` in App.jsx. */
+    selSpotId = null, onSpotPointerDown = null, spotsLive = false,
     // THE RENDER PASS'S READING. A list of wall features, each already reduced
     // to ONE rectangle in plan pixels — the union of its run of grid cells —
     // plus the individual cells for the tick marks. See wallGrid.js.
@@ -281,6 +302,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     // done about it. `optionPick` is { roomId, key }; `plans[i].design` carries
     // the chunks themselves. See the pill at the foot of this file.
     optionPick = null, onPickChunk = null, onCycleOption = null,
+    /* --- WHICH SPACE'S WALLS ARE BEING ANSWERED FOR -------------------------
+       `{ roomId, polygonPx, tones, selected }` or null, and it is a STEP rather
+       than a layer: while it is set the whole sheet goes inert and the edges of
+       that one polygon are the only live things on it. See the block at the
+       foot of this file.
+       `tones` is edge index -> tone, and the index is into `polygonPx` — the
+       edge from point i to point i+1. This file draws geometry; what a tone
+       MEANS is materials.js's business and the panel's. */
+    wallEdit = null, onWallSegment = null,
     placeSnap = null, sconceGhost = null, cursor = null },
   ref
 ) {
@@ -320,7 +350,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
    * mousemove made the card jitter under the cursor and told nobody anything
    * they did not already have.
    */
-  const feel = (id, spec) => (placing ? INERT : {
+  const feel = (id, spec, inert = placing) => (inert ? INERT : {
     onMouseEnter: (e) => {
       setHot(id);
       if (spec) onFixture?.({ ...spec, x: e.clientX, y: e.clientY });
@@ -571,8 +601,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           selects a space or clears the selection, and the browser synthesises it
           after every press this layer has already answered — so without this a
           box drawn over a bedroom would also select the bedroom, and the panel
-          the step just emptied would fill back up underneath the question. */
-      onClick={doorEdit ? undefined : onCanvasClick}
+          the step just emptied would fill back up underneath the question.
+          ...AND WHILE THE WALLS ARE BEING ANSWERED FOR, for the same reason and
+          then one more: a click that missed a wall would clear the selection,
+          which is the very space the step is about — so the step would empty
+          itself out from under the person using it. */
+      onClick={doorEdit || wallEdit ? undefined : onCanvasClick}
       onPointerDown={onZoneDown} onPointerMove={onZoneMove}
       onPointerUp={onZoneUp} onPointerCancel={onZoneUp}
     >
@@ -2607,7 +2641,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               const S = STRIP_STYLE;
               const boost = hot === a.id ? S.hoverBoost : 0;
               const dot = lw * S.dash, gapl = lw * S.gap;
-              const d = a.loop.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ') + ' Z';
+              /* `Z` UNLESS THE RUN IS OPEN. Every other loop on this sheet is
+                 a closed circuit — a cove round an island, a shelf ring — and
+                 closing it is right. A slot drawn wall to wall is not: an
+                 L-shaped one would grow a leg straight back across the room,
+                 billed and drawn and never built. See the open coves in
+                 `accentZonesPx`. */
+              const d = a.loop.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
+                + (a.open ? '' : ' Z');
               return (
                 <g>
                   <path d={d} fill="none" stroke={tape}
@@ -3344,7 +3385,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           // will select. The hit shapes inside — the capsule's rect, the recessed
           // circle — are what the pointer actually lands on, and the arrow and
           // the ring come with them.
-          <g key={sp.id} {...feel(sp.id, specsFor(sp.fixture || 'spot'))}
+          <g key={sp.id}
+            {...feel(sp.id, specsFor(sp.fixture || 'spot'), placing && !spotsLive)}
             onPointerDown={onSpotPointerDown
               ? (ev) => onSpotPointerDown(ev, sp.id) : undefined}>
             {/* PICKED. A ring around the fitting and nothing else: a spot has no
@@ -3682,8 +3724,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           outside it. They are one object to anybody looking at the sheet, so
           both have to answer the press — see `tape` in coveShapesPx. */}
       {(coveShapes.length > 0 || draftShape || penDraft) && (() => {
-        const path = (pts) =>
-          pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ') + ' Z';
+        /* `open` DROPS THE CLOSING LEG, for the reason the accent runs give: a
+           cove drawn from one wall to another is a line and not a circuit, and a
+           Z on it draws a side nobody set out. */
+        const path = (pts, open = false) =>
+          pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ') + (open ? '' : ' Z');
         // WHITE WHERE WHITE READS, following the cove line and the ceiling
         // objects rather than inventing a third answer. See the note by `col`
         // in the fansPx block.
@@ -3698,17 +3743,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     tick having thrown it away. Drawn as the setting-out line it
                     will become the moment the space is lit. */}
                 {!sh.lit && (
-                  <path d={path(sh.pts)} fill="none" stroke={ink} strokeWidth={lw}
+                  <path d={path(sh.pts, sh.open)} fill="none" stroke={ink} strokeWidth={lw}
                     strokeDasharray={dot} strokeLinecap="round" strokeLinejoin="round"
                     opacity="0.55" pointerEvents="none" />
                 )}
                 {selShapeId === sh.id && (
-                  <path d={path(sh.pts)} fill="none" stroke={C.lit}
+                  <path d={path(sh.pts, sh.open)} fill="none" stroke={C.lit}
                     strokeWidth={lw * 2.2} strokeLinejoin="round"
                     opacity="0.95" pointerEvents="none" />
                 )}
                 {onShapePointerDown && [sh.pts, sh.tape].filter(Boolean).map((band, i) => (
-                  <path key={i} className="hit" d={path(band)} fill="none"
+                  <path key={i} className="hit" d={path(band, sh.open)} fill="none"
                     stroke="transparent" strokeWidth={Math.max(lw * 8, 6)}
                     strokeLinejoin="round"
                     style={{ pointerEvents: 'stroke', cursor: 'move' }}
@@ -3795,8 +3840,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 rather than as four more lines crossing the ones already there. */}
             {draftShape && (
               <g pointerEvents="none">
-                <path d={path(draftShape.pts)} fill={C.lit} opacity="0.07" />
-                <path d={path(draftShape.pts)} fill="none" stroke={C.lit}
+                {/* NO WASH INSIDE A SLOT. The fill says "this is the piece of
+                    ceiling the pocket runs round"; an open cove runs round
+                    nothing, and filling the triangle between its ends and the
+                    closing leg would shade a region that is not part of it. */}
+                {!draftShape.open && (
+                  <path d={path(draftShape.pts)} fill={C.lit} opacity="0.07" />
+                )}
+                <path d={path(draftShape.pts, draftShape.open)} fill="none" stroke={C.lit}
                   strokeWidth={lw * 1.8} strokeLinejoin="round"
                   strokeDasharray={`${lw * 5} ${lw * 4}`} strokeLinecap="round" />
               </g>
@@ -4220,6 +4271,90 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           </>}
         </g>
       )}
+
+      {/* --- CONFIGURING THE WALLS, AND IT SITS OVER EVERYTHING -------------
+          THE DOOR STEP'S SHAPE, FOR THE DOOR STEP'S REASON. It is a modal step
+          in front of the sheet rather than a layer of it: the drawing keeps
+          drawing underneath — washed, so the one space being asked about is the
+          only thing that reads — and not one mark on it may take the press.
+
+          ONE SPACE, AND ONLY ITS EDGES ARE LIVE. Every other room on the plan
+          is still there and is deliberately inert; the question is what THIS
+          room is finished in, and a click that landed on the neighbour's wall
+          would answer a question nobody asked.
+
+          THE CASING IS WHAT MAKES A TONE READABLE ON EITHER GROUND. A light
+          wall is near-white and a dark wall is near-black, and this canvas has
+          both a white page and a negative — so each edge is drawn twice: a grey
+          casing wide enough to separate the core from whatever is behind it,
+          then the tone itself. The same trick a survey drawing uses, and the
+          reason the dark end of the scale does not disappear on the negative.
+
+          THE HIT BAND IS WIDER THAN EITHER. An outline traced over somebody
+          else's wall line is a few pixels from a dozen other marks; a band
+          about a finger wide is what makes "click the wall" a gesture rather
+          than an aiming exercise. */}
+      {wallEdit?.polygonPx?.length > 1 && (() => {
+        const poly = wallEdit.polygonPx;
+        const tones = wallEdit.tones ?? {};
+        const segs = poly.map((a, i) => ({
+          i, a, b: poly[(i + 1) % poly.length],
+          tone: WALL_TONE_INK[tones[i]] ? tones[i] : 'light',
+        })).filter((s) => s.a.x !== s.b.x || s.a.y !== s.b.y);
+        return (
+          <g>
+            {/* THE SHEET THAT SWALLOWS EVERY OTHER PRESS. Two things make it
+                work and both are easy to leave out.
+                `fill="transparent"` AND NOT `fill="none"` — see the door step
+                above: `none` is the absence of a fill, and a shape with no fill
+                is not a pointer target at all.
+                AND `.hit`, WHICH IS THE HALF THAT IS EASY TO MISS. Everything
+                inside `.plan` is `pointer-events: none` by default and controls
+                opt back in with this class — see the rule in styles.css. Without
+                it this rect is a picture of a press target: the cove shapes
+                underneath it stay grabbable, and the step's own bands below
+                receive nothing at all. */}
+            <rect className="hit" x="0" y="0" width={width} height={height}
+              fill="transparent" />
+            <g strokeLinecap="round">
+              {/* WHICH ONE IS BEING ANSWERED, AND IT IS DRAWN UNDERNEATH. Only
+                  ever set while the popup is open, so it is the drawing saying
+                  what the card is about. Under the casing rather than over it,
+                  because over it a wide ramp would cover the very tone the card
+                  is offering to change — the selected wall would be the one wall
+                  whose colour you could not read. Wider than the casing, so what
+                  shows is a rim: a halo round the wall rather than a repaint
+                  of it. */}
+              {segs.filter((s) => s.i === wallEdit.selected).map((s) => (
+                <line key="wsel" x1={s.a.x} y1={s.a.y} x2={s.b.x} y2={s.b.y}
+                  stroke="url(#lp-sel-ramp)" strokeWidth={lw * 12}
+                  opacity="0.9" pointerEvents="none" />
+              ))}
+              {segs.map((s) => (
+                <line key={'wc' + s.i} x1={s.a.x} y1={s.a.y} x2={s.b.x} y2={s.b.y}
+                  stroke="#7A7A7A" strokeWidth={lw * 7} pointerEvents="none" />
+              ))}
+              {segs.map((s) => (
+                <line key={'wt' + s.i} x1={s.a.x} y1={s.a.y} x2={s.b.x} y2={s.b.y}
+                  stroke={WALL_TONE_INK[s.tone]} strokeWidth={lw * 4.2}
+                  pointerEvents="none" />
+              ))}
+              {segs.map((s) => (
+                /* `.hit` FOR THE REASON THE SHEET ABOVE CARRIES IT — this is a
+                   control, and controls inside `.plan` have to say so. */
+                <line className="hit" key={'wh' + s.i}
+                  x1={s.a.x} y1={s.a.y} x2={s.b.x} y2={s.b.y}
+                  stroke="transparent" strokeWidth={lw * 16}
+                  style={{ cursor: 'pointer' }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    onWallSegment?.(s.i, e);
+                  }} />
+              ))}
+            </g>
+          </g>
+        );
+      })()}
     </svg>
   );
 });
