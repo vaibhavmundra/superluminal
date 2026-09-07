@@ -38,6 +38,7 @@ import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, sn
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import { LIGHT_TOOLS, GESTURE } from './components/LightPalette.jsx';
+import { owns, canGrab } from './lib/pressOwner.js';
 import { Logo } from './components/Wordmark.jsx';
 import ShapeMenu, { SHAPE_GESTURE } from './components/ShapeMenu.jsx';
 import { SHAPE_BY_ID, POLY_SIDES, shapeFromDrag, penShape, sealShape, clampCoveMove,
@@ -1917,6 +1918,24 @@ export default function App({
   // is part of the design — but it must not reopen mid-edit either.
   const [doorsOk, setDoorsOk] = useState(false);
   const [doorEdit, setDoorEdit] = useState(false);
+
+  /* --- WHICH MACHINE OWNS THE NEXT PRESS ----------------------------------
+     ONE MEMO, AND THE RULE THAT READS IT IS IN lib/pressOwner.js. This canvas
+     has one pointer pipeline and seven machines that can own a press on it, and
+     the arbitration between them used to be a guard expression hand-copied into
+     every handler that had to obey it — in variants that differed only by which
+     terms they remembered. A variant missing one term is indistinguishable from
+     a correct one by reading, which is how the track diffuser and the track spot
+     came to be completely unplaceable. See the header of that file for the
+     precedence and the reason for each rank.
+
+     IT DOES NOT CARRY `readOnly`, `pxPerFt` OR `source`. The first is a veto on
+     editing rather than a machine; the other two ask "is there a drawing at
+     all", which is a different question with a different answer when it fails.
+     All three stay as their own checks beside this one at the call sites. */
+  const pressState = useMemo(() => ({
+    doorEdit, boardPlace, zoneMode, armed, addTool, shapeMenuOn, shapeTool,
+  }), [doorEdit, boardPlace, zoneMode, armed, addTool, shapeMenuOn, shapeTool]);
   /* `zoneEdit` IS THE DOOR EDITOR'S TWIN, and it is a screen rather than a
      decision, so like `doorEdit` it is not saved. `zoneMode` is the older flag
      and it stays: that one says the canvas's pointer is boxing out a zone, and
@@ -9937,7 +9956,7 @@ export default function App({
    */
   const lightPointerDown = (e, roomId, l) => {
     if (e.button != null && e.button !== 0) return;
-    if (addTool || zoneMode || armed || boardPlace) return;
+    if (!canGrab(pressState)) return;
     if (!l.bandPx || !l.cellKey || !pxPerFt) return;
     e.preventDefault();
     e.stopPropagation();
@@ -10103,7 +10122,7 @@ export default function App({
        would be swallowed here and the new shape would never start. The caller
        withholds the handler for exactly the same set (so the grab area is not
        even drawn); this is the local reading of it. */
-    if (addTool || zoneMode || armed || boardPlace || (shapeMenuOn && shapeTool)) return;
+    if (!canGrab(pressState)) return;
     /* --- THE BAR IS OPEN, AND THIS SHAPE IS THE OTHER ROLE ------------------
        THEN THE PRESS TAKES IT RATHER THAN SELECTING IT. This is the same act
        `shapeToolDown` performs; which handler gets it depends only on whether a
@@ -11406,7 +11425,12 @@ export default function App({
        press that starts on an existing spot is a press on a fitting a few pixels
        across, and selecting it is what somebody meant. Dragging a box that
        happens to cover one still works — start it anywhere but on the fitting. */
-    if ((addTool && addTool !== 'spot') || zoneMode) return;
+    /* THE EXEMPTION HAS A NAME, so it cannot be read as a guard that forgot a
+       term. `pressOwner` says the TOOL owns this press — see lib/pressOwner.js
+       — and this handler departs from that answer deliberately, for the reason
+       above. The departure is one flag wide and everything else still obeys. */
+    const spotStepExempt = addTool === 'spot';
+    if ((!spotStepExempt && addTool) || zoneMode) return;
     e.stopPropagation();
     e.preventDefault();
     setSel(select('spot', id));
@@ -11445,7 +11469,10 @@ export default function App({
    */
   const cobPointerDown = (e, id) => {
     if (e.button != null && e.button !== 0) return;   // middle button is the pan
-    if (addTool || zoneMode || armed || boardPlace || !pxPerFt) return;
+    // `!pxPerFt` IS NOT ARBITRATION and stays its own check: it asks whether
+    // there is a drawing at all, which fails to nothing rather than to somebody
+    // else's machine.
+    if (!canGrab(pressState) || !pxPerFt) return;
     /* --- A LAMP THAT BELONGS TO AN ARRAY IS NOT A LAMP YOU CAN PICK UP -------
        The canvas draws the hand-placed lamps and every array's lamps in ONE list
        — on the ceiling they are the same fitting, see the note at the call site
@@ -11713,7 +11740,15 @@ export default function App({
      module always clashes with itself. */
   const modulePointerDown = (e, id) => {
     if (e.button != null && e.button !== 0) return;
-    if (addTool === 'module') return;   // a press with the tool in hand PLACES one
+    /* THE SECOND NAMED EXEMPTION ON THIS CANVAS, alongside the spot's.
+       `pressOwner` says the TOOL owns this press — see lib/pressOwner.js — and
+       this handler departs from that answer on purpose: you clip six modules
+       onto a run, and a press stolen by the module already there would make the
+       one thing somebody does repeatedly fail the moment two were near each
+       other. It returns WITHOUT stopping the event, so the press falls through
+       to the canvas and places the next one. */
+    const moduleRunExempt = addTool === 'module';
+    if (moduleRunExempt) return;        // a press with the tool in hand PLACES one
     if (addTool || zoneMode || armed || boardPlace || !pxPerFt) return;
     const f = trackFixtures.find((q) => q.id === id);
     if (!f) return;
@@ -12778,7 +12813,7 @@ export default function App({
     // it is open a press on the plan cannot also select a space, arm a fitting
     // or start a no-light zone. Grab a box to move it; press empty plan to draw
     // a new one, or to drop the selection.
-    if (doorEdit && source) {
+    if (owns(pressState, 'door') && source) {
       e.preventDefault();
       e.currentTarget.setPointerCapture?.(e.pointerId);
       const p = svgPoint(e);
@@ -12812,7 +12847,7 @@ export default function App({
        does not disarm on a miss — a click too far from any wall places nothing
        and says nothing, and the step's way out is its Done button, exactly as
        the spot's and the cove's are. */
-    if (boardPlace && source && pxPerFt) {
+    if (owns(pressState, 'board') && source && pxPerFt) {
       e.preventDefault();
       placeBoardAt(svgPoint(e));
       return;
@@ -12821,7 +12856,7 @@ export default function App({
     // in the block below it: a tool that is armed owns the next click, and any
     // path that lets selection or a ceiling object see it first is a path where
     // the click does two things.
-    if (addTool && source && pxPerFt) {
+    if (owns(pressState, 'tool') && source && pxPerFt) {
       // THE SNAPPED POINT, NOT THE RAW ONE. The indicator under the cursor is a
       // promise about where the click will land, and a click that lands
       // anywhere else makes every future indicator a lie.
@@ -13156,7 +13191,7 @@ export default function App({
     // before it got here, so reaching this point means the EMPTY ceiling was
     // hit. Armed: drop one, and disarm — the way a shape tool returns to the
     // pointer after you draw one shape. Not armed: deselect.
-    if ((armed || objMode || selAccId) && source && pxPerFt) {
+    if ((owns(pressState, 'object') || objMode || selAccId) && source && pxPerFt) {
       const p = svgPoint(e);
       // Outside every room: cancel, do not act. One branch, before anything
       // else, so there is no path by which a click out here places something.
@@ -15186,8 +15221,8 @@ export default function App({
                  and the wire's handlers are: a press with a fitting armed is
                  aiming at the ceiling, not at the lamp in the way. */
               selLightId={readOnly ? null : selLightId}
-              onLightPointerDown={readOnly || armed || addTool || boardPlace || zoneMode
-                || (shapeMenuOn && shapeTool) ? null : lightPointerDown}
+              onLightPointerDown={readOnly || !canGrab(pressState)
+                ? null : lightPointerDown}
               /* THE ONE IN FLIGHT, AND ONLY ONCE THE DRAG IS PAST ITS SLOP —
                  otherwise a press meant as a click would move the fitting by the
                  pixel of wobble that arrives with it. */
@@ -15215,8 +15250,8 @@ export default function App({
               shapeEditId={readOnly || armed || addTool || boardPlace || zoneMode
                 ? null : shapeEditId}
               onShapeHandleDown={readOnly ? null : shapeHandleDown}
-              onShapePointerDown={readOnly || armed || addTool || boardPlace || zoneMode
-                || (shapeMenuOn && shapeTool) ? null : shapePointerDown}
+              onShapePointerDown={readOnly || !canGrab(pressState)
+                ? null : shapePointerDown}
               /* WHICH GEOMETRY THE TOOL IN HAND WOULD TAKE, so the line itself
                  says it before the press — the third of the three cues
                  `geomHover` drives, alongside the cursor and the array's ghost. */
@@ -15286,8 +15321,7 @@ export default function App({
                  grabbed. */
               selArrayPath={readOnly ? null : selArrayPathPx}
               selArrayId={readOnly ? null : selArrayId}
-              onArrayPathDown={readOnly || armed || addTool || boardPlace || zoneMode
-                ? null : arrayGrab}
+              onArrayPathDown={readOnly || !canGrab(pressState) ? null : arrayGrab}
               /* THE FITTINGS STAND DOWN AND THE GUIDES COME UP WHILE A
                  PRIMITIVE IS ARMED. `shapeMenuOn` alone is not the condition:
                  the bar also arrives unarmed on a click in a space (see
@@ -15297,8 +15331,7 @@ export default function App({
                  place geometry". */
               placingGeometry={!readOnly && shapeMenuOn && !!shapeTool}
               selCobId={readOnly ? null : selCobId}
-              onCobPointerDown={readOnly || armed || addTool || boardPlace || zoneMode
-                ? null : cobPointerDown}
+              onCobPointerDown={readOnly || !canGrab(pressState) ? null : cobPointerDown}
               /* THE GHOST CARRIES THE POOL IT WOULD THROW, so the beam angle on
                  the bar is something you can see rather than only read. Computed
                  from what is in force for the NEXT lamp and the space's own
