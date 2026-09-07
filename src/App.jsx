@@ -128,10 +128,9 @@ import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
 import { collectTargets, snapPoint, SNAP_DEFAULTS } from './lib/snapGuides.js';
 /* PICKING A THING UP, MOVING IT, AND LEAVING A COPY BEHIND — the four rules
    every draggable object on this canvas needs and each of which has been got
-   wrong at least once here. See its header. What this file still imports
-   directly is what the drags not yet on hooks/useDrag.js are calling by hand;
-   the hook is where the rest of it is now spent. */
-import { movedEnough } from './lib/dragMove.js';
+   wrong at least once here. Nothing in this file calls that arithmetic by hand
+   any more: hooks/useDrag.js is where it is spent, and every drag here reaches
+   it through that. Read the header of lib/dragMove.js for the rules themselves. */
 import { buildSnapIndex, snapAt } from './lib/snap.js';
 import { openPdf, isPdf, pageToImg } from './lib/pdfPlan.js';
 import PdfPagePicker from './components/PdfPagePicker.jsx';
@@ -11657,6 +11656,32 @@ export default function App({
      cannot share an inch of extrusion, so a drag that would overlap lands at the
      nearest gap instead of stacking. Excluded rather than included, because a
      module always clashes with itself. */
+  /* --- A MODULE'S WHOLE GESTURE ---------------------------------------------
+
+     NO STORE IS HANDED TO THE HOOK, AND THAT IS THE POINT OF THIS ONE. What a
+     module has is not a position but a FRACTION of a path, so there is no `at`
+     and no `to`: the hook resolves the pointer, and `onMove` turns it into a `u`
+     the same way the placing press does. The constraint stays in the caller
+     because the constraint is the whole of what a module is. */
+  const mod = useDrag({
+    state: [moduleDrag, setModuleDrag],
+    point: svgPoint,
+    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
+    zoom,
+    onMove: (p, { drag }) => {
+      const f = trackFixtures.find((q) => q.id === drag.id);
+      const run = f ? magTrackById[f.trackId] : null;
+      if (!run) return;
+      const taken = trackFixtures.filter(
+        (q) => q.trackId === f.trackId && q.id !== f.id);
+      const u = placeableU(run.pts, uAt(run.pts, p, { closed: run.closed }),
+                           taken, f.kind,
+                           { closed: run.closed, watts: f.watts });
+      if (u == null) return;   // the rest of the run is full — leave it where it is
+      setTrackFixtures((l) => l.map((q) => (q.id === f.id ? { ...q, u } : q)));
+    },
+  });
+
   const modulePointerDown = (e, id) => {
     if (e.button != null && e.button !== 0) return;
     /* THE SECOND NAMED EXEMPTION ON THIS CANVAS, alongside the spot's.
@@ -11668,7 +11693,14 @@ export default function App({
        to the canvas and places the next one. */
     const moduleRunExempt = addTool === 'module';
     if (moduleRunExempt) return;        // a press with the tool in hand PLACES one
-    if (addTool || zoneMode || armed || boardPlace || !pxPerFt) return;
+    /* AND EVERYTHING ELSE GOES THROUGH THE ROUTER. This was a hand-written
+       variant — `addTool || zoneMode || armed || boardPlace` — and it was
+       missing two of the seven machines: the door editor and an armed cove
+       primitive both had their presses swallowed here. That is the exact class
+       of bug lib/pressOwner.js exists for, and this is now the one rule with the
+       one exemption above it declared by name. `!pxPerFt` is not arbitration and
+       stays its own check. */
+    if (!canGrab(pressState) || !pxPerFt) return;
     const f = trackFixtures.find((q) => q.id === id);
     if (!f) return;
     e.stopPropagation();
@@ -11678,30 +11710,12 @@ export default function App({
        whatever bar is up for the space's own. */
     shapeTook.current = true;
     setSel(select('module', id));
-    svgRef.current?.setPointerCapture?.(e.pointerId);
-    setModuleDrag({ id, pointerId: e.pointerId, from: svgPoint(e), moved: false });
+    mod.down(e, { id });
   };
 
-  const modulePointerMove = (e) => {
-    if (!moduleDrag || !pxPerFt) return;
-    const p = svgPoint(e);
-    if (!moduleDrag.moved) {
-      if (!movedEnough(moduleDrag.from, p, { zoom })) return;
-      setModuleDrag((d) => (d ? { ...d, moved: true } : d));
-    }
-    const f = trackFixtures.find((q) => q.id === moduleDrag.id);
-    const run = f ? magTrackById[f.trackId] : null;
-    if (!run) return;
-    const taken = trackFixtures.filter(
-      (q) => q.trackId === f.trackId && q.id !== f.id);
-    const u = placeableU(run.pts, uAt(run.pts, p, { closed: run.closed }),
-                         taken, f.kind,
-                         { closed: run.closed, watts: f.watts });
-    if (u == null) return;   // the rest of the run is full — leave it where it is
-    setTrackFixtures((l) => l.map((q) => (q.id === f.id ? { ...q, u } : q)));
-  };
+  const modulePointerMove = (e) => { if (pxPerFt) mod.move(e); };
 
-  const modulePointerUp = () => { if (moduleDrag) setModuleDrag(null); };
+  const modulePointerUp = mod.up;
 
   /** ONE MODULE, OFF THE RUN. Its own act, unlike deleting the run — which takes
    *  every module with it (see `deleteShape`). */
