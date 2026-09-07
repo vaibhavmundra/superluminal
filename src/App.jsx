@@ -10779,6 +10779,54 @@ export default function App({
     ? doors.map((d) => (d.id === doorDrag.id ? { ...d, rect: doorDrag.rect } : d))
     : doors), [doors, doorDrag]);
 
+  /* --- A DOOR BOX'S WHOLE GESTURE -------------------------------------------
+
+     THE LAST OF THE TEN AND THE ODDEST, in three ways that are each a decision.
+
+     NO SLOP. `slopPx: 0`, and it is the only drag here that takes that
+     position. A door box is not selectable by a bare press that might have been
+     a nudge — the door editor is a modal step that owns the whole canvas, and a
+     press either lands on a box or draws a new one — so there is no click
+     meaning for a threshold to protect. What guards against a click writing
+     nothing is the rect comparison in `onCommit`.
+
+     NO POINTER CAPTURE FROM THE HOOK. The door branch of `onZoneDown` takes it
+     on the canvas itself, before it knows whether the press hit a box or is
+     about to start a new one, because BOTH need it. Handing the hook a `capture`
+     would take it twice.
+
+     NO STORE AND NO POSITION — what it carries is a RECT. Writing a move into
+     `doors` on every pointermove would re-run the board pass, the bay pass and
+     the flows forty times a second, and the scale too if the box being dragged
+     is the ruler. So the gesture holds the live rect, `doorEditBoxes` draws it,
+     and `onCommit` is the one write.
+
+     THE OFFSET IS FROM THE PRESS, NOT FROM THE LAST FRAME — rule 2, and here the
+     difference shows at the edge of the sheet, which is where half of these
+     boxes are since a door is in a wall. `shiftRect` clamps, so an incremental
+     delta would keep counting while the box was held against the edge and the
+     box would then come away from the cursor by however far the pointer had gone
+     past it. Measured from the press, a clamped box stays clamped until the
+     pointer comes back for it. */
+  const door = useDrag({
+    state: [doorDrag, setDoorDrag],
+    point: svgPoint,
+    slopPx: 0,
+    onMove: (p, { drag: d }) => door.set((cur) => (cur
+      ? { ...cur, rect: shiftRect(d.base, p.x - d.from.x, p.y - d.from.y) }
+      : cur)),
+    /* THE RELEASE IS THE ONE WRITE.
+       A PRESS THAT SELECTED AND DID NOT MOVE WRITES NOTHING. The rect would be
+       identical, but the list's identity would not — and `doors` is what the
+       board pass, the bay pass and the flows are all memoised on, so a click to
+       select a box would re-run every one of them for nothing. */
+    onCommit: (ids, d) => {
+      if (d.rect.x0 === d.base.x0 && d.rect.y0 === d.base.y0) return;
+      setDoors((ds) => ds.map((q) => (q.id === d.id
+        ? { ...q, rect: d.rect, openingPx: openingPx(d.rect) } : q)));
+    },
+  });
+
   const snapTargets = useCallback((excludeId, points = []) => collectTargets({
     rooms: rooms.map((r) => ({ id: r.id, name: r.outline.name, polygonPx: r.plan?.polygonPx || r.geo?.polygonPx })),
     objects: obstaclesPx.filter((o) => o.source === 'placed'),
@@ -12702,9 +12750,9 @@ export default function App({
       if (hit) {
         setSel(select('door', hit.id));
         // `base` IS THE RECT AT THE PRESS AND NEVER MOVES; `rect` is where the
-        // pointer has it now. See the move handler for why the offset is
-        // measured from the press rather than accumulated frame by frame.
-        setDoorDrag({ id: hit.id, from: p, base: hit.rect, rect: hit.rect });
+        // pointer has it now. See `door` for why the offset is measured from the
+        // press rather than accumulated frame by frame.
+        door.down(e, { id: hit.id, base: hit.rect, rect: hit.rect });
         return;
       }
       setSel(clear());
@@ -13167,20 +13215,7 @@ export default function App({
     // THE DOOR EDITOR FIRST, for the reason given on the press: it owns the
     // canvas outright while it is open.
     if (doorEdit) {
-      if (doorDrag) {
-        /* THE OFFSET IS FROM THE PRESS, NOT FROM THE LAST FRAME, and the
-           difference only shows at the edge of the sheet — which is where half
-           of these boxes are, since a door is in a wall. `shiftRect` clamps, so
-           an incremental delta would keep counting while the box was held
-           against the edge and the box would then come away from the cursor by
-           however far the pointer had gone past it. Measured from the press, a
-           clamped box stays clamped until the pointer comes back for it. */
-        const p = svgPoint(e);
-        setDoorDrag((d) => (d
-          ? { ...d, rect: shiftRect(d.base, p.x - d.from.x, p.y - d.from.y) }
-          : d));
-        return;
-      }
+      if (doorDrag) { door.move(e); return; }
       if (doorDraft) {
         const p = svgPoint(e);
         setDoorDraft((d) => (d ? { ...d, x1: p.x, y1: p.y } : d));
@@ -13369,18 +13404,7 @@ export default function App({
        marking it as hand-made, and nothing downstream reads it — the board pass
        must not be able to prefer a detection over a correction. */
     if (doorEdit) {
-      if (doorDrag) {
-        const { id, base, rect } = doorDrag;
-        setDoorDrag(null);
-        // A PRESS THAT SELECTED AND DID NOT MOVE WRITES NOTHING. The rect would
-        // be identical, but the list's identity would not — and `doors` is what
-        // the board pass, the bay pass and the flows are all memoised on, so a
-        // click to select a box would re-run every one of them for nothing.
-        if (rect.x0 === base.x0 && rect.y0 === base.y0) return;
-        setDoors((ds) => ds.map((d) => (d.id === id
-          ? { ...d, rect, openingPx: openingPx(rect) } : d)));
-        return;
-      }
+      if (doorDrag) { door.up(); return; }
       if (!doorDraft) return;
       const r = {
         x0: Math.min(doorDraft.x0, doorDraft.x1), x1: Math.max(doorDraft.x0, doorDraft.x1),
@@ -13392,12 +13416,15 @@ export default function App({
       // no-light zone, so a twitch does not leave a sliver on the sheet.
       const minPx = Math.max(6, (pxPerFt || 0) * 0.5);
       if (r.x1 - r.x0 < minPx || r.y1 - r.y0 < minPx) return;
-      const door = {
+      /* NOT NAMED `door`, WHICH IS THE GESTURE — see the hook of that name. A
+         `const door` in this block would shadow it for the whole block, and the
+         `door.up()` eight lines above would throw before this line ran. */
+      const made = {
         id: `door-hand-${Date.now().toString(36)}`,
         cls: 'door', conf: 1, rect: r, openingPx: openingPx(r), placed: true,
       };
-      setDoors((ds) => [...ds, door]);
-      setSel(select('door', door.id));
+      setDoors((ds) => [...ds, made]);
+      setSel(select('door', made.id));
       return;
     }
     if (objDrag) { objPointerUp(); return; }
