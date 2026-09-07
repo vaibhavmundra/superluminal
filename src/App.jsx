@@ -18,10 +18,8 @@ import { clampLightMove } from './lib/planner.js';
    from the one the drawing used — see the note in the rooms memo. There is one
    enumeration now and `designChunking` owns it. */
 import { nextChunkOption } from './lib/ceilingDesign.js';
-import { STRIP_OFFSET_FT, COVE_GAP_FT,
-         coveClearOfOutline } from './lib/cove.js';
-import { absorbPoints, drawnTrackRefusal,
-         TRACK_REFUSALS, SPOT_LEN_FT, DODGE_FT } from './lib/track.js';
+import { COVE_GAP_FT, coveClearOfOutline } from './lib/cove.js';
+import { drawnTrackRefusal, TRACK_REFUSALS } from './lib/track.js';
 import usePen from './hooks/usePen.js';
 import { useDrag } from './hooks/useDrag.js';
 import { penSegments, penLengthFt, penRelock, penMovePoint, penAim, axisLock,
@@ -42,21 +40,20 @@ import { Logo } from './components/Wordmark.jsx';
 import ShapeMenu, { SHAPE_GESTURE } from './components/ShapeMenu.jsx';
 import { SHAPE_BY_ID, POLY_SIDES, shapeFromDrag, penShape, sealShape, clampCoveMove,
          outlineFt as shapeOutlineFt, cornersFt as shapeCornersFt,
-         hitShape, pathLengthFt,
+         hitShape,
          isOpen as shapeIsOpen, roleOf as shapeRoleOf,
          isTrack as shapeIsTrack, isBuilt as shapeIsBuilt, insetShape,
          canTakeGeometry,
-         spanOnOutline, penSpansOutline, runLengthFt,
+         spanOnOutline, penSpansOutline,
          lineShape, projectOnOutline,
          bigEnough, maxRadiusFt, roundable, newShapeId, bboxFt as shapeBboxFt,
          MIN_SPAN_FT as SHAPE_MIN_SPAN_FT,
-         resizeShape, handlesFor, frameFt as shapeFrameFt,
-         sizeLabel as shapeSizeLabel } from './lib/ceilingShapes.js';
+         resizeShape, sizeLabel as shapeSizeLabel } from './lib/ceilingShapes.js';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
 import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
-import { buildBOQ, FIXTURE_BY_ID, trackFixtureFor } from './lib/boq.js';
+import { buildBOQ, FIXTURE_BY_ID } from './lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
 import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, isOutdoor } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
@@ -67,14 +64,13 @@ import CobSpec from './components/CobSpec.jsx';
    lib/cob.js, and this file does the placing. See its header. */
 import { recommendCob, placeCob, newCobId, chunkSpec, wallClearance, bedUnder,
          clampWatts, nearestBeam, throwDiameterFt, DEFAULT_DROP_FT,
-         COB_WATT_RANGE, arraySpots, arrayPath, arrayAsks, ARRAY_SIDES,
+         COB_WATT_RANGE, arrayAsks, ARRAY_SIDES,
          arrayQuanta, quantiseCount } from './lib/cob.js';
 /* THE MAGNETIC TRACK. Its RUN is a ceiling shape with `role: 'track'` — which
    is why there is no store of paths here and why it resizes, duplicates and
    snaps like everything else in the geometry library — and this file holds the
    modules that clip into one. See its header for why it is not track.js. */
-import { MODULE_BY_ID, MODULE_SOON, moduleAt, uAt, moduleWatts,
-         moduleLenIn,
+import { MODULE_BY_ID, MODULE_SOON, uAt, moduleWatts,
          placeableU, placeModule, newModuleId,
          planDiffusers } from './lib/magTrack.js';
 import OptionCoach from './components/OptionCoach.jsx';
@@ -82,18 +78,15 @@ import OptionCoach from './components/OptionCoach.jsx';
    export: the default one is the line of type that opens it in a dialog. */
 import { HowToVideo } from './components/HowToLink.jsx';
 import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
-import { planTaskSpots, chunkFor, isBedZone,
-         SPOT_DEFAULTS } from './lib/taskSpots.js';
+import { chunkFor } from './lib/taskSpots.js';
 import { roomSnapshot, requestAccents, toPlanRect } from './lib/accentMask.js';
 import { BED_SOURCES, splitByProvider, label as labelBeds, bedsIn, contestFor, judgeNote,
          applyVerdict } from './lib/bedFit.js';
 import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
 import { WALL_BY_ID, joinPlacements } from './lib/wallPrompt.js';
-import { gridFor, anchorLines, cellsToPlanPx, cellsToRect } from './lib/wallGrid.js';
+import { gridFor, anchorLines } from './lib/wallGrid.js';
 import { fitAll, RENDER_DEFAULTS, renderBlob, renderRef, fetchRender }
   from './lib/renderImage.js';
-import { sliceRect, artWidthFt, spotCountFor, litByArtSpots, planArtSpots,
-         ART_SPOT } from './lib/artSpots.js';
 import { reverseCovesFor, mergeReverseCoves, trimWallRun,
          manualReverseCove, RUN_TRIM } from './lib/reverseCove.js';
 import { shelfStripsFor } from './lib/shelfStrip.js';
@@ -102,14 +95,13 @@ import { shelfStripsFor } from './lib/shelfStrip.js';
    component, its state and every handler that fed it are intact. */
 import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone,
          nearestWall, alongWallAt, RUN_EDIT } from './lib/accentPlace.js';
-import { planSwitchboards, planChunkBoards, markClashes, asDrawn, slideBoardTo,
+import { planSwitchboards, planChunkBoards, asDrawn, slideBoardTo,
          innerSpaceFor, nearestBoardTo, boardUnder, nearestSeat, placedBoards,
          asOutlet, heightsFor, SB_COLOUR } from './lib/electrical.js';
 // THE BED, FOR THE SWITCHBOARD RULE THAT BRACKETS IT. One function, and it is
 // borrowed rather than copied so that "which bed" has one answer on a plan with
 // two of them in one room — see the note by `bedRect` below.
 import { bedZoneIn } from './lib/bedGrid.js';
-import { planFlows } from './lib/flows.js';
 // WHAT IS ON THE PLATE, as against where the plate is. electrical.js above
 // answers the second; this answers the first, and it is a different question in
 // every country — see its header.
@@ -163,7 +155,8 @@ import {
 import {
   projectMagTracksPx, projectTrackModulesPx, projectArrayCobsPx,
   projectDraftArrayPx, projectSelectedArrayPathPx, projectManualCobsPx,
-  projectCoveShapesPx, projectDraftShapePx,
+  projectCoveShapesPx, projectDraftShapePx, projectTrackDraftPx,
+  projectTrackEditPx, projectPenDraftPx,
 } from './lib/fixtureProjection.js';
 
 
@@ -8311,42 +8304,11 @@ export default function App({
 
   const draftShapePx = useMemo(() => projectDraftShapePx(shapeDraft, shapePts, pxPerFt), [shapeDraft, shapePts, pxPerFt]);
 
-  /* THE DRAWN RUN IN FLIGHT, IN THE PEN DRAWING THE COVE PEN ALREADY HAS.
-     `closed: false` is the whole difference: no dashed closing leg back to the
-     first point, and no ring round it, because clicking it does nothing. See
-     the canvas — one drawing, two pens, which is the same argument usePen
-     makes about the state behind them. */
-  const trackDraftPx = useMemo(() => {
-    if (!pxPerFt || addTool !== 'track' || trackPen.isEmpty) return null;
-    const toPlanPx = (q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt });
-    /* CLOSED, NOW THAT THE TRACK PEN CLOSES. The dashed leg back to the first
-       point and the ring round it are both promises about a click that works —
-       which is exactly what they were not while this said `false`. */
-    return { pts: trackPen.pts.map(toPlanPx), closed: true,
-             at: trackPen.at ? toPlanPx(trackPen.at) : null };
-  }, [pxPerFt, addTool, trackPen.pts, trackPen.at, trackPen.isEmpty]);
+  const trackDraftPx = useMemo(() => projectTrackDraftPx(pxPerFt, addTool, trackPen.pts, trackPen.at, trackPen.isEmpty), [pxPerFt, addTool, trackPen.pts, trackPen.at, trackPen.isEmpty]);
 
-  /* THE OPEN PATH IN PLAN PIXELS. The one drawing on this canvas that shows a
-     drawn run whole: `tracksPx` carries it clipped to each room it crosses (see
-     `trackRunsInRoom`), and a corner that fell in a doorway appears in neither
-     room's copy. */
-  const trackEditPx = useMemo(() => {
-    if (!pxPerFt || !trackEditId) return null;
-    const t = manualTracks.find((q) => q.id === trackEditId);
-    if (!t) return null;
-    return { id: t.id, closed: !!t.closed,
-             pts: t.ptsFt.map((q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt })) };
-  }, [pxPerFt, trackEditId, manualTracks]);
+  const trackEditPx = useMemo(() => projectTrackEditPx(pxPerFt, trackEditId, manualTracks), [pxPerFt, trackEditId, manualTracks]);
 
-  const penDraftPx = useMemo(() => {
-    if (!pxPerFt || !shapeMenuOn || shapeTool !== 'pen' || covePen.isEmpty) return null;
-    const toPlanPx = (q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt });
-    /* CLOSED, because a cove pen's path encloses something and the canvas
-       draws the closing leg dashed to say so before the click that commits it.
-       The track pen hands the same drawing `closed: false`. */
-    return { pts: covePen.pts.map(toPlanPx), closed: true,
-             at: covePen.at ? toPlanPx(covePen.at) : null };
-  }, [pxPerFt, shapeMenuOn, shapeTool, covePen.pts, covePen.at, covePen.isEmpty]);
+  const penDraftPx = useMemo(() => projectPenDraftPx(pxPerFt, shapeMenuOn, shapeTool, covePen.pts, covePen.at, covePen.isEmpty), [pxPerFt, shapeMenuOn, shapeTool, covePen.pts, covePen.at, covePen.isEmpty]);
 
 
   /**

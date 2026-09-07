@@ -175,7 +175,7 @@ export function projectMagTracksPx(ceilingShapes, rooms, pxPerFt) {
       });
     }
     return out;
-  
+
 }
 
 /**
@@ -214,7 +214,7 @@ export function projectTrackModulesPx(trackFixtures, magTrackById, pxPerFt) {
       });
     }
     return out;
-  
+
 }
 
 /**
@@ -249,7 +249,7 @@ export function projectArrayCobsPx(cobArrays, arrayOutline, pxPerFt, ceilingMmFo
       }));
     }
     return out;
-  
+
 }
 
 /** The draft array's lamps, drawn while the bar is still asking about them —
@@ -268,4 +268,44 @@ export function projectDraftArrayPx(cobDraftArray, arrayOutline, pxPerFt) {
       closed: geo.closed, side: d.side, offsetFt: (d.offsetFt || 0) * pxPerFt });
     return { pts, path, closed: geo.closed, geo };
   
+}
+
+/* THE DRAWN RUN IN FLIGHT, IN THE PEN DRAWING THE COVE PEN ALREADY HAS.
+   `closed: false` is the whole difference: no dashed closing leg back to the
+   first point, and no ring round it, because clicking it does nothing. See
+   the canvas — one drawing, two pens, which is the same argument usePen
+   makes about the state behind them. */
+export function projectTrackDraftPx(pxPerFt, addTool, pts, at, isEmpty) {
+    if (!pxPerFt || addTool !== 'track' || isEmpty) return null;
+    const toPlanPx = (q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt });
+    /* CLOSED, NOW THAT THE TRACK PEN CLOSES. The dashed leg back to the first
+       point and the ring round it are both promises about a click that works —
+       which is exactly what they were not while this said `false`. */
+    return { pts: pts.map(toPlanPx), closed: true,
+             at: at ? toPlanPx(at) : null };
+
+}
+
+/* THE OPEN PATH IN PLAN PIXELS. The one drawing on this canvas that shows a
+   drawn run whole: `tracksPx` carries it clipped to each room it crosses (see
+   `trackRunsInRoom`), and a corner that fell in a doorway appears in neither
+   room's copy. */
+export function projectTrackEditPx(pxPerFt, trackEditId, manualTracks) {
+    if (!pxPerFt || !trackEditId) return null;
+    const t = manualTracks.find((q) => q.id === trackEditId);
+    if (!t) return null;
+    return { id: t.id, closed: !!t.closed,
+             pts: t.ptsFt.map((q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt })) };
+
+}
+
+export function projectPenDraftPx(pxPerFt, shapeMenuOn, shapeTool, pts, at, isEmpty) {
+    if (!pxPerFt || !shapeMenuOn || shapeTool !== 'pen' || isEmpty) return null;
+    const toPlanPx = (q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt });
+    /* CLOSED, because a cove pen's path encloses something and the canvas
+       draws the closing leg dashed to say so before the click that commits it.
+       The track pen hands the same drawing `closed: false`. */
+    return { pts: pts.map(toPlanPx), closed: true,
+             at: at ? toPlanPx(at) : null };
+
 }
