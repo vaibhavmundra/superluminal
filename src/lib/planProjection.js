@@ -542,3 +542,42 @@ export function projectAccentZonesPx(rooms, accentResults, accentDismissed, manu
       (m) => live.has(m.roomId) && !accentDismissed.includes(m.id))];
 
 }
+
+/**
+ * What the canvas draws for the render pass: every placed wall feature, in
+ * plan pixels.
+ *
+ * THE GRID IS RECOMPUTED HERE RATHER THAN STORED WITH THE RESULT, and that is
+ * the same argument as runFt in computeAccents. A grid is a memo over the
+ * room's polygon and the scale; store it on the answer and it starts lying the
+ * moment somebody drags an outline corner or renames the door that sets the
+ * scale — the cells would then be drawn against a grid the room no longer has.
+ * Derived every render, it moves with the room, which is what anybody would
+ * expect of a mark that says "there is panelling along this wall".
+ */
+export function projectWallCellsPx(rooms, wallResults, pxPerFt) {
+    const out = [];
+    for (const r of rooms) {
+      const res = wallResults[r.id];
+      if (!res?.elements?.length || !r.plan?.ok) continue;
+      const grid = gridFor(r.plan.polygonPx, pxPerFt);
+      if (!grid) continue;
+      for (const e of res.elements) {
+        if (!e.cells?.length) continue;
+        const rect = cellsToRect(e.cells, grid);
+        if (!rect) continue;
+        out.push({
+          id: e.id || `${r.id}-${out.length}`, roomId: r.id, type: e.type,
+          label: e.label || WALL_BY_ID[e.type]?.label || e.type,
+          colour: e.colour || WALL_BY_ID[e.type]?.colour || '#666',
+          rect, rects: cellsToPlanPx(e.cells, grid),
+          // Which way the run lies, so the cell ticks are drawn ACROSS it
+          // rather than along it. A run one cell long is called horizontal and
+          // draws no ticks either way.
+          horizontal: e.start && e.end ? e.start.y === e.end.y : true,
+        });
+      }
+    }
+    return out;
+
+}

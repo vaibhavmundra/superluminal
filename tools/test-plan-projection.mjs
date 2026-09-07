@@ -8,6 +8,7 @@ import {
   projectTaskSpotsPx,
   projectAccentZonesPx,
 } from '../src/lib/planProjection.js';
+import { projectFlowsPx } from '../src/lib/electricalProjection.js';
 
 let fail = 0;
 const ok = (condition, message) => {
@@ -75,6 +76,34 @@ console.log('\n-- accent sources are merged and filtered in screen space --');
     `live, undismissed sources survive in order: ${ids.join(',')}`);
   ok(projected.find((item) => item.id === 'rcove-strip-reverse')?.fixture === 'reverse-cove',
     'reverse coves keep their schedule fixture identity');
+}
+
+console.log('\n-- flows receive projected room geometry and eligible fittings --');
+{
+  const room = {
+    id: 'room-1',
+    plan: {
+      ok: true,
+      polygonPx: [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 120 }, { x: 0, y: 120 }],
+      chunksPx: [], cellsPx: [], lightsPx: [], tracksPx: [], zonesPx: [],
+    },
+  };
+  const board = {
+    id: 'board', roomId: 'room-1', role: 'door', servesShort: 'Door',
+    point: { x: 0, y: 60 }, wall: { index: 3 },
+  };
+  const boardsFor = () => [board];
+  const noneFor = () => [];
+  const baysOf = () => [{ key: 'room', rect: { x0: 0, y0: 0, x1: 200, y1: 120 } }];
+  const flows = projectFlowsPx(
+    [room], boardsFor, noneFor, {},
+    [{ id: 'fan', kind: 'fan', x: 100, y: 60, r: 10 }],
+    [], [], {}, 10, baysOf, [board], noneFor, {}, {},
+  );
+  ok(flows.length === 1 && flows[0].kind === 'object',
+    'the room fan becomes one object circuit');
+  ok(flows[0]?.boardId === 'board' && flows[0]?.nodes[0]?.id === 'fan',
+    'the projected circuit joins the fitting to the room board');
 }
 
 console.log(fail ? `\n${fail} failing` : '\nall good');
