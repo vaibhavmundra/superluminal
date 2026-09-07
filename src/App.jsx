@@ -9037,12 +9037,64 @@ export default function App({
      BY ID INTO `boardsOff`, not by removing anything: the boards are a memo, so
      a plate taken out of the list is back on the next render. Same machinery as
      a dismissed accent. */
+  /* --- A PLATE'S WHOLE GESTURE ----------------------------------------------
+
+     THE CONSTRAINT IS THE GESTURE, AND IT STAYS IN THE CALLER. `slideBoardTo`
+     projects the pointer onto every wall of that room that can hold a plate and
+     the nearest wins, so what this drag means is "which piece of plaster do you
+     mean" rather than "drag this rectangle wherever". A switchboard off its wall
+     is not a thing. That is why no store is handed to the hook: what is written
+     is not a position but a distance along an outline, and `onMove` is the only
+     place that can say so.
+
+     WRITTEN STRAIGHT INTO `boardMoves`, ON EVERY MOVE, and that is deliberate
+     rather than lazy. The chain it re-runs — the board rules, the bay boards,
+     the flows — is pure geometry over a handful of objects and does NOT reach
+     the planner, so the layout is not recomputed; and the alternative (a live
+     position held in the drag and committed on release) would leave the wires
+     hanging off the plate's old position for the whole gesture. The derived
+     cove's end-drag already writes its trim per move for the same reason.
+
+     ITS THRESHOLD IS A FRACTION OF THE DRAWING, like the cove shape's and the
+     light's, with a 12 px/ft fallback so a plan with no scale yet still has one.
+     Without it a click that wobbles one pixel writes a hand position onto a
+     board that was exactly where the rule put it, and the plate is then marked
+     "moved by hand" for the life of the plan. */
+  const board = useDrag({
+    state: [boardDrag, setBoardDrag],
+    point: svgPoint,
+    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
+    moved: (from, p) => Math.hypot(p.x - from.x, p.y - from.y)
+      >= Math.max(3, (pxPerFt || 12) * 0.12),
+    onMove: (p, { drag: d }) => {
+      const r = rooms.find((q) => q.id === d.roomId);
+      const poly = r?.plan?.polygonPx;
+      if (!poly?.length) return;
+      const sFt = slideBoardTo(p, { polygonPx: poly, pxPerFt });
+      if (sFt == null) return;
+      /* A HAND-PLACED PLATE HAS ONE POSITION AND IT IS THIS ONE. `boardMoves` is
+         an OVERRIDE — it exists so a rule's board can be somewhere the rule did
+         not put it, and so the card can say both. A board somebody dropped on a
+         wall has no rule behind it, so writing a move for one would be storing
+         "moved from" a position that was itself a hand position: two records of
+         one fact, and a plate that could be reset to a place nobody chose. */
+      if (manualBoards.some((m) => m.id === d.id)) {
+        setManualBoards((list) => list.map((m) => (
+          m.id === d.id ? { ...m, sFt } : m)));
+        return;
+      }
+      setBoardMoves((m) => ({ ...m, [d.id]: sFt }));
+    },
+  });
+
   const boardPointerDown = (e, id, roomId) => {
     if (e.button != null && e.button !== 0) return;   // middle button is the pan
-    // A TOOL IN HAND WINS. Somebody placing a fitting or boxing a zone across a
-    // plate is aiming at the drawing, not at the switch in the way — the same
-    // rule every other selectable thing on this canvas follows.
-    if (addTool || zoneMode || armed) return;
+    /* AND EVERYTHING ELSE GOES THROUGH THE ROUTER. This was a hand-written
+       variant — `addTool || zoneMode || armed` — and it was missing three of the
+       seven machines, the switchboard placing step among them. See
+       lib/pressOwner.js, whose whole subject is that a variant missing one term
+       is indistinguishable from a correct one by reading. */
+    if (!canGrab(pressState)) return;
     e.preventDefault();
     // ONE SELECTION ON THIS CANVAS. A plate and a fitting both picked would be
     // two things Delete could mean.
@@ -9056,64 +9108,15 @@ export default function App({
        audience's tab and yanking an operator out of it because they clicked the
        drawing would lose whatever they were reading. */
     setView((v) => (v === 'admin' ? v : 'design'));
-    /* AND THE DRAG IS ARMED BUT NOT LIVE. `live` turns on once the pointer has
-       moved past a few pixels — the accent runs' own slop, and for the same
-       reason: without it a click that wobbles one pixel writes a hand position
-       onto a board that was exactly where the rule put it, and the plate is
-       then marked "moved by hand" for the life of the plan. */
-    if (roomId) {
-      svgRef.current?.setPointerCapture?.(e.pointerId);
-      setBoardDrag({ id, roomId, origin: svgPoint(e), live: false });
-    }
+    /* NO ROOM, NO DRAG, AND STILL A SELECTION. A plate the board pass produced
+       outside any space has no outline to slide along, so there is nothing for
+       the gesture to resolve the pointer to — but it is still a thing you can
+       pick and read the card of. */
+    if (roomId) board.down(e, { id, roomId });
   };
 
-  /**
-   * A PLATE FOLLOWS THE POINTER ROUND THE WALLS OF ITS OWN SPACE.
-   *
-   * `slideBoardTo` is the whole of it: the pointer is projected onto every wall
-   * of that room that can hold a plate and the nearest wins, so the gesture is
-   * "which piece of plaster do you mean" rather than "drag this rectangle
-   * wherever". A switchboard off its wall is not a thing.
-   *
-   * WRITTEN STRAIGHT INTO `boardMoves`, ON EVERY MOVE, and that is deliberate
-   * rather than lazy. The chain it re-runs — the board rules, the bay boards,
-   * the flows — is pure geometry over a handful of objects and does NOT reach
-   * the planner, so the layout is not recomputed; and the alternative (a live
-   * position held in the drag and committed on release) would leave the wires
-   * hanging off the plate's old position for the whole gesture. The derived
-   * cove's end-drag already writes its trim per move for the same reason.
-   */
-  const boardPointerMove = (e) => {
-    if (!boardDrag) return;
-    const p = svgPoint(e);
-    if (!boardDrag.live) {
-      const slop = Math.max(3, (pxPerFt || 12) * 0.12);
-      if (Math.hypot(p.x - boardDrag.origin.x, p.y - boardDrag.origin.y) < slop) return;
-      setBoardDrag((d) => (d ? { ...d, live: true } : d));
-    }
-    const r = rooms.find((q) => q.id === boardDrag.roomId);
-    const poly = r?.plan?.polygonPx;
-    if (!poly?.length) return;
-    const sFt = slideBoardTo(p, { polygonPx: poly, pxPerFt });
-    if (sFt == null) return;
-    /* A HAND-PLACED PLATE HAS ONE POSITION AND IT IS THIS ONE. `boardMoves` is
-       an OVERRIDE — it exists so a rule's board can be somewhere the rule did
-       not put it, and so the card can say both. A board somebody dropped on a
-       wall has no rule behind it, so writing a move for one would be storing
-       "moved from" a position that was itself a hand position: two records of
-       one fact, and a plate that could be reset to a place nobody chose. */
-    if (manualBoards.some((m) => m.id === boardDrag.id)) {
-      setManualBoards((list) => list.map((m) => (
-        m.id === boardDrag.id ? { ...m, sFt } : m)));
-      return;
-    }
-    setBoardMoves((m) => ({ ...m, [boardDrag.id]: sFt }));
-  };
-
-  const boardPointerUp = () => {
-    if (!boardDrag) return;
-    setBoardDrag(null);
-  };
+  const boardPointerMove = board.move;
+  const boardPointerUp = board.up;
 
   /* --- A WIRE, PICKED ------------------------------------------------------
      ONE PRESS SELECTS THE WHOLE LOOP. A flow is one switch — its legs are how
@@ -15022,7 +15025,7 @@ export default function App({
                  happening rather than deriving it from a moved position: a board
                  that was dragged yesterday and a board being dragged now are the
                  same geometry and want different cursors. */
-              draggingBoardId={boardDrag?.live ? boardDrag.id : null}
+              draggingBoardId={boardDrag?.moved ? boardDrag.id : null}
               /* THE WIRING, ON ITS OWN SWITCH. Handed in regardless of the
                  layer — PlanCanvas gates the drawing on `layers.electrical`, so
                  there is one place that decides whether the arcs are on rather
