@@ -125,6 +125,31 @@ export const FIXTURES = [
   { id: 'track-spot', label: 'Track spot — directional', unit: 'nos',
     watts: 5, beam: 30, lumens: 450,
     note: 'aimed at a surface, clipped into a track' },
+  /* --- AND THE FIFTH LINE, WHICH IS A DIFFERENT DISTRIBUTION AND NOT A
+         DIFFERENT BEAM ----------------------------------------------------
+     THE NOTE FOUR LINES UP SAYS THE MODULES ARE TWO PRODUCTS AND NOT FIVE, on
+     the argument that a track range is an ambient head and a directional head
+     and that a different OPTIC does not earn a line. That still holds, and this
+     is not an exception to it: a diffuser is not a wider head.
+
+     IT IS A LENS OVER A LINEAR BOARD. There is no cone at all — the light leaves
+     a face that is already the ceiling and spreads, which is the `panel`
+     distribution in lumens.js (70% at the walls, 30% at the floor) against the
+     spots' 80% at the floor. Two things that light a room differently are two
+     products however similarly they clip in, and a schedule that billed a run
+     of diffusers as track spots would be ordering the wrong fitting.
+
+     `beam: null` AND NOT A FIGURE, for `passive`'s reason one line up: a beam
+     angle is the half-intensity cone of a reflector and a diffuser has no
+     reflector. Null is "not specified here", which is true, rather than a
+     number somebody would later try to design to.
+
+     18 W IS THE ORDINARY 600 mm MODULE, and it is `PANEL_WATTS`' own default in
+     lumens.js — stated in both because one is the catalogue and the other is
+     the model, and they have to agree about the product. */
+  { id: 'track-diffuser', label: 'Track diffuser — linear', unit: 'nos',
+    watts: 18, beam: null, lumens: 1600,
+    note: 'linear ambient module, clipped into a track' },
   { id: 'sconce', label: 'Wall sconce', unit: 'nos',
     // NULL, NOT ZERO, and the difference matters downstream: zero would sum
     // into the connected load as a fitting that draws nothing, which is a
@@ -223,6 +248,23 @@ export const trackMetres = (lengthFt) => (
  * but not measured — which is the honest outcome of not having a scale.
  */
 export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
+                           /* --- THE MAGNETIC TRACKS AND THEIR MODULES --------
+                              THEIR OWN TWO ARGUMENTS, beside `spots` and for its
+                              reason: neither is derived from the layout, so
+                              neither can be read off a room. A magnetic track is
+                              a ceiling shape somebody drew and its modules are
+                              clipped on by hand — see lib/magTrack.js — where
+                              `r.tracks` is what the ceiling DESIGN made of a
+                              chunk. Merging them into `r.tracks` would have
+                              billed the profile correctly and then let the
+                              canvas draw it twice, once as an absorbing track
+                              with no heads on it.
+                              EACH CARRIES ITS OWN `roomId`, because a profile
+                              drawn across a threshold is one object and the
+                              schedule is a room's schedule — the caller decides
+                              which room it belongs to (its centre) rather than
+                              this file re-deriving it. */
+                           magTracks = [], modules = [],
                            pxPerFt = null, plan = null } = {}) {
   const lit = rooms.filter((r) => r.plan?.ok);
 
@@ -281,6 +323,33 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
     for (const t of r.tracks ?? []) {
       q['track-profile'] += trackMetres(t.lengthFt ?? 0);
       q['track-corner'] += t.corners ?? 0;
+    }
+
+    /* --- AND THE MAGNETIC TRACKS, WHICH ARE THE SAME TWO PRODUCTS ----------
+       THE PROFILE AND THE CORNERS BILL IDENTICALLY, through `trackMetres` and
+       per turn, because a magnetic track and an absorbing one are the same
+       extrusion — what differs is how the modules got onto it. Rounded per RUN
+       and not once at the end, which is `trackMetres`' own rule: a 4.3 m track
+       is a 5 m order however many other tracks are on the drawing.
+       THE MODULES ARE COUNTED SEPARATELY because they are not lights. Every
+       other fitting in this loop is either in `r.plan.lights` (the grid), in
+       `spots` or in `accents`; a module is in none of those, and its catalogue
+       line comes off the module itself — see TRACK_MODULES, which is the one
+       place a module's product is named. */
+    for (const t of magTracks) {
+      if (t.roomId !== r.id) continue;
+      q['track-profile'] += trackMetres(t.lengthFt ?? 0);
+      q['track-corner'] += t.corners ?? 0;
+    }
+    for (const m of modules) {
+      if (m.roomId !== r.id) continue;
+      const id = m.fixture;
+      // A MODULE WITH NO CATALOGUE LINE IS NOT BILLED AND NOT INVENTED. The
+      // wall washer is declared and not specified yet (see TRACK_MODULES), and
+      // a schedule that priced it would be pricing a product nobody has chosen.
+      if (!id) continue;
+      if (q[id] == null) q[id] = 0;
+      q[id]++;
     }
 
     return {

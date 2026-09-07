@@ -124,7 +124,8 @@ function HeightRow({ ceilingMm, onCeilingMm, disabled }) {
 
 export default function SpaceDetail({
   name, meta, ceilingMm, onCeilingMm, materials, materialsLabel, wallLabel,
-  onTone, onConfigureWalls, onBack, analysis, onWatts,
+  onTone, onConfigureWalls, onBack, analysis, onWatts, onBeam = null,
+  highlight = [], autoplace = null, onAutoplace = null,
   editing = false, onEdit, onDone, disabled = false,
 }) {
   return (
@@ -194,7 +195,9 @@ export default function SpaceDetail({
               number below it — that is the whole reason the finishes come first,
               and the reason both live on one screen rather than in two tabs. */}
           <div className={SEC}>
-            <SpaceAnalysis analysis={analysis} onWatts={onWatts} disabled={disabled} />
+            <SpaceAnalysis analysis={analysis} onWatts={onWatts} onBeam={onBeam}
+              highlight={highlight} autoplace={autoplace} onAutoplace={onAutoplace}
+              disabled={disabled} />
           </div>
         </>
       )}

@@ -71,6 +71,18 @@ const C = {
   object: '#FFFFFF',
   fan: '#404040',         // an obstacle is somebody else's object
   zone: '#737373',        // ...and so is a no-light zone
+  /* CEILING A HAND-PLACED FITTING SHOULD KEEP OFF, AND IT IS RED WHERE THE
+     no-light zone is grey. The two are the same KIND of fact and are told apart
+     by who is being addressed. A no-light zone is a standing instruction on the
+     sheet — somebody drew it, the layout obeys it, and it is quiet because it is
+     settled. This band is a live warning under a moving pointer, up for a second
+     or two, and its whole job is to be noticed before a press that will be
+     allowed to ignore it.
+     DULL AND NOT BRIGHT. #B4453C is a brick red — clearly red, clearly a
+     warning, and dark enough not to shout over somebody's line work. The danger
+     scarlet this app uses for errors would claim the press was about to fail,
+     and it is not: nothing here refuses anything. See lib/cob.js. */
+  nogo: '#B4453C',
   measure: '#000000',
   faint: '#B8B8B8',       // debug overlays, the secondary grid
   // Controls are not drawing. Selection frames, grips and alignment guides are
@@ -130,6 +142,13 @@ const poolFtFor = (fx) =>
  */
 const WALL_TONE_INK = { light: '#F2F2F2', medium: '#8A8A8A', dark: '#242424' };
 
+/* THE WARNING HATCH, IN CSS PIXELS ON SCREEN — see the `cob-nogo` pattern for
+   why this one texture is measured in screen pixels when every other weight on
+   this canvas is measured in the sheet's own units. 10 and 1.8 read as a fine
+   hatch rather than as stripes, at any zoom. */
+const HATCH_PX = 10;
+const HATCH_LINE_PX = 1.8;
+
 const PlanCanvas = forwardRef(function PlanCanvas(
   { src, srcAsScanned = null, vector = null, wallLayers = null,
     width, height, plans = [], focusId = null, selectedId = null,
@@ -175,6 +194,33 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        cove's own draft does. Nothing downstream can see a shape that has not
        been ticked. */
     coveShapes = [], selShapeId = null, onShapePointerDown = null,
+    /* --- WHICH GEOMETRY THE TOOL IN HAND WOULD TAKE -------------------------
+       ONE SHAPE ID, AND IT IS A CUE AND NOT A SELECTION. Two tools take a
+       geometry rather than a point — the shape tool spans a cove from a guide,
+       the COB array sets a run out on one — and neither could say so before the
+       press. The stroke comes up to full weight and solid under the pointer,
+       which is the drawing's own way of saying "this line, if you press".
+       DISTINCT FROM `selShapeId`, which is a state the drawing HOLDS. This is a
+       fact about where the pointer is, gone the moment it moves. */
+    hoverShapeId = null,
+    /* --- THE MAGNETIC TRACKS, AND THE MODULES CLIPPED INTO THEM -------------
+       ALREADY IN PLAN PIXELS, the contract every list here arrives under: this
+       file draws geometry and does not compute it. A run carries its points and
+       whether it closes; a module carries where it is and WHICH WAY THE RUN IS
+       HEADING there, because a module is a body lying ALONG the profile and
+       without the direction every one on a diagonal run is drawn across the run
+       it clips into — a fitting that could not be installed.
+       THEY ARE NOT `plans[i].tracksPx`. That list is the ABSORBING track — what
+       the ceiling design made of a chunk — and its heads are grid lights that
+       moved onto a profile. These are a profile somebody drew and modules
+       somebody clipped on, which is the same relationship `manualCobs` has to
+       the ambient grid. Two lists, because they have two different lifetimes and
+       one of them is rebuilt every time a fan moves. */
+    magTracks = [], trackModules = [], selTrackId = null,
+    /* A MODULE CAN BE PICKED UP AND SLID ALONG ITS RUN. `selModuleId` is which
+       one is held — a ring, so Delete has something visible to act on — and the
+       handler is withheld on the read-only sheet with everything else grabbable. */
+    selModuleId = null, onModulePointerDown = null,
     /* WHICH SHAPE IS SHOWING ITS DIMENSIONS, and the press on one of its grips.
        Narrower than `selShapeId` on purpose: selection is one press and gets the
        contextual bar, dimensions are a second press and get eight handles. See
@@ -311,7 +357,56 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        edge from point i to point i+1. This file draws geometry; what a tone
        MEANS is materials.js's business and the panel's. */
     wallEdit = null, onWallSegment = null,
-    placeSnap = null, sconceGhost = null, cursor = null },
+    placeSnap = null, sconceGhost = null,
+    /* --- RECESSED COBs SOMEBODY PUT DOWN THEMSELVES ------------------------
+       ONE ENTRY PER LAMP, already in plan pixels — this file draws geometry and
+       does not compute it, the same contract `shapes` and `taskSpots` arrive
+       under. Each carries the wattage and the beam angle it was specified at,
+       which is what the hover card prints; nothing here decides either.
+
+       THEY ARE NOT IN `plans[i].lightsPx` AND MUST NOT BE. That list is the
+       LAYOUT — what the gridding engine made of a ceiling — and it is thrown
+       away and rebuilt every time a fan moves or a chunking is re-read. A lamp
+       somebody placed by hand survives all of that, so it is a list of its own,
+       drawn on the same layer and with the same symbol. See lib/cob.js.
+
+       `cobGhost` IS THE ONE UNDER THE POINTER, before the click, and `cobGuide`
+       is the warning that goes with it — the band along the walls, the bed. Both
+       are momentary and belong to the gesture rather than to the sheet; both are
+       drawn and NEITHER refuses anything. */
+    manualCobs = [], selCobId = null, onCobPointerDown = null,
+    cobGhost = null, cobGuide = null,
+    /* THE RING AN ARRAY IS BEING SET OUT ON, while the bar is still asking about
+       it. Momentary, like the alignment guides: it is the offset path rather
+       than the geometry that produced it, because that is what the lamps are
+       spaced along and what a foot either way actually changes. */
+    arrayPath = null,
+    /* --- AND THE ONE UNDER AN ARRAY THAT IS OPEN ---------------------------
+       THE SAME LINE, KEPT FOR AS LONG AS ITS ARRAY IS SELECTED, and it is a
+       control rather than a mark on the ceiling: it says that twelve separate
+       lamps are one object, and it is what that object is grabbed by. On a ring
+       of four the lamps are four small targets a long way apart; the line
+       between them is the whole geometry and can be caught anywhere.
+       SEPARATE FROM `arrayPath` BECAUSE ONE ANSWERS THE POINTER AND THE OTHER
+       MUST NOT. The draft's ring is drawn while the tool is armed, and a band on
+       it would swallow presses meant for the ceiling underneath. */
+    selArrayPath = null, selArrayId = null, onArrayPathDown = null,
+    /* --- THE FITTINGS, STOOD DOWN WHILE GEOMETRY IS BEING SET OUT ----------
+       A DRAWN LINE IS WORTH MORE THAN A LAMP AT THIS MOMENT, and that inverts
+       the sheet's usual order. A COB carries a glowing aperture and a pool of
+       floor light the width of its beam — the brightest things on the drawing,
+       and rightly so when the question is "is this room lit". While the question
+       is "where does the next rectangle go", they are twelve bright discs over
+       the one faint dashed line somebody is trying to set out from.
+       SO THE LAYER GOES QUIET: no pools, no pulse, no hover, and the symbols at
+       a quarter weight. They stay visible — the whole point is to place the new
+       geometry with respect to the fittings already there — they simply stop
+       shouting over the lines that are being aimed at.
+       AND THE GUIDES ALREADY DRAWN COME UP TO MEET THEM. The exchange is the
+       feature, not two unrelated adjustments: see the `!sh.lit` line in the
+       shapes layer, which is the mark this is clearing the way for. */
+    placingGeometry = false,
+    cursor = null },
   ref
 ) {
   // WHICH FITTING IS WARM. Local, because nothing outside this file needs to
@@ -571,9 +666,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     return out;
   };
 
+  /* THE GRID IS DRAWN FROM `gridChunksPx` AND FALLS BACK TO `chunksPx`, and the
+     two are the same list except in the one state this overlay exists to serve:
+     the lights switched off (`AUTO_GRID` in App.jsx), where the layout's own
+     chunk list is deliberately empty and the chunker's reading is kept aside.
+     The fallback is for a plan that predates the field — it draws what it always
+     drew rather than nothing. */
   const gridPath = (plan) => (
     <g pointerEvents="none">
-      {(plan.chunksPx ?? []).map((ch, k) => (
+      {(plan.gridChunksPx ?? plan.chunksPx ?? []).map((ch, k) => (
         <g key={k}>
           <rect x={ch.x0} y={ch.y0} width={ch.x1 - ch.x0} height={ch.y1 - ch.y0}
             fill="none" stroke={C.audit} strokeWidth={lw * 1.8} opacity="0.75" />
@@ -620,6 +721,39 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2={lw * 9} stroke={zoneInk} strokeWidth={lw * 1.6}
             opacity={layers.invert ? 0.6 : 0.45} />
+        </pattern>
+        {/* THE SAME 45-DEGREE HATCH IN THE WARNING RED, because it is saying
+            the same thing about a piece of ceiling as `nlz` above. Only the
+            colour differs, and the colour is the whole message: this one is live
+            and momentary. See `C.nogo`, and the block that paints with it near
+            the foot of this file.
+
+            --- AND ITS TILE IS IN SCREEN PIXELS, WHICH IS THE ONE THING THAT
+                MAKES IT DIFFERENT FROM `nlz` -------------------------------
+            THIS WAS A BUG AND IT IS WORTH STATING SO IT IS NOT UNDONE. The tile
+            was `lw * 8` like the grey one's, and `lw` is the SHEET's line weight
+            — a constant in user units. This canvas zooms by scaling the whole
+            <svg> against a fixed viewBox (see the element at the foot of this
+            file: `viewBox="0 0 width height"`, `style.width = width * zoom`), so
+            one user unit is `zoom` CSS pixels. A tile fixed in user units
+            therefore GROWS AND SHRINKS ON SCREEN as you zoom: fat red stripes an
+            inch apart at 200%, an unreadable red mush at 40%.
+            `nlz` lives with that because it is DRAWING — a no-light zone is a
+            boundary on the sheet, it prints, and it should scale with everything
+            else that prints. This is not drawing. It is a warning that appears
+            under a moving pointer for a second and then goes, and it belongs
+            with the selection rings and the grips, every one of which this
+            canvas already keeps at a constant size on screen for exactly this
+            reason. So the tile and the line are divided by the zoom.
+            WHAT IS *NOT* DIVIDED BY THE ZOOM IS THE BAND'S WIDTH. That is two
+            feet of ceiling — a real distance, measurable off the drawing — and
+            it has to scale with the plan like any other dimension. The texture
+            is UI; the extent is geometry. See the block that paints them. */}
+        <pattern id="cob-nogo" width={HATCH_PX / (zoom || 1)} height={HATCH_PX / (zoom || 1)}
+          patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2={HATCH_PX / (zoom || 1)} stroke={C.nogo}
+            strokeWidth={HATCH_LINE_PX / (zoom || 1)}
+            opacity={layers.invert ? 0.75 : 0.6} />
         </pattern>
 
         {/* THE GLOW UNDER A FITTING, AS A GRADIENT AND NOT A BLUR.
@@ -3653,6 +3787,264 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         );
       })()}
 
+      {/* --- WHAT THE ENGINE WOULD NOT DO, DRAWN AND NOT ENFORCED -----------
+          Two marks, and both are momentary: they exist only while the COB
+          gesture is armed and the pointer is somewhere worth mentioning. See
+          lib/cob.js for why neither of them refuses the click.
+
+          BENEATH THE FITTINGS ON PURPOSE. These say something about the CEILING
+          — this strip of it is too close to a wall, that rectangle is a bed —
+          and a warning painted over the lamps would obscure the very thing
+          somebody is deciding about.
+
+          THE BAND IS A CLIPPED STROKE AND NOT AN INSET POLYGON, which is worth
+          recording because the obvious way is wrong. Offsetting an arbitrary
+          polygon inward is a real algorithm with real failure modes on a
+          reflex corner, and this app has plenty of L-shaped rooms. Stroking the
+          outline at twice the clearance and clipping the result to the outline
+          throws the outer half away and leaves a band of exactly the clearance,
+          hugging every corner correctly, for two elements and no arithmetic. */}
+      {cobGuide && (
+        <g pointerEvents="none">
+          {cobGuide.bandPx > 0 && cobGuide.polygonPx?.length > 0 && (() => {
+            const d = cobGuide.polygonPx
+              .map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ') + ' Z';
+            /* AN ID PER OUTLINE, because two spaces on one sheet would otherwise
+               share a clip path and the second would be cut to the first. It is
+               the same reason every gradient in this file is named. */
+            const cid = `cob-nogo-${Math.round(cobGuide.polygonPx[0].x)}`
+              + `-${Math.round(cobGuide.polygonPx[0].y)}`;
+            return (
+              <g>
+                <clipPath id={cid}><path d={d} /></clipPath>
+                {/* HATCHED IN THE WARNING RED, AND THE HATCH GOES ON THE
+                    STROKE. A pattern is a paint server like any other, so it
+                    fills the band the same way it would fill a shape — which is
+                    what lets the clipped-stroke trick above carry a hatch at all
+                    without anybody having to compute the inset polygon it would
+                    otherwise need. See the `cob-nogo` pattern in the defs.
+                    AND A HAIRLINE ALONG THE WALL ITSELF, so the band has an
+                    outer edge to be read against on a busy drawing. The inner
+                    edge is left to the hatch: it is where the hatching stops,
+                    which is exactly the line, and drawing it would mean offsetting
+                    the polygon after all. */}
+                <path d={d} clipPath={`url(#${cid})`} fill="none"
+                  stroke="url(#cob-nogo)" strokeWidth={cobGuide.bandPx * 2} />
+                <path d={d} clipPath={`url(#${cid})`} fill="none"
+                  stroke={C.nogo} strokeWidth={HATCH_LINE_PX / (zoom || 1)}
+                  opacity="0.75" />
+              </g>
+            );
+          })()}
+          {/* THE BED, IN THE SAME RED HATCH AS THE WALL BAND. One warning
+              language for both, because they are one warning: this is ceiling
+              the engine would not have put a downlight on. What differs is only
+              WHY — a wall washes, a bed glares in the eye of whoever is lying
+              under it — and that is a reason, not a second kind of mark. */}
+          {cobGuide.bed && (
+            <rect x={cobGuide.bed.x0} y={cobGuide.bed.y0}
+              width={cobGuide.bed.x1 - cobGuide.bed.x0}
+              height={cobGuide.bed.y1 - cobGuide.bed.y0}
+              fill="url(#cob-nogo)"
+              stroke={C.nogo} strokeWidth={HATCH_LINE_PX / (zoom || 1)} opacity="0.9" />
+          )}
+        </g>
+      )}
+
+      {/* --- THE COBs SOMEBODY PLACED ---------------------------------------
+          THE SAME SYMBOL AS AN AMBIENT DOWNLIGHT, and that is the point rather
+          than laziness. It IS an ambient downlight: a round cut-out in the same
+          ceiling, set out by the same installer, ordered off the same page. A
+          second glyph for it would tell whoever builds this that there are two
+          kinds of hole to cut, which is false — the only thing that differs is
+          who decided where it went, and that is not a fact about the ceiling.
+
+          AND IT THROWS A POOL THE SIZE OF ITS OWN BEAM. This is the one place on
+          the sheet where the coverage claim is exact rather than assumed. Every
+          other pool comes out of THROW_STYLE's three stated diameters, worked
+          out on a 9 ft ceiling because this app had no height when they were
+          written and keyed on WATTAGE, which is a proxy for the optic and not
+          the optic. A hand-placed lamp states its beam angle outright and stands
+          in a space whose ceiling height was asked for, so `throwFt` is computed
+          from both — see throwDiameterFt in lib/cob.js. Change the optic on the
+          bar or in the analysis panel and the disc under the lamp changes with
+          it, which is the whole point of choosing one.
+
+          CLIPPED TO THE ROOM, like the grid's own pools and for their reason: a
+          pool is a claim about THIS floor, and light spilling through a wall on
+          a drawing is a claim about the flat next door.
+
+          OPACITY PER CIRCLE AND NOT ON THE GROUP, again like the grid's. Group
+          opacity composites once, so two overlapping pools look exactly like one
+          — which throws away the most useful thing the layer says: that these
+          two lamps double up here and that corner has nothing.
+
+          EVERY POOL FIRST, THEN EVERY FITTING, AND THE TWO PASSES ARE NOT
+          OPTIONAL. Drawn inside each lamp's own group, the second lamp's six
+          feet of wash would paint straight over the first lamp's body, and a row
+          of downlights would come out with every symbol but the last one dimmed
+          by its neighbour. The grid's pools are a separate pass for this reason;
+          so are these. `laid` is indexed for the clip because the clip ids are.
+
+          ABOVE THE GRID AND BELOW THE SELECTABLE OBJECTS, for the ordering
+          reason the drawn coves state: a fitting somebody placed has to beat the
+          layout underneath it for a press, and must not beat a control. */}
+      {layers.lights && !placingGeometry && manualCobs.map((c) => {
+        const ri = laid.findIndex((r) => r.id === c.roomId);
+        if (ri < 0 || !(c.throwFt > 0)) return null;
+        return (
+          <g key={`cobthrow-${c.id}`} clipPath={`url(#roomclip-${ri})`}
+            pointerEvents="none">
+            <circle cx={c.x} cy={c.y} r={(c.throwFt / 2) * s}
+              fill="url(#lp-throw)" opacity={THROW_STYLE.opacity} />
+          </g>
+        );
+      })}
+
+      {layers.lights && manualCobs.map((c) => {
+        const R = Math.max(s * 0.3, lw * 3);
+        /* STOOD DOWN, AND IT IS THE WHOLE GROUP RATHER THAN EACH SYMBOL. The
+           pools above are skipped outright; what is left is the aperture, and one
+           opacity over it keeps the fitting reading as one mark at low weight.
+           AHEAD OF EVERYTHING BELOW, including `feel`: none of the hover
+           machinery, the selection ring or the pulse means anything on a layer
+           that has stood down, and raising a fitting's card off a lamp nobody
+           can press would be a card about a dead mark. */
+        if (placingGeometry) {
+          return (
+            <g key={c.id} opacity="0.26" pointerEvents="none">
+              <circle cx={c.x} cy={c.y} r={R} fill="url(#lp-core)" stroke={rim}
+                strokeWidth={lw * 1.7} />
+            </g>
+          );
+        }
+        const warm = hot === c.id;
+        /* A LAMP ON THE OPEN ARRAY IS PICKED, AND ALL OF THEM ARE. There is no
+           such thing as one selected spot in a run: the array is the object, and
+           a ring on only the lamp that happened to be pressed would say the
+           opposite of what the bar at the foot of the stage is about to. */
+        const picked = c.id === selCobId
+          || (!!selArrayId && c.arrayId === selArrayId);
+        /* THE RING'S SIZE IS CONSTANT ON SCREEN, like every other selection mark
+           on this canvas — a ring in drawing units vanishes at low zoom on the
+           one fitting somebody is trying to confirm they have hold of. Same two
+           figures the task spot's ring uses. */
+        const SR = Math.max(R * 2.1, (Math.max(width, height) / 150) / (zoom || 1));
+        const SFW = Math.max(width, height) / 1400;
+        /* THE POINTER SAYS THE LAMP CAN BE PICKED UP. `feel` hands back a
+           `pointer` cursor, which is right for a mark you can only SELECT and
+           wrong for one you can drag — and this is the only thing on screen that
+           says the gesture exists at all. Overridden here rather than added as a
+           parameter to `feel`, because that contract is about warming a fitting
+           and raising its card; what a PRESS will do is this layer's business.
+           The same `move` the ceiling objects show, for the same gesture. */
+        const hover = feel(c.id, { label: 'Recessed COB', rows: [
+          ['Wattage', `${c.watts} W`],
+          ['Beam angle', `${c.beam}\u00B0`],
+        ] });
+        return (
+          <g key={c.id} {...hover}
+            style={onCobPointerDown && !placing
+              ? { ...hover.style, cursor: 'move' } : hover.style}
+            onPointerDown={onCobPointerDown
+              ? (ev) => onCobPointerDown(ev, c.id) : undefined}>
+            {picked && (
+              <circle cx={c.x} cy={c.y} r={SR} fill="none"
+                stroke={C.sel} strokeWidth={SFW * 1.6} pointerEvents="none" />
+            )}
+            {/* THE BREATHING DISC AT THE FITTING, which is a different mark from
+                the pool and both belong. The pool is a claim about the floor;
+                this is the aperture reading as lit, and it is what makes a
+                drawing of a ceiling look like a ceiling with lamps in it rather
+                than a plan with circles on it. Staggered off the lamp's own id
+                so a row of them does not blink as one element — the grid's rule,
+                with a string to hash instead of an index. */}
+            <circle cx={c.x} cy={c.y} r={R * 2.6} fill="url(#lp-glow)"
+              className="lp-pulse" pointerEvents="none"
+              style={{ animationDelay:
+                `${((c.id.charCodeAt(c.id.length - 1) * 137) % 1000) / 1000 * -2.8}s` }} />
+            <circle className="hit" cx={c.x} cy={c.y} r={R}
+              fill="url(#lp-core)" stroke={rim}
+              strokeWidth={lw * (warm ? 3.1 : 1.7)} />
+          </g>
+        );
+      })}
+
+      {/* THE PATH AN ARRAY IS SPACED ALONG. Dashed and in the control colour,
+          because it is not a thing on the ceiling — it is the setting-out the
+          lamps beside it came from, and it goes the moment they are kept. */}
+      {arrayPath?.pts?.length > 1 && (
+        <path d={arrayPath.pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
+          + (arrayPath.closed ? ' Z' : '')}
+          fill="none" stroke={C.sel} strokeWidth={lw * 1.3}
+          strokeDasharray={`${lw * 5} ${lw * 4}`} opacity="0.85"
+          strokeLinejoin="round" pointerEvents="none" />
+      )}
+
+      {/* --- THE OPEN ARRAY'S OWN LINE, AND IT ANSWERS THE PRESS ------------
+          DRAWN THE SAME AS THE DRAFT'S, because it is the same line: the offset
+          path the lamps are spaced along, in the control colour, dashed, because
+          nobody builds it. What it has that the draft's has not is a grab band —
+          the transparent stroke eight line-weights wide that every other
+          grabbable line on this canvas uses, so it can be caught without aiming.
+          THE PRESS AND THE CLICK ARE BOTH STOPPED, which is not one act. See the
+          shape's own band: `stopPropagation` on `pointerdown` does nothing to
+          the `click` the browser synthesises after the release, and that click
+          reaches the canvas handler, which reads "a press on empty plan" and
+          clears the selection — the array would open and close forty
+          milliseconds apart. */}
+      {!placingGeometry && selArrayPath?.pts?.length > 1 && (() => {
+        const d = selArrayPath.pts
+          .map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
+          + (selArrayPath.closed ? ' Z' : '');
+        return (
+          <g>
+            <path d={d} fill="none" stroke={C.sel} strokeWidth={lw * 1.6}
+              strokeDasharray={`${lw * 5} ${lw * 4}`} opacity="0.9"
+              strokeLinejoin="round" pointerEvents="none" />
+            {onArrayPathDown && (
+              <path className="hit" d={d} fill="none" stroke="transparent"
+                strokeWidth={Math.max(lw * 8, 6)} strokeLinejoin="round"
+                style={{ pointerEvents: 'stroke', cursor: 'move' }}
+                onPointerDown={(e) => onArrayPathDown(e, selArrayPath.id)}
+                onClick={(e) => e.stopPropagation()} />
+            )}
+          </g>
+        );
+      })()}
+
+      {/* THE ONE UNDER THE POINTER, BEFORE THE CLICK. Faint, and drawn with the
+          fitting's own ground and line work for the reason the sconce's ghost
+          gives: a preview in a colour the click will not produce is a small lie
+          about the gesture. Unlike the sconce's, it sits exactly where the
+          pointer is — because that is exactly where the lamp will land. */}
+      {cobGhost && (() => {
+        const R = Math.max(s * 0.3, lw * 3);
+        return (
+          <g pointerEvents="none" opacity="0.5">
+            {/* AND THE POOL IT WOULD THROW, WHICH IS THE HALF WORTH SEEING
+                BEFORE THE PRESS. Where a lamp goes is a decision you can take by
+                eye; how much floor it covers is the thing the beam angle on the
+                bar actually decides, and it is invisible until it is drawn. Move
+                the slider from 24 to 60 degrees with the pointer over the
+                ceiling and the disc doubles under your hand, which is the
+                quickest possible way to understand what the control does.
+                UNCLIPPED, unlike the placed lamps' pools above. There is no room
+                index to hand here — the ghost is not a fitting and has no
+                `roomId` — and it costs nothing: the ghost is only ever drawn
+                while the pointer is inside a room, so the spill is a foot or two
+                at the wall for the moment before the click resolves it. */}
+            {cobGhost.throwFt > 0 && (
+              <circle cx={cobGhost.x} cy={cobGhost.y} r={(cobGhost.throwFt / 2) * s}
+                fill="url(#lp-throw)" opacity={THROW_STYLE.opacity} />
+            )}
+            <circle cx={cobGhost.x} cy={cobGhost.y} r={R} fill="url(#lp-core)" />
+            <circle cx={cobGhost.x} cy={cobGhost.y} r={R} fill="none"
+              stroke={rim} strokeWidth={lw * 2.1} />
+          </g>
+        );
+      })()}
+
       {/* THE SCONCE, BEFORE IT IS PLACED. Not a marker at the cursor: the whole
           point of this fitting is that it seats itself on a wall, so a preview
           at the pointer would show something that is never what lands. This is
@@ -3742,16 +4134,63 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     or committing one over an unlit space would look like the
                     tick having thrown it away. Drawn as the setting-out line it
                     will become the moment the space is lit. */}
-                {!sh.lit && (
-                  <path d={path(sh.pts, sh.open)} fill="none" stroke={ink} strokeWidth={lw}
+                {!sh.lit && !sh.track && (
+                  /* --- AND IT COMES UP WHILE ANOTHER ONE IS BEING SET OUT ---
+                     THE LINE IS THE SUBJECT AT THAT MOMENT, so it stops being
+                     scenery. 55% of the ink is right for a guide sitting under a
+                     finished drawing — it is a setting-out line, not a thing
+                     that gets built, and it must not compete with the fittings.
+                     It is wrong for the one minute the guide is the thing being
+                     aimed at: a new rectangle placed a foot inside an existing
+                     one has to be judged against it, and at half weight under a
+                     ceiling's worth of lamps there was nothing to judge against.
+                     The fittings stand down in the same breath — see
+                     `placingGeometry` — so this is one exchange rather than two
+                     unrelated nudges. */
+                  <path d={path(sh.pts, sh.open)} fill="none" stroke={ink}
+                    strokeWidth={placingGeometry ? lw * 1.4 : lw}
                     strokeDasharray={dot} strokeLinecap="round" strokeLinejoin="round"
-                    opacity="0.55" pointerEvents="none" />
+                    opacity={placingGeometry ? 0.95 : 0.55} pointerEvents="none" />
                 )}
                 {selShapeId === sh.id && (
                   <path d={path(sh.pts, sh.open)} fill="none" stroke={C.lit}
                     strokeWidth={lw * 2.2} strokeLinejoin="round"
                     opacity="0.95" pointerEvents="none" />
                 )}
+                {/* --- THE LINE, LIT UNDER A TOOL THAT WOULD TAKE IT ---------
+                    THE SAME INK AT FULL STRENGTH, SOLID, AND HEAVIER — not a
+                    new colour. `ink` is already white on an inverted plan and
+                    the drawing's own line work on paper (see the note where it
+                    is set), so "goes white on hover" and "reads on both grounds"
+                    are the same instruction: what changes is that the resting
+                    55% dashed line becomes a 100% solid one. A literal white
+                    would be invisible on the paper sheet, and picking a THIRD
+                    colour for it would put a hue on this canvas that means
+                    neither state nor type — see the palette note at the top.
+
+                    ALWAYS MOUNTED, WITH THE OPACITY DOING THE WORK, and that is
+                    what buys the transition. A path that appears on hover has
+                    nothing to animate FROM — CSS interpolates between two
+                    computed values and an element that did not exist has none —
+                    so it would snap on. Rendered for every shape at zero opacity
+                    it fades in and out properly, and the cost is one more empty
+                    path per shape on a layer that holds a handful.
+
+                    AND IT IS DRAWN WHATEVER `lit` SAYS, unlike the dashed line
+                    above. A cove the layout has taken up is drawn by the room's
+                    own layer and skipped here — but the array tool will happily
+                    set a run out on one, so it has to be able to light up. The
+                    two marks coincide exactly (same points), so the overlay
+                    reads as that line brightening rather than as a second one.
+
+                    NO POINTER EVENTS. The grab bands below are what answer a
+                    press; a cue that could also be pressed would be a cue that
+                    changes what the press means. */}
+                <path d={path(sh.pts, sh.open)} fill="none" stroke={ink}
+                  strokeWidth={lw * 2.2} strokeLinecap="round"
+                  strokeLinejoin="round" pointerEvents="none"
+                  style={{ opacity: hoverShapeId === sh.id ? 1 : 0,
+                           transition: 'opacity 130ms ease-out' }} />
                 {onShapePointerDown && [sh.pts, sh.tape].filter(Boolean).map((band, i) => (
                   <path key={i} className="hit" d={path(band, sh.open)} fill="none"
                     stroke="transparent" strokeWidth={Math.max(lw * 8, 6)}
@@ -3902,6 +4341,146 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           </g>
         );
       })()}
+
+      {/* --- WHY THIS LAYER IS DOWN HERE ------------------------------------
+          IT WAS ABOVE THE SHAPES LAYER AND THAT MADE THE MODULES UNGRABBABLE. A
+          magnetic track IS a ceiling shape, so the shapes layer draws a
+          transparent grab band along its outline — eight line-weights wide, the
+          thing that selects it and drags it. Painted after the modules, that band
+          took every press aimed at one: pressing a diffuser to slide it along the
+          rail picked up the whole track instead, which reads as the drag not
+          existing.
+          LATER PAINT TAKES THE PRESS, so the fix is the order and not a
+          `pointer-events` fiddle — the same rule the shape grips are painted last
+          for, and the same failure they were guarding against.
+          IT IS ALSO THE RIGHT ORDER TO LOOK AT. The rail is a built thing and the
+          dashed guide it was set out from is scenery; drawn after, the profile
+          reads on top of the line it came from rather than under it. */}
+      {/* --- THE MAGNETIC TRACKS, AND THE MODULES ON THEM ------------------
+          IT IS THE ABSORBING TRACK'S OWN TREATMENT, DELIBERATELY AND EXACTLY.
+          The first version of this layer drew a thin amber line with soft
+          glowing pills on it, which was a second idea about what a track looks
+          like on a plan — and this file already had one, argued out at length
+          where `plans[i].tracksPx` is drawn a thousand lines up. Two pictures of
+          one object is the fault every note in that block exists to prevent, so
+          this is the same three marks in the same order:
+
+            A RIM in the accent RAMP at the profile's REAL WIDTH,
+            A BLACK CORE inset by one edge weight,
+            THE MODULES seated inside it as white bodies.
+
+          `real-width` IS LOAD-BEARING AND NOT DECORATION. Every other stroke on
+          this sheet is a LINE WEIGHT, pinned to a constant screen width by the
+          stylesheet; this one is an inch of aluminium. Without the class the
+          rail would be a hairline with inch-wide modules sitting outside it at
+          high zoom — which is precisely how it looked. See the long note at `w`
+          in the absorbing track's block.
+
+          MITRED AND ONE PATH ON A CLOSED RUN. Four strokes that overlap at the
+          ends show as a lump at each corner where a corner join belongs.
+
+          NO PRESS HANDLER ON THE RAIL. A magnetic track IS a ceiling shape — see
+          lib/magTrack.js — so the grab band the shapes layer already draws for
+          it is what selects it, drags it and opens its grips. A second target
+          here would be two ways to pick up one object. */}
+      {layers.lights && magTracks.map((t, ti) => {
+        const d = t.pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
+          + (t.closed ? ' Z' : '');
+        const w = inch(TRACK_DIMS_IN.profile);
+        // The black core, inset by one edge weight each side. Clamped so a very
+        // small plan cannot invert it into a negative stroke width, at which
+        // point the rail would vanish.
+        const core = Math.max(w - lw * 1.5 * 2, w * 0.25);
+        const gid = `lp-magrail-${ti}`;
+        const xs = t.pts.map((q) => q.x), ys = t.pts.map((q) => q.y);
+        return (
+          <g key={`mtrack-${t.id}`} pointerEvents="none">
+            {/* THE EDGE IS A GRADIENT ALONG THE RUN, like the strips and like the
+                absorbing rail: a length of product with the light graduating
+                down it. `userSpaceOnUse` across the whole run's extent, so a
+                closed track grades across its rectangle instead of each side
+                restarting. */}
+            <defs>
+              <linearGradient id={gid} gradientUnits="userSpaceOnUse"
+                x1={Math.min(...xs)} y1={Math.min(...ys)}
+                x2={Math.max(...xs)} y2={Math.max(...ys)}>
+                {RAMP.stops.map((st) => (
+                  <stop key={st.at} offset={st.at} stopColor={st.color} />
+                ))}
+              </linearGradient>
+            </defs>
+            <path d={d} fill="none" stroke={`url(#${gid})`} strokeWidth={w}
+              className="real-width" strokeLinejoin="miter" strokeLinecap="butt" />
+            <path d={d} fill="none" stroke={C.ink} strokeWidth={core}
+              className="real-width" strokeLinejoin="miter" strokeLinecap="butt" />
+            {/* AND THE SELECTION, OUTSIDE THE PROFILE RATHER THAN OVER IT. A ring
+                painted on the rail would hide the very thing it is confirming you
+                have hold of. */}
+            {selTrackId === t.id && (
+              <path d={d} fill="none" stroke={C.sel} strokeWidth={w * 2.1}
+                className="real-width" strokeLinejoin="miter" opacity="0.35" />
+            )}
+          </g>
+        );
+      })}
+
+      {/* THE MODULES, SEATED IN THE PROFILE.
+          A REAL-WIDTH BODY AND NOT A GLOWING PILL, which is the other half of
+          the same correction. A module is a 600 x 38 mm extrusion clipped into a
+          38 mm carrier: drawn at its own size it seats INSIDE the rail as a white
+          body in a dark slot, which is what a track looks like from the floor and
+          what no soft disc could say. The absorbing track's heads are drawn from
+          the same two figures in TRACK_DIMS_IN.
+
+          ROTATED BY THE RUN'S OWN DIRECTION, from `ux`/`uy` and not from an axis
+          name: a drawn track is not rectilinear and 'h' or 'v' cannot describe a
+          diagonal.
+
+          THE GLOW IS STRETCHED THE WAY THE BODY IS. A round glow under a linear
+          source is the one thing that would give the game away — a two-foot lens
+          throws a two-foot pool.
+
+          A SEPARATE PASS, AFTER EVERY PROFILE, for the reason the COB pools are:
+          a module's glow drawn inside its own run's group would paint over the
+          profile of the next run along.
+
+          AND EACH ONE CAN BE PICKED UP. A diffuser the allocator put down is a
+          proposal, not a decision — see `allocateOnTrack` — so it has to be
+          movable along the run it is in. The hit band is wider than the body for
+          the reason every target on this canvas is: 38 mm of pointer is not a
+          target. */}
+      {layers.lights && trackModules.map((m) => {
+        const along = inch(m.lenIn);
+        const across = inch(m.wideIn);
+        const deg = (Math.atan2(m.uy ?? 0, m.ux ?? 1) * 180) / Math.PI;
+        const grabW = Math.max(along, HIT_BAND);
+        const grabH = Math.max(across * 3, HIT_BAND);
+        const picked = selModuleId === m.id;
+        return (
+          <g key={m.id} transform={`translate(${m.x} ${m.y}) rotate(${deg})`}>
+            <ellipse cx="0" cy="0" rx={along / 2 + inch(3)} ry={across / 2 + inch(3)}
+              fill="url(#lp-glow)" className="lp-pulse" pointerEvents="none"
+              style={{ animationDelay:
+                `${((m.id.charCodeAt(m.id.length - 1) * 137) % 1000) / 1000 * -2.8}s` }} />
+            {picked && (
+              <rect x={-along / 2 - across} y={-across * 1.5} width={along + across * 2}
+                height={across * 3} rx={across} fill="none" stroke={C.sel}
+                strokeWidth={lw * 1.6} pointerEvents="none" />
+            )}
+            <rect x={-along / 2} y={-across / 2} width={along} height={across}
+              rx={Math.min(across / 3, lw * 1.2)}
+              fill="url(#lp-core)" stroke={rim} strokeWidth={lw * 1.5}
+              pointerEvents="none" />
+            {onModulePointerDown && !placing && (
+              <rect className="hit" x={-grabW / 2} y={-grabH / 2}
+                width={grabW} height={grabH} fill="transparent"
+                style={{ cursor: 'move' }}
+                onPointerDown={(e) => onModulePointerDown(e, m.id)}
+                onClick={(e) => e.stopPropagation()} />
+            )}
+          </g>
+        );
+      })}
 
       {/* --- THE CEILING DESIGN, CHOSEN ON THE DRAWING ----------------------
           A cove is a thing you judge by looking at it, so the choice belongs on

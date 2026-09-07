@@ -25,11 +25,11 @@ import { STRIP_OFFSET_FT, coveHostFor, bandBetween, bandFixtureFor, COVE_GAP_FT,
 import { absorbPoints, planDrawnTrack, drawnTrackRefusal,
          TRACK_REFUSALS, SPOT_LEN_FT, DODGE_FT } from './lib/track.js';
 import usePen from './hooks/usePen.js';
-import { penSegments, penLengthFt, penRelock, penMovePoint, penAim,
+import { penSegments, penLengthFt, penRelock, penMovePoint, penAim, axisLock,
          MIN_SEG_FT } from './lib/pen.js';
 import { newHistory, record, stepBack, stepForward, historyDepth,
          QUIET_MS } from './lib/undo.js';
-import { bbox, pointInPolygon } from './lib/geometry.js';
+import { bbox, pointInPolygon, maxInset } from './lib/geometry.js';
 import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, openingPx, DOOR_WIDTHS } from './lib/doors.js';
 import { proposeOutlines } from './lib/outlineSources.js';
@@ -40,10 +40,15 @@ import { LIGHT_TOOLS, GESTURE } from './components/LightPalette.jsx';
 import { Logo } from './components/Wordmark.jsx';
 import ShapeMenu, { SHAPE_GESTURE } from './components/ShapeMenu.jsx';
 import { SHAPE_BY_ID, POLY_SIDES, shapeFromDrag, penShape, sealShape, clampCoveMove,
-         outlineFt as shapeOutlineFt, coveRectFt, pathLengthFt,
-         isOpen as shapeIsOpen, spanOnOutline, penSpansOutline, runLengthFt,
+         outlineFt as shapeOutlineFt, cornersFt as shapeCornersFt,
+         hitShape, coveRectFt, pathLengthFt,
+         isOpen as shapeIsOpen, roleOf as shapeRoleOf,
+         isTrack as shapeIsTrack, isBuilt as shapeIsBuilt, insetShape,
+         canTakeGeometry,
+         spanOnOutline, penSpansOutline, runLengthFt,
          lineShape, projectOnOutline,
          bigEnough, maxRadiusFt, roundable, newShapeId, bboxFt as shapeBboxFt,
+         MIN_SPAN_FT as SHAPE_MIN_SPAN_FT,
          resizeShape, handlesFor, frameFt as shapeFrameFt,
          sizeLabel as shapeSizeLabel } from './lib/ceilingShapes.js';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
@@ -54,6 +59,23 @@ import { buildBOQ, FIXTURE_BY_ID, trackFixtureFor } from './lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
 import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed, isOutdoor, targetAreaFor, fixtureForCell } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
+import CobSpec from './components/CobSpec.jsx';
+/* THE DOWNLIGHT SOMEBODY PUTS DOWN THEMSELVES. Every rule about one — what it
+   may be specified at, what the gridding engine would have installed where the
+   pointer is, and the two things worth warning about before the click — is in
+   lib/cob.js, and this file does the placing. See its header. */
+import { recommendCob, placeCob, newCobId, chunkSpec, wallClearance, bedUnder,
+         clampWatts, nearestBeam, throwDiameterFt, DEFAULT_DROP_FT,
+         COB_WATT_RANGE, arraySpots, arrayPath, arrayAsks, ARRAY_SIDES,
+         arrayQuanta, quantiseCount } from './lib/cob.js';
+/* THE MAGNETIC TRACK. Its RUN is a ceiling shape with `role: 'track'` — which
+   is why there is no store of paths here and why it resizes, duplicates and
+   snaps like everything else in the geometry library — and this file holds the
+   modules that clip into one. See its header for why it is not track.js. */
+import { MODULE_BY_ID, MODULE_SOON, moduleAt, uAt, moduleWatts,
+         moduleLenIn,
+         placeableU, placeModule, newModuleId,
+         planDiffusers } from './lib/magTrack.js';
 import OptionCoach from './components/OptionCoach.jsx';
 /* The walkthrough, playing in the panel rather than linked out of it. Named
    export: the default one is the line of type that opens it in a dialog. */
@@ -101,6 +123,13 @@ import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
          newCeilingObjectId }
          from './lib/ceilingObjects.js';
 import { collectTargets, snapPoint, SNAP_DEFAULTS } from './lib/snapGuides.js';
+/* PICKING A THING UP, MOVING IT, AND LEAVING A COPY BEHIND — the four rules
+   every draggable object on this canvas needs and each of which has been got
+   wrong at least once here. See its header. The COB is the first store wired
+   through it; the ceiling objects still carry their own copy of the same
+   arithmetic, and moving them across is the next job. */
+import { movedEnough, grabOffset, wantedCentre, orthoLock,
+         deltaFrom, applyDelta, forkCopy } from './lib/dragMove.js';
 import { buildSnapIndex, snapAt } from './lib/snap.js';
 import { openPdf, isPdf, pageToImg } from './lib/pdfPlan.js';
 import PdfPagePicker from './components/PdfPagePicker.jsx';
@@ -109,7 +138,7 @@ import SpaceDetail from './components/SpaceDetail.jsx';
 import WallTonePopup from './components/WallTonePopup.jsx';
 import { DEFAULT_CEILING_MM, CEILING_MM_MIN, CEILING_MM_MAX,
          materialsOf, wallMix, wallMixLabel, materialsSummary } from './lib/materials.js';
-import { analyseSpace, FIXTURE_FAMILIES, FAMILY_BY_ID } from './lib/lumens.js';
+import { analyseSpace, netPerUnit, FIXTURE_FAMILIES, FAMILY_BY_ID, lumensPerWattFor } from './lib/lumens.js';
 
 /* ---------------------------------------------------------------------------
    THE GRIDDING ENGINE IS OFF, AND THIS IS THE WHOLE OF THE SWITCH.
@@ -140,6 +169,15 @@ import { analyseSpace, FIXTURE_FAMILIES, FAMILY_BY_ID } from './lib/lumens.js';
    than no tool.
    --------------------------------------------------------------------------- */
 const AUTO_GRID = false;
+
+/* --- THE COB GESTURES THIS BUILD DOES NOT ANSWER FOR YET --------------------
+   EMPTY NOW, AND KEPT. It held 'array' while that gesture was undecided — the
+   cell was in the drawer because the drawer is what says this fitting has two
+   gestures, and out of reach because a press that arms nothing is worse than a
+   cell you can see is not ready yet. The array is built, so the entry goes and
+   the list stays: the next gesture to be sketched before it is written has a
+   place to sit. */
+const COB_SOON = [];
 
 // ---------------------------------------------------------------------------
 // THE DESIGN LANGUAGE, AS UTILITY STRINGS.
@@ -1047,6 +1085,222 @@ export default function App({
   const [manualAccents, setManualAccents] = useState([]);
   const [manualSurfaces, setManualSurfaces] = useState([]);
 
+  /* --- RECESSED COBs SOMEBODY PUT DOWN THEMSELVES ----------------------------
+     A FLAT LIST IN PLAN FEET, kept for the reason `manualCoves` and
+     `manualTracks` are kept and not for the reason `lightMoves` is. Those two
+     are fittings with no generator behind them: nothing re-derives a run
+     somebody clicked out, so the geometry IS the record. `lightMoves` is the
+     opposite — an offset from a layout that gets recomputed on every open — and
+     a hand-placed COB is not that. It does not belong to a cell, it did not come
+     out of a solver, and re-running the layout must not be able to move it or
+     take it away. So it is stored whole.
+
+     FEET AND NOT PIXELS, which is the newer of the two habits in this file and
+     the right one: a plan reopened after its scale has been corrected has its
+     lamps where they were SET OUT rather than where they happened to fall on
+     screen. (`manualAccents` predates that and is still in pixels.)
+
+     AND EACH ONE CARRIES ITS OWN WATTAGE AND OPTIC. Everything the engine places
+     is bought off the catalogue and the room holds one decision per family — see
+     `fixtureWatts` — because the engine made that decision once for all of them.
+     A lamp placed by hand was specified as it was placed, which is what the card
+     on the drawing is for, so the specification rides on the fitting. That is
+     also what makes the analysis panel give each one a row of its own. */
+  const [manualCobs, setManualCobs] = useState([]);
+  /* WHICH ONE IS PICKED, so Delete has something to act on. Its own selection
+     and not `selAccId`: an accent zone is a strip or a sconce out of the accent
+     machinery, and filing a COB in that list would mean Delete looking for it in
+     three stores that have never heard of it. */
+  const [selCobId, setSelCobId] = useState(null);
+  /* THE DRAG IN FLIGHT, and it lives for one press. Everything in it is a
+     snapshot taken when the pointer went down — see `cobPointerDown`, and rule 2
+     in lib/dragMove.js for why every frame is measured from there rather than
+     from the frame before it. */
+  const [cobDrag, setCobDrag] = useState(null);
+
+  /* --- THE COB DRAWER, AND WHAT THE NEXT LAMP WILL BE ------------------------
+     ALL TRANSIENT. None of this is saved: it is which cell of the rail is open,
+     which of its gestures is armed, and the specification the next click will
+     use — and a plan reopened holding a half-made intention would be a plan that
+     places a lamp somebody decided about last week.
+
+     THE THREE SPECIFICATION SLOTS ARE THREE DIFFERENT LIFETIMES, which is the
+     whole of the two buttons on the card:
+
+       cobDraft     what the slider and the chips are showing. It has no effect
+                    on anything until one of the buttons is pressed, which is
+                    what makes dragging the slider free.
+       cobOnce      "Update this" — one lamp, then gone.
+       cobStanding  "Update all next" — every lamp from now until it is cleared
+                    by the Recommended chip.
+
+     Null in all three means "ask the engine", which is the default and the thing
+     the card opens on. */
+  const [cobOpen, setCobOpen] = useState(false);
+  const [cobMode, setCobMode] = useState(null);
+  const [cobDraft, setCobDraft] = useState(null);
+  const [cobOnce, setCobOnce] = useState(null);
+  const [cobStanding, setCobStanding] = useState(null);
+  /* --- THE LAMPS PUT DOWN SINCE THE TOOL WAS PICKED UP -----------------------
+     A LIST OF IDS, AND IT IS WHAT THE TICK AND THE CROSS ON THE BAR ACT ON.
+     Placing is immediate — a lamp appears the moment it is clicked, it is on the
+     drawing, it is in the analysis — and that is deliberate: a tool where twenty
+     fittings are invisible until you confirm them is a tool you cannot judge the
+     ceiling with. What the two buttons decide is whether the RUN stays.
+
+     SCOPED TO THIS ARMING OF THE TOOL AND NOT TO THE PLAN, which is the whole
+     safety of the cross. "Reject all placements" has to mean the ones just made,
+     not every COB anybody ever placed on this drawing — a button that could take
+     out last week's work in one press does not belong beside a button you press
+     twenty times a minute. Cleared when the tool is put down, so the next run
+     starts empty and the cross can never reach back past it.
+
+     NOT SAVED. It is a fact about a gesture in flight, and a plan reopened
+     holding one would offer to throw away lamps from a session that ended. */
+  const [cobRun, setCobRun] = useState([]);
+  /* --- THE SPACE THE RUN BELONGS TO -----------------------------------------
+     SET BY THE FIRST LAMP AND HELD UNTIL THE RUN ENDS. Placing a downlight is
+     not really an act on a POINT — it is an act on a CEILING: the recommendation
+     comes from that ceiling's cells, the analysis that has to move while you
+     work is that space's, and the row of lamps you are lining up is a row in one
+     room. A run that wandered across a doorway would be one gesture editing two
+     spaces, with the panel able to show only one of them.
+
+     SO THE FIRST PRESS CHOOSES THE ROOM AND THE REST OF THE RUN IS INSIDE IT.
+     Clicks on any other ceiling place nothing — and, more importantly, SAY they
+     will place nothing before they are spent: the pointer goes back to an arrow,
+     the ghost lamp and the guides come off, and the bar stops answering for
+     wherever the cursor is. A rule you discover by pressing is a bug; a rule the
+     cursor states is a boundary.
+
+     THE WAY TO THE NEXT ROOM IS THE TICK, which is what gives that button its
+     second job. Keep the run, and the tool re-arms unlocked on the next press;
+     the cross does the same having thrown the run away. Both were already the
+     way out — this is what they are the way out OF.
+
+     NOT SAVED, like `cobRun` beside it: it is a fact about a gesture in flight. */
+  const [cobLock, setCobLock] = useState(null);
+
+  /* --- WHICH SPACES ARE FILLING THEIR OWN GRID -------------------------------
+     A SET OF OUTLINE IDS, and it is SAVED, unlike everything else in this block.
+     The rest of the COB state is a gesture in flight; this is a decision about a
+     ceiling — "this space's grid is laid out automatically" — and a plan
+     reopened without it would come back with the lamps gone and nothing to say
+     why they went.
+     WHAT IT SWITCHES IS A PLACER AND NOT A LAYER. The lamps it puts down are
+     real entries in `manualCobs`: they draw, they count, they can be dragged,
+     re-specified and deleted one at a time, and once one of them has been
+     touched it stops being the toggle's to take away. See `autoplaceIn`. */
+  const [autoSpots, setAutoSpots] = useState([]);
+
+  /* --- LAMPS SET OUT ON A GEOMETRY -------------------------------------------
+     WHAT IS STORED IS THE INSTRUCTION, NOT THE LAMPS. Each entry names a
+     geometry, how many lamps go on it, which side of it they sit and how far
+     off — and the positions are worked out from that every time. That is the
+     whole reason a geometry is a first-class thing: the same rectangle is the
+     cove's setting-out line and the ring a run of spots is arranged a foot
+     inside, and storing the twelve points it currently works out to would mean
+     dragging the rectangle moved the cove and left the lamps behind.
+
+     ONE SPECIFICATION FOR THE WHOLE ARRAY, which is what makes it one row in the
+     Analysis: twelve lamps on one ring are one decision, and changing the
+     wattage there changes all twelve because there is only one figure to change.
+
+     `geomId` IS A SHAPE'S ID, OR `room:<outlineId>` FOR A ROOM'S OWN OUTLINE.
+     One field rather than a shape id beside a room id and a flag saying which,
+     because every reader wants the same thing from it — a path — and a prefix is
+     the cheapest way to say which list to look in. See `arrayOutline`. */
+  const [cobArrays, setCobArrays] = useState([]);
+  /* THE ARRAY BEING SET UP, which is a gesture and not a record: which geometry
+     is picked, and what the bar is currently asking about it. It becomes an
+     entry above when the tick is pressed, and is thrown away otherwise. */
+  const [cobDraftArray, setCobDraftArray] = useState(null);
+  /* --- THE ARRAY THAT IS OPEN ------------------------------------------------
+     ITS OWN SELECTION, beside `selCobId` rather than inside it, and the reason
+     is what a press on one of its lamps MEANS. A hand-placed COB is a fitting
+     and clicking it selects that fitting; an array lamp is not a fitting at all
+     — it is one of twelve consequences of a count and an offset, and there is
+     nothing about it on its own that anybody can change. So the press has to
+     resolve to the ARRAY, and the bar it opens has to be the array's.
+
+     WHICH IS ALSO WHY IT CANNOT BE FILED UNDER `selCobId`. That id is looked up
+     in `manualCobs` by Delete, by the analysis highlight and by the drag — three
+     lookups that would all miss, because an array's lamps are a memo (see
+     `arrayCobsPx`) and were never in that store.
+
+     TRANSIENT. A selection is a fact about what somebody is looking at. */
+  const [selArrayId, setSelArrayId] = useState(null);
+  /* THE ARRAY BEING CARRIED, for one press. Same snapshot-at-the-press rule
+     every other drag on this canvas follows — see rule 2 in lib/dragMove.js. */
+  const [arrayDrag, setArrayDrag] = useState(null);
+
+  /* --- THE GEOMETRY UNDER THE POINTER, WHILE SOMETHING CAN TAKE IT ----------
+     A SHAPE ID, AND IT IS ONLY EVER SET WHILE A TOOL CAN ACTUALLY USE ONE. Two
+     tools take a geometry rather than a point — the shape tool, which spans a
+     cove from a guide already drawn, and the COB array, which sets a run out on
+     one — and until this existed neither said so before the press. Both showed a
+     crosshair over a line they were about to swallow, and the array drew a ghost
+     lamp at the pointer that was never going to be placed there.
+
+     ONE PIECE OF STATE FOR THREE CUES, which is why it is a state and not three
+     tests at three call sites: the cursor turns into a pointer, the ghost lamp
+     goes, and the geometry's own stroke comes up to full weight. All three are
+     saying the same sentence — "press here and you get THIS line" — and they
+     have to agree frame by frame.
+
+     TRANSIENT, and cleared with whatever tool set it. A highlight left on a
+     shape after the tool was put down is a shape claiming to be selectable by a
+     press that would do something else. */
+  const [geomHover, setGeomHover] = useState(null);
+
+  /* --- THE MODULES CLIPPED INTO A MAGNETIC TRACK ----------------------------
+     THE RUN IS NOT IN HERE, AND THAT IS THE WHOLE DESIGN. A magnetic track is a
+     ceiling shape with `role: 'track'` — one entry in `ceilingShapes` beside the
+     coves and the guides — so it draws with every primitive the shape bar has,
+     it resizes by its grips, it duplicates by its own button, it snaps, it drags
+     and it saves, none of which is written here. See the header of
+     lib/magTrack.js for the argument at length.
+
+     WHAT IS IN HERE IS WHERE EACH MODULE SITS ON ITS RUN, and it is a FRACTION
+     of the path rather than a distance along it. That trade is stated in
+     `clampU`: the run came out of the geometry library and is routinely resized
+     and copied onto a room of another size, and a module stored in feet falls
+     off the end of a run somebody shortened. Stored as a fraction the
+     arrangement survives the edit.
+
+     ONE FLAT LIST KEYED BY `trackId` rather than a list per track, for the
+     reason `manualCobs` is flat: every reader wants "the modules on this run",
+     which is a filter, and a map of arrays is a second structure to keep in step
+     with a store of shapes that can be deleted from anywhere.
+
+     SAVED, because it is a decision somebody made about a drawing and nothing
+     re-derives it. */
+  const [trackFixtures, setTrackFixtures] = useState([]);
+  /* THE DRAWER, AND WHICH MODULE IS ARMED. Transient, exactly as the COB's two
+     are: which cell of the rail is open and what the next press will clip in. */
+  /* WHICH MODULE IS ARMED. There is no `trackOpen` beside it any more: the rail
+     cell's latch is the geometry bar's own role (`shapeRole === 'track'`) and the
+     drawer follows the SELECTED RUN, so both were state that had to be kept in
+     step with something already true. See the cell at the ToolRail call site. */
+  const [trackMode, setTrackMode] = useState(null);
+  /* WHICH MODULE IS HELD, AND THE SLIDE IN FLIGHT.
+     A DIFFUSER THE ALLOCATOR PUT DOWN IS A PROPOSAL AND NOT A DECISION — it
+     answered "how much light" from the room's shortfall and "where" from the
+     geometry, and neither of those is a claim about the console being under it.
+     So it has to be movable, and the only direction it CAN move is along the run:
+     a module clips anywhere on a profile and nowhere across one. That is why the
+     drag writes a fraction rather than a point. */
+  const [selModuleId, setSelModuleId] = useState(null);
+  const [moduleDrag, setModuleDrag] = useState(null);
+  /* WHERE THE POINTER IS ON THE PLAN, and only that. It is what the
+     recommendation and the two warnings are computed from — the bar that shows
+     them is pinned to the foot of the stage and needs no position of its own,
+     which is the whole of why this is one point rather than two. See CobSpec for
+     the card at the cursor that this replaced and why it could not work.
+     NULL OFF THE CEILING, so the guides draw nothing out there and the engine
+     falls back to the catalogue. */
+  const [cobAt, setCobAt] = useState(null);
+
   /* --- COVES SOMEBODY DREW ---------------------------------------------------
      A LIST OF SHAPES IN PLAN FEET, and the same kind of state `ceilingObjs` is:
      real objects of a real size, held in feet so that correcting the scale
@@ -1091,6 +1345,13 @@ export default function App({
      say. */
   const [shapeMenuOn, setShapeMenuOn] = useState(false);
   const [shapeTool, setShapeTool] = useState(null);        // a SHAPE_TOOLS id
+  /* WHAT THE BAR IS DRAWING FOR — 'cove' or 'guide'. THE BAR ITSELF IS THE SAME
+     BAR, which is the whole of this: the six primitives, the gestures, the
+     grips, the tick and the cross were all built for the cove tool and none of
+     them was ever ABOUT coves. What differs is only what the drawing becomes
+     once it is committed, and that is one field on the shape. See `roleOf` in
+     ceilingShapes.js. Transient — a shape carries its own role once sealed. */
+  const [shapeRole, setShapeRole] = useState('cove');
   const [shapeSides, setShapeSides] = useState(POLY_SIDES.initial);
   const [shapeAskSides, setShapeAskSides] = useState(false);
   const [shapeSpan, setShapeSpan] = useState(null);        // { aFt, uniform }
@@ -1125,6 +1386,25 @@ export default function App({
      between, and it is the one piece of the gesture that survives the pointer
      coming up. */
   const [shapeHeld, setShapeHeld] = useState(null);
+  /* --- A DRAFT TAKEN FROM A GEOMETRY, AND HOW FAR OFF IT IS BEING SET -------
+     TWO PIECES BECAUSE THE ANSWER IS RECOMPUTED AND NOT ACCUMULATED. `heldSrc`
+     is the borrowed outline exactly as it was found, untouched for the life of
+     the gesture; `heldOff` is the side and the distance the bar is showing. The
+     draft is `insetShape(heldSrc, ...)` of the pair, worked out afresh on every
+     change — so sweeping the distance from 1 ft to 2 ft and back lands on the
+     original rather than on a shape that has been offset three times.
+
+     IT IS ONLY EVER SET FOR A BORROWED DRAFT. A shape dragged out with a
+     primitive has no source geometry to be offset FROM: the drag IS the
+     position, and offering "a foot inside" of it would be asking about the wrong
+     thing. `heldSrc` null is what withholds the control — see the shape bar.
+
+     WHY THE CONTROL EXISTS AT ALL: a magnetic track set out a foot inside a
+     guide is the ordinary case, and the whole reason to draw the guide first.
+     It applies to a cove borrowed from a guide identically, because it is the
+     same act — see `insetShape`. */
+  const [heldSrc, setHeldSrc] = useState(null);
+  const [heldOff, setHeldOff] = useState({ side: 'on', ft: 1 });
   const [selShapeId, setSelShapeId] = useState(null);
   const [shapeDrag, setShapeDrag] = useState(null);        // moving one already there
   /* WHICH SHAPE IS SHOWING ITS HANDLES, and it is NOT the same thing as which
@@ -1776,6 +2056,11 @@ export default function App({
     // AND THE DRAWN TRACKS, which go for the same reason the shapes do: a path
     // is clicked out in ONE plan's feet.
     setManualTracks([]); trackPen.reset();
+    /* AND THE MODULES. The RUNS go with `ceilingShapes` a few lines up — a
+       magnetic track is a shape — but a module is keyed by a shape id, so
+       leaving these would carry a new plan's first track a set of diffusers
+       belonging to the last one. */
+    setTrackFixtures([]); setTrackMode(null);
     setArmed(null); setGuides([]); setGhost(null);
     setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
     setOutlinesOpen(false); setDirtyIds([]);
@@ -2135,6 +2420,9 @@ export default function App({
     // ...and the lengths somebody dragged. Two numbers per run, and the only
     // thing about these derived fittings a person actually chose.
     setRunTrims, setManualCoves, setManualTracks,
+    // ...and the downlights somebody put down themselves, which carry their own
+    // wattage and beam angle. See `manualCobs`.
+    setManualCobs, setAutoSpots, setCobArrays, setTrackFixtures,
     // ...and where the views themselves are. The bytes are fetched back out
     // of the bucket by the effect below, lazily and per space.
     setRenderRefs,
@@ -2970,6 +3258,16 @@ export default function App({
          drawn last. See `avoid` in coveHostFor. */
       const shapeBoxes = [], hostsSoFar = [];
       const shapeCoves = ceilingShapes
+        /* A GUIDE IS NOT A COVE AND NOTHING IS BUILT FROM IT. It is a line
+           somebody put on the ceiling to measure from — see `roleOf` — so it
+           cuts no grid, grows no host chunk and produces no tape. Everything
+           below this line is about a shape the LAYOUT has taken up. */
+        /* ONLY A COVE IS BUILT. It was `!isGuide`, which was right with two
+           roles and wrong the moment there were three: a magnetic track would
+           have come through here as a pocket, re-cutting the grid and appearing
+           in the schedule as tape. `isBuilt` falls the safe way for any role
+           this file has not been told about — see the note there. */
+        .filter((sh) => shapeIsBuilt(sh))
         /* A SLOT IS NOT A POCKET AND DOES NOT CUT THE GRID. Everything below
            this line — the box, the ring grown into the room, the chunk the
            layout is set out on — describes a cove that runs ROUND a piece of
@@ -3355,6 +3653,30 @@ export default function App({
          room with no cells and no lights in it — a warning about a layout that
          is not on the drawing, which is the worst kind. `areaSqft`, `fans` and
          `avgCell` are facts about the ROOM and survive. */
+      /* --- THE GRID SURVIVES THE BLANKING, AND ONLY THE GRID --------------
+         WHAT `AUTO_GRID` IS ABOUT IS THE FITTINGS, and the block below throws
+         the cells and the chunks away with them because everything that read
+         them was counting or billing what stood IN them. One thing was not: the
+         admin overlay, whose whole subject is how the ceiling was CUT — see
+         `showGrid`, and `gridPath` in PlanCanvas. That switch has been drawing
+         nothing since the day the lights were switched off, which is the wrong
+         answer to "show me the grid without placing the lights": the chunker ran,
+         it has an opinion, and the opinion is exactly what somebody laying lamps
+         out by hand wants to see.
+         SO THE GEOMETRY IS KEPT ASIDE, HERE, BEFORE IT GOES. It is deliberately
+         NOT put back into `res`: everything downstream of that — `stats`, the
+         schedule, the exporters, the troubles list — is counting a layout that is
+         not on the drawing, and handing any of them cells again would have the
+         troubles list reporting four dark cells in a room with no lights in it.
+         One reader, one field, and nothing else can see it. */
+      const gridChunks = res?.ok ? (res.chunks ?? []) : [];
+      /* AND THE CELLS WITH THEM, for a second reader that arrived later: the
+         autoplace rule needs one lamp per CELL, and the recommendation under the
+         pointer needs the cell's area and its short side. Both are facts about
+         how the ceiling divides rather than about what was placed on it, so they
+         belong on this side of the blanking with the chunks. */
+      const gridCells = res?.ok ? (res.cells ?? []) : [];
+
       if (!AUTO_GRID && res?.ok) {
         res = { ...res,
           chunks: [], omittedChunks: [], cells: [], lights: [],
@@ -3544,6 +3866,15 @@ export default function App({
       const rectToPx = (c) => ({ ...c,
         x0: c.x0 * pxPerFt + origin.x, x1: c.x1 * pxPerFt + origin.x,
         y0: c.y0 * pxPerFt + origin.y, y1: c.y1 * pxPerFt + origin.y });
+      /* A CHUNK IS A RECTANGLE PLUS THE LINES IT WAS DIVIDED ON, and it is
+         converted in two places now — the layout's own list and the grid the
+         admin overlay reads, which are the same list except while the lights are
+         switched off. Written once so the two cannot drift. */
+      const chunkToPx = (ch) => ({
+        ...rectToPx(ch),
+        xLines: ch.xLines.map((x) => x * pxPerFt + origin.x),
+        yLines: ch.yLines.map((y) => y * pxPerFt + origin.y),
+      });
 
       const plan = !res.ok ? { ...res, polygonPx } : {
         ...res,
@@ -3552,11 +3883,21 @@ export default function App({
         // is drawn small but billed as the 7 W line is the worst of both.
         lights: res.lights.map((l) => ({ ...l, fixture: lightFixture(l) })),
         polygonFt: geo.polygonFt, polygonPx, origin, toPx,
-        chunksPx: res.chunks.map((ch) => ({
-          ...rectToPx(ch),
-          xLines: ch.xLines.map((x) => x * pxPerFt + origin.x),
-          yLines: ch.yLines.map((y) => y * pxPerFt + origin.y),
-        })),
+        chunksPx: res.chunks.map(chunkToPx),
+        /* THE CHUNKER'S OWN READING OF THIS CEILING, whether or not anything was
+           placed on it. The same conversion as `chunksPx` above and usually the
+           same list — they part company only while `AUTO_GRID` is off, which is
+           the whole reason this exists. Read by the admin grid overlay and by
+           nothing else; see the note where `gridChunks` is captured. */
+        gridChunksPx: gridChunks.map(chunkToPx),
+        /* THE CELLS THE CHUNKER CUT, whether or not anything stands in them.
+           Same conversion as `cellsPx` above and usually the same list — they
+           part company only while the lights are switched off. Note what
+           `rectToPx` does and does not touch: the BOUNDS come out in pixels and
+           `w`, `h`, `cx`, `cy` stay in the room's own FEET, which is what lets
+           the autoplace rule read an area and a short side straight off one of
+           these without a division. */
+        gridCellsPx: gridCells.map(rectToPx),
         cellsPx: res.cells.map(rectToPx),
         // WHAT EACH LIGHT IS BOUGHT AS, stamped here because this is the one
         // place that knows both the layout and the room's type. The planner
@@ -4991,7 +5332,11 @@ export default function App({
        a closed circuit and is stroked with a Z; this one must not be, or an
        L-shaped run would carry a spurious leg back across the room. */
     for (const sh of ceilingShapes) {
-      if (!shapeIsOpen(sh)) continue;
+      // A GUIDE BUYS NOTHING. Same rule the closed pipeline states one memo up:
+      // an open guide is a line to measure from, not a slot to fill with tape.
+      // A COVE AND NOTHING ELSE MAKES A RUN OF TAPE. Same swap, same reason as
+      // the pocket filter above.
+      if (!shapeIsBuilt(sh) || !shapeIsOpen(sh)) continue;
       const home = rooms.find((r) => pointInPolygon(
         { x: sh.x * pxPerFt, y: sh.y * pxPerFt }, r.geo.polygonPx));
       if (!home) continue;
@@ -5745,6 +6090,7 @@ export default function App({
   const pickFlow = useCallback((id) => {
     setSelFlowId((cur) => (cur === id ? null : id));
     setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+    setSelCobId(null); setSelArrayId(null);
   }, [setSelObjId]);
 
   /* The points somebody added to THIS plate. Its own memo because it is a
@@ -5823,6 +6169,7 @@ export default function App({
     if (flowId) {
       setSelFlowId(flowId);
       setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+    setSelCobId(null); setSelArrayId(null);
     }
   }, [selBoard, selBoardParts, setSelObjId]);
 
@@ -6028,6 +6375,357 @@ export default function App({
     () => taskSpotsPx.filter((sp) => !sp.rejected && sp.x != null).length,
     [taskSpotsPx]);
 
+  /* --- THESE THREE SIT ABOVE `roomFixtureGroups` AND `placeArray` BECAUSE
+         BOTH READ THEM ------------------------------------------------------
+     A `useCallback` evaluates its dependency ARRAY on every render, so a hook
+     naming one of these below its own `const` would touch the binding before it
+     existed — "Cannot access 'arrayOutline' before initialization", which is a
+     blank screen and not a warning. They were declared with the rest of the COB
+     machinery and that is exactly what happened; the scanner over the hook deps
+     is what caught it. Anything a callback names, in its body or its deps, is
+     declared above it. */
+
+  /**
+   * THE PATH AN ARRAY IS SET OUT ON, in plan pixels — geometry or room outline.
+   *
+   * ONE FUNCTION FOR BOTH SOURCES, because every reader wants the same thing
+   * from either: a closed or open run of points to space lamps along. Which list
+   * to look in is the `room:` prefix on the id, and nothing downstream has to
+   * know there were two lists.
+   */
+  const arrayOutline = useCallback((geomId) => {
+    if (!geomId || !(pxPerFt > 0)) return null;
+    if (String(geomId).startsWith('room:')) {
+      const r = rooms.find((q) => q.id === String(geomId).slice(5));
+      const poly = r?.plan?.polygonPx || r?.geo?.polygonPx;
+      /* EVERY VERTEX OF A ROOM IS A CORNER, which is why this hands the same
+         list twice rather than deriving one from the other. A room's outline is
+         traced on the plaster and has no fillets and no sampled curve in it —
+         each point IS a corner of the room — so a ring of downlights set out on
+         one lands on the corners at four lamps and adds the middle of each wall
+         at eight. See `arraySpots`. */
+      return poly?.length ? { pts: poly, corners: poly,
+                              closed: true, isRoom: true, roomId: r.id,
+                              label: r.outline?.name || 'Space' } : null;
+    }
+    const sh = ceilingShapes.find((q) => q.id === geomId);
+    if (!sh) return null;
+    const toPx = (q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt });
+    const pts = shapeOutlineFt(sh).map(toPx);
+    if (pts.length < 2) return null;
+    const home = rooms.find((r) => pointInPolygon(
+      { x: sh.x * pxPerFt, y: sh.y * pxPerFt }, r.geo.polygonPx));
+    /* AND THE SHAPE'S CORNERS SEPARATELY, WHICH IS NOT `pts` FILTERED. The
+       outline is a POLYLINE — 72 points for a circle, ten per rounded corner —
+       so there is no reading of it that recovers "this shape has four corners".
+       `cornersFt` is the shape's own answer, and it comes back EMPTY for a
+       circle, which is what makes a run on one freely spaced. */
+    return { pts, corners: shapeCornersFt(sh).map(toPx),
+             closed: !shapeIsOpen(sh), isRoom: false, roomId: home?.id ?? null,
+             label: SHAPE_BY_ID[sh.kind]?.label ?? 'Geometry' };
+  }, [ceilingShapes, rooms, pxPerFt]);
+
+  /**
+   * THE SHAPE UNDER A POINT ON THE PLAN, if any — the hit test both geometry-
+   * taking tools run.
+   *
+   * ONE TEST AND NOT TWO, which is the whole reason it is a function. The COB
+   * array had this inline in its branch of the canvas press; the cursor, the
+   * ghost and the shape's own highlight all need the same answer on every MOVE,
+   * and a second copy of the tolerance would be a hover that lit a line the
+   * press then missed.
+   *
+   * THE TOLERANCE IS IN SCREEN PIXELS AND CONVERTED, the rule every hit test on
+   * this canvas follows: it is about how accurately somebody can hit a line on
+   * screen, which does not change when the drawing is scaled. `hitShape` grows
+   * a closed outline by it and bands an open one either side — see its note.
+   *
+   * FIRST MATCH IN THE LIST, which is the order shapes were drawn in. Two
+   * overlapping guides are a rare thing to have drawn on purpose and the press
+   * has to pick one; the alternative — smallest first, as the door editor does —
+   * would be a rule about area on objects that are very often the same size.
+   */
+  const shapeAtPointer = useCallback((pPx) => {
+    if (!pPx || !(pxPerFt > 0)) return null;
+    const pFt = { x: pPx.x / pxPerFt, y: pPx.y / pxPerFt };
+    const tolFt = Math.max(8, pxPerFt * 0.4) / pxPerFt;
+    return ceilingShapes.find((sh) => hitShape(sh, pFt, tolFt)) ?? null;
+  }, [ceilingShapes, pxPerFt]);
+
+  /**
+   * ...AND WHETHER THE TOOL IN HAND WOULD ACTUALLY TAKE IT.
+   *
+   * THE ANSWER IS DIFFERENT FOR THE TWO TOOLS AND THAT DIFFERENCE IS THE POINT.
+   *
+   *   THE COB ARRAY takes ANY geometry. A run of spots can be set out on a
+   *   cove's own rectangle as readily as on a guide — it references the line and
+   *   builds nothing from it, so there is nothing for the line's role to clash
+   *   with. See `cobArrays`.
+   *
+   *   THE SHAPE TOOL takes a geometry OF THE OTHER ROLE, and only that. Armed to
+   *   draw a cove it will span one from a guide, which is exactly what a guide is
+   *   for; armed to draw a cove it must NOT swallow the cove already there,
+   *   because a press on bare ceiling inside an existing cove is how a second
+   *   one is drawn across it — and that is the ordinary case, not the exception.
+   *   The rule reads symmetrically (a guide can be taken from a cove) because it
+   *   is one condition rather than a cove-only exemption.
+   *
+   * `null` WITH NOTHING ARMED, so a press on a shape with no tool in hand still
+   * means what it has always meant: pick it up. See `shapePointerDown`.
+   */
+  const geomUnder = useCallback((pPx) => {
+    if (addTool === 'cob' && cobMode === 'array') return shapeAtPointer(pPx);
+    /* --- A MODULE WANTS A TRACK, AND NOTHING ELSE WILL DO ------------------
+       THE THIRD TOOL THAT TAKES A GEOMETRY, and the narrowest of the three: a
+       diffuser clips into a magnetic track and cannot be clipped into a cove, a
+       guide or the ceiling. So the cue is offered for a track and withheld for
+       everything else — which is what makes the pointer honest over a guide
+       drawn an inch away from the run. */
+    if (addTool === 'module') {
+      const sh = shapeAtPointer(pPx);
+      return sh && shapeIsTrack(sh) ? sh : null;
+    }
+    /* THE BAR BEING OPEN IS ENOUGH — IT DOES NOT HAVE TO BE ARMED, and that is
+       the whole flow for a magnetic track: press the rail cell and the bar
+       arrives with no primitive live (see `openShapeTool`, and the space click
+       that does the same), then press the guide you want to be a track. Requiring
+       a primitive first would mean arming a rectangle you are not going to draw
+       in order to borrow an outline that already exists. */
+    if (shapeMenuOn) {
+      const sh = shapeAtPointer(pPx);
+      return sh && shapeRoleOf(sh) !== shapeRole ? sh : null;
+    }
+    return null;
+  }, [shapeAtPointer, addTool, cobMode, shapeMenuOn, shapeRole]);
+
+  /**
+   * EVERY MAGNETIC TRACK ON THE DRAWING, RESOLVED — in plan pixels.
+   *
+   * DERIVED FROM `ceilingShapes` AND NOT FROM A STORE OF ITS OWN, which is what
+   * makes a track editable: drag a grip and the profile moves, because there was
+   * never a copy of its path to go stale. See `trackFixtures`.
+   *
+   * THE LENGTH IS MEASURED FROM THE LIVE OUTLINE AND THE LIVE SCALE, never
+   * stored — the rule `runMetres` in boq.js exists to enforce. A run whose scale
+   * was corrected after it was drawn is a different number of metres of profile,
+   * and a plan that billed the old figure would be ordering the wrong length.
+   *
+   * `corners` IS THE TURNS AND NOT THE POINTS. A moulded corner join is bought
+   * per turn of profile — see boq.js — so a closed rectangle is four and an open
+   * L is one. A circle's outline is 72 segments and none of them is a corner
+   * anybody orders a join for, which is exactly what `cornersFt` answers: it
+   * returns nothing for a circle, and a run on one is a bent extrusion rather
+   * than a set of mitres.
+   *
+   * `roomId` IS WHERE THE MIDDLE OF IT IS. A profile drawn across a threshold
+   * belongs to one room for the purposes of the Analysis, and the honest single
+   * answer is the space its centre is over — the same reading `arrayOutline`
+   * takes for a shape. The absorbing track splits itself per room because it is
+   * billed per room off the layout; this one is a hand-placed object and is
+   * counted where it sits.
+   */
+  const magTracksPx = useMemo(() => {
+    if (!(pxPerFt > 0)) return [];
+    const out = [];
+    for (const sh of ceilingShapes) {
+      if (!shapeIsTrack(sh)) continue;
+      const toPx = (q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt });
+      const pts = shapeOutlineFt(sh).map(toPx);
+      if (pts.length < 2) continue;
+      const closed = !shapeIsOpen(sh);
+      const cn = shapeCornersFt(sh).length;
+      const home = rooms.find((r) => pointInPolygon(
+        { x: sh.x * pxPerFt, y: sh.y * pxPerFt }, r.geo.polygonPx));
+      out.push({
+        id: sh.id, pts, closed,
+        lengthFt: pathLengthFt(pts, { closed }) / pxPerFt,
+        // A CLOSED RUN TURNS AT EVERY CORNER; AN OPEN ONE HAS TWO FEWER, because
+        // its two ends are cut rather than mitred.
+        corners: cn >= 3 ? (closed ? cn : cn - 2) : 0,
+        roomId: home?.id ?? null,
+        label: SHAPE_BY_ID[sh.kind]?.label ?? 'Track',
+      });
+    }
+    return out;
+  }, [ceilingShapes, rooms, pxPerFt]);
+
+  const magTrackById = useMemo(
+    () => Object.fromEntries(magTracksPx.map((t) => [t.id, t])), [magTracksPx]);
+
+  /**
+   * THE RUN THAT IS SELECTED, if the selected shape is one.
+   *
+   * A TRACK IS A CEILING SHAPE, so being selected is `selShapeId` naming it —
+   * there is no second selection to keep in step. What this adds is the TEST:
+   * `selShapeId` is just as likely to be a cove or a guide, and the module
+   * drawer must not appear for either. See the ToolRail call site.
+   */
+  const selTrackId = useMemo(
+    () => (selShapeId && magTrackById[selShapeId] ? selShapeId : null),
+    [selShapeId, magTrackById]);
+
+  /**
+   * EVERY MODULE, RESOLVED ONTO ITS RUN — what the drawing and the Analysis both
+   * read. Nothing here is stored; see `trackFixtures` for why.
+   *
+   * A MODULE WHOSE RUN HAS GONE IS DROPPED RATHER THAN DRAWN AT THE ORIGIN. The
+   * shape can be deleted from anywhere — the bar, the Delete key, a cleared plan
+   * — and `deleteShape` takes the fixtures with it, so this is the belt to that
+   * braces: a stale entry produces nothing rather than a fitting floating off
+   * the drawing.
+   */
+  const trackModulesPx = useMemo(() => {
+    if (!(pxPerFt > 0)) return [];
+    const out = [];
+    for (const f of trackFixtures) {
+      const t = magTrackById[f.trackId];
+      if (!t) continue;
+      const at = moduleAt(t.pts, f.u, { closed: t.closed });
+      if (!at) continue;
+      const m = MODULE_BY_ID[f.kind] ?? MODULE_BY_ID.spot;
+      out.push({
+        id: f.id, trackId: f.trackId, kind: f.kind, roomId: t.roomId,
+        x: at.x, y: at.y, ux: at.ux, uy: at.uy,
+        /* INCHES, BECAUSE THAT IS WHAT THE PRODUCT IS AND WHAT THE CANVAS DRAWS
+           FROM. `inch()` there turns them into drawing units at the live scale,
+           exactly as the absorbing track's heads are drawn — see TRACK_DIMS_IN.
+           Handing feet would have been a second unit for one dimension.
+           AND THE LENGTH IS ASKED OF THE WATTAGE. A diffuser's body is a band of
+           its output — 200 mm under 15 W, 400 to 25, 600 above (see
+           `DIFFUSER_LENGTHS_MM`) — so a 5 W corner module and an 18 W one are
+           two different objects on the drawing. It was a flat 24 in for every
+           diffuser, which drew the whole range as the biggest thing in it. */
+        lenIn: moduleLenIn(f.kind, f.watts), wideIn: m.wideIn ?? 1.5,
+        watts: f.watts ?? m.watts, beam: f.beam ?? m.beam,
+      });
+    }
+    return out;
+  }, [trackFixtures, magTrackById, pxPerFt]);
+
+  /**
+   * EVERY ARRAY'S LAMPS, WORKED OUT AFRESH — what the drawing and the schedule
+   * both read. Nothing here is stored; see `cobArrays` for why.
+   */
+  const arrayCobsPx = useMemo(() => {
+    if (!(pxPerFt > 0)) return [];
+    const out = [];
+    for (const a of cobArrays) {
+      const geo = arrayOutline(a.geomId);
+      if (!geo) continue;
+      const pts = arraySpots(geo.pts, {
+        closed: geo.closed, side: a.side, offsetFt: (a.offsetFt || 0) * pxPerFt,
+        count: a.count,
+        /* WHERE THE LAMPS ARE OBLIGED TO SIT, which is what makes a run on a
+           rectangle land on its corners rather than at four equal steps round
+           its perimeter. See `arraySpots`; a shape with none — a circle — is
+           spaced freely. */
+        corners: geo.corners,
+        /* WHERE THE RUN HAS BEEN DRAGGED TO, in pixels because the outline is.
+           Stored in FEET on the array for the reason every other placed thing on
+           this drawing is — see `manualCobs` — so a scale correction does not
+           carry the run across the ceiling. */
+        dx: (a.dxFt || 0) * pxPerFt, dy: (a.dyFt || 0) * pxPerFt,
+      });
+      pts.forEach((p, i) => out.push({
+        id: `${a.id}#${i}`, arrayId: a.id, roomId: a.roomId ?? geo.roomId,
+        x: p.x, y: p.y, watts: a.watts, beam: a.beam,
+        throwFt: throwDiameterFt(a.beam,
+          (ceilingMmFor(a.roomId ?? geo.roomId) / 304.8) || DEFAULT_DROP_FT),
+      }));
+    }
+    return out;
+  }, [cobArrays, arrayOutline, pxPerFt, ceilingMmFor]);
+
+  /** The draft array's lamps, drawn while the bar is still asking about them —
+   *  the same resolution the committed ones go through, so what you are looking
+   *  at is what the tick will keep. */
+  const draftArrayPx = useMemo(() => {
+    const d = cobDraftArray;
+    if (!d?.geomId || !(pxPerFt > 0)) return null;
+    const geo = arrayOutline(d.geomId);
+    if (!geo) return null;
+    const pts = arraySpots(geo.pts, {
+      closed: geo.closed, side: d.side, offsetFt: (d.offsetFt || 0) * pxPerFt,
+      count: d.count, corners: geo.corners,
+    });
+    const path = arrayPath(geo.pts, {
+      closed: geo.closed, side: d.side, offsetFt: (d.offsetFt || 0) * pxPerFt });
+    return { pts, path, closed: geo.closed, geo };
+  }, [cobDraftArray, arrayOutline, pxPerFt]);
+
+  /**
+   * THE SETTING-OUT LINE OF THE ARRAY THAT IS OPEN — the "connector".
+   *
+   * DRAWN ONLY WHILE ITS ARRAY IS SELECTED, and that is the honest lifetime. It
+   * is not a thing on the ceiling: nobody builds it, it appears on no drawing
+   * that leaves here, and a dashed ring left under every array for ever would be
+   * the sheet claiming a line that is not there. What it IS is the array's
+   * handle — the one mark that says twelve separate lamps are one object — and
+   * the moment that matters is the moment somebody has hold of it.
+   *
+   * IT IS ALSO WHAT MAKES THE RUN DRAGGABLE BY SOMETHING OTHER THAN A LAMP. On
+   * a ring of four the lamps are four small targets a long way apart; the line
+   * between them is the whole geometry and can be grabbed anywhere.
+   */
+  const selArrayPathPx = useMemo(() => {
+    const a = cobArrays.find((q) => q.id === selArrayId);
+    if (!a || !(pxPerFt > 0)) return null;
+    const geo = arrayOutline(a.geomId);
+    if (!geo) return null;
+    const pts = arrayPath(geo.pts, {
+      closed: geo.closed, side: a.side, offsetFt: (a.offsetFt || 0) * pxPerFt,
+      dx: (a.dxFt || 0) * pxPerFt, dy: (a.dyFt || 0) * pxPerFt });
+    return pts?.length > 1 ? { pts, closed: geo.closed, id: a.id } : null;
+  }, [cobArrays, selArrayId, arrayOutline, pxPerFt]);
+
+  /**
+   * WHAT THE BAR ASKS ABOUT THE ARRAY THAT IS OPEN.
+   *
+   * THE SAME SHAPE THE DRAFT HANDS IT, deliberately — see the `array` prop at
+   * the CobSpec call site — because it is the same bar and the same questions.
+   * `editing` is the one field that differs, and everything the bar does
+   * differently follows from it rather than from a second component.
+   *
+   * `arrayAsks` DECIDES THE CONTROLS FROM THE GEOMETRY and not from what was
+   * stored on the array. That matters after the fact rather than only while
+   * setting out: a run set out INSIDE a rectangle that has since been reduced to
+   * a line has no inside any more, and a side control offered for it would be
+   * offering a choice between two paths with nothing to say which was meant.
+   *
+   * `null` WHERE THE GEOMETRY HAS GONE. A shape can be deleted from under an
+   * array — the geometry is referenced, not owned — and a bar with a label and
+   * no path behind it would be a control acting on nothing.
+   */
+  const selArrayBar = useMemo(() => {
+    const a = cobArrays.find((q) => q.id === selArrayId);
+    if (!a) return null;
+    const geo = arrayOutline(a.geomId);
+    if (!geo) return null;
+    const asks = arrayAsks(geo.pts, { closed: geo.closed, isRoom: geo.isRoom,
+                                      corners: geo.corners });
+    return {
+      watts: clampWatts(a.watts), beam: nearestBeam(a.beam),
+      array: {
+        editing: true, picked: true, label: geo.label,
+        /* THE COUNT AS THE GEOMETRY CAN PRODUCE IT, not as it happens to be
+           stored. A plan saved before the corners mattered, or an array whose
+           hexagon has since been resized into a rectangle, would otherwise show
+           a figure the drawing is not obeying — `arraySpots` quantises what it
+           draws, so the bar has to quantise what it prints or the two disagree
+           about the run in front of you. */
+        count: quantiseCount(a.count, arrayQuanta(geo.corners, geo.closed)),
+        sideId: a.side, offsetFt: a.offsetFt ?? 0,
+        side: asks.side, sides: asks.sides,
+        /* WHAT THE NUMBER BOX MAY STEP IN — one per corner and up in whole
+           passes round the shape. See `arrayQuanta`. */
+        countMin: asks.countMin, countStep: asks.countStep,
+        // FEET AT THE CONTROL, PIXELS IN THE OUTLINE — the draft's own note.
+        maxOffsetFt: asks.maxOffsetFt / (pxPerFt || 1),
+      },
+    };
+  }, [cobArrays, selArrayId, arrayOutline, pxPerFt]);
+
+
   /**
    * WHAT IS ON THIS CEILING, COUNTED BY FAMILY — the input to the lumen model.
    *
@@ -6098,10 +6796,146 @@ export default function App({
       bump(z.id, familyId, 1, ft(z.runLength));
     }
 
+    /* --- THE THREE THINGS THAT USED TO BE ONE ROW --------------------------
+       The ambient grid, the spots aimed at work surfaces and the spots aimed at
+       pictures were bumped together as `cob`, on the argument that they are one
+       family: a recessed lamp throwing down. That is still true of the PHYSICS —
+       they share a distribution and the model treats them identically — and it
+       was never true of the DESIGN. They are three layers of a lighting scheme,
+       a designer specifies them separately, and now that the panel has three
+       sections a single row could only appear in one of them.
+       SO THE FAMILY STAYS ONE AND THE ROWS BECOME THREE, which is exactly the
+       split `layer` was added for: `split` is where the light goes, `layer` is
+       what it is for. See FIXTURE_FAMILIES in lumens.js.
+       AND EACH OPENS AT ITS OWN CATALOGUE WATTAGE. A spot is a 5 W lamp and the
+       grid's is 7 W — one row at one figure had to be wrong about one of them.
+       See `defaultWatts` on the group and the note in `wattsFor`. */
     const grid = r.plan?.ok ? r.plan.lights.length : 0;
-    const spots = taskSpotsPx.filter(
-      (sp) => sp.roomId === r.id && !sp.rejected && sp.x != null).length;
-    if (grid + spots) bump('cob', 'cob', grid + spots, 0);
+    if (grid) bump('cob', 'cob', grid, 0);
+
+    for (const sp of taskSpotsPx) {
+      if (sp.roomId !== r.id || sp.rejected || sp.x == null) continue;
+      /* WHICH SPOT IT IS, OFF THE FITTING ITSELF. `art-spot` is a 24-degree lamp
+         aimed at a picture and `spot` a 30-degree one aimed at a worktop; the
+         schedule has always billed them as two lines, and they are two LAYERS
+         for the same reason — one is what you work by, the other is what you
+         look at. */
+      const art = sp.fixture === 'art-spot';
+      bump(art ? 'art-spot' : 'spot', 'cob', 1, 0);
+      const row = g.get(art ? 'art-spot' : 'spot');
+      row.label = art ? 'Art spot' : 'Directional spot';
+      row.layer = art ? 'accent' : 'task';
+      row.defaultWatts = FIXTURE_BY_ID[art ? 'art-spot' : 'spot']?.watts ?? null;
+    }
+
+    /* --- ...AND ONE ROW PER COB SOMEBODY PLACED BY HAND --------------------
+       THIS IS THE COUNTED FAMILIES' RULE BROKEN ON PURPOSE, and it is worth
+       saying why rather than leaving it to be found. The rule above is that
+       anything sold by the piece gets ONE row for the lot, because twelve COBs
+       are one decision about COBs and twelve rows of chips would be eleven
+       chances for two of them to disagree. That holds exactly as long as one
+       decision is what they are: the engine buys off the catalogue, once, for
+       every cell in the room.
+       A HAND-PLACED LAMP WAS SPECIFIED AS IT WAS PLACED. That is the whole point
+       of the bar on the drawing — you may put a 24-degree 18 W lamp over the
+       console and leave the rest of the ceiling alone — so each one is its own
+       decision, and merging them into a row would be the panel unable to show
+       the thing the tool exists to let somebody do. It is the same test the
+       linear runs pass: a thing you point at and specify on its own.
+       ITS OWN LABEL, so the numbering below does not run through the grid's row
+       as if they were a series. See `analyseSpace`.
+       AND IT CARRIES ITS OWN WATTAGE AND OPTIC rather than looking them up in
+       `fixtureWatts`: the figures are on the fitting — see `manualCobs` — which
+       is what makes them survive a room being re-gridded under them. */
+    /* --- AN ARRAY IS ONE ROW, WHATEVER ITS COUNT --------------------------
+       AND THAT IS THE OPPOSITE OF THE RULE BELOW IT, on purpose. A lamp placed
+       by hand is its own decision and gets its own row. Twelve lamps on one ring
+       are ONE decision — a geometry, a count and an offset — and they carry one
+       wattage and one optic between them, because there is only one figure for
+       them to read. So the row is the array, the quantity is how many it works
+       out to, and changing the wattage here changes all twelve at once. That is
+       not a convenience; it is what an array IS. See `cobArrays`. */
+    for (const a of cobArrays) {
+      const n = arrayCobsPx.filter((c) => c.arrayId === a.id && c.roomId === r.id).length;
+      if (!n) continue;
+      bump(a.id, 'cob', n, 0);
+      const row = g.get(a.id);
+      row.label = 'Spot array';
+      row.layer = 'ambient';
+      row.watts = clampWatts(a.watts);
+      row.wattRange = COB_WATT_RANGE;
+      row.beam = nearestBeam(a.beam);
+    }
+
+    /* --- THE MODULES ON A MAGNETIC TRACK, ONE ROW PER RUN -----------------
+       ONE ROW PER RUN AND PER KIND, which is the array's rule rather than the
+       hand-placed lamp's, and for the array's reason: four diffusers on one
+       profile are ONE decision — a run, a module, a wattage — and they carry one
+       figure between them. Two kinds on one run are two rows, because a diffuser
+       and a spot are two products doing two different jobs on the same carrier.
+
+       THE DIFFUSER IS AMBIENT AND THE SPOT IS NOT, and that is the whole point
+       of offering both. A diffuser is a lens over a linear board: its light
+       leaves a face that is already the ceiling and spreads (70% at the walls,
+       30% at the floor — the `panel` family, which has been specified in
+       lumens.js since it was written and had no tool behind it until now). A
+       spot puts a cone on the floor and is `cob`'s distribution, layered as
+       task light. So a run of four 18 W diffusers moves the two figures at the
+       top of this panel and a run of four spots barely does, which is a true
+       statement about the two products and the reason the choice matters.
+
+       THE FAMILY COMES OFF THE MODULE and not out of a table here — see
+       TRACK_MODULES in lib/magTrack.js, which is the one place a module's
+       distribution is named. */
+    /* --- ONE ROW PER MODULE, WHICH IS THE HAND-PLACED LAMP'S RULE ----------
+       IT WENT FROM ONE ROW PER RUN, TO ONE PER RUN PER WATTAGE, TO THIS. Each
+       step was forced by the one before it, and the third is where it should have
+       started: a module on a track is a thing you point at and specify on its
+       own, which is exactly the test the note below `manualCobs` sets out for
+       breaking the counted-family rule.
+
+       WHY THE FIRST TWO FAILED. One row per run assumed a run carries one
+       figure, and the corner-first allocator puts 5 W at the corners and a 10 W
+       in the middle of a rail. Grouping by wattage fixed the arithmetic and left
+       you unable to say anything about ONE of them: five diffusers on a run, four
+       of them in one row, and no way to change the wattage of a single corner or
+       to see which row the module you just dragged belongs to.
+
+       SO THE KEY IS THE FITTING'S OWN ID, and the rows are numbered by
+       `analyseSpace` — "Track diffuser 1", "Track diffuser 2" — which is what it
+       already does for any two rows sharing a label. Press a chip and it moves
+       that module and nothing else.
+
+       AND THE LAYER IS THE FAMILY'S. A diffuser is ambient and a spot is task;
+       both now have families of their own that say so (see `track_diffuser` and
+       `track_spot` in lumens.js), so this no longer decides it per module id. */
+    for (const t of magTracksPx) {
+      if (t.roomId !== r.id) continue;
+      for (const q of trackModulesPx) {
+        if (q.trackId !== t.id) continue;
+        const m = MODULE_BY_ID[q.kind];
+        if (!m?.family) continue;    // the wall washer, which has no numbers yet
+        bump(q.id, m.family, 1, 0);
+        const row = g.get(q.id);
+        row.label = `Track ${m.label.toLowerCase()}`;
+        row.watts = q.watts ?? moduleWatts(q.kind);
+        row.beam = q.beam ?? m.beam;
+      }
+    }
+
+    for (const c of manualCobs) {
+      if (c.roomId !== r.id) continue;
+      bump(c.id, 'cob', 1, 0);
+      const row = g.get(c.id);
+      row.label = 'Placed COB';
+      /* AMBIENT, like the grid it stands in. A downlight placed by hand is doing
+         the ambient layer's job in a cell the ambient grid cut — where it came
+         from is a fact about who decided, not about what it is for. */
+      row.layer = 'ambient';
+      row.watts = clampWatts(c.watts);
+      row.wattRange = COB_WATT_RANGE;
+      row.beam = nearestBeam(c.beam);
+    }
 
     const pendants = (r.geo?.fansInRoom ?? []).filter(
       (f) => f.kind === 'chandelier').length;
@@ -6114,7 +6948,8 @@ export default function App({
     const order = new Map(FIXTURE_FAMILIES.map((f, i) => [f.id, i]));
     return [...g.values()].sort(
       (a, b) => (order.get(a.familyId) ?? 99) - (order.get(b.familyId) ?? 99));
-  }, [accentZonesPx, taskSpotsPx, pxPerFt]);
+  }, [accentZonesPx, taskSpotsPx, pxPerFt, manualCobs, cobArrays, arrayCobsPx,
+      magTracksPx, trackModulesPx]);
 
   /**
    * IS THIS SPACE BRIGHT ENOUGH — the Analysis section of the space detail.
@@ -6160,11 +6995,498 @@ export default function App({
     return { required, achieved };
   }, [rooms, spaceAnalysis]);
 
+  /**
+   * WHICH ANALYSIS ROWS THE CURRENT SELECTION IS, as row keys.
+   *
+   * THE TRANSLATION LIVES HERE BECAUSE ONLY THIS FILE KNOWS BOTH ENDS. The panel
+   * is handed rows keyed by whatever `roomFixtureGroups` decided identifies one,
+   * and that is a different kind of handle per family: a placed COB and a length
+   * of tape are each their own row, so a fitting's id IS the key; every task spot
+   * in a room is one row, so the key is the catalogue line it is billed as. A
+   * component given a fitting id could not resolve either without learning the
+   * grouping rules, which are this file's.
+   *
+   * A LIST, because more than one thing can be picked at once — a run and a spot
+   * are separate selections on this canvas and both should light up.
+   *
+   * A SELECTED SPACE IS NOT IN HERE. Opening a room is how you get the panel to
+   * be about it at all; highlighting every row in it would be the panel telling
+   * you what you just asked for.
+   */
+  const analysisHighlight = useMemo(() => {
+    const keys = [];
+    let roomId = null;
+    if (selCobId) {
+      keys.push(selCobId);
+      roomId = manualCobs.find((c) => c.id === selCobId)?.roomId ?? roomId;
+    }
+    /* AN ARRAY'S ROW IS KEYED BY THE ARRAY, which is what `roomFixtureGroups`
+       bumps it under: twelve lamps on one ring are one decision and therefore
+       one row, so clicking any of the twelve marks the row all twelve share. */
+    if (selArrayId) {
+      keys.push(selArrayId);
+      roomId = cobArrays.find((a) => a.id === selArrayId)?.roomId ?? roomId;
+    }
+    /* A MODULE'S ROW IS KEYED BY THE FITTING, exactly as a hand-placed COB's is
+       — one row per module, see `roomFixtureGroups` — so clicking one on the
+       drawing reveals the row that is about it and nothing else. */
+    if (selModuleId) {
+      keys.push(selModuleId);
+      roomId = trackModulesPx.find((q) => q.id === selModuleId)?.roomId ?? roomId;
+    }
+    /* A RUN'S ROW IS KEYED BY THE ZONE'S OWN ID — see the note in
+       `roomFixtureGroups` on why anything sold by the metre gets a row apiece —
+       except a sconce, which is counted and therefore shares one. */
+    if (selAccId) {
+      const z = accentZonesPx.find((q) => q.id === selAccId);
+      keys.push(z?.type === 'sconce' ? 'sconce' : selAccId);
+      roomId = z?.roomId ?? roomId;
+    }
+    if (selSpotId) {
+      const sp = taskSpotsPx.find((q) => q.id === selSpotId);
+      if (sp) {
+        keys.push(sp.fixture === 'art-spot' ? 'art-spot' : 'spot');
+        roomId = sp.roomId ?? roomId;
+      }
+    }
+    /* AND A GRID LIGHT LIGHTS THE GRID'S ROW. They are one row for the lot, so
+       clicking one of twelve marks the decision all twelve share — which is the
+       honest answer to "what is this fitting" for a lamp whose wattage cannot be
+       set on its own. */
+    if (selLightId) {
+      keys.push('cob');
+      /* THE ID IS `<roomId>|<cellKey>` — see where it is set on the canvas. The
+         room is the half before the bar, which is the only part this needs. */
+      roomId = String(selLightId).split('|')[0] || roomId;
+    }
+    return { keys, roomId };
+  }, [selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId,
+      manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx]);
+
+  /**
+   * CLICKING A FITTING TAKES YOU TO IT IN THE ANALYSIS.
+   *
+   * ONE EFFECT AND NOT FOUR HANDLERS, which is why `analysisHighlight` carries
+   * the room as well as the keys. A COB, a length of tape, a spot and a grid
+   * light are picked up by four different pointer handlers with four different
+   * stores behind them, and "show me what I just clicked" is one behaviour: put
+   * it in each of them and the fourth one gets forgotten, which is exactly what
+   * had already happened before this existed.
+   *
+   * IT FIRES ON THE SELECTION CHANGING AND NOT ON EVERY RENDER, so somebody who
+   * selects a lamp and then goes to read the BOQ is not dragged back to the
+   * Spaces tab a moment later. `keys` is the dependency; re-selecting the same
+   * fitting is not a change and does nothing.
+   *
+   * OPENING THE ROW AND SCROLLING TO IT IS SpaceAnalysis's HALF. This gets the
+   * right space in front of you; that panel gets the right row in front of you.
+   * The split is the same one this file makes everywhere: which space the panel
+   * is about is the editor's business, how the panel reads is the panel's.
+   */
+  const revealed = useRef('');
+  useEffect(() => {
+    const { keys, roomId } = analysisHighlight;
+    const tag = keys.join('|');
+    if (!tag) { revealed.current = ''; return; }
+    if (tag === revealed.current) return;
+    revealed.current = tag;
+    if (roomId) { setFocusId(roomId); setOptionPick(null); }
+    setView('spaces');
+  }, [analysisHighlight]);
+
   /** ONE ROW'S WATTAGE, IN ONE ROOM — a run's own, or a counted family's. `key`
    *  is whatever `roomFixtureGroups` said identifies the row; `familyId` is only
    *  needed to know what its default is. A choice that lands back on that
    *  default is stored as nothing, the rule every override in this file
    *  follows — see `boardKinds` and the wall tones. */
+  /* --- THESE TWO SIT HERE BECAUSE `autoplaceIn` BELOW READS THEM -----------
+     THEY WERE DECLARED WITH THE REST OF THE COB MACHINERY, a thousand lines
+     down beside `cobEngine`, and that crashed the app outright: a `useCallback`
+     evaluates its dependency ARRAY on every render, so `autoplaceIn` naming
+     `cobBasisFor` in its deps touched the binding before the `const` had been
+     reached — "Cannot access 'cobBasisFor' before initialization".
+     IT IS NOT A HOISTING QUIRK TO WORK AROUND, it is the rule: a hook's deps are
+     ordinary expressions in the component body and a `const` below them does not
+     exist yet. Anything a callback names, in its body or its deps, has to be
+     declared above it. The COB block still owns everything else.
+     THE ORDER WITHIN THE PAIR MATTERS TOO — `cobBasisFor` calls `cobChunkSpec`
+     and lists it as a dependency, so it follows it. */
+
+  /**
+   * WHAT A CHUNK HAS ALREADY BEEN DECIDED TO BE, if anything.
+   *
+   * A CHUNK IS ONE PIECE OF CEILING AND ONE RUN OF LAMPS. The moment one of them
+   * carries a specification somebody chose, the rest are not a fresh question —
+   * they are the same decision, and a flat plane of downlights that came out at
+   * three different wattages is a grid nobody would build. So a lamp with `spec`
+   * set anywhere in the chunk answers for the whole of it, and both callers ask
+   * this: the bar under the pointer, and the autoplace toggle.
+   *
+   * `spec` AND NOT MERELY "EXISTS", which is the distinction that keeps this
+   * from eating its own tail. Every autoplaced lamp is on the rule, so if their
+   * presence counted as a decision the first one placed would freeze the chunk
+   * at its own cell's answer and every larger cell beside it would inherit a
+   * lamp too small. Only a lamp somebody OVERRULED — on the bar, or in the
+   * Analysis panel — is a decision. See `placeCob` and `setCobSpec`.
+   *
+   * BY CHUNK AND NOT BY CELL, so the lookup is on `cell.chunk`, which the
+   * planner stamps on every cell it cuts.
+   */
+  const cobChunkSpec = useCallback((room) => (cell) => {
+    if (!room || cell?.chunk == null || !(pxPerFt > 0)) return null;
+    const cells = room.plan?.gridCellsPx ?? [];
+    for (const c of manualCobs) {
+      if (c.roomId !== room.id || !c.spec) continue;
+      const at = { x: c.xFt * pxPerFt, y: c.yFt * pxPerFt };
+      const home = cells.find((q) => at.x >= q.x0 && at.x <= q.x1
+                                  && at.y >= q.y0 && at.y <= q.y1);
+      if (home?.chunk === cell.chunk) return { watts: c.watts, beam: c.beam };
+    }
+    return null;
+  }, [manualCobs, pxPerFt]);
+
+  /* WHERE THE BUILDING IS AND HOW HIGH THE CEILING IS — the two facts outside
+     the cell that the rule needs. Both callers share this so the bar and the
+     toggle cannot come to disagree. */
+  const cobBasisFor = useCallback((room) => ({
+    lumensPerWatt: lumensPerWattFor(country),
+    dropFt: (room ? ceilingMmFor(room.id) / 304.8 : 0) || DEFAULT_DROP_FT,
+    inForce: cobChunkSpec(room),
+  }), [country, ceilingMmFor, cobChunkSpec]);
+
+  /**
+   * FILL A SPACE'S GRID CELLS WITH LAMPS — the autoplace toggle's whole job.
+   *
+   * ONE LAMP PER CELL, AT THE CELL'S OWN SPEC. `autoSpec` in lib/cob.js is the
+   * rule and this only applies it: the cell's area decides the wattage, its
+   * short side decides the optic, and a chunk that has already been decided
+   * overrides both — see `cobChunkSpec`. It reads `gridCellsPx`, which is the
+   * chunker's answer whether or not the old auto-placement is switched on, so
+   * this works on the ordinary state of this app.
+   *
+   * AT THE CELL'S CENTRE AND NOT AT THE PLANNER'S CHOSEN SPOT, and that is a
+   * real difference worth stating. The old placement ran a solver: it slid a
+   * lamp inside its centre band to line up with its neighbours, promoted pairs
+   * of cells to one large fitting, and shoved lamps clear of fans. None of that
+   * survives — `cx`/`cy` is the middle of the box. That is the honest reading of
+   * "one lamp per cell at ten lumens a square foot": if the grid is right, the
+   * middle of a cell is where its lamp goes, and if it is not, the fix is the
+   * grid. Everything the solver did can be had back by hand, one lamp at a time,
+   * because these are ordinary hand-placeable lamps once they land.
+   *
+   * IT SKIPS A CELL THAT ALREADY HAS A LAMP IN IT, so switching the toggle on in
+   * a space somebody has already worked in adds the missing ones rather than
+   * doubling the ones that are there.
+   *
+   * `auto` MARKS THEM AS THE TOGGLE'S. Switching it off takes back exactly the
+   * lamps that are still the toggle's and no others — a lamp that has been
+   * dragged or re-specified has been adopted, and losing somebody's work to a
+   * checkbox is the one thing a reversible control must not do. See the flag's
+   * two clearing points: `setCobSpec` and the drag's commit.
+   */
+  const autoplaceIn = useCallback((room) => {
+    if (!room || !(pxPerFt > 0)) return;
+    const cells = room.plan?.gridCellsPx ?? [];
+    if (!cells.length) return;
+    const basis = cobBasisFor(room);
+    /* --- THE TWO PIECES OF CEILING THAT GET NO LAMP -------------------------
+       "The previous placement logic goes" is about the SOLVER — the sliding, the
+       pairing, the shoving clear of fans — and not about the two rules that say
+       a fitting must not be somewhere at all. Those are not tuning; they are the
+       reasons the grid was cut the way it was, and a toggle that overrode them
+       would put a downlight in the eye of whoever is lying in the bed while the
+       app draws a warning about that very thing under the pointer two feet away.
+
+         A NO-LIGHT ZONE is a bed, or a box somebody drew. Tested at the cell's
+         CENTRE, because that is where the lamp would land — a cell merely
+         clipped by a zone still has somewhere for its fitting to be, and
+         refusing it would leave a hole beside every bed.
+         A DARK CHUNK is laid out and deliberately unlit — the band outside a
+         cove that is carrying the room on its own. See `ch.dark` in planner.js:
+         it is an intention rather than a failure, and filling it would be
+         undoing a decision the ceiling design made. */
+    const zones = room.plan?.zonesPx ?? [];
+    const chunksPx = room.plan?.gridChunksPx ?? [];
+    setManualCobs((list) => {
+      const mine = list.filter((c) => c.roomId === room.id);
+      const taken = (cell) => mine.some((c) => {
+        const x = c.xFt * pxPerFt, y = c.yFt * pxPerFt;
+        return x >= cell.x0 && x <= cell.x1 && y >= cell.y0 && y <= cell.y1;
+      });
+      const add = [];
+      /* ONE ANSWER PER CHUNK, WORKED OUT ONCE. `chunkSpec` walks every cell in
+         the chunk, so asking it per cell would be quadratic on a big room and —
+         worse — would invite somebody to "simplify" it back to a per-cell call,
+         which is the bug this replaced: two wattages in one run of plasterboard
+         because two boxes of the grid were different sizes. */
+      const byChunk = new Map();
+      const specFor = (ch) => {
+        if (!byChunk.has(ch)) {
+          byChunk.set(ch, chunkSpec(cells, ch,
+            { dropFt: basis.dropFt, lumensPerWatt: basis.lumensPerWatt }));
+        }
+        return byChunk.get(ch);
+      };
+      for (const cell of cells) {
+        if (!(cell.w > 0 && cell.h > 0) || taken(cell)) continue;
+        if (chunksPx[cell.chunk]?.dark) continue;
+        const mid = { x: (cell.x0 + cell.x1) / 2, y: (cell.y0 + cell.y1) / 2 };
+        if (zones.some((z) => mid.x >= z.x0 && mid.x <= z.x1
+                           && mid.y >= z.y0 && mid.y <= z.y1)) continue;
+        const held = basis.inForce?.(cell);
+        const spec = held ?? specFor(cell.chunk);
+        if (!spec) continue;
+        add.push({
+          ...placeCob({
+            /* THE CENTRE OF THE CELL, TAKEN FROM THE BOUNDS AND NOT FROM
+               `cx`/`cy`. Those are in the ROOM's own feet — see the note on
+               `gridCellsPx` — and would need the room's origin applied again;
+               the bounds are already plan pixels. */
+            p: mid,
+            pxPerFt, roomId: room.id,
+            watts: spec.watts, beam: spec.beam,
+            /* NOT A DECISION SOMEBODY MADE, even where it inherited one: it is
+               the rule's answer for this cell, and `spec` is what marks a lamp
+               as having been overruled. Setting it here would freeze the chunk
+               on its own output — see `cobChunkSpec`. */
+            spec: false,
+            seq: `a${add.length}`,
+          }),
+          auto: true,
+        });
+      }
+      return add.length ? [...list, ...add] : list;
+    });
+  }, [pxPerFt, cobBasisFor]);
+
+  /**
+   * KEEP THE ARRAY — the tick on the bar, and the only way one gets onto the
+   * drawing.
+   *
+   * A PREVIEW UNTIL SOMEBODY SAYS YES, which is the shape tool's rule and the
+   * right one here for its reason: an array is a dozen fittings arriving at
+   * once, and the count, the side and the distance are all being adjusted while
+   * you watch them move. Committing on every keystroke would put a dozen lamps
+   * into the schedule for each digit typed.
+   *
+   * THE SPECIFICATION IS TAKEN FROM THE BAR AT THE MOMENT OF THE TICK, so an
+   * array carries the wattage and optic that were showing when it was placed —
+   * one figure for the whole run, which is what makes it one row in the
+   * Analysis and what makes changing it there change every lamp in it.
+   *
+   * THE TOOL STAYS ARMED AND THE DRAFT IS CLEARED, so the next press picks the
+   * next geometry. Somebody ringing four rooms does it four times without
+   * touching the rail.
+   */
+  const placeArray = useCallback(() => {
+    const d = cobDraftArray;
+    if (!d?.geomId || !(d.count > 0)) return;
+    const geo = arrayOutline(d.geomId);
+    if (!geo) return;
+    setCobArrays((l) => [...l, {
+      id: `carr-${Date.now().toString(36)}-${l.length}`,
+      geomId: d.geomId, roomId: d.roomId ?? geo.roomId,
+      count: d.count, side: geo.closed ? d.side : 'on',
+      offsetFt: geo.closed ? d.offsetFt : 0,
+      watts: clampWatts(d.watts ?? 7), beam: nearestBeam(d.beam ?? 36),
+    }]);
+    setCobDraftArray(null);
+    setSelShapeId(null);
+  }, [cobDraftArray, arrayOutline]);
+
+  /** ONE ARRAY'S SPECIFICATION, from the Analysis panel. Every lamp in it moves
+   *  together, because there is only one figure and they all read it. */
+  const setArraySpec = useCallback((id, patch) => {
+    setCobArrays((l) => l.map((a) => (a.id === id ? { ...a,
+      ...(patch.watts != null ? { watts: clampWatts(patch.watts) } : {}),
+      ...(patch.beam != null ? { beam: nearestBeam(patch.beam) } : {}) } : a)));
+  }, []);
+
+  /**
+   * ONE ARRAY'S SETTING-OUT, from its own bar — how many, which side, how far.
+   *
+   * IT WRITES STRAIGHT THROUGH AND THERE IS NO TICK, which is the one way an
+   * array already on the drawing differs from one being set out. A draft is a
+   * preview and needs a yes; this run exists, it is in the schedule, and every
+   * one of these three figures is a thing somebody adjusts while watching the
+   * lamps move. A confirmation on each keystroke would be a control you cannot
+   * sweep.
+   *
+   * THE SAME CLAMPS THE DRAFT'S HANDLERS APPLY, because they are the same
+   * questions asked of the same object — a count of zero is not a run, and a
+   * negative distance is the other side by another name. See `arrayAsks` for
+   * which of the three a given geometry may honestly be asked at all.
+   */
+  const setArrayShape = useCallback((id, patch) => {
+    setCobArrays((l) => l.map((a) => {
+      if (a.id !== id) return a;
+      /* THE COUNT IS QUANTISED AGAINST THIS ARRAY'S OWN GEOMETRY, here rather
+         than at the control, and that is the point: the number box steps in the
+         right units already (see `countStep` on the bar) but a typed figure, a
+         held arrow key and a stored plan all reach this too. One place decides
+         what a count may be, so the drawing can never hold a run of five on a
+         rectangle. See `quantiseCount`. */
+      const geo = patch.count != null ? arrayOutline(a.geomId) : null;
+      const q = geo ? arrayQuanta(geo.corners, geo.closed) : null;
+      return { ...a,
+        ...(patch.count != null
+          ? { count: Math.min(200, quantiseCount(patch.count, q ?? { free: true })) }
+          : {}),
+        ...(patch.side != null ? { side: patch.side } : {}),
+        ...(patch.offsetFt != null
+          ? { offsetFt: Math.max(0, Number(patch.offsetFt) || 0) } : {}) };
+    }));
+  }, [arrayOutline]);
+
+  /**
+   * ONE RUN'S MODULES, RE-SPECIFIED — from the Analysis panel's own chips.
+   *
+   * THE ROW'S KEY IS `<trackId>|<kind>`, which is what `roomFixtureGroups` bumps
+   * a track's modules under: one row per run per kind, because four diffusers on
+   * one profile are ONE decision and carry one figure between them.
+   *
+   * WHY THIS HAD TO EXIST. The row reads its wattage off the fittings — `row.watts
+   * = own[0].watts` — and `analyseSpace` believes a group that states its own
+   * wattage over anything in the room's override store (see the note on `watts`
+   * there, which is the right rule for a hand-placed fitting). So the chips were
+   * writing to `fixtureWatts`, the row was ignoring it, and the figure sat at
+   * whatever the allocator chose for ever. The chip has to write where the row
+   * reads, and that is the fitting.
+   *
+   * EVERY MODULE OF THAT KIND ON THAT RUN MOVES TOGETHER, because there is one
+   * figure and they all show it. A single module specified differently from its
+   * neighbours is not something this panel can express, and pretending otherwise
+   * would put a row on it nobody could reach.
+   */
+  const setTrackModuleSpec = useCallback((id, patch) => {
+    /* ONE MODULE, BY ITS OWN ID. The key was `<trackId>|<kind>` and then
+       `<trackId>|<kind>|<watts>`, and both were groups — so a chip moved four
+       corners together and there was no way to reach one of them. A module is a
+       thing you point at and specify on its own; the row's key is the fitting.
+       See `roomFixtureGroups`.
+       WHOLE WATTS, because a module is specified in them and the length bands
+       are keyed on them — see `DIFFUSER_LENGTHS_MM`. */
+    setTrackFixtures((l) => l.map((f) => (f.id === id
+      ? { ...f,
+          ...(patch.watts != null ? { watts: Math.max(1, Math.round(patch.watts)) } : {}),
+          ...(patch.beam != null ? { beam: nearestBeam(patch.beam) } : {}) }
+      : f)));
+  }, []);
+
+  /** IS THIS ROW A TRACK'S MODULES? One test, because three handlers ask it and
+   *  a row key is the only thing they are given. */
+  const isModuleRow = useCallback(
+    (key) => trackFixtures.some((f) => f.id === key), [trackFixtures]);
+
+  /** THE WHOLE RUN, OFF THE DRAWING. The geometry it was set out on stays — see
+   *  the note at the Delete key. */
+  const deleteArray = useCallback((id) => {
+    setCobArrays((l) => l.filter((a) => a.id !== id));
+    setSelArrayId((cur) => (cur === id ? null : cur));
+    setArrayDrag((d) => (d?.id === id ? null : d));
+  }, []);
+
+  /** THE TOGGLE. On fills the grid; off takes back only what is still the
+   *  toggle's — see `autoplaceIn` for why that distinction is the whole safety
+   *  of the control. */
+  const setAutoplace = useCallback((roomId, on) => {
+    setAutoSpots((ids) => (on
+      ? (ids.includes(roomId) ? ids : [...ids, roomId])
+      : ids.filter((x) => x !== roomId)));
+    if (on) autoplaceIn(rooms.find((r) => r.id === roomId));
+    else setManualCobs((l) => l.filter((c) => !(c.roomId === roomId && c.auto)));
+  }, [autoplaceIn, rooms]);
+
+  /**
+   * EVERY LAMP NOBODY HAS OVERRULED FOLLOWS ITS CHUNK.
+   *
+   * THIS IS THE OTHER HALF OF "the rest will follow suit", and it was missing.
+   * `chunkSpec` makes a run of downlights uniform at the moment they are PLACED;
+   * this keeps them uniform afterwards, which is when it actually matters —
+   * because the two things the rule reads both move under the drawing:
+   *
+   *   THE GRID GETS RE-CUT. A fan is dropped, a cove is added, a chunking is
+   *   re-picked, and the chunk that was four equal boxes is now three unequal
+   *   ones. The lamps standing in it were sized for a ceiling that no longer
+   *   exists.
+   *   SOMEBODY OVERRULES ONE. Set a lamp to 12 W on the bar or in the Analysis
+   *   panel and every other lamp in its chunk should become 12 W — that is what
+   *   `inForce` is for, and until now it only reached lamps placed AFTER the
+   *   decision.
+   *
+   * IT TOUCHES ONLY `spec: false`, WHICH IS THE WHOLE SAFETY OF IT. Such a lamp
+   * carries no decision — its wattage IS the rule's answer, recorded at the
+   * moment it was placed — so re-deriving it is not overwriting anybody's work,
+   * it is keeping a memo in step with what it is a memo OF. A lamp somebody set
+   * by hand is never touched, whatever the grid does around it. Same doctrine
+   * `lightMoves` follows when a cell is re-cut: a stored override survives, a
+   * stored derivation lapses.
+   *
+   * IT CONVERGES IN ONE EXTRA PASS AND CANNOT LOOP. The write is guarded on
+   * something having actually differed, and an unchanged list is returned BY
+   * REFERENCE — React bails out of the re-render, so the dependencies that
+   * brought us here do not change again. `chunkSpec` is a pure function of the
+   * cells and the basis, so there is nothing for it to oscillate between.
+   */
+  useEffect(() => {
+    if (readOnly || !(pxPerFt > 0) || !rooms.length) return;
+    setManualCobs((list) => {
+      let changed = false;
+      const next = list.map((c) => {
+        if (c.spec) return c;
+        const room = rooms.find((r) => r.id === c.roomId);
+        const cells = room?.plan?.gridCellsPx ?? [];
+        if (!cells.length) return c;
+        const at = { x: c.xFt * pxPerFt, y: c.yFt * pxPerFt };
+        const home = cells.find((q) => at.x >= q.x0 && at.x <= q.x1
+                                    && at.y >= q.y0 && at.y <= q.y1);
+        /* A LAMP IN NO CELL IS LEFT ALONE — dragged into a cove pocket, or into
+           a chunk the design has since taken away. There is nothing to derive
+           from, and the figures it is carrying are the last honest answer
+           anybody had for it. */
+        if (!home) return c;
+        const basis = cobBasisFor(room);
+        const want = basis.inForce?.(home) ?? chunkSpec(cells, home.chunk, basis);
+        if (!want || (want.watts === c.watts && want.beam === c.beam)) return c;
+        changed = true;
+        return { ...c, watts: want.watts, beam: want.beam };
+      });
+      return changed ? next : list;
+    });
+  }, [rooms, pxPerFt, cobBasisFor, readOnly]);
+
+  /** RE-SPECIFYING A LAMP SOMEBODY PLACED, from the analysis panel.
+   *
+   *  IT WRITES TO THE FITTING AND NOT TO `fixtureWatts`, which is the whole
+   *  difference between this and `setRowWatts` below. That store is a room's
+   *  override of a FAMILY — the right shape when the engine chose once for
+   *  twelve lamps and somebody is overruling that one choice. A hand-placed COB
+   *  has no family decision behind it to override: it was specified as it was
+   *  put down, the figures ride on it (see `manualCobs`), and a second store
+   *  keyed by row would be a second opinion about the same lamp, kept somewhere
+   *  the drawing does not read.
+   *  BOTH FIGURES THROUGH THE SAME DOOR, because both are the specification. The
+   *  wattage moves the lumen model; the beam angle does not and is not meant to
+   *  — it decides where the light lands, and this app's model is about how much
+   *  there is. It is stored because it is half of what was ordered. */
+  const setCobSpec = useCallback((id, patch) => {
+    setManualCobs((l) => l.map((c) => (c.id === id
+      ? { ...c,
+          ...(patch.watts != null ? { watts: clampWatts(patch.watts) } : {}),
+          ...(patch.beam != null ? { beam: nearestBeam(patch.beam) } : {}),
+          /* RE-SPECIFIED IS SPECIFIED. A lamp placed on the engine's own
+             recommendation and then dialled to 18 W in the panel is no longer
+             carrying the engine's answer, and the flag has to say so or it would
+             be recording where the figure came from at birth rather than what it
+             is now. */
+          spec: true,
+          /* ...AND IT IS NO LONGER THE TOGGLE'S TO TAKE AWAY. Switching autoplace
+             off removes the lamps that are still the rule's answer; one somebody
+             has re-specified is theirs. See `autoplaceIn`. */
+          auto: false }
+      : c)));
+  }, []);
+
   const setRowWatts = useCallback((roomId, key, familyId, watts) => {
     setFixtureWatts((m) => {
       const room = { ...(m[roomId] ?? {}) };
@@ -6198,9 +7520,17 @@ export default function App({
     accents: accentZonesPx,
     spots: taskSpotsPx,
     objects: ceilingObjs,
+    /* THE MAGNETIC TRACKS AND THEIR MODULES, resolved. The profile is billed by
+       the metre off the LIVE outline and the LIVE scale — never a stored length,
+       which is the rule `runMetres` exists to enforce — and each module names
+       its own catalogue line. See `magTracksPx`. */
+    magTracks: magTracksPx,
+    modules: trackModulesPx.map((m) => ({
+      roomId: m.roomId, fixture: MODULE_BY_ID[m.kind]?.fixture ?? null })),
     pxPerFt,
     plan: source?.name ?? null,
-  }), [rooms, accentZonesPx, taskSpotsPx, ceilingObjs, pxPerFt, source]);
+  }), [rooms, accentZonesPx, taskSpotsPx, ceilingObjs, magTracksPx, trackModulesPx,
+       pxPerFt, source]);
 
   /**
    * MAY THIS EXPORT GO AHEAD — one gate, awaited by all nine export buttons.
@@ -7164,6 +8494,202 @@ export default function App({
     return poly && pointInPolygon(p, poly);
   }) || null, [rooms]);
 
+  /* --- HAND-PLACED COBs, IN THE SPACE THE CANVAS DRAWS IN --------------------
+     THE STORE IS FEET AND EVERY READER WANTS PIXELS, so the conversion happens
+     once, here, rather than in the four places that draw, count and hit-test
+     them. It is the same shape `trackEditPx` and `penDraftPx` take, and the same
+     multiplication: plan feet are plan pixels over `pxPerFt` with no origin to
+     subtract, because unlike a room's own feet they are measured from the
+     sheet's corner. */
+  const manualCobsPx = useMemo(() => (pxPerFt > 0
+    ? manualCobs.map((c) => ({
+        ...c, x: c.xFt * pxPerFt, y: c.yFt * pxPerFt,
+        /* WHAT THIS LAMP THROWS, AS A DIAMETER IN FEET. Computed here rather
+           than on the canvas because it takes the SPACE's ceiling height, and
+           the canvas is handed one flat list of fittings rather than a list per
+           room. It is a real number for once: every other pool on this sheet is
+           read out of THROW_STYLE's three stated diameters, which were worked
+           out on a 9 ft assumption because the app had no height when they were
+           written. A hand-placed lamp states its own beam angle and sits in a
+           space with its own recorded height, so its pool is computed from both.
+           See throwDiameterFt. */
+        throwFt: throwDiameterFt(c.beam,
+          (ceilingMmFor(c.roomId) / 304.8) || DEFAULT_DROP_FT),
+      }))
+    : []), [manualCobs, pxPerFt, ceilingMmFor]);
+
+  /* --- LINING ONE LAMP UP WITH ANOTHER ---------------------------------------
+     THE LAMPS SOMEBODY HAS ALREADY PLACED, AS ALIGNMENT TARGETS, and nothing
+     else. The rest of this screen snaps to the drawing — walls, room centres,
+     the objects on the ceiling — through `snapTargets`, and that is right for a
+     fitting whose position is about the ROOM. A row of hand-placed downlights is
+     about ITSELF: the thing that has to be true is that the fourth one is level
+     with the other three, and a wall three feet away pulling it off that line
+     would be the drawing overruling the row.
+
+     THE SPAN RUNS FROM THE LAMP TO THE POINTER, which is why these are built
+     here instead of through `collectTargets`. That helper spans an object by its
+     own radius — a two-inch tick beside a downlight — and what says "these two
+     are in line" is the line BETWEEN them. Same construction the pen's own point
+     targets use, with the far end filled in.
+
+     IT SNAPS AS WELL AS DRAWING, and that is not a contradiction of the "no
+     clamp" rule in lib/cob.js. That rule is about the ENGINE: the wall band and
+     the bed are the layout's opinions, and a tool built to overrule the layout
+     must not be stopped by them. This is not an opinion about where the lamp
+     ought to go — it is the difference between a row that is straight and one
+     that is seven pixels out, which nobody can hit by hand and everybody wants.
+     The tolerance is the app's own, in SCREEN pixels, so it does not stiffen as
+     you zoom in to place carefully. */
+  const cobTargets = useCallback((p, exclude = null) => {
+    const skip = exclude == null ? null
+      : exclude instanceof Set ? exclude
+      : new Set(Array.isArray(exclude) ? exclude : [exclude]);
+    const out = [];
+    for (const c of manualCobsPx) {
+      /* A LAMP CANNOT BE ASKED TO LINE UP WITH ITSELF — the same guard
+         `collectTargets` states for a dragged object, and without it a drag
+         locks solid the moment it starts: the thing under the pointer is within
+         nought pixels of its own centre on both axes. */
+      if (skip && skip.has(c.id)) continue;
+      out.push({ axis: 'x', value: c.x, span: [Math.min(c.y, p.y), Math.max(c.y, p.y)],
+                 kind: 'object-centre', label: 'aligned' });
+      out.push({ axis: 'y', value: c.y, span: [Math.min(c.x, p.x), Math.max(c.x, p.x)],
+                 kind: 'object-centre', label: 'aligned' });
+    }
+    return out;
+  }, [manualCobsPx]);
+
+  /** Where a COB would land, with the guides that say why. One function, called
+   *  by the hover and by the click, so the indicator cannot promise a point the
+   *  press does not take. */
+  const cobSnap = useCallback((p, exclude = null) =>
+    snapPoint(p, cobTargets(p, exclude),
+      { tol: SNAP_DEFAULTS.tolScreenPx / (zoom || 1) }),
+    [cobTargets, zoom]);
+
+  /**
+   * WHERE A LAMP BEING DRAGGED WANTS TO BE, with Shift holding it to one axis.
+   *
+   * DELIBERATELY `moveTargetPx` FOR DOWNLIGHTS, and it is the same three rules
+   * said about a different store — read that one first if this is unfamiliar.
+   *
+   *   THE LINE IS MEASURED FROM THE PRESS, not from the last frame. Frame to
+   *   frame the constraint creeps: each frame is straight relative to the one
+   *   before it and the path as a whole bends. From the anchor, a locked drag is
+   *   on the same line however long it goes on — and for a COPY that anchor is
+   *   the ORIGINAL, so Option+Shift leaves the twin exactly level with the lamp
+   *   it came from, which is the gesture that lays out a row.
+   *
+   *   WHICHEVER AXIS HAS TRAVELLED FURTHER WINS, re-decided every frame rather
+   *   than latched on the first pixel: a drag that starts off sideways and turns
+   *   into a vertical one switches over as it crosses the diagonal, which is
+   *   what every other tool with this modifier does.
+   *
+   *   THE FROZEN AXIS TAKES NO SNAP AND DRAWS NO GUIDE. A guide is a claim that
+   *   the point took an alignment, and one drawn for an axis that was held still
+   *   by a modifier would be claiming credit for the modifier's work.
+   *
+   * WHAT IT SNAPS TO IS THE OTHER PLACED LAMPS AND NOTHING ELSE — the same
+   * targets the placing gesture uses, so "level with that one" means one thing
+   * whether you are putting a lamp down or moving it afterwards.
+   */
+  const cobMoveTarget = useCallback((p, drag, shift, exclude) => {
+    /* THE THREE STEPS, IN THIS ORDER, AND THE ORDER IS LOAD-BEARING.
+       The lock is applied FIRST and the snap SECOND: snapping first would let a
+       lamp four feet away pull the point off the line the modifier had just held
+       it to, and the row would come out crooked with the lock silently undone.
+       Then the frozen axis is dropped from both the snap's result and its guides
+       — see `orthoLock` for why a guide on a held axis is a false claim. */
+    const { at, axis } = orthoLock(wantedCentre(p, drag.grabPx), drag.start, shift);
+    const sn = cobSnap(at, exclude);
+    setGuides(sn.guides.filter((g) => g.axis !== axis));
+    return { x: axis === 'x' ? at.x : sn.x, y: axis === 'y' ? at.y : sn.y };
+  }, [cobSnap]);
+
+  /* --- WHAT THE NEXT COB WILL BE --------------------------------------------
+     FOUR ANSWERS STACKED, MOST SPECIFIC FIRST, and the stack IS the feature:
+
+       the draft       what the bar is showing while somebody drags the slider.
+                       It governs nothing — see the note on `cobDraft` — so it is
+                       deliberately absent from `inForce` below.
+       "this one"      a one-shot, spent by the next click.
+       "all next"      a standing override, until the Recommended chip clears it.
+       the engine      what the gridding engine would have installed in the cell
+                       under the pointer. See recommendCob in lib/cob.js.
+
+     `recommended` IS TRUE ONLY WHEN THE ENGINE IS ANSWERING, which is what the
+     chip on the bar latches on. A one-shot in flight is not a recommendation
+     even though nothing has been placed with it yet. */
+  const cobRoom = useMemo(() => (cobAt ? roomAt(cobAt) : null), [cobAt, roomAt]);
+  /* WHAT THE RULE NEEDS THAT IS NOT IN THE CELL.
+     A CALLBACK AND NOT A MEMO OVER THE HOVERED ROOM, because THREE callers need
+     it now and they are asking about different rooms. The bar asks about
+     whichever space the pointer is over; the press asks about the space it
+     actually landed in, resolved afresh at that moment; and autoplace asks about
+     whichever space's toggle was switched. One function, so the three can never
+     come to disagree — which matters more here than anywhere, because a
+     recommendation that differed from what the toggle beside it places would be
+     this app holding two opinions about one hole in one ceiling. */
+  const cobEngine = useMemo(
+    () => recommendCob(cobRoom, cobAt, cobBasisFor(cobRoom)),
+    [cobRoom, cobAt, cobBasisFor]);
+
+  /* --- WHY THE BAR SAYS WHAT IT SAYS, IN THE CONSOLE -------------------------
+     ONE LINE, ONLY WHEN THE ANSWER CHANGES, and it earns its place: the 7 W
+     bathroom was reported twice before it could be pinned down, because the
+     three things that decide the answer — which space the pointer is in, what
+     TYPE that space is, and whether the cell under it has a light — are all
+     invisible on screen. A space nobody has classified is not a bathroom to this
+     app however obviously it is one on the drawing, and that is the single most
+     likely reason a recommendation looks wrong. `from` names which branch
+     answered; see recommendCob.
+     THROTTLED BY THE ANSWER AND NOT BY TIME. A pointer move fires this handler
+     forty times a second and the answer changes perhaps twice a minute, so
+     logging every move would bury the drawing's own diagnostics. */
+  const cobLog = useRef('');
+  useEffect(() => {
+    if (addTool !== 'cob') { cobLog.current = ''; return; }
+    /* THE CELL IS WHAT THE ANSWER IS ABOUT, so the cell is what the line
+       prints: its size is the whole of the wattage and its short side is the
+       whole of the optic (see `autoSpec`), and a figure that looks wrong is
+       almost always a cell that is not the size anybody expected. The room's
+       TYPE stays on the line even though the rule no longer reads it — it is
+       still what decides the cell's target area upstream, in the chunker. */
+    const c = cobEngine.cell;
+    const line = `[cob] ${cobRoom?.outline?.name ?? 'no space'}`
+      + ` · type ${roomTypes[cobRoom?.id]?.type ?? 'UNSET'}`
+      + (c ? ` · cell ${c.w.toFixed(1)}×${c.h.toFixed(1)} ft (chunk ${c.chunk})` : '')
+      + ` · ${cobEngine.watts}W ${cobEngine.beam}°`
+      + ` (${cobEngine.from})`;
+    if (line === cobLog.current) return;
+    cobLog.current = line;
+    console.log(line);
+  }, [addTool, cobRoom, roomTypes, cobEngine]);
+  const cobInForce = cobOnce ?? cobStanding ?? cobEngine;
+  const cobShow = cobDraft ?? cobInForce;
+  /* A DRAFT THAT AGREES WITH WHAT IS ALREADY IN FORCE IS NOT A CHANGE. Dragging
+     the slider away and back must put the two buttons away again, or the bar
+     would be asking somebody to confirm a decision they had just undone. */
+  const cobDirty = !!cobDraft
+    && (cobDraft.watts !== cobInForce.watts || cobDraft.beam !== cobInForce.beam);
+
+  /* --- THE TWO THINGS WORTH SAYING BEFORE THE CLICK -------------------------
+     AND NEITHER OF THEM STOPS IT. See the header of lib/cob.js: this whole tool
+     exists because the engine's answer is sometimes the wrong one, and a guide
+     that refused the press would be the engine winning the argument anyway, in a
+     quieter voice.
+     NULL WHERE THERE IS NOTHING TO SAY, so the canvas draws the ordinary case —
+     which is most of the ceiling — with no extra marks on it at all. */
+  const cobGuide = useMemo(() => {
+    if (!cobRoom || !cobAt || !(pxPerFt > 0)) return null;
+    const polygonPx = cobRoom.plan?.polygonPx || cobRoom.geo?.polygonPx;
+    const near = wallClearance(cobAt, polygonPx, pxPerFt);
+    const bed = bedUnder(cobAt, cobRoom.plan?.zonesPx ?? []);
+    if (!near && !bed) return null;
+    return { polygonPx, bandPx: near ? near.limitFt * pxPerFt : 0, bed };
+  }, [cobRoom, cobAt, pxPerFt]);
+
   /**
    * WHICH WALL A COVE CLICK LANDED ON, and everything the rest of the gesture
    * needs to stay on it.
@@ -7265,6 +8791,31 @@ export default function App({
     setAddTool(null); setStripFrom(null); setAddAt(null);
     setAddSnap(null); setAddGhost(null);
     setCoveFrom(null); setCoveNote('');
+    /* THE COB BAR AND THE HALF-MADE CHANGE ON IT. `cobAt` is the point the bar
+       was answering for, so it has to go with the tool; `cobDraft` is a slider
+       position nobody committed and `cobOnce` was aimed at a lamp that is no
+       longer about to be placed.
+       `cobStanding` DELIBERATELY SURVIVES. "Update all next" is a standing
+       decision about this session's fittings, not about this arming of the tool
+       — somebody who sets 24 W, places four, reaches for the strip tool and
+       comes back is still placing 24 W lamps, and having to say so again would
+       make the button mean "update the next few". The card says which is in
+       force every time it opens, so nothing is hidden. */
+    setCobAt(null); setCobDraft(null); setCobOnce(null);
+    setCobRun([]); setCobLock(null);
+    /* THE ARRAY BEING SET UP GOES WITH THE TOOL. It is a geometry picked and a
+       count half-typed — a gesture, not a record — and one left behind would
+       reappear over a different plan the next time the tool was armed. The
+       arrays already PLACED are untouched: those are fittings. */
+    setCobDraftArray(null);
+    /* AND THE GEOMETRY HIGHLIGHT, which belongs to the tool that was offering to
+       take it. A lit stroke under no tool is a line claiming a press that would
+       now do something else entirely. */
+    setGeomHover(null);
+    /* AND THE ARMED MODULE. The DRAWER itself stays up as long as a run is
+       selected — it is what says which fittings that run can take — and its
+       cells simply unlatch because nothing is armed any more. */
+    setTrackMode(null);
     // A HALF-CLICKED RUN IS NOT A TRACK. Putting the tool away throws the path
     // away with it, exactly as `abandonShape` does for the cove pen: the
     // alternative is a set of points with no tool armed to finish them.
@@ -7328,11 +8879,17 @@ export default function App({
      as putting the pen down. */
   const abandonShape = useCallback(() => {
     setShapeSpan(null); covePen.reset(); setShapeAt(null); setShapeHeld(null);
+    // AND THE BORROWED SOURCE WITH IT. It exists for the length of one held
+    // draft; left behind, the offset control would appear over a shape dragged
+    // out from scratch and offer to set it in from a geometry it never came from.
+    setHeldSrc(null);
     setShapeAskSides(false); setGuides([]);
   }, [covePen]);
 
   const closeShapeTool = useCallback(() => {
     setShapeMenuOn(false); setShapeTool(null); setShapeDrag(null);
+    // ...AND THE GEOMETRY IT WAS OFFERING TO TAKE. See `geomHover`.
+    setGeomHover(null);
     abandonShape();
   }, [abandonShape]);
 
@@ -7342,15 +8899,45 @@ export default function App({
     setShapeEditId(null); setShapeResize(null);
   }, []);
 
-  const openShapeTool = useCallback(() => {
+  const openShapeTool = useCallback((role = 'cove', { arm = true } = {}) => {
+    /* THREE ROLES NOW, AND THE LIST IS NOT WRITTEN OUT HERE. It was
+       `role === 'guide' ? 'guide' : 'cove'`, which silently turned every role it
+       had not heard of into a cove — so opening the bar for a magnetic track
+       committed a pocket. `roleOf` is the one place that knows the roles; asking
+       it means a fourth one is a change to that file and not to this line. */
+    setShapeRole(shapeRoleOf({ role }));
     /* ARMED ON THE RECTANGLE, NOT ON NOTHING. Opening with no primitive picked
        was a bar that looked ready and answered no press — you had to notice
        that one more click was owed before the drawing would respond, which is
        the kind of step nobody sees until they have already tried. The rectangle
        is the default for the reason it is first in the row: it is the one
-       everybody reaches for, and picking any other is one press either way. */
-    setShapeMenuOn(true); setShapeTool('rect');
-    abandonShape(); clearShapeEdit();
+       everybody reaches for, and picking any other is one press either way.
+
+       ...UNLESS NOBODY ASKED TO DRAW, WHICH IS THE ONE EXEMPTION AND IT MATTERS.
+       The bar also arrives as a consequence of clicking a space — see
+       `onCanvasClick` — and that click was about the SPACE. Arming a placer on
+       it would give one press two meanings and the second one would bite
+       immediately: click a room to select it, click the room next door to select
+       THAT, and instead of a selection you would have dragged out a rectangle.
+       So the bar opens showing its primitives with none of them live, and the
+       press that arms one is a press somebody made for that purpose. */
+    setShapeMenuOn(true); setShapeTool(arm ? 'rect' : null);
+    abandonShape();
+    /* AND THE ARRAY'S BAR GOES, ARMED OR NOT. This one is above the `!arm`
+       return on purpose: the unarmed bar is what a click on a space raises, and
+       it lands in exactly the place the array's bar is standing — see
+       `openArray` for why one is the limit. Nothing else in the takeover below
+       has to happen for an unarmed bar, but this does. */
+    setSelArrayId(null);
+    /* THE TAKEOVER BELOW BELONGS TO ARMING AND NOT TO OPENING, which is why it
+       stops here when nothing was armed. Everything under this line exists to
+       make this tool the sole owner of the next press; a bar showing six
+       primitives with none of them live owns no press at all, and putting away
+       somebody's zone editor or their half-placed switchboard because they
+       clicked a room would be a click with two meanings — the very thing the
+       note below is about. */
+    if (!arm) return;
+    clearShapeEdit();
     /* ONE POINTER PIPELINE, ONE OWNER — the same clearing `openZoneEdit` and
        `openBoardPlace` do. A press with two tools armed is a press with two
        meanings, and this one draws across the whole ceiling rather than at a
@@ -7406,6 +8993,7 @@ export default function App({
    */
   const openDoorEdit = useCallback(() => {
     setDoorEdit(true);
+    setSelArrayId(null);
     setZoneEdit(false); setBoardPlace(false); closeShapeTool();
     setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
     setZoneMode(false); setDraftZone(null);
@@ -7446,6 +9034,7 @@ export default function App({
     // ONE SELECTION ON THIS CANVAS. A plate and a fitting both picked would be
     // two things Delete could mean.
     setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelFlowId(null);
+    setSelCobId(null); setSelArrayId(null);
     /* AND THE DRAG IS ARMED BUT NOT LIVE. `live` turns on once the pointer has
        moved past a few pixels — the accent runs' own slop, and for the same
        reason: without it a click that wobbles one pixel writes a hand position
@@ -7520,6 +9109,7 @@ export default function App({
     setSelFlowId(id);
     // ONE SELECTION ON THIS CANVAS.
     setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelBoardId(null);
+    setSelCobId(null); setSelArrayId(null);
   };
 
   /**
@@ -7681,6 +9271,7 @@ export default function App({
      pointer pipeline, one owner. */
   const openZoneEdit = useCallback(() => {
     setZoneEdit(true);
+    setSelArrayId(null);
     setBoardPlace(false); closeShapeTool();
     setZoneMode(true); setDraftZone(null);
     setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
@@ -7702,7 +9293,7 @@ export default function App({
      does. One pointer pipeline, one owner. */
   const openWallEdit = useCallback((roomId) => {
     setWallEdit(roomId); setWallPick(null);
-    setFocusId(roomId);
+    setFocusId(roomId); setSelArrayId(null);
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
     setBoardPlace(false); closeShapeTool();
     setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
@@ -7739,6 +9330,7 @@ export default function App({
      do: one pointer pipeline, one owner. */
   const openBoardPlace = useCallback(() => {
     setBoardPlace(true);
+    setSelArrayId(null);
     closeShapeTool();
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
     setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
@@ -7787,6 +9379,30 @@ export default function App({
      reads as a broken tool. See the shape step in the panel. */
   const lineSpan = useMemo(() => {
     if (shapeTool !== 'line' || !shapeSpan || !shapeAt) return { shape: null, why: '' };
+    /* --- A GUIDE LINE GOES WHERE IT IS DRAWN ------------------------------
+       A COVE LINE HAS TO LAND ON TWO WALLS. That is not a preference: a slot is
+       a channel cut across the slab, and a channel that stops in mid-air has no
+       end detail and cannot be built — see `spanOnOutline`, which is what
+       projects a rough drag onto the plaster at both ends.
+       A GUIDE LINE IS NOT BUILT. It is a line to set an array of fittings out
+       along, and the useful ones are exactly the ones the cove rule forbids: a
+       run over a worktop that starts and stops where the worktop does, a line
+       across the middle of a room touching nothing. Forcing its ends onto the
+       walls would make the tool refuse the one thing it is for.
+       SO THE PROJECTION IS SKIPPED AND THE DRAG IS THE LINE, ends included. The
+       square-up modifier still applies, because a run somebody wants level is a
+       run somebody wants level whatever it is for. */
+    /* ...AND A TRACK IS NOT BUILT EITHER, so it takes the same exemption. The
+       test is "is this a cove" rather than a list of the roles that escape: a
+       magnetic track profile has to be able to run across the middle of a room
+       and stop, exactly as a guide does, and the wall projection below exists
+       only because a COVE is a channel in plasterboard whose ends need something
+       to land on. */
+    if (shapeRole !== 'cove') {
+      const b = shapeSpan.uniform
+        ? axisLock(shapeSpan.aFt, shapeAt) : shapeAt;
+      return { shape: lineShape(shapeSpan.aFt, b), why: '' };
+    }
     const room = shapeSpan.roomId
       ? rooms.find((r) => r.id === shapeSpan.roomId) : null;
     if (!room) return { shape: null, why: 'Start on a wall of a space.' };
@@ -7803,7 +9419,7 @@ export default function App({
                  : 'A cove spans two walls — drag to a different one.' };
     }
     return { shape: lineShape(span.a, span.b), why: '' };
-  }, [shapeTool, shapeSpan, shapeAt, rooms]);
+  }, [shapeTool, shapeSpan, shapeAt, rooms, shapeRole]);
 
   /* --- THE SHAPE THE GESTURE HAS MADE SO FAR --------------------------------
      A MEMO AND NOT A PIECE OF STATE, so there is exactly one place the live
@@ -7858,10 +9474,41 @@ export default function App({
      whose second end has not reached another wall yet produces no shape — see
      `lineSpan` — and without this the bar would drop back to the row of
      primitives half way through the drag, which reads as the tool letting go. */
+  /* THE BAR HAS FOUR STATES AND `edit` IS REACHABLE TWO WAYS.
+     It used to be reachable only with the tool CLOSED, which was right while the
+     only way to open the bar was to ask to draw: if you were drawing, you were
+     not editing. The bar now also arrives on a space click, unarmed (see
+     `onCanvasClick`), and in that state selecting a shape has to offer what can
+     be done to it — otherwise the one gesture that puts the tools in front of
+     you would be the one that takes the corner radius, the duplicate and the
+     delete away. NOTHING ARMED AND SOMETHING SELECTED IS EDITING; a live
+     primitive means you are drawing, whatever is selected underneath. */
+  /* --- ...AND `edit` DOES NOT SURVIVE ANOTHER TOOL OWNING THE BAR ------------
+     `otherBar` IS A FIX FOR TWO CONTEXTUAL BARS STACKED IN ONE PLACE. The COB
+     array tool selects the geometry it is setting out on — `setSelShapeId` in
+     its branch of the canvas press, and rightly so: that ring is what says which
+     shape the run belongs to. But a selected shape with the shape tool CLOSED is
+     this bar's `edit` state, so arming the array put the shape's corner radius,
+     duplicate and delete up at the foot of the stage alongside the array's own
+     count and offset. Both are `position: fixed` at the same 26px — see BOTTOM
+     in ShapeMenu and in CobSpec — so they overlapped: two rows of controls, half
+     of them about an object nobody was working on, and a bin that deletes the
+     GEOMETRY sitting beside a bar asking about lamps.
+     A SELECTION IS NOT A REQUEST FOR A MENU WHILE SOMETHING ELSE IS IN HAND. So
+     the fallback state is withheld whenever another machine on this canvas owns
+     the next press — an add tool, the board step, the zone band. The ring on the
+     shape stays, because that is a true statement about what the array is set
+     out on; what goes is the second bar. Same one-bar-at-a-time rule `openArray`
+     enforces from the other side.
+     IT IS ONLY THE FALLBACK THAT IS GATED. `shapeMenuOn` means somebody
+     deliberately asked for this bar, and the tool that armed it has already put
+     every other machine away — so those states are untouched. */
+  const otherBar = !!addTool || boardPlace || zoneMode;
   const shapeMode = shapeMenuOn
     ? (shapeAskSides ? 'sides'
-      : ((shapeDraft || !covePen.isEmpty || shapeSpan) ? 'draw' : 'pick'))
-    : (selShape ? 'edit' : null);
+      : ((shapeDraft || !covePen.isEmpty || shapeSpan) ? 'draw'
+        : (!shapeTool && selShape ? 'edit' : 'pick')))
+    : (selShape && !otherBar ? 'edit' : null);
 
   /**
    * KEEP IT. The tick, and the only way a shape gets onto the drawing.
@@ -7905,6 +9552,54 @@ export default function App({
 
   const canCommitShape = !!shapeToCommit && bigEnough(shapeToCommit);
 
+  /**
+   * SET THE BORROWED DRAFT IN OR OUT — the one control a borrowed shape gets.
+   *
+   * RECOMPUTED FROM THE SOURCE EVERY TIME, never applied to the current draft.
+   * `insetShape` is not reversible in the accumulating sense — a rectangle set
+   * in a foot and then out a foot is the original, but a pen path offset twice
+   * has been through the bisector solver twice and has drifted — so the source
+   * is the only safe thing to measure from. See `heldSrc`.
+   *
+   * A REFUSAL LEAVES THE DRAFT WHERE IT WAS. `insetShape` returns null when the
+   * offset eats the shape, and the honest reading of that is "not that far":
+   * the control stops moving rather than the preview vanishing.
+   */
+  const setHeldOffset = useCallback((patch) => {
+    setHeldOff((cur) => {
+      const next = { ...cur, ...patch };
+      if (!heldSrc) return next;
+      const g = next.side === 'on' ? 0
+        : (next.side === 'out' ? 1 : -1) * Math.max(0, next.ft || 0);
+      const made = insetShape(heldSrc, g);
+      if (!made) return cur;
+      setShapeHeld(made);
+      return next;
+    });
+  }, [heldSrc]);
+
+  /**
+   * WHAT THE SHAPE BAR MAY ASK ABOUT A BORROWED DRAFT.
+   *
+   * `null` UNLESS ONE IS HELD, which is what keeps the control off a shape
+   * dragged out from scratch — that drag IS the position.
+   *
+   * AND NO SIDE ON AN OPEN PATH. A line has no inside: "a foot in from it" names
+   * two paths and nothing in the drawing says which. `insetShape` returns an
+   * open shape unchanged for exactly that reason, so offering the control would
+   * be offering one that does nothing. Same call `arrayAsks` makes.
+   */
+  const heldAsks = useMemo(() => {
+    if (!heldSrc || shapeIsOpen(heldSrc)) return null;
+    const pts = shapeOutlineFt(heldSrc);
+    return { sideId: heldOff.side, ft: heldOff.ft,
+             sides: ARRAY_SIDES,
+             // HOW FAR IN THE CONTROL MAY GO, from the geometry itself — see
+             // `maxInset`, which bisects on the real offset rather than guessing
+             // at an inradius, because an L-shaped outline has not got one.
+             maxFt: Math.max(0, maxInset(pts) - SHAPE_MIN_SPAN_FT / 2) };
+  }, [heldSrc, heldOff]);
+
   /* --- FINISHING A PEN PATH OPEN, WHICH IS THE L-SHAPED COVE ----------------
      THE PEN HAS TWO ENDINGS NOW AND THEY MEAN DIFFERENT DETAILS. Clicking the
      first point closes the path, and a closed path is a pocket run round an
@@ -7927,10 +9622,18 @@ export default function App({
   }, [shapeMenuOn, shapeTool, covePen.pts, roomForSlot]);
 
   const canFinishOpen = useMemo(() => {
+    /* A GUIDE PATH IS FINISHED WHEN IT HAS TWO POINTS. The wall test below is
+       the cove's — an open cove is a channel and both its ends have to reach the
+       plaster or there is no end detail to build. A guide reaches nothing on
+       purpose: a run of spots set out over a worktop stops where the worktop
+       does. Same exemption `lineSpan` makes, for the same reason. */
+    // A GUIDE OR A TRACK IS FINISHED WHEN IT HAS TWO POINTS. Same exemption
+    // `lineSpan` makes, for its reason: neither is built into the plaster.
+    if (shapeRole !== 'cove') return covePen.pts.length >= 2;
     if (!openPenRoom || !pxPerFt) return false;
     const tolFt = Math.max(8, pxPerFt * 0.5) / pxPerFt;
     return penSpansOutline(covePen.pts, openPenRoom.geo.polygonPlanFt, tolFt);
-  }, [openPenRoom, covePen.pts, pxPerFt]);
+  }, [openPenRoom, covePen.pts, pxPerFt, shapeRole]);
 
   /* --- WHAT THE PANEL SAYS WHILE A COVE IS BEING DRAWN ---------------------
      ONE OBJECT DESCRIBING THE STEP, so the branch that renders it is a layout
@@ -7942,6 +9645,30 @@ export default function App({
      can guess is that a line has to land on a wall at both ends. */
   const coveDraw = useMemo(() => {
     if (!shapeMenuOn || readOnly) return null;
+    /* --- A GUIDE HAS NO STEP, AND THAT IS LOAD-BEARING --------------------
+       WHAT A STEP DOES HERE IS EMPTY THE PANEL. Returning anything from this
+       memo replaces the whole right-hand column — the tab strip, the header and
+       the space detail with it — because a cove is a gesture the panel cannot
+       help with and the cards are what it says instead.
+
+       THE GEOMETRY BAR OPENS ON A SPACE CLICK, and that click's other half is to
+       open that space in the panel: its height, its finishes, its Analysis. A
+       step here would take all of it away again at the same instant — one
+       gesture doing a thing and undoing it, and the more useful half would be
+       the one that lost.
+
+       THERE IS ALSO NOTHING TO SAY. The three cards below explain a COVE: where
+       its ends have to land, what a pocket does to the grid, what gets built.
+       A guide has no consequence to warn anybody about — it is a line on the
+       ceiling and it goes where you draw it — and the bar on the drawing
+       already shows the six primitives. Which of the two roles is live is on
+       the rail, latched. */
+    /* NO STEP CARD FOR A GUIDE OR A TRACK. The card explains a cove's
+       CONSEQUENCES — where its ends have to land, what a pocket does to the
+       grid, what gets built — and neither of the other two has any: a line goes
+       where you draw it, and a profile is screwed to the ceiling you drew it on.
+       The bar on the drawing already shows the six primitives. */
+    if (shapeRole !== 'cove') return null;
     if (!shapeTool) {
       return { title: 'Pick a shape for the cove', art: null,
                hint: 'The bar on the drawing has the primitives.', why: '' };
@@ -7975,7 +9702,8 @@ export default function App({
       hint: 'Press on the ceiling and drag. The pocket runs round what you draw.',
       why: '',
     };
-  }, [shapeMenuOn, shapeTool, readOnly, lineSpan.why, covePen.isEmpty, canFinishOpen]);
+  }, [shapeMenuOn, shapeTool, readOnly, lineSpan.why, covePen.isEmpty, canFinishOpen,
+      shapeRole]);
 
   const finishOpenCove = useCallback(() => {
     if (!canFinishOpen) return;
@@ -7987,16 +9715,105 @@ export default function App({
     covePen.reset(); setShapeAt(null);
   }, [canFinishOpen, covePen]);
 
+  /**
+   * SPANNING A TRACK ALSO FILLS IT — the diffuser allocator.
+   *
+   * WHY IT RUNS HERE AND NOT ON A BUTTON. Every other module on a run is placed
+   * by hand because every other module is AIMED: a spot goes over the console
+   * because that is where the console is. A diffuser is not aimed at anything —
+   * it is ambient light — and the only question worth asking about how many a
+   * run carries is the one the Analysis panel is already asking about the room.
+   * So the moment a run exists, that question has an answer, and making somebody
+   * press a second button to get it would be making them ask for the obvious.
+   *
+   * THE COUNT IS THE PANEL'S OWN ARITHMETIC RUN BACKWARDS. `spaceAnalysis` says
+   * what the space is owed and what it is getting; `netPerUnit` says what one
+   * diffuser is worth against THIS room's surfaces, height and country. The
+   * quotient, rounded up, is the number. Nothing here re-derives a lumen —
+   * see the note on `netPerUnit` for why that matters.
+   *
+   * AND THE GEOMETRY DECIDES WHERE THEY LAND, which is the other half and a
+   * different question: corners on a closed run, ends-then-seven-feet on an
+   * open one. See `allocateDiffusers`.
+   *
+   * FEET AND NOT PIXELS. The allocator's own figures — a module's length, the
+   * seven-foot gap — are in feet, and a shape is held in the plan's own feet
+   * anyway, so there is no conversion to get wrong.
+   *
+   * A ROOM IS REQUIRED AND A BRIGHT ONE GETS NOTHING. A run drawn over no lit
+   * space has no shortfall to answer and no reflectances to answer it against;
+   * a run in a room already over its criterion gets a bare profile, which is a
+   * perfectly ordinary thing to want. Either way the spots still go on by hand.
+   */
+  const allocateOnTrack = useCallback((shape) => {
+    if (!shapeIsTrack(shape) || !(pxPerFt > 0)) return;
+    const pts = shapeOutlineFt(shape);
+    if (pts.length < 2) return;
+    const home = rooms.find((r) => pointInPolygon(
+      { x: shape.x * pxPerFt, y: shape.y * pxPerFt }, r.geo.polygonPx));
+    if (!home?.plan?.ok) return;
+    const closed = !shapeIsOpen(shape);
+    const a = spaceAnalysis(home);
+    /* THE COUNT AND THE WATTAGE ARE SOLVED TOGETHER, and `netFor` is the panel's
+       own arithmetic handed to the solver as a function of wattage — see
+       `chooseDiffusers`, and `netPerUnit` for why nothing here re-derives a
+       lumen. This replaced a fixed 18 W and a count rounded up to the geometry's
+       quantum, which put 3,834 lm of diffuser into a room that wanted 1,250. */
+    /* THE SHORTFALL, IN WATTS. The allocator's rule is written in watts —
+       "27 W over four corners is 6.75 W each" — so the conversion happens here,
+       once, against what ONE watt of this family is worth to THIS room. Linear,
+       because `unitOutput` is: no fixed lumens on the family, so a watt is a
+       watt and the division is exact rather than a fit.
+       `track_diffuser` AND NOT `panel`. They share a distribution and are two
+       products with two ranges — see lumens.js. */
+    const fam = MODULE_BY_ID.diffuser.family;
+    const perW = netPerUnit(fam, 1, { ref: a.ref, lumensPerWatt: a.lumensPerWatt });
+    const plan = perW > 0 ? planDiffusers(pts, {
+      closed, needW: a.shortfall / perW,
+      /* --- THE CATALOGUE, OFF THE FAMILY, AND THE SAME ARRAY THE CHIPS USE ---
+         WHAT A DIFFUSER IS SOLD AT COMES FROM UPSTREAM AND NOT FROM THE
+         ALLOCATOR. `FAMILY_BY_ID.track_diffuser.watts` is the one store — see
+         `TRACK_DIFFUSER_WATTS` in lumens.js — and it is also exactly what
+         `analyseSpace` copies onto the row as `wattOptions` for SpaceAnalysis to
+         draw a chip per entry. Read here through the FAMILY rather than by
+         importing the constant, so the allocator and the panel look at the same
+         array object: the allocator cannot pick a wattage the chips cannot show,
+         and a brand's catalogue swapped into the family is followed by both
+         without either being touched.
+         IT IS PASSED AND NOT DEFAULTED. `planDiffusers` has no built-in list —
+         see its note — so a caller that forgets this places nothing rather than
+         quietly solving against a range nobody in this project sells. */
+      watts: FAMILY_BY_ID[fam]?.watts,
+    }) : [];
+    if (!plan.length) return;
+    /* EACH MODULE CARRIES THE WATTAGE ITS OWN SLOT WAS GIVEN, which is the whole
+       point of the corner-first rule: a run comes out as four 5 W at the corners
+       and a 10 W in the middle of a rail, and those are two figures on one
+       profile. The Analysis panel groups by wattage for the same reason — see
+       `roomFixtureGroups`. */
+    setTrackFixtures((l) => [...l, ...plan.map((mod, i) => placeModule({
+      trackId: shape.id, kind: 'diffuser', u: mod.u, watts: mod.watts,
+      seq: `a${i}` }))]);
+    /* AND THE PANEL GOES TO THE SPACE, because the two figures at the top of it
+       have just moved by the whole of what the run adds. A tool that changed a
+       room's verdict silently would be the one act on this drawing worth
+       watching, performed off screen. */
+    setFocusId(home.id); setOptionPick(null); setView('spaces');
+  }, [pxPerFt, rooms, spaceAnalysis]);
+
   const commitShape = useCallback(() => {
     if (!shapeToCommit || !bigEnough(shapeToCommit)) return;
-    const shape = sealShape(shapeToCommit);
+    const shape = sealShape(shapeToCommit, shapeRole);
     setCeilingShapes((l) => [...l, shape]);
     closeShapeTool();
     setSelShapeId(shape.id);
+    // ...AND IF IT IS A TRACK, IT ARRIVES FILLED. See `allocateOnTrack`.
+    allocateOnTrack(shape);
     // ONE SELECTION ON THIS CANVAS, exactly as picking one off the sheet does.
     setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+    setSelCobId(null); setSelArrayId(null); setSelModuleId(null);
     setSelObjIds([]); setSelBoardId(null); setSelFlowId(null);
-  }, [shapeToCommit, closeShapeTool, setSelObjId]);
+  }, [shapeToCommit, shapeRole, closeShapeTool, setSelObjId, allocateOnTrack]);
 
   /** Pick a primitive off the bar. The polygon is the one that asks a question
    *  first, because "how many sides" has no sensible default to assume. */
@@ -8018,12 +9835,38 @@ export default function App({
     const copy = { ...src, id: newShapeId(), x: src.x + 0.5, y: src.y + 0.5 };
     setCeilingShapes((l) => [...l, copy]);
     setSelShapeId(copy.id);
-  }, [ceilingShapes]);
+    /* --- AND A TRACK BRINGS ITS MODULES WITH IT ---------------------------
+       COPYING A RUN AND LEAVING ITS FITTINGS BEHIND WOULD NOT BE A COPY. A
+       magnetic track is a profile with modules clipped into it, and "duplicate"
+       said of one means the second run is the same run — same length, same three
+       diffusers at the same places along it. That is the whole reason to
+       duplicate rather than draw a second one and clip six modules onto it by
+       hand.
+       THE FRACTIONS COPY UNCHANGED, WHICH IS WHY THEY ARE FRACTIONS. A module is
+       stored as a proportion of its run (see `clampU`), so the arrangement
+       survives onto a copy of any length — and it will be another length the
+       moment somebody drags a grip on it. Stored in feet the copy would be
+       right until it was resized and then quietly shed its far modules.
+       NOTHING HAPPENS FOR A COVE OR A GUIDE, because neither carries a module —
+       the filter is empty and the write is skipped. */
+    const mods = trackFixtures.filter((f) => f.trackId === id);
+    if (mods.length) {
+      setTrackFixtures((l) => [...l, ...mods.map((f, i) => ({
+        ...f, id: newModuleId(`d${i}`), trackId: copy.id,
+      }))]);
+    }
+  }, [ceilingShapes, trackFixtures]);
 
   const deleteShape = useCallback((id) => {
     setCeilingShapes((l) => l.filter((q) => q.id !== id));
     setSelShapeId((cur) => (cur === id ? null : cur));
     setShapeEditId((cur) => (cur === id ? null : cur));
+    /* AND THE MODULES GO WITH THE RUN THEY WERE CLIPPED INTO. A module with no
+       profile is not a fitting anybody can install, and an orphan in the store
+       would be an entry nothing draws and nothing can reach to delete — it would
+       simply sit in every saved plan for ever. `trackModulesPx` also drops one
+       whose run has gone, which is the belt to this braces. */
+    setTrackFixtures((l) => l.filter((f) => f.trackId !== id));
   }, []);
 
   /**
@@ -8099,6 +9942,7 @@ export default function App({
     setSelLightId(lightKey(roomId, l.cellKey));
     // ONE SELECTION ON THIS CANVAS.
     setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelObjIds([]);
+    setSelCobId(null); setSelArrayId(null);
     setSelBoardId(null); setSelFlowId(null); setSelShapeId(null); clearShapeEdit();
     lightMoved.current = false;
     /* NO POINTER CAPTURE, AND THIS IS THE ONE DRAG ON THIS CANVAS THAT REFUSES
@@ -8260,6 +10104,24 @@ export default function App({
        withholds the handler for exactly the same set (so the grab area is not
        even drawn); this is the local reading of it. */
     if (addTool || zoneMode || armed || boardPlace || (shapeMenuOn && shapeTool)) return;
+    /* --- THE BAR IS OPEN, AND THIS SHAPE IS THE OTHER ROLE ------------------
+       THEN THE PRESS TAKES IT RATHER THAN SELECTING IT. This is the same act
+       `shapeToolDown` performs; which handler gets it depends only on whether a
+       primitive is armed, because an armed primitive is what makes the caller
+       withhold this handler (and the grab band with it). With the bar open and
+       unarmed the band is live and answers first, so the take has to happen here
+       too — see `takeGeometry`, which is the one copy of it.
+       THE CUE HAS ALREADY SAID SO. `geomHover` lit this line and turned the
+       cursor into a hand the moment the pointer reached it, so a press that
+       borrows an outline instead of selecting it is signposted rather than
+       surprising. */
+    if (!shapeTool) {
+      const sh = ceilingShapes.find((q) => q.id === id);
+      if (canTakeGeometry({ shape: sh, role: shapeRole, menuOpen: shapeMenuOn,
+                            addTool, penEmpty: covePen.isEmpty })) {
+        takeGeometry(e, sh); return;
+      }
+    }
     e.preventDefault();
     e.stopPropagation();
     shapeTook.current = true;
@@ -8276,11 +10138,16 @@ export default function App({
     setShapeMenuOn(false); setShapeTool(null); abandonShape();
     setSelShapeId(id);
     setSelSpotId(null); setSelAccId(null); setSelObjId(null);
+    setSelCobId(null); setSelArrayId(null);
     setSelObjIds([]); setSelBoardId(null); setSelFlowId(null);
     const src = ceilingShapes.find((q) => q.id === id);
     if (!src || !pxPerFt) return;
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const p = svgPoint(e);
+    // AND THE HIGHLIGHT GOES WITH THE PRESS. The move handler stops tracking for
+    // the length of a drag, so a value left behind would keep the cursor a hand
+    // over a shape that is already moving.
+    setGeomHover(null);
     setShapeDrag({ id, from: { x: p.x / pxPerFt, y: p.y / pxPerFt },
                    base: { x: src.x, y: src.y }, live: false, copied: false });
   };
@@ -8301,6 +10168,16 @@ export default function App({
     const p = svgPoint(e);
     const at = { x: p.x / pxPerFt, y: p.y / pxPerFt };
     const drag = shapeDrag;
+    /* --- A GUIDE IS NOT KEPT OFF THE PLASTER, AND A COVE IS --------------
+       `clampCoveMove` holds a shape six inches clear of the room's outline,
+       because a pocket four inches from the wall leaves four inches of board
+       between them and nobody can build that. A guide is not built. It is a
+       line to set out FROM — and the most useful place to put one is very often
+       exactly on the wall, or a foot inside it, which is the one position the
+       cove's rule exists to forbid. Applying it to a guide would make the tool
+       refuse the thing it is for. */
+    const settle = (sh, to) => (shapeIsBuilt(sh) && room?.geo?.polygonPlanFt
+      ? clampCoveMove(sh, to, room.geo.polygonPlanFt, COVE_GAP_FT) : to);
     if (!drag.live) {
       const slop = Math.max(3, pxPerFt * 0.12) / pxPerFt;
       if (Math.hypot(at.x - drag.from.x, at.y - drag.from.y) < slop) return;
@@ -8331,8 +10208,7 @@ export default function App({
     if (!drag.copied && e.altKey) {
       const src = ceilingShapes.find((q) => q.id === drag.id);
       if (!src) return;
-      const to = room?.geo?.polygonPlanFt
-        ? clampCoveMove(src, want, room.geo.polygonPlanFt, COVE_GAP_FT) : want;
+      const to = settle(src, want);
       const twin = { ...src, id: newShapeId(), x: to.x, y: to.y };
       setCeilingShapes((l) => [
         ...l.map((q) => (q.id === drag.id ? { ...q, x: drag.base.x, y: drag.base.y } : q)),
@@ -8344,8 +10220,7 @@ export default function App({
     }
     setCeilingShapes((l) => l.map((q) => {
       if (q.id !== drag.id) return q;
-      const to = room?.geo?.polygonPlanFt
-        ? clampCoveMove(q, want, room.geo.polygonPlanFt, COVE_GAP_FT) : want;
+      const to = settle(q, want);
       return { ...q, x: to.x, y: to.y };
     }));
   };
@@ -8453,6 +10328,49 @@ export default function App({
     setTrackEditId(null); setSelTrackPt(null); setTrackGrip(null);
   }, []);
 
+  /**
+   * OPEN AN ARRAY, AND CLOSE EVERYTHING ELSE THAT WANTS THE SAME SPACE.
+   *
+   * ONE CONTEXTUAL BAR AT A TIME, AND IT IS NOT A PREFERENCE. Both bars on this
+   * drawing are `position: fixed`, centred over the stage, 26px off its foot —
+   * see BOTTOM in CobSpec and in ShapeMenu, which deliberately share the figure
+   * on the argument that the two are never up together. Two of them up IS two
+   * rows of buttons in one place: the second draws over the first, and half the
+   * controls somebody can see belong to an object they are not looking at.
+   *
+   * SO OPENING ONE IS ALSO AN ACT OF CLOSING, and it is written here rather than
+   * spread across the four presses that can open an array because the list of
+   * what has to go is the interesting part and it must not be maintained in four
+   * copies. `openShapeTool`, `openZoneEdit`, `openBoardPlace` and the rail's own
+   * handlers already do the same thing from the other side.
+   *
+   * IT ALSO PUTS THE PANEL ON THE SPACE THE RUN IS IN, which is what every other
+   * fitting's press does through `analysisHighlight` — an array is one row in
+   * that panel (see `roomFixtureGroups`) and the row is where its wattage can
+   * also be changed, so the two have to be looking at the same room.
+   */
+  const openArray = useCallback((id) => {
+    setSelArrayId(id);
+    /* THE SHAPE BAR AND THE SHAPE ITSELF. Selecting a shape is what puts the bar
+       into its `edit` state — see `shapeMode` — so clearing the tool is not
+       enough on its own; the selection has to go too, or the bar comes straight
+       back up over the array's. */
+    closeShapeTool(); clearShapeEdit(); setSelShapeId(null);
+    closeTrackEdit(); closeBoardPlace();
+    setTrackMode(null);
+    setZoneEdit(false); setZoneMode(false); setDraftZone(null);
+    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setArmed(null); setGhost(null); setGuides([]);
+    disarmAdd();
+    // ONE SELECTION ON THIS CANVAS. Two things picked would be two things Delete
+    // could mean.
+    setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelObjIds([]);
+    setSelCobId(null); setSelBoardId(null); setSelFlowId(null); setSelLightId(null);
+    const roomId = cobArrays.find((a) => a.id === id)?.roomId ?? null;
+    if (roomId) { setFocusId(roomId); setView('spaces'); }
+  }, [closeShapeTool, clearShapeEdit, closeTrackEdit, closeBoardPlace,
+      disarmAdd, cobArrays, setSelObjId, setSelObjIds]);
+
   const shapeHandleDown = (e, id, handle) => {
     if (e.button != null && e.button !== 0) return;
     e.preventDefault();
@@ -8501,16 +10419,107 @@ export default function App({
    * first point. Nothing about the two can be shared beyond this branch, which
    * is why the split is here and not four levels down.
    */
-  const shapeToolDown = (e) => {
-    if (!shapeMenuOn || !shapeTool || !pxPerFt) return false;
+  /**
+   * TAKE A GEOMETRY ALREADY ON THE DRAWING AS THE TOOL'S DRAFT.
+   *
+   * A FUNCTION AND NOT A BRANCH, because two different presses arrive at it. With
+   * a primitive armed the press lands on the <svg> and comes through
+   * `shapeToolDown`; with the bar merely OPEN the shape's own grab band answers
+   * first and stops the event, so it comes through `shapePointerDown`. Same act,
+   * same result, and one copy of it — the alternative was the same eight lines in
+   * two handlers, which is how they come to disagree about whether the role is
+   * stripped.
+   *
+   * IT ALWAYS TAKES THE EVENT. `shapeTook` is what stops the click the browser
+   * synthesises on release being read as a press on bare plan, which would clear
+   * the selection and swap this bar for the space's own, forty milliseconds after
+   * the draft appeared.
+   */
+  const takeGeometry = (e, took) => {
+    const { id: _id, role: _role, ...draft } = took;
     e.preventDefault();
+    e.stopPropagation();
+    setShapeSpan(null); setShapeAt(null); setGuides([]); setGeomHover(null);
+    /* THE SOURCE IS KEPT AND THE OFFSET IS RESET. Kept, because every later
+       change to the distance is computed from it rather than from the last
+       answer — see `heldSrc`. Reset to "on the line", because the first thing to
+       be sure of is that the right geometry was taken, and the only arrangement
+       that shows that unambiguously is the one drawn on it. The distance is
+       carried at a foot so choosing a side is one press. */
+    setHeldSrc(draft);
+    setHeldOff({ side: 'on', ft: 1 });
+    setShapeHeld(draft);
+    shapeTook.current = true;
+    return true;
+  };
+
+  const shapeToolDown = (e) => {
+    if (!shapeMenuOn || !pxPerFt) return false;
     const p = svgPoint(e);
+    /* --- A GEOMETRY ALREADY ON THE DRAWING IS SOMETHING TO SPAN FROM --------
+       THE WHOLE POINT OF A GUIDE IS THAT SOMETHING GETS BUILT ON IT, and until
+       this branch existed nothing could be: you drew a line to set out from,
+       reached for the cove tool, and then had to drag a second rectangle over
+       the first by eye — on the one drawing where the geometry to match was
+       already there and exact. So a press on a geometry of the OTHER role hands
+       that geometry to the tool as its draft. See `geomUnder` for why "the other
+       role" and not "any shape".
+
+       IT ARRIVES AS A HELD DRAFT AND NOT AS A COMMITTED COVE, which is what
+       makes this one branch rather than a feature: the bar goes to its `draw`
+       state, showing the size and a tick and a cross, and `commitShape` does the
+       rest exactly as it does for a shape somebody dragged out. A cove is a
+       piece of building — see the note there — so it gets its confirmation
+       whether the outline was drawn or borrowed.
+
+       THE ID AND THE ROLE ARE STRIPPED, AND BOTH MATTER. The id, because
+       `sealShape` mints a fresh one and a draft carrying the source's would
+       commit a second shape claiming to be the first. The role, because
+       `sealShape` spreads the draft and only ADDS `role: 'guide'` — so a guide
+       copied with its role intact would come back a guide however the tool was
+       armed, which is this branch failing silently at the one thing it does.
+
+       AND THE GUIDE STAYS WHERE IT IS. It was a setting-out line before the
+       press and it is one after: the cove is a new shape on the same outline,
+       and consuming the line that positioned it would take away the thing the
+       next detail is set out from.
+
+       NOT WHILE A PEN PATH IS OPEN. A click mid-path is a corner, and a corner
+       is not a press anything else may take — the same rule every in-flight
+       gesture on this canvas owns its pointer by. */
+    /* --- AND AN ARMED TOOL OWNS THIS PRESS ---------------------------------
+       `canTakeGeometry` IS THE WHOLE TEST AND IT IS NOT INLINE ANY MORE. It read
+       `covePen.isEmpty && geomUnder(p)` here, and `geomUnder` answers for
+       whichever tool is in hand — so with a track MODULE armed it returned the
+       track under the pointer and this branch converted it into a fresh draft.
+       The press never reached the module branch below: the diffuser and the spot
+       were unreachable, which is what was reported. See the note on that
+       function for the rule and tools/test-mag-track.mjs for the truth table. */
+    const took = shapeAtPointer(p);
+    if (canTakeGeometry({ shape: took, role: shapeRole, menuOpen: shapeMenuOn,
+                          addTool, penEmpty: covePen.isEmpty })) {
+      return takeGeometry(e, took);
+    }
+    /* NOTHING WAS TAKEN. With no primitive armed the bar is merely OPEN — the
+       state a rail cell and a space click both leave it in — and this press is
+       not its business: it falls through to the canvas, where it selects the
+       space or lets go of a selection like any other press on bare plan. */
+    if (!shapeTool) return false;
+    e.preventDefault();
+    /* THE PRESS IS ABOUT TO DRAW, so the highlight goes — here rather than in
+       the two branches below. The move handler stops tracking for the length of a
+       gesture (a span owns the pointer, and a pen with points down draws a band
+       instead), so a shape lit up a pixel before the press would stay lit for the
+       whole of it, claiming a press already spent on something else. */
+    setGeomHover(null);
     const at = shapeTool === 'pen'
       // THE POINT THE GUIDES ARE PROMISING. `penSnap` is what the rubber band
       // was drawn from a moment ago, so running it again on the press is the
       // only way the click can land where the preview said it would.
       ? penSnap(p, covePen)
-      : { x: p.x / pxPerFt, y: p.y / pxPerFt };
+      // ...AND THE SAME RULE FOR THE FIVE DRAGGED PRIMITIVES. The anchor of a
+      // marquee is a corner somebody aimed at a line; see `shapeSnapFt`.
+      : shapeSnapFt(p);
     if (shapeTool === 'pen') {
       // A NEW PATH REPLACES WHATEVER WAS HELD, exactly as a new span does
       // below: the first click of a second outline means "not that one, this
@@ -8593,7 +10602,22 @@ export default function App({
        room's `coves`, but it does become a run (see `accentZonesPx`) and that
        run is on the sheet whether the space has a layout or not. Without this it
        would be drawn twice: the tape, and a dashed line under it. */
-    lit: litShapeIds.has(sh.id) || shapeIsOpen(sh),
+    /* A GUIDE IS NEVER "LIT". `lit` means something else on this sheet is already
+       drawing the shape — its setting-out line among the room's coves, its tape
+       among the accents — so this layer owes it only a way to grab it. Nothing
+       else draws a guide, by definition, so this layer draws it: the dashed
+       outline is the whole of the mark. */
+    /* `lit` MEANS SOMETHING ELSE IS ALREADY DRAWING THIS SHAPE — its
+       setting-out line among the room's coves, its tape among the accents. Only
+       a COVE ever is: a guide is drawn by this layer alone, and a magnetic
+       track by the track layer, which draws the profile itself rather than a
+       dotted line to set out from. */
+    lit: shapeIsBuilt(sh) && (litShapeIds.has(sh.id) || shapeIsOpen(sh)),
+    /* AND WHETHER THIS LAYER OWES IT A DASHED LINE AT ALL. A track is drawn
+       SOLID, as a visible profile with modules on it — see the track layer — so
+       a dotted setting-out line under it would be two marks for one object at
+       two different weights, which is the exact fault `lit` exists to prevent. */
+    track: shapeIsTrack(sh),
     open: shapeIsOpen(sh),
     pts: shapePts(sh),
     /* THE TAPE IS PART OF THE OBJECT AND HAS TO BE GRABBABLE TOO. On the sheet
@@ -8609,7 +10633,8 @@ export default function App({
     /* NO SECOND BAND ON A SLOT. The tape and the setting-out line are three
        inches apart on a pocket and are the same line on a slot — see `outlineFt`
        — so offering both here would be two grab bands on one set of points. */
-    tape: shapeIsOpen(sh) ? null : shapePts(sh, STRIP_OFFSET_FT),
+    tape: (shapeIsOpen(sh) || !shapeIsBuilt(sh)) ? null
+      : shapePts(sh, STRIP_OFFSET_FT),
     /* THE FRAME AND ITS GRIPS, drawn only on the shape whose dimensions are
        being asked for. Which grips there are is a fact about the SHAPE — a
        circle has no edge to drag independently, see `handlesFor` — so it is
@@ -8736,12 +10761,26 @@ export default function App({
   const snapTargets = useCallback((excludeId, points = []) => collectTargets({
     rooms: rooms.map((r) => ({ id: r.id, name: r.outline.name, polygonPx: r.plan?.polygonPx || r.geo?.polygonPx })),
     objects: obstaclesPx.filter((o) => o.source === 'placed'),
+    /* --- THE GEOMETRY ALREADY DRAWN ON THE CEILING ----------------------
+       THE LINES SOMEBODY PUT THERE ON PURPOSE. A guide rectangle exists for one
+       reason — to set the next thing out against — and until this was passed in,
+       it was the only geometry on the sheet nothing could align to: the walls
+       clicked, the placed fans clicked, and the line drawn deliberately a foot
+       inside the wall did not. Everything that snaps on this screen goes through
+       this one function, so a second rectangle, a pen path, a dragged fitting
+       and an array's own ring all catch it from here.
+       ITS SETTING-OUT LINE AND NOT ITS TAPE. `coveShapesPx` carries both — see
+       `tape` there — and the tape is three inches outside the line on a pocket:
+       offering both would put two targets three inches apart on one object and
+       make which of them you caught a matter of luck. The line is the one the
+       drawing is dimensioned from. */
+    shapes: coveShapesPx.map((sh) => ({ id: sh.id, pts: sh.pts })),
     /* WHATEVER THE GESTURE IS ALREADY HOLDING — the pen's own points. Passed
        per call rather than collected here because they are not a fact about the
        drawing: they exist for the length of one path. */
     points,
     exclude: excludeId,
-  }), [rooms, obstaclesPx]);
+  }), [rooms, obstaclesPx, coveShapesPx]);
 
   /** Screen pixels -> plan pixels. The tolerance must not stiffen as you zoom. */
   const snapTol = () => SNAP_DEFAULTS.tolScreenPx / (zoom || 1);
@@ -8856,6 +10895,35 @@ export default function App({
     setGuides(r.guides.filter((g) => g.axis !== lock));
     return { x: (lock === 'x' ? at.x : r.x) / pxPerFt,
              y: (lock === 'y' ? at.y : r.y) / pxPerFt };
+  };
+
+  /**
+   * A CORNER OF ONE OF THE FIVE DRAGGED PRIMITIVES, SNAPPED, IN PLAN FEET.
+   *
+   * THE PEN HAD GUIDES AND THE MARQUEE DID NOT, and there was no argument for
+   * the difference — only that the pen was wired up later. Dragging out a
+   * rectangle a foot inside another one is the single most common thing anybody
+   * does with the geometry tool, and by eye at any zoom it is a guess. So the
+   * anchor and the moving corner both go through the same engine everything else
+   * on this screen uses, and the blue dotted lines say what was caught.
+   *
+   * NO LOCK IS PASSED, and that is the one place this differs from `penSnap`.
+   * Shift on a primitive does not freeze an axis — it makes the shape UNIFORM
+   * (a square, a circle, an equilateral triangle), which `shapeFromDrag` applies
+   * to the pair of points AFTER this — so there is no frozen coordinate for a
+   * guide to lie about. Squaring up a rectangle whose corner has snapped is
+   * exactly what somebody holding Shift asked for.
+   *
+   * IT SNAPS THE POINTER AND NOT THE RESULT. A slot's ends are then projected
+   * onto the room's outline by `spanOnOutline`, and a circle is fitted into the
+   * box the two corners make; in both the snap decides where the DRAG is, which
+   * is the thing the guides are drawn about.
+   */
+  const shapeSnapFt = (rawPx) => {
+    if (!pxPerFt) return { x: 0, y: 0 };
+    const r = snapPoint(rawPx, snapTargets(null), { tol: snapTol() });
+    setGuides(r.guides);
+    return { x: r.x / pxPerFt, y: r.y / pxPerFt };
   };
 
   /**
@@ -9353,10 +11421,360 @@ export default function App({
     setSelObjId(null);
     setSelBoardId(null);
     setSelFlowId(null);
+    setSelCobId(null); setSelArrayId(null);
     setArmed(null);
     const sp = taskSpotsPx.find((q) => q.id === id);
     if (sp?.roomId) setFocusId(sp.roomId);
   };
+
+  /**
+   * PICKING UP A COB SOMEBODY PLACED — and it can be MOVED, which is a reversal.
+   *
+   * IT USED TO BE SELECTION ONLY, and the note here argued that a fitting which
+   * could be nudged by a press meant to select it would quietly undo the one act
+   * it exists to record. The argument was about a press that acts immediately;
+   * it is answered by the drag slop rather than by refusing the gesture. A press
+   * that never travels three screen pixels is still a click and still only
+   * selects; past that it is a move, because somebody has visibly asked for one.
+   * See `movedEnough` in lib/dragMove.js.
+   *
+   * WHAT IT DOES NOT DO IS RESIZE OR ROTATE. A downlight is a round hole of a
+   * size the catalogue decides and it has no orientation, so the frame of grips
+   * a ceiling object carries would be three controls that cannot do anything.
+   * Position is the whole of what a person chooses about one.
+   *
+   * NOT WHILE ANY TOOL IS ARMED, and this one has no exemption of the sort the
+   * spot grants itself. The COB's own gesture is a press on open ceiling that
+   * places a lamp, so a press stolen by the lamp already there would make the
+   * one thing somebody does twenty times in a row fail the moment two of them
+   * were near each other. Put the tool down to pick one up — which is one press
+   * on the cell that is latched right in front of them.
+   *
+   * THE POINTER IS CAPTURED ON THE SVG, exactly as the object drag captures it:
+   * a lamp dragged toward the edge of the sheet routinely releases outside the
+   * element the press landed on, and without capture that release is somebody
+   * else's event and the drag never ends.
+   */
+  const cobPointerDown = (e, id) => {
+    if (e.button != null && e.button !== 0) return;   // middle button is the pan
+    if (addTool || zoneMode || armed || boardPlace || !pxPerFt) return;
+    /* --- A LAMP THAT BELONGS TO AN ARRAY IS NOT A LAMP YOU CAN PICK UP -------
+       The canvas draws the hand-placed lamps and every array's lamps in ONE list
+       — on the ceiling they are the same fitting, see the note at the call site
+       — so this handler receives both, and the id is the only thing that says
+       which. A hand-placed one is in `manualCobs`; an array's is a memo worked
+       out from a geometry and a count, and there is nothing about it on its own
+       to select or to move.
+       SO THE PRESS RESOLVES TO THE ARRAY. That is what somebody aiming at one of
+       twelve lamps on a ring has actually got hold of, and the array is a thing
+       with a specification, a count and a position. See `arrayGrab`. */
+    const own = arrayCobsPx.find((q) => q.id === id);
+    if (own) { arrayGrab(e, own.arrayId); return; }
+    const c = manualCobs.find((q) => q.id === id);
+    if (!c) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setSelCobId(id);
+    setSelSpotId(null);
+    setSelAccId(null);
+    setSelObjId(null);
+    setSelBoardId(null);
+    setSelFlowId(null);
+    setArmed(null);
+    /* THE SPACE AND THE TAB ARE NOT SET HERE. Selecting a fitting reveals it in
+       the Analysis, and that is one behaviour shared by every fitting on this
+       canvas — so it lives in one effect over `analysisHighlight` rather than
+       being written out in this handler and the three like it. */
+
+    svgRef.current?.setPointerCapture?.(e.pointerId);
+    const p = svgPoint(e);
+    const centre = { x: c.xFt * pxPerFt, y: c.yFt * pxPerFt };
+    setCobDrag({
+      id, pointerId: e.pointerId,
+      /* WHERE INSIDE THE LAMP IT WAS GRABBED, subtracted from every later
+         pointer position so the symbol does not jump to centre itself under the
+         cursor on the first move. */
+      grabPx: grabOffset(p, centre),
+      /* WHERE IT WAS AT THE PRESS. Every frame's delta is measured from here and
+         never from the frame before — see rule 2 in lib/dragMove.js — and it is
+         also the anchor the ortho lock holds the line to, and what the Option
+         copy puts the original back to. */
+      start: centre,
+      from: p,
+      /* WHO IS MOVING AND WHAT THEY LOOKED LIKE. One lamp today, because a COB
+         has no multi-selection; kept in the group shape anyway so that adding
+         one is a change to the SELECTION and not to this gesture. */
+      group: [id],
+      startAll: { [id]: { ...c } },
+      moved: false,
+      copied: false,
+    });
+  };
+
+  /**
+   * THE LAMP FOLLOWING THE POINTER — and, if Option arrives, its twin.
+   *
+   * EVERYTHING IN PLAN FEET AT THE STORE AND PLAN PIXELS AT THE POINTER, which
+   * is why `at`/`to` are handed to the library: `manualCobs` holds `xFt`/`yFt`
+   * so that a scale correction does not move a lamp (see the store's own note),
+   * and the pointer only ever speaks pixels.
+   */
+  const cobPointerMove = (e) => {
+    if (!cobDrag || !pxPerFt) return;
+    const p = svgPoint(e);
+    /* NOT A DRAG UNTIL IT HAS TRAVELLED. Before that this handler does nothing
+       at all: no write, no guides, no copy — so a click that wobbles is a click.
+       Once past the slop the flag latches and stays latched, because a drag that
+       came back to within three pixels of its origin is still a drag. */
+    if (!cobDrag.moved) {
+      if (!movedEnough(cobDrag.from, p, { zoom })) return;
+      setCobDrag((d) => (d ? { ...d, moved: true } : d));
+    }
+
+    /* PLAN FEET IN, PLAN FEET OUT — the two adapters the library asks for. */
+    const inFt = (o) => ({ x: o.xFt * pxPerFt, y: o.yFt * pxPerFt });
+    const outFt = (o, q) => ({ ...o, xFt: q.x / pxPerFt, yFt: q.y / pxPerFt,
+                               roomId: roomAt(q)?.id ?? o.roomId,
+                               /* MOVING A LAMP ADOPTS IT. It is no longer where
+                                  the rule put it, so switching autoplace off
+                                  must not take it away — see `autoplaceIn`. */
+                               auto: false });
+
+    /* --- OPTION LEAVES A COPY BEHIND ------------------------------------
+       READ LIVE OFF THE MOVE and not latched at the press, so "Option then
+       drag" and "drag then Option" are the same gesture. `forkCopy` puts the
+       original back where it was picked up, which is what reading the modifier
+       late costs — see its note. The twins' ids are minted first so they can be
+       kept out of the snap targets, which leaves the ORIGINAL a live target:
+       exactly what lining a second lamp up with the first wants.
+       ONE WRITE DOING THE RESTORE AND THE CLONE TOGETHER, then a return. Every
+       line below this branch reads `cobDrag` as it was when this handler was
+       created — the retarget has not landed yet — so a second pass through them
+       would take the ORIGINAL for the twin and move it after all. */
+    if (!cobDrag.copied && e.altKey) {
+      /* THE IDS ARE MINTED HERE, OUTSIDE THE WRITE, and that is not tidiness.
+         `setManualCobs` takes an UPDATER because two moves can fire before a
+         re-render and a plain value would write a stale list — but an updater
+         runs whenever React chooses, so anything computed inside it is not
+         available to the two lines after it. The retarget below needs to know
+         which twin each original became, so the mapping is decided up front and
+         `forkCopy` is handed a minter that reads it. */
+      const pairs = cobDrag.group
+        .map((gid, i) => ({ gid, twinId: newCobId(`c${i}`), base: cobDrag.startAll[gid] }))
+        .filter((q) => q.base);
+      if (!pairs.length) return;
+      const twinOf = Object.fromEntries(pairs.map((q) => [q.gid, q.twinId]));
+      /* THE TWINS ARE EXCLUDED FROM THE SNAP TARGETS — they are not in the list
+         yet, so nothing is actually excluded and the ORIGINALS stay live, which
+         is exactly what lining a copy up with the lamp it came from wants. */
+      const at = cobMoveTarget(p, cobDrag, e.shiftKey, pairs.map((q) => q.twinId));
+      const d = deltaFrom(cobDrag.start, at);
+      setManualCobs((list) => forkCopy(list, cobDrag.startAll, d,
+        (_n, base) => twinOf[base.id], { at: inFt, to: outFt }).list);
+      setCobDrag((cur) => (cur ? {
+        ...cur,
+        /* THE DRAG TRANSFERS TO THE TWIN and the anchor is untouched: `start` is
+           still the ORIGINAL's position, so later frames go on computing one
+           delta from the press and applying it to these snapshots exactly as a
+           plain move does. */
+        id: twinOf[cur.id] ?? pairs[0].twinId,
+        group: pairs.map((q) => q.twinId),
+        startAll: Object.fromEntries(
+          pairs.map(({ twinId, base }) => [twinId, { ...base, id: twinId }])),
+        copied: true, moved: true,
+      } : cur));
+      setSelCobId(twinOf[cobDrag.id] ?? pairs[0].twinId);
+      return;
+    }
+
+    const at = cobMoveTarget(p, cobDrag, e.shiftKey, cobDrag.group);
+    const d = deltaFrom(cobDrag.start, at);
+    setManualCobs((list) => applyDelta(list, cobDrag.startAll, d,
+                                       { at: inFt, to: outFt }));
+  };
+
+  /**
+   * LETTING GO.
+   *
+   * A LAMP DROPPED OFF EVERY CEILING GOES BACK WHERE IT CAME FROM, and that is
+   * the one thing this does beyond clearing the gesture. `roomId` is what the
+   * Analysis counts a lamp under, what its throw is clipped to and what its
+   * ceiling height is read from, so a lamp belonging to no space is a fitting
+   * that is drawn on the sheet, absent from every reading of it, and impossible
+   * to account for. Refusing the drop is kinder than keeping a stale `roomId`,
+   * which would put a lamp visibly in the hall and count it in the bedroom.
+   */
+  const cobPointerUp = () => {
+    if (!cobDrag) return;
+    if (cobDrag.moved) {
+      setManualCobs((list) => list.map((c) => {
+        if (!cobDrag.group.includes(c.id)) return c;
+        if (c.roomId && roomAt({ x: c.xFt * pxPerFt, y: c.yFt * pxPerFt })) return c;
+        const base = cobDrag.startAll[c.id];
+        return base ? { ...c, xFt: base.xFt, yFt: base.yFt, roomId: base.roomId } : c;
+      }));
+    }
+    setCobDrag(null);
+    setGuides([]);
+  };
+
+  /* --- AN ARRAY: OPENED BY ITS LAMPS, CARRIED BY ANY OF THEM -----------------
+
+     ONE PRESS, TWO ANSWERS, AND THE SLOP DECIDES WHICH. A press that never
+     travels is a click and only opens the array; past three screen pixels it is
+     a move, because somebody has visibly asked for one. That is rule 1 in
+     lib/dragMove.js and it is what lets one gesture both select and drag without
+     a click that wobbles quietly shifting a run of twelve lamps.
+
+     WHAT MOVES IS THE ARRAY AND NOT THE GEOMETRY UNDER IT. See `shiftPts` in
+     lib/cob.js: an array records which geometry it is set out on and what it did
+     to it, and a displacement is one more entry in the second list. The
+     rectangle keeps its position, the cove drawn on it keeps its position, and
+     editing the rectangle still carries the run with it — which is the thing the
+     reference was for.
+
+     IT ALSO OPENS THE ARRAY'S OWN BAR AND CLOSES EVERY OTHER ONE. Two
+     contextual bars are pinned to the same place at the foot of the stage — see
+     the note on BOTTOM in CobSpec — so "the one you just opened" has to be the
+     only one up. `closeContextual` is that rule in one place. */
+  const arrayGrab = (e, arrayId) => {
+    const a = cobArrays.find((q) => q.id === arrayId);
+    if (!a || !pxPerFt) return;
+    e.stopPropagation();
+    e.preventDefault();
+    /* THE PRESS IS SPOKEN FOR, so the click the browser synthesises on release
+       is not read as a press on bare plan — which would clear the selection and
+       swap the array's bar for the space's geometry tools, forty milliseconds
+       after opening it. Same flag every grip on this canvas sets. */
+    shapeTook.current = true;
+    openArray(arrayId);
+    svgRef.current?.setPointerCapture?.(e.pointerId);
+    const p = svgPoint(e);
+    setArrayDrag({
+      id: arrayId, pointerId: e.pointerId,
+      from: p,
+      // WHERE THE RUN ALREADY WAS. Every frame's delta is measured from here and
+      // never from the frame before it — rule 2 in lib/dragMove.js.
+      base: { x: a.dxFt || 0, y: a.dyFt || 0 },
+      moved: false,
+    });
+  };
+
+  const arrayPointerMove = (e) => {
+    if (!arrayDrag || !pxPerFt) return;
+    const p = svgPoint(e);
+    if (!arrayDrag.moved) {
+      if (!movedEnough(arrayDrag.from, p, { zoom })) return;
+      setArrayDrag((d) => (d ? { ...d, moved: true } : d));
+    }
+    /* SHIFT HOLDS IT TO ONE AXIS, from the anchor rather than from the last
+       frame, so a run nudged sideways stays exactly level with where it was —
+       which is the whole reason anybody reaches for the modifier here. No guide
+       is drawn for the frozen axis, and none is drawn for the free one either:
+       an array is set out on a geometry, and a dotted line claiming it had found
+       an alignment of its own would be a claim about the wrong object. */
+    const want = { x: p.x - arrayDrag.from.x, y: p.y - arrayDrag.from.y };
+    const { at } = orthoLock(want, { x: 0, y: 0 }, e.shiftKey);
+    setCobArrays((l) => l.map((q) => (q.id === arrayDrag.id
+      ? { ...q, dxFt: arrayDrag.base.x + at.x / pxPerFt,
+                dyFt: arrayDrag.base.y + at.y / pxPerFt }
+      : q)));
+  };
+
+  /**
+   * LETTING GO OF A RUN.
+   *
+   * A RUN DROPPED OFF EVERY CEILING GOES BACK WHERE IT CAME FROM — the lamp
+   * drag's own rule (see `cobPointerUp`), said about twelve at once and there
+   * for its reason rather than as a tidy-up. An array's `roomId` is what the
+   * Analysis counts it under, what its pools are clipped to and what its ceiling
+   * height is read from; carried clear of that room it would be a row of
+   * fittings drawn in the hall, counted in the bedroom, and clipped to a
+   * polygon they are nowhere near — visible on the sheet and absent from every
+   * reading of it.
+   *
+   * ANY ONE LAMP INSIDE A ROOM IS ENOUGH, and it is deliberately that lenient. A
+   * ring set out on a room's own outline has lamps ON the walls, and a strict
+   * "every lamp is inside" test would refuse the array's ordinary position. What
+   * this catches is the run carried right off the plan.
+   */
+  const arrayPointerUp = () => {
+    if (!arrayDrag) return;
+    if (arrayDrag.moved) {
+      const own = arrayCobsPx.filter((c) => c.arrayId === arrayDrag.id);
+      if (own.length && !own.some((c) => roomAt({ x: c.x, y: c.y }))) {
+        setCobArrays((l) => l.map((q) => (q.id === arrayDrag.id
+          ? { ...q, dxFt: arrayDrag.base.x, dyFt: arrayDrag.base.y } : q)));
+      }
+    }
+    setArrayDrag(null);
+  };
+
+  /* --- A MODULE, PICKED UP AND SLID ALONG ITS RUN ---------------------------
+
+     ONE AXIS, AND IT IS NOT A CONSTRAINT THIS APP INVENTED. A module clips
+     anywhere along a magnetic profile and nowhere across one, so "move it" can
+     only mean "move it along" — which is why the drag resolves the pointer to a
+     FRACTION of the path rather than to a point. Drag it out into the middle of
+     the room and it slides to the nearest place on the rail, which is the honest
+     answer rather than a refusal.
+
+     THE SAME SLOP EVERY OTHER DRAG ON THIS CANVAS USES, so a press that only
+     meant to select does not nudge a fitting three pixels — rule 1 in
+     lib/dragMove.js.
+
+     AND IT WILL NOT SIT ON ANOTHER ONE. `placeableU` is what the placing press
+     runs too, with this module excluded from what it has to clear: two bodies
+     cannot share an inch of extrusion, so a drag that would overlap lands at the
+     nearest gap instead of stacking. Excluded rather than included, because a
+     module always clashes with itself. */
+  const modulePointerDown = (e, id) => {
+    if (e.button != null && e.button !== 0) return;
+    if (addTool === 'module') return;   // a press with the tool in hand PLACES one
+    if (addTool || zoneMode || armed || boardPlace || !pxPerFt) return;
+    const f = trackFixtures.find((q) => q.id === id);
+    if (!f) return;
+    e.stopPropagation();
+    e.preventDefault();
+    /* THE PRESS IS SPOKEN FOR, so the click the browser synthesises on release is
+       not read as one on bare plan — which would clear the selection and swap
+       whatever bar is up for the space's own. */
+    shapeTook.current = true;
+    setSelModuleId(id);
+    setSelCobId(null); setSelArrayId(null); setSelSpotId(null);
+    setSelAccId(null); setSelObjId(null); setSelBoardId(null); setSelFlowId(null);
+    svgRef.current?.setPointerCapture?.(e.pointerId);
+    setModuleDrag({ id, pointerId: e.pointerId, from: svgPoint(e), moved: false });
+  };
+
+  const modulePointerMove = (e) => {
+    if (!moduleDrag || !pxPerFt) return;
+    const p = svgPoint(e);
+    if (!moduleDrag.moved) {
+      if (!movedEnough(moduleDrag.from, p, { zoom })) return;
+      setModuleDrag((d) => (d ? { ...d, moved: true } : d));
+    }
+    const f = trackFixtures.find((q) => q.id === moduleDrag.id);
+    const run = f ? magTrackById[f.trackId] : null;
+    if (!run) return;
+    const taken = trackFixtures.filter(
+      (q) => q.trackId === f.trackId && q.id !== f.id);
+    const u = placeableU(run.pts, uAt(run.pts, p, { closed: run.closed }),
+                         taken, f.kind,
+                         { closed: run.closed, watts: f.watts });
+    if (u == null) return;   // the rest of the run is full — leave it where it is
+    setTrackFixtures((l) => l.map((q) => (q.id === f.id ? { ...q, u } : q)));
+  };
+
+  const modulePointerUp = () => { if (moduleDrag) setModuleDrag(null); };
+
+  /** ONE MODULE, OFF THE RUN. Its own act, unlike deleting the run — which takes
+   *  every module with it (see `deleteShape`). */
+  const deleteModule = useCallback((id) => {
+    setTrackFixtures((l) => l.filter((f) => f.id !== id));
+    setSelModuleId((cur) => (cur === id ? null : cur));
+    setModuleDrag((d) => (d?.id === id ? null : d));
+  }, []);
 
   /**
    * DELETE A SPOT — WHICH MEANS DELETING THE THING IT WAS PLACED FOR.
@@ -9583,10 +12001,31 @@ export default function App({
            the last thing. */
         if (shapeEditId) { setShapeEditId(null); return; }
         if (selShapeId) { setSelShapeId(null); return; }
+        /* THE ARRAY'S BAR IS A CONTEXTUAL MENU AND CLOSES LIKE ONE, ahead of the
+           plain selections below: it is the innermost thing open, and Escape
+           undoes the last thing you asked for. */
+        if (selArrayId) { setSelArrayId(null); return; }
+        if (selModuleId) { setSelModuleId(null); return; }
         if (selLightId) { setSelLightId(null); return; }
-        if (addTool) { disarmAdd(); }
+        /* THE COB DRAWER CLOSES WITH THE TOOL IT ARMED. `disarmAdd` puts the
+           gesture away; leaving the drawer hanging open with neither cell
+           latched would be a menu still claiming to be the live thing. */
+        if (addTool) {
+          disarmAdd();
+          if (cobOpen) { setCobOpen(false); setCobMode(null); }
+          /* THE TRACK DRAWER CLOSES WITH THE MODULE IT ARMED, exactly as the COB
+             drawer does: a menu left hanging open with no cell latched is a menu
+             still claiming to be the live thing. The GEOMETRY BAR goes too —
+             opening the drawer raised it (see `onTrack`), so one Escape has to
+             put away everything one press put up. */
+          /* THE TRACK'S MODULE GOES WITH ITS TOOL, and the geometry bar with
+             it: one press put both up (the rail cell raises the bar, a selected
+             run raises the drawer), so one Escape has to put both away. */
+          if (trackMode) { setTrackMode(null); closeShapeTool(); }
+        }
         if (armed) { setArmed(null); setGhost(null); setGuides([]); }
         else if (selSpotId) setSelSpotId(null);
+        else if (selCobId) setSelCobId(null);
         else if (selAccId) setSelAccId(null);
         else if (selBoardId) setSelBoardId(null);
         else if (selFlowId) setSelFlowId(null);
@@ -9611,6 +12050,29 @@ export default function App({
          smallest thing on the sheet — it is one of the largest — but because
          picking one clears every other selection (see `shapePointerDown`), so
          when this is set it is the only thing Delete can be about. */
+      /* A SELECTED ARRAY, AND DELETE TAKES THE WHOLE RUN. Twelve lamps on one
+         ring are one decision — one row in the Analysis, one wattage, one optic
+         — so there is no half of it to remove: the entry in `cobArrays` IS the
+         fittings, and deleting it is the only thing "delete" can mean here.
+         THE GEOMETRY STAYS. It was on the drawing before the array was set out
+         on it and it is very often a cove's own setting-out line; taking a
+         rectangle off the ceiling because somebody deleted the spots arranged
+         inside it would be one press with two consequences. */
+      /* A SELECTED MODULE, AND DELETE TAKES JUST THAT ONE. The run stays: a
+         profile with one fewer diffuser on it is an ordinary thing to want, and
+         deleting the carrier because somebody removed a fitting from it would be
+         one press with two consequences. The run's own Delete is the shape's —
+         see `deleteShape`, which takes every module with it. */
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selModuleId && !moduleDrag) {
+        e.preventDefault();
+        deleteModule(selModuleId);
+        return;
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selArrayId && !arrayDrag) {
+        e.preventDefault();
+        deleteArray(selArrayId);
+        return;
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selShapeId && !shapeDrag) {
         e.preventDefault();
         deleteShape(selShapeId);
@@ -9623,6 +12085,18 @@ export default function App({
       if ((e.key === 'Delete' || e.key === 'Backspace') && selSpotId) {
         e.preventDefault();
         deleteSpot(selSpotId);
+        return;
+      }
+      /* A HAND-PLACED COB, AND DELETE REALLY DELETES IT. It has no generator
+         behind it — nothing re-derives a lamp somebody put down — so there is
+         nothing to dismiss and nothing to switch off; the fitting IS the record,
+         and removing it from the list removes it from the drawing, the analysis
+         and the plan that gets saved. Same rule the first of the three run cases
+         below states, arrived at the same way. */
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selCobId && !cobDrag) {
+        e.preventDefault();
+        setManualCobs((l) => l.filter((c) => c.id !== selCobId));
+        setSelCobId(null);
         return;
       }
       /* --- A SELECTED RUN, AND THERE ARE THREE KINDS OF IT ------------------
@@ -9772,7 +12246,9 @@ export default function App({
       shapeMenuOn, shapeTool, shapeDraft, covePen, shapeSpan, abandonShape, closeShapeTool,
       canFinishOpen, finishOpenCove,
       selShapeId, shapeDrag, deleteShape, shapeEditId,
-      selLightId, lightDrag, resetLightMove]);
+      selLightId, lightDrag, resetLightMove, selCobId, cobDrag, cobOpen,
+      selArrayId, arrayDrag, deleteArray, trackMode,
+      selModuleId, moduleDrag, deleteModule]);
 
   /**
    * OPEN A CHUNK'S OPTIONS. Called by a click on any ambient light — the light
@@ -9919,7 +12395,29 @@ export default function App({
        this, because `materialsEdit` holds a room id and stops matching by
        itself. */
     if (off) setMaterialsEdit(null);
-  }, [focusId, optionPickFor, hideCoach]);
+    /* --- ...AND IT PUTS THE GEOMETRY TOOLS IN FRONT OF YOU -----------------
+       CLICKING A SPACE RAISES THE BAR, AND THIS IS ONE OF THE TWO PLACES A
+       SPACE CAN BE CLICKED. The other is the room itself on the drawing — see
+       `onCanvasClick`, which carries the full argument. Both are the same act
+       and now have to do the same thing, because the rail cell that used to
+       offer these primitives has been removed (see the note above `ToolRail`):
+       a click on a space is the ONLY way in, so a route that selected a space
+       without raising the bar would be a route with no geometry tools at all.
+       IT WAS EXACTLY THAT ROUTE. This handler is how a space is picked out of
+       the panel's list, which is the more deliberate of the two gestures — you
+       have read the room's name — and it was the one that opened nothing.
+       NOT ON THE WAY OUT. Toggling a row off means "no space is selected", and
+       a bar of primitives for a room nobody has chosen would be a tool aimed at
+       whichever ceiling the panel happened to fall back to — which is the whole
+       fault the rail cell was removed for.
+       AND ONLY WHEN NOTHING ELSE IS ALREADY OPEN, which is `onCanvasClick`'s own
+       gate for its own reason: somebody drawing a COVE must not have the tool
+       taken out of their hands by a press on a room in the list. */
+    if (!off && !shapeMenuOn && !boardPlace && !zoneEdit) {
+      openShapeTool('guide', { arm: false });
+    }
+  }, [focusId, optionPickFor, hideCoach, shapeMenuOn, boardPlace, zoneEdit,
+      openShapeTool]);
 
   /**
    * FLIP ONE CHUNK THROUGH ITS OPTIONS.
@@ -9999,6 +12497,12 @@ export default function App({
     if (lightMoved.current) { lightMoved.current = false; return; }
     if (selShapeId) setSelShapeId(null);
     if (shapeEditId) setShapeEditId(null);
+    /* AND THE ARRAY LETS GO. A press that really was on bare plan is how every
+       other selection on this canvas is cleared, and a run whose dashed
+       setting-out line stayed on the sheet would be a drawn line — see
+       `selArrayPathPx` for why that line exists only while it is held. */
+    if (selArrayId) setSelArrayId(null);
+    if (selModuleId) setSelModuleId(null);
     // AND THE TRACK'S POINTS, which are a selection like any other: a path left
     // open with its grips on the drawing reads as part of the drawing. A press
     // that came off a grip never reaches here — see `shapeTook` above, which
@@ -10032,6 +12536,45 @@ export default function App({
        plan means "never mind", and yanking the tab strip about would be a
        strange thing for it to also mean. */
     if (hit) setView('spaces');
+    /* --- ...AND IT PUTS THE GEOMETRY TOOLS IN FRONT OF YOU ------------------
+       CLICKING A SPACE IS THE ONLY WAY THE GEOMETRY BAR OPENS. It had a cell in
+       the rail as well and that cell has been removed — see the note above
+       `ToolRail` — so this is not one of two doors into the primitives, it is
+       the door. Which makes this line load-bearing rather than a convenience:
+       lose it and there is no way to draw a guide at all.
+       THE SAME LINE IS IN `pickSpace`, because a space can be clicked in two
+       places — here on the drawing, and on its row in the panel's list — and
+       "clicking a space" has to mean one thing in both. They are deliberately
+       not folded into one function: this one has a hit test and a deselect to
+       do first, that one has a toggle, and the shared part is a single call.
+
+       AND CLICKING A SPACE IS THE RIGHT ACT TO HANG IT ON, WHICH IS WHY THE
+       CELL WENT. Geometry is set out IN a room, and the room is what says which
+       one — the click names the ceiling, puts the panel on that ceiling and
+       brings up the primitives in one gesture. The rail cell could not name a
+       ceiling: pressed with nothing chosen it armed a rectangle over whichever
+       space the panel had happened to fall back to.
+
+       IT IS A CLICK AND NOT `focusId`, and that distinction is the other half.
+       A space is very nearly always focused — the panel falls back to the first
+       room so that the drawing has something to be about — so a bar keyed on
+       SELECTION would be a bar that never went away, permanently occupying the
+       foot of the stage that the cove bar and the COB bar also want. A click is
+       different: it happened, it is over, and the bar it opened is dismissed by
+       Escape or by reaching for any other tool. There is no cell to un-press.
+
+       ONLY WHEN A SPACE WAS HIT. Clicking the margin means "never mind" — see
+       the two lines above, which read it that way for the selection and the tab
+       — and opening a drawing tool would be a strange thing for it to also mean.
+
+       AND ONLY WHEN NOTHING ELSE IS ALREADY OPEN. `shapeMenuOn` covers the case
+       that matters: somebody drawing a COVE clicks the ceiling as part of that
+       gesture, and switching them to guides mid-drag would take the tool out of
+       their hands. Every other machine on this canvas has already returned long
+       before this line — a press with a tool armed never reaches here at all. */
+    if (hit && !shapeMenuOn && !boardPlace && !zoneEdit) {
+      openShapeTool('guide', { arm: false });
+    }
     /* --- SELECTING A SPACE OPENS ITS OPTIONS, WHEREVER YOU SELECTED IT FROM
        This used to close the pill outright on any click that was not on a
        fitting, and that made the same act mean two different things depending on
@@ -10388,6 +12931,55 @@ export default function App({
         return;
       }
 
+      /* --- A MODULE CLIPS INTO A TRACK, AND ONLY INTO A TRACK --------------
+         AHEAD OF THE ROOM TEST, AND THAT IS THE POINT OF ITS POSITION. Every
+         other tool below asks "is there a ceiling here" first, because every
+         other tool puts a fitting ON a ceiling. A module goes on a PROFILE: the
+         run is the thing that has to be under the pointer, and a profile drawn
+         across a threshold is one object whose middle may be over a doorway.
+         Asking about the room first would refuse a press on the one thing the
+         press is about.
+
+         A PRESS ANYWHERE ELSE DOES NOTHING AND DOES NOT DISARM, which is the
+         COB's third exemption said about a module: you clip six of these onto a
+         run, and a tool that had to be re-armed after a stray click on the
+         ceiling beside it would be a trip to the rail per module. The cursor has
+         already said the press is dead out there — see `geomHover`, which is
+         what turns the pointer into a hand over a run and leaves it an arrow
+         everywhere else.
+
+         WHERE ALONG THE RUN IS WHERE THE CLICK LANDED, projected onto the path
+         and then moved to the nearest place the body fits — see `placeableU`.
+         Two modules cannot occupy the same inch of extrusion, and that is a fact
+         about the product rather than a rule this app is imposing. */
+      if (addTool === 'module') {
+        const hit = shapeAtPointer(p);
+        const run = hit && shapeIsTrack(hit) ? magTrackById[hit.id] : null;
+        if (!run || !trackMode) return;
+        e.preventDefault();
+        const taken = trackFixtures.filter((f) => f.trackId === run.id);
+        /* CLEARED AT THE BODY THIS MODULE WILL ACTUALLY BE, and every module
+           already on the run at its own — a 5 W diffuser is a 200 mm stub and an
+           18 W one a 400 mm bar, so one clearance figure for the lot would refuse
+           the small one a gap it fits and let the big one overlap. See
+           `DIFFUSER_LENGTHS_MM`. */
+        const u = placeableU(run.pts, uAt(run.pts, p, { closed: run.closed }),
+                             taken, trackMode,
+                             { closed: run.closed, watts: moduleWatts(trackMode) });
+        if (u == null) return;   // the run is full — see `placeableU`
+        setTrackFixtures((l) => [...l,
+          placeModule({ trackId: run.id, kind: trackMode, u, seq: l.length })]);
+        /* AND THE PANEL GOES TO THE SPACE IT LANDED IN, on the first module of
+           a run, for the reason the first COB of a run opens its space: a
+           diffuser is an ambient source and the two figures at the top of the
+           Analysis move as you clip them on, which is the only reason watching
+           them is worth anything. */
+        if (run.roomId && !trackFixtures.some((f) => f.trackId === run.id)) {
+          setFocusId(run.roomId); setOptionPick(null); setView('spaces');
+        }
+        return;
+      }
+
       const room = roomAt(p);
       /* Off the ceiling: put the tool away rather than place a fitting in a
          space that does not exist. Same rule the ceiling palette follows.
@@ -10401,8 +12993,129 @@ export default function App({
          do it for a click that placed nothing. A step ends at its Done button
          or at Escape. The click still does nothing, which is correct: there is
          no ceiling out here to put a fitting on. */
-      if (!room) { if (!GESTURE[addTool]) disarmAdd(); return; }
+      /* ...AND THE COB IS THE THIRD EXEMPTION, ARRIVED AT FROM THE OTHER SIDE.
+         The two above keep the tool armed because putting it away would close a
+         STEP somebody is working inside. This one keeps it armed because a
+         downlight is the fitting you place TWENTY of: a tool that had to be
+         re-armed after every stray click on the margin would turn a ceiling's
+         worth of lamps into a ceiling's worth of trips to the rail. Its way out
+         is the same as its way in — the drawer is open and its cell is latched
+         — plus Escape, like everything else here. */
+      if (!room) { if (!GESTURE[addTool] && addTool !== 'cob') disarmAdd(); return; }
+      /* (A MODULE NEVER REACHES HERE — its branch above returns either way. It
+         is exempt from the disarm for the COB's reason, stated there.) */
       e.preventDefault();
+
+      /* --- A RECESSED COB, EXACTLY WHERE THE CLICK LANDED -------------------
+         NO SNAP, NO PROJECTION, NO CLAMP, and the absence of all three is the
+         feature rather than an omission — see the header of lib/cob.js. The
+         sconce below seats itself on a wall and the strip snaps to a guide,
+         because in both cases the geometry is what the fitting IS. A downlight
+         is a hole in a ceiling, and somebody who has aimed at a point has said
+         everything there is to say about where it goes.
+         THE SPECIFICATION IS RESOLVED AT THE CLICK AND NOT OFF THE BAR. Same
+         stack the bar reads — one-shot, then standing, then the engine — but
+         asked of THIS point, because the pointer moves between the last render
+         and the press, and a lamp specified for the cell next door would be the
+         bar and the drawing disagreeing about what was just placed.
+         THE TOOL STAYS ARMED, and the one-shot is spent. */
+      /* --- THE ARRAY PICKS A GEOMETRY RATHER THAN PLACING A LAMP -----------
+         THE SAME TOOL AND A DIFFERENT QUESTION. Manual mode asks "where"; the
+         array asks "on what", and the answer is a thing already on the drawing.
+         So the press selects rather than places, and everything the bar goes on
+         to ask — how many, which side, how far — is about the thing it selected.
+
+         A SHAPE UNDER THE POINTER WINS OVER THE ROOM IT IS IN, which is the
+         most-specific-first rule this canvas follows everywhere. A guide drawn
+         inside a room is always also inside that room's outline; without the
+         ordering the smaller of the two targets could never be hit.
+
+         AND THE ROOM'S OWN OUTLINE IS A GEOMETRY. It is the one every plan has,
+         it is what you offset from to ring a room with downlights, and it needs
+         no drawing first. `room:` says which list to look in — see
+         `arrayOutline`. */
+      if (addTool === 'cob' && cobMode === 'array') {
+        /* THE SAME HIT TEST THE CURSOR AND THE HIGHLIGHT RUN, which is what
+           makes the press land on the line the pointer said it would — see
+           `shapeAtPointer`. It was inline here, and a second copy of the
+           tolerance is a hover that lights one thing and a press that takes
+           another. */
+        const hitSh = shapeAtPointer(p);
+        const geomId = hitSh ? hitSh.id : `room:${room.id}`;
+        const geo = arrayOutline(geomId);
+        if (!geo) return;
+        /* WHAT IT OPENS ON: ONE LAMP PER CORNER, on the line itself.
+           THE COUNT COMES FROM THE GEOMETRY AND IS NOT A CONSTANT ANY MORE. It
+           was 4 for everything, which is the right answer for a rectangle and a
+           wrong one for a triangle (a lamp stranded mid-edge) and for a hexagon
+           (four of six corners served). One per corner is the smallest run that
+           describes the shape it was set out on, and it is the base every step
+           of the control counts from — see `arrayQuanta`.
+           `on` RATHER THAN A SIDE, because the first thing to be sure of is that
+           the right geometry was picked, and the only arrangement that shows it
+           unambiguously is the one drawn on the geometry. The offset is carried
+           at a foot so that choosing a side is one press and not two. */
+        const q = arrayQuanta(geo.corners, geo.closed);
+        setCobDraftArray((d) => ({
+          side: 'on', offsetFt: 1,
+          ...(d ?? {}), geomId, roomId: geo.roomId ?? room.id,
+          /* THE COUNT IS RE-ASKED ON EVERY PICK, unlike the side and the
+             distance. Those are a preference somebody has expressed and it
+             carries to the next geometry; a count is a fact about the shape
+             underneath, and eight carried from a rectangle onto a triangle is a
+             run of eight on three corners. `quantiseCount` would rescue it to
+             nine, which is a number nobody asked for either — so the new
+             geometry answers for it. */
+          count: d?.geomId === geomId ? quantiseCount(d.count, q) : q.base,
+          watts: d?.watts ?? cobShow.watts, beam: d?.beam ?? cobShow.beam,
+        }));
+        setSelShapeId(hitSh ? hitSh.id : null);
+        return;
+      }
+
+      if (addTool === 'cob') {
+        /* THE RUN OWNS ONE CEILING. A press on any other one places nothing and
+           says nothing — it does NOT disarm, and it does not move the run: the
+           cursor has already said this click was dead (see `inside` in the move
+           handler), and a stray press near a doorway must not silently start
+           laying lamps in the next flat. */
+        if (cobLock && room.id !== cobLock) return;
+        const sn = cobSnap(p);
+        const at = { x: sn.x, y: sn.y };
+        const override = cobOnce ?? cobStanding ?? null;
+        const spec = override ?? recommendCob(room, at, cobBasisFor(room));
+        const lamp = placeCob({
+          p: at, pxPerFt, roomId: room.id,
+          watts: spec.watts, beam: spec.beam,
+          spec: !!override, seq: manualCobs.length,
+        });
+        setManualCobs((l) => [...l, lamp]);
+        /* AND IT JOINS THE RUN, which is what the tick and the cross on the bar
+           act on. See `cobRun`. */
+        setCobRun((r) => [...r, lamp.id]);
+        /* --- THE FIRST LAMP CHOOSES THE SPACE, AND OPENS IT ----------------
+           The lock is what stops the rest of the run wandering into the next
+           room — see `cobLock`. Opening the space is the other half of the same
+           thought: a run of downlights is an argument about how bright one
+           ceiling is, and the panel has to be showing THAT ceiling's Analysis
+           for the argument to be watchable. Every lamp placed after this moves
+           the two figures at the top of it while you watch, which is the only
+           reason the section is worth having.
+           THE SPACES TAB AND NOT THE DESIGN ONE, because that is where a space's
+           own detail lives — its finishes, its height, and the Analysis with a
+           row per placed lamp. The Design tab holds the palettes, which are
+           about the drawing rather than about this room.
+           ONLY ON THE FIRST. Re-focusing on every press would fight anybody who
+           opened a different space mid-run to compare a figure. */
+        if (!cobLock) {
+          setCobLock(room.id);
+          setFocusId(room.id);
+          setOptionPick(null);
+          setView('spaces');
+        }
+        if (cobOnce) setCobOnce(null);
+        return;
+      }
 
       if (addTool === 'sconce') {
         // ONE CLICK, AND THE WALL DOES THE REST. The click says WHICH wall and
@@ -10504,11 +13217,37 @@ export default function App({
        AHEAD OF EVERY OTHER BRANCH, matching the press. */
     if (shapeSpan && shapeMenuOn && shapeTool && pxPerFt) {
       const p = svgPoint(e);
-      setShapeAt({ x: p.x / pxPerFt, y: p.y / pxPerFt });
+      // SNAPPED, AND THE GUIDES SAY WHY — see `shapeSnapFt`. The far corner of a
+      // marquee is aimed at a line as much as the near one was.
+      setShapeAt(shapeSnapFt(p));
       if (shapeSpan.uniform !== e.shiftKey) {
         setShapeSpan((d) => (d ? { ...d, uniform: e.shiftKey } : d));
       }
       return;
+    }
+    /* --- A PRIMITIVE IS ARMED AND NOTHING IS BEING DRAWN YET ---------------
+       THE ONE THING WORTH KNOWING IN THIS STATE is whether the next press would
+       drag out a new shape or take the geometry already under the pointer — see
+       the branch at the top of `shapeToolDown`, whose `covePen.isEmpty` gate
+       this mirrors exactly. Nothing else on this canvas is live here (every grab
+       handler is withheld while a primitive is armed), so this owns the move.
+
+       AFTER THE SPAN AND BEFORE THE PEN'S RUBBER BAND, and both halves of that
+       are the gate. A span is a gesture in flight and owns the pointer, so a
+       drag passing over a guide must not light it up. A pen with no points down
+       has nothing to draw a band from and CAN still take a geometry, so it wants
+       the cue; a pen mid-path cannot, and falls through to the band below. */
+    if (shapeMenuOn && pxPerFt && covePen.isEmpty
+        && !shapeResize && !shapeDrag && !trackGrip) {
+      const h = geomUnder(svgPoint(e));
+      const id = h?.id ?? null;
+      if (id !== geomHover) setGeomHover(id);
+      /* IT ONLY OWNS THE MOVE WHEN A PRIMITIVE IS ARMED. Unarmed, the bar is
+         merely open — the state a rail cell and a space click both leave it in —
+         and every grab handler on this canvas is live underneath it. Returning
+         here would swallow the moves that drag a shape, resize one by its grips
+         or slide a track's point. */
+      if (shapeTool) return;
     }
     /* THE PEN'S RUBBER BAND. No press to wait for — the path is a run of
        clicks — so the segment from the last point to the pointer is drawn
@@ -10558,6 +13297,16 @@ export default function App({
       return;
     }
     if (objDrag) { objPointerMove(e); return; }
+    // A LAMP BEING DRAGGED, with the rest of the in-flight gestures and for
+    // their reason: a gesture that has the pointer owns it until it is released,
+    // whatever else is armed.
+    if (cobDrag) { cobPointerMove(e); return; }
+    // A WHOLE RUN BEING CARRIED — the same rule, said about an array rather than
+    // about one lamp. See `arrayGrab`.
+    if (arrayDrag) { arrayPointerMove(e); return; }
+    // A MODULE SLIDING ALONG ITS RUN — same rule: a gesture already in flight
+    // owns the pointer until it is released.
+    if (moduleDrag) { modulePointerMove(e); return; }
     if (accDrag) { accPointerMove(e); return; }
     // A PLATE BEING SLID ROUND THE WALLS. Above the armed-tool branch below for
     // the same reason the object and accent drags are: a gesture already in
@@ -10591,7 +13340,18 @@ export default function App({
     // for these three and the pointer sat there claiming nothing would happen.
     if (addTool && source && pxPerFt) {
       const raw = svgPoint(e);
-      const inside = insideAnyRoom(raw);
+      /* WHAT "ON A CEILING" MEANS DEPENDS ON WHETHER A RUN IS UNDER WAY.
+         For every tool but one it is the plain question — is there a room here.
+         Once a COB run has chosen its space (see `cobLock`) it becomes a
+         narrower one: is there a room here that the next press may act on. The
+         cursor, the ghost and the crosshair all read this, which is the whole
+         point of resolving it before the branches rather than inside one — the
+         pointer has to say what a click will do BEFORE it is spent, and out here
+         it will do nothing. */
+      const here = roomAt(raw);
+      const inside = addTool === 'cob'
+        ? !!here && (!cobLock || here.id === cobLock)
+        : !!here;
       if (inside !== overRoom) setOverRoom(inside);
 
       if (addTool === 'strip') {
@@ -10624,6 +13384,53 @@ export default function App({
         trackPen.move(penSnap(raw, trackPen));
         return;
       }
+      /* --- WHAT THE COB BAR IS TALKING ABOUT -----------------------------
+         THE PLAN POINT AND NOTHING ELSE. The bar is pinned to the foot of the
+         stage (see CobSpec), so this is not a position to draw at — it is the
+         question the recommendation and the two guides answer.
+         NULL OUTSIDE A ROOM. Out there the next click places nothing, so there
+         is no cell to read and no wall or bed worth warning about; the bar stays
+         up and falls back to the catalogue's ordinary downlight. */
+      /* --- IS A MODULE ABOUT TO LAND ON A RUN? --------------------------
+         THE ONLY THING WORTH SAYING WHILE THIS TOOL IS ARMED. A module goes on
+         a profile, so the pointer's whole job is to distinguish "over a run"
+         from "over the ceiling", and it does it with the cues `geomHover`
+         drives: the cursor becomes a hand and the run's own stroke comes up. No
+         ghost is drawn because nothing lands at the pointer.
+         AHEAD OF THE COB AND IT RETURNS, because a module reads none of what the
+         branch below maintains — there is no cell to recommend a wattage from
+         and no wall band to warn about. */
+      if (addTool === 'module') {
+        const h = geomUnder(raw);
+        const hid = h?.id ?? null;
+        if (hid !== geomHover) setGeomHover(hid);
+        setAddAt(raw);
+        return;
+      }
+      if (addTool === 'cob') {
+        /* --- IS THE ARRAY ABOUT TO TAKE A GEOMETRY? -----------------------
+           THE ARRAY TOOL DOES NOT PLACE A LAMP AT THE POINTER — it picks the
+           line the run is set out on — so over a geometry the ghost lamp is a
+           promise the press will not keep, and the crosshair is aimed at a point
+           the press will not use. Both are exchanged for a pointer and a lit
+           stroke on the line itself; see `geomHover`.
+           NOT IN MANUAL MODE, where a press really does put a lamp at the point
+           and a geometry under it is scenery. `geomUnder` answers `null` there
+           by construction. */
+        const h = geomUnder(raw);
+        const hid = h?.id ?? null;
+        if (hid !== geomHover) setGeomHover(hid);
+        /* THE SNAPPED POINT, NOT THE RAW ONE — the same rule the strip tool's
+           press states: the ghost under the cursor is a promise about where the
+           click will land, and a click that lands anywhere else makes every
+           future indicator a lie. `cobSnap` is what the press runs too. */
+        const sn = inside ? cobSnap(raw) : null;
+        const at = sn ? { x: sn.x, y: sn.y } : raw;
+        setGuides(sn?.guides ?? []);
+        setCobAt(inside ? at : null);
+        setAddAt(at);
+        return;
+      }
       // The spot draws an area, so the plain cursor position is the truth; the
       // grid decides where the fitting goes once the area exists.
       setAddAt(raw);
@@ -10644,6 +13451,11 @@ export default function App({
     if (shapeSpan) {
       const held = shapeDraft;
       setShapeSpan(null);
+      /* THE GUIDES GO WITH THE GESTURE, whichever way it ended. `abandonShape`
+         clears them on the throw-away path; a shape that is KEPT would otherwise
+         be left standing beside the dotted lines that helped place it, and a
+         guide that outlives its drag is a drawn line. */
+      setGuides([]);
       if (held && bigEnough(held)) setShapeHeld(held); else abandonShape();
       return;
     }
@@ -10698,6 +13510,9 @@ export default function App({
       return;
     }
     if (objDrag) { objPointerUp(); return; }
+    if (cobDrag) { cobPointerUp(); return; }
+    if (arrayDrag) { arrayPointerUp(); return; }
+    if (moduleDrag) { modulePointerUp(); return; }
     if (accDrag) { accPointerUp(); return; }
     if (boardDrag) { boardPointerUp(); return; }
     if (flowDrag) { flowPointerUp(); return; }
@@ -11301,8 +14116,9 @@ export default function App({
     lightMoves,
     accentResults, accentDismissed, manualAccents,
     surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-    wallResults, runTrims, manualCoves, manualTracks, renderRefs,
-    boardsOff, boardMoves, boardPoints, flowBoards, flowBends, manualBoards, boardKinds,
+    wallResults, runTrims, manualCoves, manualTracks, manualCobs, autoSpots,
+    cobArrays, trackFixtures,
+    renderRefs, boardsOff, boardMoves, boardPoints, flowBoards, flowBends, manualBoards, boardKinds,
     boardHeights, boardOrders,
     // WHAT EACH SPACE IS FINISHED IN, AND HOW HIGH ITS CEILING IS — see the
     // note in planState.js. Both are sparse; both are the answer rather than an
@@ -11316,7 +14132,8 @@ export default function App({
        lightMoves,
        accentResults, accentDismissed, manualAccents,
        surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-       wallResults, runTrims, manualCoves, manualTracks, renderRefs, boardsOff, boardMoves, boardPoints,
+       wallResults, runTrims, manualCoves, manualTracks, manualCobs, autoSpots,
+       cobArrays, trackFixtures, renderRefs, boardsOff, boardMoves, boardPoints,
        flowBoards, flowBends, manualBoards, boardKinds, boardHeights, boardOrders,
        ceilingMm, materials, fixtureWatts, runsOff,
        layers, zoom, view]);
@@ -11385,6 +14202,7 @@ export default function App({
     // honest than reconciling every selection against the restored document:
     // whatever was picked, the picture just changed under it.
     setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelBoardId(null);
+    setSelCobId(null); setSelArrayId(null);
     setSelFlowId(null);
     setUndoDepth(historyDepth(history.current));
   }, [stateSetters, setSelObjId]);
@@ -11869,8 +14687,126 @@ export default function App({
           tool={addTool} objArmed={armed} boardOn={boardPlace}
           disabled={!pxPerFt || !rooms.length}
           objDisabled={!pxPerFt}
-          shapeOn={shapeMenuOn}
-          onShape={() => (shapeMenuOn ? closeShapeTool() : openShapeTool())}
+          /* --- THE COB DRAWER -------------------------------------------
+             THE CELL OPENS AND THE GESTURES INSIDE IT ARM, which is why this
+             is one handler taking four messages rather than the rail's usual
+             pair. `open`/`close` are the cell; a mode id or null is the
+             drawer. See CobMenu.
+             THE ARRAY IS SHOWN AND NOT YET ANSWERED FOR. Its cell is in the
+             drawer because the drawer is what says this fitting has two
+             gestures, and a menu that grew a second item later would be a
+             menu somebody had already learned the shape of. It is out of
+             reach rather than absent, which is the honest picture of a
+             gesture this build does not implement. */
+          cobOpen={cobOpen} cobMode={cobMode} cobSoon={COB_SOON}
+          onCob={(m) => {
+            if (m === 'close') { setCobOpen(false); setCobMode(null); disarmAdd(); return; }
+            if (m === 'open') { setCobOpen(true); return; }
+            /* PICKING A GESTURE PUTS EVERY OTHER MACHINE AWAY, which is the
+               rule the rail's own two handlers already follow: one pointer
+               pipeline, one owner. Two armed tools is a click with two
+               meanings. */
+            setZoneMode(false); setDraftZone(null);
+            closeShapeTool(); closeTrackEdit(); closeBoardPlace();
+            // AND THE ARRAY THAT WAS OPEN, whose bar stands exactly where this
+            // gesture's bar is about to — see `openArray`.
+            setSelArrayId(null);
+            // ...AND THE TRACK'S ARMED MODULE. Two live tools is a press with
+            // two meanings.
+            setTrackMode(null);
+            setArmed(null); setGhost(null);
+            /* THROUGH `disarmAdd` AND NOT STRAIGHT TO `setAddTool`, because the
+               tool being put down might be a half-clicked strip or an unfinished
+               track path, and those have to be thrown away with it — see the
+               note there. It clears this cell's own bar too, which is right:
+               switching gesture is not the moment to carry a slider position
+               across. `cobStanding` survives it deliberately. */
+            disarmAdd();
+            setCobMode(m);
+            /* THE DRAWER STAYS OPEN WHILE A GESTURE IS ARMED. It is the only
+               thing on screen saying which of the two is live, and closing it
+               on the press would take that away at the moment it starts
+               mattering. */
+            setAddTool(m ? 'cob' : null);
+          }}
+          /* --- THE MAGNETIC TRACK'S DRAWER -----------------------------
+             THE SAME FOUR MESSAGES THE COB CELL TAKES — open, close, a module
+             id, or null — because it is the same kind of cell: one product with
+             several things under it. What differs is that these are MODULES
+             rather than gestures, and that opening this cell also raises the
+             GEOMETRY BAR in the track's own role. That is not a convenience, it
+             is the feature: a module has to have a run to clip into, and the two
+             ways of getting one are both the shape tool's — drag out a primitive,
+             or press a guide already on the drawing and have its outline handed
+             over (see `takeGeometry`). A drawer offering three modules and no way
+             to make a run would be a drawer about nothing on a fresh plan.
+             PICKING A MODULE DOES NOT CLOSE THE BAR EITHER. Clipping a diffuser
+             on and then drawing a second run is one continuous piece of work,
+             and the bar is how the second run gets drawn — its primitives are
+             simply unarmed while a module is. */
+          /* --- THE MAGNETIC TRACK CELL, AND ITS DRAWER --------------------
+             THE CELL OPENS THE GEOMETRY BAR AND NOTHING ELSE. It used to open
+             the drawer as well, and that was three modules offered on a plan
+             with no profile to clip them into — controls that cannot do anything
+             are worse than controls that are not there yet. A module has to have
+             a run, and the two ways of getting one are both the shape tool's:
+             drag out a primitive, or press a guide already on the drawing and
+             have its outline handed over (see `takeGeometry`).
+
+             SO THE LATCH IS THE BAR'S OWN ROLE. `shapeMenuOn && shapeRole ===
+             'track'` is the honest answer to "is the track tool in hand" — the
+             same shape the Cove cell's latch has — and there is no second piece
+             of state to keep in step with it.
+
+             AND THE DRAWER OPENS ON A SELECTED RUN. Press a track on the drawing
+             and the three modules appear beside the cell, which is where
+             somebody has already learned a drawer lives. It stays up while one is
+             armed, so clipping six diffusers on is six presses and not twelve.
+             `selTrackId` is the selection; a track is a ceiling shape, so being
+             selected is `selShapeId` naming one. */
+          trackOn={shapeMenuOn && shapeRole === 'track'}
+          onTrack={() => (shapeMenuOn && shapeRole === 'track'
+            ? closeShapeTool() : openShapeTool('track', { arm: false }))}
+          trackDrawer={!!selTrackId || addTool === 'module'}
+          trackMode={trackMode} trackSoon={MODULE_SOON}
+          onTrackPick={(m) => {
+            /* A MODULE IS ARMED, AND THE PRIMITIVES ARE PUT DOWN WITH IT. Two
+               live tools is a press with two meanings, and here the two would
+               fight over the same object: a press on a run would both drag out a
+               new shape and clip a module onto the run underneath. The BAR stays
+               open with nothing armed, so the way back to drawing is one press.
+               EVERY OTHER MACHINE GOES TOO — one pointer pipeline, one owner. */
+            const next = trackMode === m ? null : m;
+            setShapeTool(null); abandonShape();
+            setZoneMode(false); setDraftZone(null);
+            closeTrackEdit(); closeBoardPlace();
+            setArmed(null); setGhost(null);
+            setCobOpen(false); setCobMode(null); setSelArrayId(null);
+            setAddTool(next ? 'module' : null);
+            setTrackMode(next);
+          }}
+          /* ONE CELL FOR TWO ROLES' WORTH OF BAR, AND ONLY THE COVE IS IN THE
+             RAIL. The bar draws the same six primitives either way and `shapeRole`
+             is the whole difference — what a committed shape BECOMES — but the
+             two are asked for in different ways, and that is why only one of them
+             is a tool you pick up:
+
+               COVE      an act you bring to a ceiling. Nothing on the drawing
+                         suggests it, so it lives here, latched while it is open.
+               GEOMETRY   what you set out IN a space, and the space is what says
+                         which one. A click on a room raises it — see
+                         `onCanvasClick` — and it had a cell under this one until
+                         that cell turned out to be a second door into the same
+                         room: pressed with no space chosen it armed a rectangle
+                         over whichever room the panel had fallen back to.
+
+             LATCHED ONLY IN ITS OWN ROLE, so this cell reads as off while the bar
+             is up as the space's geometry — which is true: pressing it then is
+             not "close", it is "make this a cove instead", and switching the bar
+             over is what somebody asking for that means. */
+          shapeOn={shapeMenuOn && shapeRole === 'cove'}
+          onShape={() => (shapeMenuOn && shapeRole === 'cove'
+            ? closeShapeTool() : openShapeTool('cove'))}
           zoneOn={zoneEdit} onZones={openZoneEdit}
           onPick={(t, arms) => {
             /* TWO MACHINES BEHIND ONE COLUMN. Most of these arm `addTool`, the
@@ -11882,6 +14818,10 @@ export default function App({
                click with two meanings. */
             setZoneMode(false); setDraftZone(null);
             closeShapeTool();
+            // ...AND THE COB DRAWER, which is a third machine and closes on the
+            // way in like the other two. `disarmAdd` takes the bar with it.
+            setCobOpen(false); setCobMode(null); setSelArrayId(null);
+            setTrackMode(null);
             if (arms === 'object') {
               disarmAdd();
               setArmed(t); setGhost(null);
@@ -11909,6 +14849,8 @@ export default function App({
               return;
             }
             closeBoardPlace(); closeShapeTool();
+            setCobOpen(false); setCobMode(null);
+            if (addTool === 'cob') disarmAdd();
             setArmed(id);
             if (id) { setObjType(id); setObjMode(true); setZoneMode(false); }
             setGuides([]); setGhost(null);
@@ -12163,6 +15105,17 @@ export default function App({
                    outside the room while the shape it makes is inside it, and a
                    pointer that changed halfway through the drag would be
                    reporting on the anchor rather than on the gesture. */
+                /* --- THE ONE THING THAT OUTRANKS A TOOL'S OWN CURSOR ------
+                   A GEOMETRY UNDER THE POINTER THAT THE TOOL WOULD TAKE. Both
+                   geometry-taking tools show a crosshair by default, because
+                   both are aimed at the ceiling — and over a line they are not:
+                   the press takes THAT OBJECT, which is what a hand says and a
+                   crosshair does not. Ahead of both tools' branches below, and
+                   ahead of the shape tool's deliberate "crosshair everywhere"
+                   rule, because this is the exception that rule is worth having.
+                   `geomHover` IS ONLY EVER SET WHILE ONE OF THOSE TOOLS IS
+                   ARMED — see it — so this cannot fire under anything else. */
+                : geomHover ? 'pointer'
                 : (shapeMenuOn && shapeTool) ? 'crosshair'
                 : shapeDrag ? 'grabbing'
                 /* THE TRACK PEN, FOR THE COVE'S REASON ONE LINE DOWN: a run is
@@ -12172,6 +15125,12 @@ export default function App({
                    nothing, and the click works. */
                 : addTool === 'track' ? 'crosshair'
                 : addTool === 'cove' ? 'crosshair'
+                /* A MODULE HAS NOWHERE TO GO BUT A RUN, so off one the press is
+                   dead and the cursor says so with a plain arrow — never a
+                   crosshair, which would claim the ceiling was a target. Over a
+                   run the `geomHover` branch above has already made it a hand. */
+                : addTool === 'module' ? 'default'
+                : addTool === 'cob' ? (overRoom ? 'crosshair' : 'default')
                 : (armed || addTool) ? (overRoom ? 'crosshair' : 'pointer')
                 : null}
               zones={drawnZones} draftZone={readOnly ? null : draftZone}
@@ -12285,6 +15244,24 @@ export default function App({
               onShapeHandleDown={readOnly ? null : shapeHandleDown}
               onShapePointerDown={readOnly || armed || addTool || boardPlace || zoneMode
                 || (shapeMenuOn && shapeTool) ? null : shapePointerDown}
+              /* WHICH GEOMETRY THE TOOL IN HAND WOULD TAKE, so the line itself
+                 says it before the press — the third of the three cues
+                 `geomHover` drives, alongside the cursor and the array's ghost. */
+              hoverShapeId={readOnly ? null : geomHover}
+              /* THE MAGNETIC TRACKS AND THEIR MODULES. Resolved from the shapes
+                 and the fixtures on every render — see `magTracksPx` — so a grip
+                 dragged on a run carries its diffusers with it. */
+              magTracks={magTracksPx} trackModules={trackModulesPx}
+              selTrackId={readOnly ? null : selShapeId}
+              /* A MODULE CAN BE SLID ALONG ITS RUN. Withheld with every other
+                 grab handler while a tool is armed — except that the MODULE tool
+                 is the press that places one, and `modulePointerDown` returns for
+                 it rather than being withheld here, so a press on an existing
+                 module during a run of placements still lands on the ceiling
+                 underneath. Same exemption the spot tool takes. */
+              selModuleId={readOnly ? null : selModuleId}
+              onModulePointerDown={readOnly || armed || boardPlace || zoneMode
+                ? null : modulePointerDown}
               draftShape={readOnly ? null : draftShapePx}
               /* ONE PEN DRAWING, WHICHEVER PEN IS HOLDING THE POINTER. The two
                   cannot both be live — arming the track tool closes the shape
@@ -12300,8 +15277,192 @@ export default function App({
               draftRun={!readOnly && addTool === 'strip' && stripFrom && addAt
                 ? [stripFrom, addAt] : null}
               placeSnap={!readOnly && addTool === 'strip' ? addSnap : null}
-              sconceGhost={!readOnly && addTool === 'sconce' ? addGhost : null} />
+              sconceGhost={!readOnly && addTool === 'sconce' ? addGhost : null}
+              /* --- THE COBs SOMEBODY PUT DOWN, AND THE THREE MARKS THAT GO
+                     WITH PUTTING ONE DOWN --------------------------------------
+                 `manualCobs` is the fittings themselves, in plan pixels, and
+                 they are drawn whatever tool is armed — they are on the ceiling.
+                 The other two are momentary and belong to the gesture: the ghost
+                 under the pointer, and the guide that says the point is hard
+                 against a wall or over a bed. Both are null the moment the
+                 gesture ends, and neither refuses anything — see lib/cob.js. */
+              /* THE HAND-PLACED LAMPS AND THE ARRAYS' TOGETHER. One list,
+                 because on the ceiling they are the same fitting: a recessed COB
+                 is a recessed COB whether somebody put it there or a geometry
+                 did. What differs is where the record lives, and that is this
+                 file's business rather than the canvas's — see `cobArrays`.
+                 THE DRAFT RIDES WITH THEM while the bar is still asking, so what
+                 you are watching move as you change the count IS what the tick
+                 will keep. */
+              manualCobs={[...manualCobsPx, ...arrayCobsPx,
+                ...(draftArrayPx?.pts ?? []).map((p, i) => ({
+                  id: `cob-draft-${i}`, x: p.x, y: p.y,
+                  watts: cobShow.watts, beam: cobShow.beam, draft: true,
+                  throwFt: throwDiameterFt(cobShow.beam,
+                    (cobRoom ? ceilingMmFor(cobRoom.id) / 304.8 : 0) || DEFAULT_DROP_FT),
+                }))]}
+              /* THE PATH AN ARRAY IS SET OUT ON, while it is being set out. It
+                 is the offset ring rather than the geometry itself — that is
+                 what the lamps are actually spaced along, and seeing it is how
+                 you judge whether a foot is the right foot. */
+              arrayPath={draftArrayPx
+                ? { pts: draftArrayPx.path, closed: draftArrayPx.closed } : null}
+              /* AND THE ONE UNDER AN ARRAY THAT IS OPEN, which is that array's
+                 handle rather than a mark on the ceiling — see `selArrayPathPx`.
+                 Withheld on the read-only sheet with everything else that can be
+                 grabbed. */
+              selArrayPath={readOnly ? null : selArrayPathPx}
+              selArrayId={readOnly ? null : selArrayId}
+              onArrayPathDown={readOnly || armed || addTool || boardPlace || zoneMode
+                ? null : arrayGrab}
+              /* THE FITTINGS STAND DOWN AND THE GUIDES COME UP WHILE A
+                 PRIMITIVE IS ARMED. `shapeMenuOn` alone is not the condition:
+                 the bar also arrives unarmed on a click in a space (see
+                 `onCanvasClick`), and dimming a ceiling's worth of lamps because
+                 somebody selected a room would be the drawing reacting to a
+                 selection. It is the LIVE primitive that means "I am about to
+                 place geometry". */
+              placingGeometry={!readOnly && shapeMenuOn && !!shapeTool}
+              selCobId={readOnly ? null : selCobId}
+              onCobPointerDown={readOnly || armed || addTool || boardPlace || zoneMode
+                ? null : cobPointerDown}
+              /* THE GHOST CARRIES THE POOL IT WOULD THROW, so the beam angle on
+                 the bar is something you can see rather than only read. Computed
+                 from what is in force for the NEXT lamp and the space's own
+                 ceiling — the same two figures `manualCobsPx` uses once the lamp
+                 is real, so the disc does not change size at the moment of the
+                 click. */
+              /* ...AND IT GOES THE MOMENT THE PRESS STOPS BEING ABOUT A POINT.
+                 Over a geometry the array tool takes the LINE, so a lamp drawn
+                 under the pointer is a promise about a place no lamp will land —
+                 and it is the brightest thing on the sheet, sitting on top of
+                 the one line the press is actually about. See `geomHover`. */
+              cobGhost={!readOnly && addTool === 'cob' && overRoom && addAt
+                && !geomHover
+                ? { ...addAt,
+                    throwFt: throwDiameterFt(cobShow.beam,
+                      (cobRoom ? ceilingMmFor(cobRoom.id) / 304.8 : 0) || DEFAULT_DROP_FT) }
+                : null}
+              cobGuide={!readOnly && addTool === 'cob' ? cobGuide : null} />
             <FixtureTip tip={tip} />
+            {/* --- WHAT THE NEXT COB WILL BE, AT THE FOOT OF THE DRAWING -----
+                UP FOR AS LONG AS THE GESTURE IS ARMED, and not only while the
+                pointer is on a ceiling: it is the one thing on screen saying
+                what the next press will place, and a bar that blinked out every
+                time somebody crossed the margin would be a control you could not
+                rely on finding. What the FIGURES on it describe still follows
+                the pointer — see `cobEngine`, which answers for the point under
+                it and falls back to the catalogue's ordinary downlight when
+                there is no ceiling under it to read.
+                IT IS PINNED RATHER THAN CARRIED, and that is a fix rather than a
+                preference — see the header of CobSpec for the card that ran away
+                from the cursor.
+                THE FOUR HANDLERS ARE THE FOUR LIFETIMES the state block over
+                `cobDraft` sets out: the slider and the chips write the draft and
+                nothing else, the two buttons promote it to a one-shot or to a
+                standing choice, and the chip clears the lot back to the engine's
+                answer. */}
+            {!readOnly && addTool === 'cob' && (
+              <CobSpec stage={stageRef} watts={cobShow.watts} beam={cobShow.beam}
+                recommended={!cobDraft && !cobOnce && !cobStanding}
+                dirty={cobDirty}
+                onWatts={(w) => setCobDraft((d) => ({ ...(d ?? cobInForce),
+                                                      watts: clampWatts(w) }))}
+                onBeam={(b) => setCobDraft((d) => ({ ...(d ?? cobInForce),
+                                                     beam: nearestBeam(b) }))}
+                onRecommended={() => {
+                  setCobDraft(null); setCobOnce(null); setCobStanding(null);
+                }}
+                onThis={() => { setCobOnce(cobDraft); setCobDraft(null); }}
+                onAll={() => { setCobStanding(cobDraft); setCobDraft(null); }}
+                /* THE RUN, AND THE TWO WAYS IT CAN END. Both put the tool down —
+                   see `cobRun`, and the note in CobSpec on why neither is a
+                   pause. The cross removes exactly the ids this arming of the
+                   tool created, so a lamp placed earlier in the session, or on a
+                   previous visit to the plan, is out of its reach. */
+                placed={cobRun.length}
+                space={cobLock
+                  ? rooms.find((r) => r.id === cobLock)?.outline?.name || 'Space'
+                  : null}
+                onKeep={() => {
+                  setCobOpen(false); setCobMode(null); disarmAdd();
+                }}
+                onDiscard={() => {
+                  const doomed = new Set(cobRun);
+                  setManualCobs((l) => l.filter((c) => !doomed.has(c.id)));
+                  setSelCobId((id) => (doomed.has(id) ? null : id));
+                  setCobOpen(false); setCobMode(null); disarmAdd();
+                }}
+                /* --- THE ARRAY, WHERE THAT IS THE GESTURE --------------------
+                   WHAT MAY BE ASKED COMES FROM THE GEOMETRY. `arrayAsks` reads
+                   the outline and answers with the controls it can honestly
+                   offer — no side or distance for an open path, no outward for a
+                   room — so the bar draws what it is handed rather than working
+                   it out from a flag per question. See lib/cob.js. */
+                array={cobMode !== 'array' ? null : (() => {
+                  const d = cobDraftArray;
+                  const geo = d?.geomId ? arrayOutline(d.geomId) : null;
+                  if (!geo) return { picked: false };
+                  const asks = arrayAsks(geo.pts,
+                    { closed: geo.closed, isRoom: geo.isRoom,
+                      corners: geo.corners });
+                  return {
+                    picked: true, label: geo.label,
+                    count: d.count, sideId: d.side, offsetFt: d.offsetFt,
+                    side: asks.side, sides: asks.sides,
+                    /* THE GEOMETRY'S OWN STEPS — see `arrayQuanta`. A rectangle
+                       counts 4, 8, 12; a hexagon 6, 12, 18; a circle, which has
+                       no corner a lamp is owed, counts freely. */
+                    countMin: asks.countMin, countStep: asks.countStep,
+                    /* THE LIMIT IS IN FEET AND THE OUTLINE IS IN PIXELS, so it
+                       is converted here rather than at the input — which reads
+                       feet, like every other length somebody types into this
+                       app. */
+                    maxOffsetFt: asks.maxOffsetFt / (pxPerFt || 1),
+                  };
+                })()}
+                /* QUANTISED HERE TOO, AND AGAINST THE DRAFT'S OWN GEOMETRY.
+                   The box steps in the right units, but it is also typable and
+                   its arrows can be held — and a draft holding a count the
+                   geometry cannot produce would draw a run that disagreed with
+                   the figure beside it. Same rule `setArrayShape` applies to a
+                   placed array; see `quantiseCount`. */
+                onCount={(n) => setCobDraftArray((d) => {
+                  if (!d) return d;
+                  const geo = arrayOutline(d.geomId);
+                  const q = arrayQuanta(geo?.corners, geo?.closed ?? true);
+                  return { ...d, count: Math.min(200, quantiseCount(n, q)) };
+                })}
+                onSide={(id) => setCobDraftArray((d) => (d ? { ...d, side: id } : d))}
+                onOffset={(ft) => setCobDraftArray((d) => (d
+                  ? { ...d, offsetFt: Math.max(0, Number(ft) || 0) } : d))}
+                onPlaceArray={placeArray} />
+            )}
+            {/* --- THE SAME BAR, ABOUT AN ARRAY ALREADY ON THE DRAWING -------
+                CLICKING ONE OF ITS LAMPS OPENS IT, which is the whole of why
+                this exists: a spot on a ring is not a fitting anybody can edit
+                on its own — it is one of twelve consequences of a count and an
+                offset — so a press on it has to resolve to the thing that CAN be
+                edited. See `arrayGrab`.
+                THE SAME COMPONENT AND NOT A SECOND ONE. The middle of the bar is
+                identical either way — a count, a side, a distance, a wattage,
+                eight optics — and `editing` is what swaps the tick for a bin and
+                takes the two "next lamp" controls off. See CobSpec.
+                NEVER WITH THE TOOL IN HAND. `addTool === 'cob'` renders the bar
+                above this one, and two of them would be two bars in one place;
+                the press that selects an array disarms every tool anyway, so
+                this is belt and braces rather than a live case. */}
+            {!readOnly && addTool !== 'cob' && selArrayBar && (
+              <CobSpec stage={stageRef}
+                watts={selArrayBar.watts} beam={selArrayBar.beam}
+                array={selArrayBar.array}
+                onWatts={(w) => setArraySpec(selArrayId, { watts: w })}
+                onBeam={(b) => setArraySpec(selArrayId, { beam: b })}
+                onCount={(n) => setArrayShape(selArrayId, { count: n })}
+                onSide={(id) => setArrayShape(selArrayId, { side: id })}
+                onOffset={(ft) => setArrayShape(selArrayId, { offsetFt: ft })}
+                onDeleteArray={() => deleteArray(selArrayId)} />
+            )}
             {/* --- THE CARD THAT EXPLAINS THE OPTIONS PILL --------------------
                 BESIDE THE CANVAS AND NOT INSIDE IT, because it deliberately
                 sits OFF the sheet with a leader line back to the chip — see
@@ -12332,6 +15493,12 @@ export default function App({
                 sizeLabel={shapeMode === 'draw' && shapeToCommit ? shapeSizeLabel(shapeToCommit)
                   : shapeMode === 'edit' && selShape ? shapeSizeLabel(selShape) : null}
                 canCommit={canCommitShape}
+                /* THE OFFSET, AND IT IS NULL UNLESS THE DRAFT WAS BORROWED. See
+                   `heldAsks` — a shape dragged out from scratch has no geometry
+                   to be set in from. */
+                offset={heldAsks}
+                onOffsetSide={(id) => setHeldOffset({ side: id })}
+                onOffsetFt={(ft) => setHeldOffset({ ft: Math.max(0, Number(ft) || 0) })}
                 radius={shapeMode === 'edit' && selShape && roundable(selShape)
                   ? { ft: selShape.radiusFt || 0, max: maxRadiusFt(selShape) } : null}
                 onTool={pickShapeTool}
@@ -13368,7 +16535,48 @@ export default function App({
               onConfigureWalls={() => openWallEdit(openRoom.id)}
               onBack={() => pickSpace(openRoom.id)}
               analysis={spaceAnalysis(openRoom)}
-              onWatts={(row, w) => setRowWatts(openRoom.id, row.key, row.familyId, w)} />
+              /* TWO STORES BEHIND ONE CONTROL, AND THE ROW SAYS WHICH. A row
+                 with a `wattRange` is a fitting somebody placed by hand and its
+                 key is that fitting's id; everything else is a family this room
+                 holds one decision about. See `setCobSpec`. */
+              /* THREE STORES BEHIND ONE CONTROL, AND THE ROW'S KEY SAYS
+                 WHICH. An array's key is its own id, a hand-placed lamp's is
+                 the fitting's, and everything else is a family this room holds
+                 one decision about. Asked in that order because an array is
+                 checked by id and cannot be mistaken for either of the others. */
+              /* FOUR STORES BEHIND ONE CONTROL, AND THE ROW'S KEY SAYS WHICH.
+                 A track's modules are keyed `<trackId>|<kind>` and are asked
+                 about FIRST, because that key cannot be mistaken for any of the
+                 other three — see `isModuleRow`, and `setTrackModuleSpec` for
+                 why a module's figure has to be written onto the fitting rather
+                 than into the room's override store. */
+              onWatts={(row, w) => (isModuleRow(row.key)
+                ? setTrackModuleSpec(row.key, { watts: w })
+                : cobArrays.some((a) => a.id === row.key)
+                  ? setArraySpec(row.key, { watts: w })
+                  : row.wattRange
+                    ? setCobSpec(row.key, { watts: w })
+                    : setRowWatts(openRoom.id, row.key, row.familyId, w))}
+              onBeam={(row, deg) => (isModuleRow(row.key)
+                ? setTrackModuleSpec(row.key, { beam: deg })
+                : cobArrays.some((a) => a.id === row.key)
+                  ? setArraySpec(row.key, { beam: deg })
+                  : setCobSpec(row.key, { beam: deg }))}
+              /* WHICH ROWS ARE THE FITTING THAT IS SELECTED ON THE DRAWING.
+                 A LIST OF ROW KEYS AND NOT A FITTING ID, because the two are not
+                 the same thing and only this file knows the mapping: a placed
+                 COB and a run of tape ARE their own row, so their id is the key;
+                 a task spot is one row for all of them, so the key is the
+                 catalogue line. `analysisHighlight` does that translation once.
+                 SEVERAL AT ONCE IS POSSIBLE and correct — a spot and a run can
+                 both be picked — so it is a list rather than one key. */
+              highlight={analysisHighlight.keys}
+              /* THE AMBIENT GRID, FILLED OR NOT. Per space, because it is a
+                 decision about one ceiling: a flat can have its bedrooms laid
+                 out automatically and its living room by hand. */
+              autoplace={autoSpots.includes(openRoom.id)}
+              onAutoplace={readOnly ? null
+                : (on) => setAutoplace(openRoom.id, on)} />
           ) : (
             <div className={SEC}>
               {/* --- THE HEADING CARRIES THE WAY BACK TO THE TRACER -------
@@ -13996,11 +17204,19 @@ export default function App({
                   the one thing on this drawing with no visible trace at all —
                   `gridPath` has been in PlanCanvas the whole time with
                   nothing calling it.
+                  ...AND IT DRAWS WITH THE LIGHTS SWITCHED OFF, which is what it
+                  is mostly for now. `AUTO_GRID` places no fittings, and this
+                  switch drew nothing for as long as the chunks were thrown away
+                  along with them — see `gridChunks` in the `rooms` memo. The
+                  chunker still runs and still has an opinion about how the
+                  ceiling divides, and that opinion is exactly what somebody
+                  laying lamps out by hand wants under the pointer.
                   DISABLED WITH NOTHING TO DRAW, which the button said by going
                   grey and a checkbox says the same way. There is no grid until
-                  there is a layout. */}
+                  there is a laid-out space — which is a lower bar than there
+                  being lights, and deliberately so. */}
               <label className={`${CHECK} mt-2 ${totals.rooms ? '' : 'opacity-40'}`}
-                title="Draw the chunk boxes and the cell lines the lights were laid on">
+                title="Draw the chunk boxes and cell lines the chunker cut, whether or not any lights were placed">
                 <input className="lp-check" type="checkbox" checked={showGrid}
                   disabled={!totals.rooms}
                   onChange={(e) => setShowGrid(e.target.checked)} />

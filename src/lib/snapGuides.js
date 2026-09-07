@@ -46,7 +46,7 @@ const bboxOf = (poly) => {
  * moment it started.
  */
 export function collectTargets({ rooms = [], objects = [], points = [],
-                                 exclude = null } = {}) {
+                                 shapes = [], exclude = null } = {}) {
   /* `exclude` TAKES ONE ID, A LIST OF THEM, OR A SET. It was a single id
      compared with `===`, which was right while only one object could ever be
      dragged. A multi-selection moves as a group, and a group that can snap to
@@ -104,6 +104,45 @@ export function collectTargets({ rooms = [], objects = [], points = [],
                label: q.label ?? '' });
   }
 
+  /* --- THE GEOMETRY ALREADY ON THE CEILING -----------------------------
+     THE LINES SOMEBODY DREW ARE THE LINES THEY ARE AIMING AT. A guide rectangle
+     is drawn for one purpose — to set the next thing out against — and until
+     this source existed the one geometry on the sheet that was there ON PURPOSE
+     was the only geometry nothing could snap to: a second rectangle a foot
+     inside the first had to be got right by eye, on a drawing where every wall
+     nobody drew clicked into place.
+
+     SHAPED LIKE `room-edge` AND NOT LIKE `point`, which is the whole reason it
+     is its own source rather than a heap of vertices passed through `points`. A
+     vertex target spans the point itself, so its guide is a stub a few pixels
+     long and says nothing about what was lined up with. Every vertex here
+     contributes its x and its y across the SHAPE'S OWN BOX, so the guide draws
+     along the edge it came from — which is what makes it readable as "this line,
+     this shape".
+
+     DE-DUPED BY VALUE, exactly as the room's own edges are: a rectangle's four
+     corners describe four lines and would otherwise push eight identical
+     targets for the tie-break in `snapPoint` to choose between.
+
+     `exclude` REACHES THIS TOO. A shape being dragged must not be able to align
+     with itself, or the drag locks solid the moment it starts. */
+  for (const sh of shapes) {
+    const poly = sh?.pts;
+    if (!poly?.length || (skip && skip.has(sh.id))) continue;
+    const b = bboxOf(poly);
+    const name = sh.label || 'geometry';
+    const seen = new Set();
+    for (const q of poly) {
+      for (const [axis, value, lo, hi] of
+           [['x', q.x, b.y0, b.y1], ['y', q.y, b.x0, b.x1]]) {
+        const tag = `${axis}:${value.toFixed(2)}`;
+        if (seen.has(tag)) continue;
+        seen.add(tag);
+        out.push({ axis, value, span: [lo, hi], kind: 'shape-edge', label: name });
+      }
+    }
+  }
+
   for (const o of objects) {
     if (!o || (skip && skip.has(o.id))) continue;
     const r = o.r || 0;
@@ -134,7 +173,11 @@ export function collectTargets({ rooms = [], objects = [], points = [],
    behind it, the first corner is what is meant — the path is the thing being
    drawn, and the wall is scenery. Below it, a room's own geometry beats an
    object somebody happened to place. */
-const RANK = { point: -1, 'room-centre': 0, 'room-edge': 1, 'object-centre': 2 };
+/* A LINE SOMEBODY DREW OUTRANKS THE ROOM BEHIND IT. A guide exists to be set
+   out against; a wall is there whether anybody wanted it or not. Below the
+   path's own points, which are the thing being drawn. */
+const RANK = { point: -1, 'shape-edge': 0, 'room-centre': 1, 'room-edge': 2,
+               'object-centre': 3 };
 
 export function snapPoint(p, targets, { tol = SNAP_DEFAULTS.tolScreenPx } = {}) {
   let bx = null, by = null;

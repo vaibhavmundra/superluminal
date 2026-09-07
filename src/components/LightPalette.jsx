@@ -68,10 +68,16 @@ export const LIGHT_TOOLS = [
      into modules on itself. Nothing about the grid changes — see the doctrine
      at the top of track.js — so it belongs with the fittings and not with the
      surface tools, even though it is drawn with a pen like the cove is. */
-  { id: 'track',  label: 'Track', pen: true,
-    stepTitle: 'Click out the run',
-    hint: 'Click each corner. Runs lock square.',
-    consequence: 'Lights within three feet clip onto it.' },
+  /* --- ...AND IT IS NOT IN THIS LIST ANY MORE ---------------------------
+     THE TRACK CELL IS A DRAWER NOW, not a tool this map can arm. A magnetic
+     track has three modules under it and its RUN is drawn with the geometry bar,
+     so the cell opens rather than arms — which is the same shape the COB cell
+     has and is rendered the same way. See TrackMenu, and `onTrack` in ToolRail.
+     THE ENTRY IS LEFT HERE AS A COMMENT AND NOT DELETED because `addTool ===
+     'track'` is still a live gesture: the pen-drawn ABSORBING track (see
+     track.js) is what every plan saved before this was built holds, and its
+     whole pipeline — the step, the refusals, the point editor — is untouched.
+     What changed is that the rail no longer arms it. */
   { id: 'cove',   label: 'Reverse cove', surface: true,
     stepTitle: 'Span the wall the cove runs along',
     hint: 'Press at one end and drag along the wall.',

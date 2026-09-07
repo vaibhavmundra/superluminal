@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { SHAPE_TOOLS, POLY_SIDES } from '../lib/ceilingShapes.js';
+import { SHAPE_TOOLS, SHAPE_BY_ID, POLY_SIDES } from '../lib/ceilingShapes.js';
 
 // ---------------------------------------------------------------------------
 // ShapeMenu — the floating white bar the cove shapes are drawn from.
@@ -107,19 +107,37 @@ const Glyph = ({ d }) => (
 const TICK = 'M4 10.6 L8.2 14.6 L16 5.6';
 const CROSS = 'M5 5 L15 15 M15 5 L5 15';
 
-const BTN = 'flex items-center justify-center w-9 h-9 rounded-[7px] '
-  + 'border-0 bg-transparent cursor-pointer p-0 '
-  + 'transition-colors duration-[120ms] hover:bg-black/[0.07] '
+/* --- THE SHELL CARRIES NO BACKGROUND, AND THAT IS A BUG FIX ----------------
+   IT USED TO CARRY `bg-transparent`, and the armed cell added `bg-black` on top
+   of it. Both are single-class utilities of identical specificity, so which one
+   wins is decided by the ORDER THEY ARE EMITTED IN THE STYLESHEET and not by
+   the order they appear in the class attribute — and Tailwind emits
+   `.bg-transparent` after `.bg-black`. The armed chip was therefore never black.
+   Worse than not-black: `Mark` inverts its stroke to WHITE when armed, so the
+   tool you had just picked turned white on a white bar and vanished. Picking a
+   primitive looked like picking nothing.
+   SO EXACTLY ONE BACKGROUND CLASS IS EVER APPLIED. The shell has none and the
+   state supplies it, which is a rule that cannot be lost to emission order
+   however the palette is reordered later. The same trap is one concatenation
+   away anywhere `A + (cond ? B : '')` puts two utilities of one property on one
+   element; the fix is always this — make them alternatives, not layers. */
+const BTN_SHELL = 'flex items-center justify-center w-9 h-9 rounded-[7px] '
+  + 'border-0 cursor-pointer p-0 transition-colors duration-[120ms] '
   + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-black/40';
+const BTN_OFF = 'bg-transparent hover:bg-black/[0.07]';
 /* WHICH ONE IS ARMED, AND IT IS A FILLED CHIP RATHER THAN A TINT. It was
    `bg-black/[0.09]` — nine percent of black on a white bar, which is a shade you
    have to go looking for, on the one control in this bar whose whole job is to
    say what the next press on the drawing will do. The mark inverts with it (see
    `Mark`), so the pair reads as one latched key. */
 const BTN_ON = 'bg-black hover:bg-black';
+const BTN = `${BTN_SHELL} ${BTN_OFF}`;
 /* THE SAME LATCH ON A BUTTON WHOSE CONTENT IS TEXT. The sides row prints a
    number, and a number in `text-black/80` on a black chip is a number nobody can
    read — so it takes the inversion the marks take. */
+const NUM_SHELL = 'flex items-center justify-center w-7 h-9 rounded-[7px] border-0 '
+  + 'cursor-pointer p-0 text-[12px] transition-colors duration-[120ms]';
+const NUM_OFF = 'bg-transparent hover:bg-black/[0.07] text-black/80';
 const NUM_ON = 'bg-black hover:bg-black text-white';
 const SEP = <span className="w-px h-5 bg-black/10 mx-0.5" aria-hidden="true" />;
 const CAP = 'text-[10.5px] leading-none tracking-[0.02em] text-black/55 px-1.5 select-none';
@@ -167,7 +185,20 @@ function useStageRect(stage) {
 export default function ShapeMenu({
   stage, mode, tool = null, sides = POLY_SIDES.initial, radius = null, sizeLabel = null,
   canCommit = true,
+  /* --- THE OFFSET, AND ONLY FOR A DRAFT BORROWED FROM A GEOMETRY -----------
+     `{ sideId, ft, sides, maxFt }` OR NULL, and null is the ordinary case. A
+     shape dragged out with a primitive has no source to be offset FROM — the
+     drag IS the position — so the control appears for exactly one thing: an
+     outline taken off a geometry already on the drawing, which is how a
+     magnetic track gets set out a foot inside the guide that positioned it.
+     THE CHIPS ARE THE ARRAY'S OWN THREE, in the array's own words (see
+     ARRAY_SIDES in lib/cob.js). Inside, on the line, outside is the same
+     question asked of the same kind of object, and inventing a second
+     vocabulary for it — "inset/offset", a signed number — would be two ways to
+     say one thing in two bars on the same drawing. */
+  offset = null,
   onTool, onSides, onCommit, onCancel, onRadius, onDuplicate, onDelete,
+  onOffsetSide, onOffsetFt,
 }) {
   const box = useStageRect(stage);
   if (!box) return null;
@@ -187,11 +218,23 @@ export default function ShapeMenu({
 
       {mode === 'pick' && SHAPE_TOOLS.map((t) => (
         <button key={t.id} type="button" title={t.label} aria-pressed={tool === t.id}
-          className={BTN + (tool === t.id ? ' ' + BTN_ON : '')}
+          className={`${BTN_SHELL} ${tool === t.id ? BTN_ON : BTN_OFF}`}
           onClick={() => onTool?.(t.id)}>
           <Mark id={t.id} on={tool === t.id} />
         </button>
       ))}
+      {/* WHICH ONE IS ARMED, IN WORDS. The latched chip says it too, and the
+          chip alone was not enough: six marks at 20px are told apart by somebody
+          who already knows what they are looking at, and the one moment you need
+          to be sure is just after picking — when the next press is going to draw
+          something. The name costs a few characters at the end of a bar that has
+          room for them, and it removes the doubt outright.
+          ONLY WITH SOMETHING ARMED, so the bar does not carry a permanent
+          caption for a state it is usually not in. */}
+      {mode === 'pick' && tool && (<>
+        {SEP}
+        <span className={CAP}>{SHAPE_BY_ID[tool]?.label ?? tool}</span>
+      </>)}
 
       {mode === 'sides' && (<>
         <span className={CAP}>Sides</span>
@@ -201,10 +244,7 @@ export default function ShapeMenu({
         {Array.from({ length: POLY_SIDES.max - POLY_SIDES.min + 1 },
           (_, i) => POLY_SIDES.min + i).map((n) => (
           <button key={n} type="button" aria-pressed={sides === n}
-            className={'flex items-center justify-center w-7 h-9 rounded-[7px] border-0 '
-              + 'bg-transparent cursor-pointer p-0 text-[12px] '
-              + 'transition-colors duration-[120ms] hover:bg-black/[0.07] '
-              + (sides === n ? NUM_ON : 'text-black/80')}
+            className={`${NUM_SHELL} ${sides === n ? NUM_ON : NUM_OFF}`}
             onClick={() => onSides?.(n)}>{n}</button>
         ))}
         {SEP}
@@ -217,6 +257,36 @@ export default function ShapeMenu({
         {/* WHAT IS BEING DRAWN, IN WORDS, because in this state the buttons are
             a tick and a cross and neither says what it is agreeing to. */}
         {sizeLabel && <span className={CAP}>{sizeLabel}</span>}
+        {/* --- HOW FAR OFF THE BORROWED GEOMETRY IT SITS ------------------
+            AHEAD OF THE TICK, because it is the question that comes first: the
+            size printed to the left of it MOVES as this changes, so a control
+            after the confirm button would be one you found only by pressing the
+            wrong thing.
+            NO CAPTION ON THE CHIPS. They read "Inside / On the line / Outside",
+            which is the label — and a word in front of them would be labelling
+            three words. The distance takes `ft` because a bare number in a bar
+            of buttons is ambiguous about its unit. */}
+        {offset && (<>
+          {SEP}
+          {offset.sides.map((sd) => (
+            <button key={sd.id} type="button" aria-pressed={offset.sideId === sd.id}
+              className={`${NUM_SHELL} w-auto px-2 `
+                + (offset.sideId === sd.id ? NUM_ON : NUM_OFF)}
+              onClick={() => onOffsetSide?.(sd.id)}>{sd.label}</button>
+          ))}
+          {offset.sideId !== 'on' && (<>
+            <input type="number" min="0" step="0.25"
+              max={offset.maxFt > 0 ? offset.maxFt.toFixed(2) : undefined}
+              value={offset.ft} aria-label="Offset in feet"
+              className="w-[58px] ml-1.5 px-1.5 py-[3px] text-[11.5px] tabular-nums
+                rounded-[6px] border border-black/12 bg-transparent text-black
+                focus-visible:outline-2 focus-visible:outline-offset-[-2px]
+                focus-visible:outline-black/40"
+              onChange={(e) => onOffsetFt?.(Number(e.target.value))} />
+            <span className={CAP}>ft</span>
+          </>)}
+          {SEP}
+        </>)}
         {/* GREYED UNTIL THERE IS SOMETHING TO KEEP. Two clicks of the pen is
             a line, not a shape — and a tick that silently does nothing is worse
             than one that visibly cannot yet. */}

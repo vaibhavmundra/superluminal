@@ -40,13 +40,29 @@ import React from 'react';
  * `on` is armed/open — whatever "this cell is the live one" means to the row
  * that owns it. `title` falls back to the label, which is what every caller
  * wanted anyway.
+ *
+ * `airy` GIVES THE CAPTION ROOM, AND IT IS FOR ARTWORK THAT REACHES THE EDGE.
+ *
+ * MOST OF THIS RAIL'S PICTURES CARRY THEIR OWN MARGIN — a fan, a cassette, a
+ * downlight, all drawn with air round them — so a single pixel between the image
+ * and its caption is enough and the column stays tight. The track modules do
+ * not: each is a rail with a beam thrown DOWNWARD off it, so the bright part of
+ * the picture runs to the bottom edge of the square and the caption sat in the
+ * light. It read as a label printed on the artwork rather than under it.
+ *
+ * A FLAG AND NOT A CHANGE TO THE DEFAULT, because the default is right for
+ * eleven cells and wrong for three. Padding every cell to suit the three would
+ * lengthen a column whose positions people learn, for no reason on any of the
+ * others. See TrackMenu, which is the only caller that sets it.
  */
 export default function PaletteButton({ icon, label, on = false, disabled = false,
+                                        airy = false,
                                         title, onClick, ...rest }) {
   return (
     <button type="button" disabled={disabled} onClick={onClick}
       title={title ?? label} aria-pressed={on}
-      className={'flex flex-col items-center gap-[1px] p-0 pb-[5px] bg-black '
+      className={'flex flex-col items-center p-0 bg-black '
+        + (airy ? 'gap-[5px] pb-[8px] ' : 'gap-[1px] pb-[5px] ')
         + 'border-0 cursor-pointer transition-colors duration-[120ms] '
         + 'disabled:opacity-[.45] disabled:cursor-not-allowed '
         + 'focus-visible:outline-2 focus-visible:outline-accent '
@@ -57,10 +73,22 @@ export default function PaletteButton({ icon, label, on = false, disabled = fals
           reader reading "fan" twice is worse than not drawing the picture for it
           at all. GUARDED, so a row listing a cell without artwork degrades to
           its label instead of rendering a broken image. */}
-      {icon && (
+      {/* ARTWORK OR A MARK, AND THE TYPE OF `icon` DECIDES WHICH. Every cell in
+          this rail is a photograph of a thing — a fan, a cassette, a downlight —
+          because at this size a picture of an object beats a line drawing of it.
+          A cell whose subject is not an object breaks that: the geometry tools
+          are a rectangle, a circle and a line, and a circle is already the
+          clearest possible picture of a circle. It is the same split ShapeMenu
+          makes for the same six primitives, said about the rail.
+          A STRING IS A FILE, ANYTHING ELSE IS DRAWN AS GIVEN. Sized by this
+          file either way, so a mark and a photograph occupy the same square. */}
+      {typeof icon === 'string' ? (
         <img src={icon} alt="" width="80" height="80"
           className="w-full aspect-square object-contain select-none" draggable="false" />
-      )}
+      ) : icon ? (
+        <span className="w-full aspect-square flex items-center justify-center
+          select-none" aria-hidden="true">{icon}</span>
+      ) : null}
       {/* WHITE WHEN ARMED — `text-ink` was the bug it replaced. Ink is #000000,
           which is right on paper and invisible here: arming a fan made its name
           DISAPPEAR, the opposite of what a latched control should do.

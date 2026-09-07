@@ -208,6 +208,47 @@ export function serialiseEditor(s) {
        so the path IS the record. It is stored in the plan's own feet, which is
        what makes it survive a scale correction — see `manualTracks` in App. */
     manualTracks: s.manualTracks,
+    /* THE RECESSED COBs SOMEBODY PUT DOWN, kept for the reason `manualCoves` and
+       `manualTracks` are and with the same shape of argument, plus one of its
+       own. The shared reason: there is no finding and no solver behind a
+       hand-placed lamp, so the fitting IS the record and losing it loses the
+       fitting — a reopened plan would come back with a ceiling somebody had laid
+       out by hand simply empty.
+       THE ONE OF ITS OWN IS THE SPECIFICATION. Each lamp carries the wattage and
+       the beam angle it was placed at, and those are not derivable from anything
+       else in this column: the engine's recommendation for that point can be
+       recomputed, but the decision to overrule it cannot. It is stored in plan
+       FEET for the reason the two above it are — a plan reopened after its scale
+       was corrected has its lamps where they were set out.
+       Optional on read — see applyEditor — because every plan saved before this
+       existed has no key here, and an empty list is the honest reading. */
+    manualCobs: s.manualCobs,
+    /* WHICH SPACES FILL THEIR OWN GRID. A list of outline ids, and it is kept
+       for the reason `ceilingKinds` is rather than the reason `manualCobs` is:
+       the LAMPS are already in the column above, so nothing is lost by
+       forgetting this — except the switch's own position, which is a decision
+       about the ceiling ("this space is laid out automatically") and reads as
+       broken when it comes back off with its lamps still on the drawing.
+       Optional on read — see applyEditor — because every plan saved before this
+       existed has no key here. */
+    autoSpots: s.autoSpots,
+    /* THE ARRAYS OF SPOTS SET OUT ON A GEOMETRY. What is kept is the
+       INSTRUCTION — which geometry, how many, which side, how far off — and not
+       the lamps it works out to, which is the whole point of an array: the
+       geometry is kept in `ceilingShapes` beside it, and reopening a plan
+       re-derives the fittings from the two. A stored list of points would come
+       back disagreeing with a shape that had been edited since.
+       Optional on read, like everything added after the column existed. */
+    cobArrays: s.cobArrays,
+    /* THE MODULES CLIPPED INTO A MAGNETIC TRACK. The RUN is not here — it is a
+       ceiling shape with `role: 'track'` and is already saved with the rest of
+       `ceilingShapes`, which is the whole reason a track resizes, duplicates and
+       snaps like everything else in the geometry library. What is kept is which
+       run each module is on, which module it is, and the FRACTION of the run it
+       sits at: reopening a plan resolves the positions from the shape and these,
+       exactly as an array's lamps are resolved. See lib/magTrack.js.
+       Optional on read, like everything added after the column existed. */
+    trackFixtures: s.trackFixtures,
     // ...and where the views went.
     //
     // A PATH AND ITS DIMENSIONS, which is about ninety bytes per render, and it
@@ -478,6 +519,10 @@ export function applyEditor(p, set) {
   set.setRunTrims?.(p.runTrims ?? {});
   set.setManualCoves?.(p.manualCoves ?? []);
   set.setManualTracks?.(p.manualTracks ?? []);
+  set.setManualCobs?.(p.manualCobs ?? []);
+  set.setAutoSpots?.(p.autoSpots ?? []);
+  set.setCobArrays?.(p.cobArrays ?? []);
+  set.setTrackFixtures?.(p.trackFixtures ?? []);
   set.setCeilingShapes?.(p.ceilingShapes ?? []);
   set.setLightMoves?.(p.lightMoves ?? {});
   // THE POINTERS, NOT THE PIXELS. App fetches the bytes back from the bucket

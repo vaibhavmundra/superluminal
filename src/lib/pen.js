@@ -22,6 +22,8 @@
 // ---------------------------------------------------------------------------
 
 /** Nothing shorter than this is a segment; it is a double-click that missed. */
+import { pathLength } from './geometry.js';
+
 export const MIN_SEG_FT = 0.25;
 
 /**
@@ -61,17 +63,12 @@ export function penClosesAt(pts, at, tolFt, { min = 3 } = {}) {
   return Math.hypot(at.x - pts[0].x, at.y - pts[0].y) < tolFt;
 }
 
-/** The path's length, walked point to point. */
-export function penLengthFt(pts, { closed = false } = {}) {
-  let ft = 0;
-  for (let i = 1; i < pts.length; i += 1) {
-    ft += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-  }
-  if (closed && pts.length > 2) {
-    ft += Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y);
-  }
-  return ft;
-}
+/** The path's length, walked point to point — the toolkit's, under this file's
+ *  name. See `pathLength` in geometry.js, and the note at the top of it for the
+ *  two copies this was one of. Kept as a named export because a pen path's
+ *  length is what half this file's callers ask for and renaming it at forty call
+ *  sites would be a change about nothing. */
+export const penLengthFt = pathLength;
 
 /**
  * THE PATH AS SEGMENTS, WITH COLLINEAR NEIGHBOURS MERGED.

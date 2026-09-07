@@ -109,11 +109,15 @@ import { coveClearOfOutline } from './cove.js';
    function so a locked drag and a locked click cannot end up square to different
    things. */
 import { axisLock } from './pen.js';
+/* THE TOOLKIT. A shape resolves to a path — `outlineFt` — and everything past
+   that point is geometry rather than shape: how long it is, where N points sit
+   on it, what it looks like set in or out. See the header of geometry.js for the
+   line between the two files. */
+import { pathLength, sub, len } from './geometry.js';
 
 // --- small vector helpers ---------------------------------------------------
 
-const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
-const len = (v) => Math.hypot(v.x, v.y);
+
 const norm = (v) => { const l = len(v) || 1; return { x: v.x / l, y: v.y / l }; };
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -337,6 +341,53 @@ export function outlineFt(shape, grow = 0) {
   return roundPolygon(place(regularPts(n, r), x, y, rot), rr);
 }
 
+/**
+ * THE SHAPE'S CORNERS, IN PLAN FEET — and nothing else on its outline.
+ *
+ * WHY THIS CANNOT BE READ OFF `outlineFt`. That function returns a POLYLINE,
+ * because everything downstream of this file takes a list of points: a circle
+ * comes back as 72 of them, and any shape with a corner radius comes back with
+ * ten per fillet. Counting the points in it would say a circle has 72 corners
+ * and a rounded rectangle 40, which is the opposite of true — and the whole use
+ * of this function is to answer "how many places on this shape is a lamp
+ * OBLIGED to sit". See `arraySpots` in lib/cob.js.
+ *
+ * THE UNROUNDED CORNERS, DELIBERATELY. A rounded rectangle's sharp corner is
+ * not ON its outline any more — the fillet cut it off — and this returns it
+ * anyway, because the caller projects each of these onto the path it is actually
+ * setting out on. Projected onto a fillet, a sharp corner lands at the middle of
+ * the arc, which is exactly where the corner of a rounded rectangle reads as
+ * being. Returning the two fillet ENDS instead would put two lamps either side
+ * of a corner and none at it.
+ *
+ * `grow` IS NOT TAKEN, AND THAT IS THE SAME ARGUMENT. An array is set out on an
+ * offset path and the caller offsets it; the corners of the offset ring are
+ * where these project to. Growing them here would be a second offset rule to
+ * keep in step with `offsetPolygon`'s.
+ *
+ * EMPTY FOR A CIRCLE, which is a fact about a circle and not a gap: there is
+ * nowhere on it a lamp is obliged to sit, so a run on one is spaced freely.
+ * That is what the caller reads an empty list as.
+ *
+ * AN OPEN SHAPE RETURNS ITS OWN POINTS, ends included. Both ends of a slot are
+ * corners in the sense that matters here — they are places the run must reach —
+ * which is the same statement `pointsAlong`'s `ends` option makes.
+ */
+export function cornersFt(shape) {
+  if (!shape) return [];
+  const { x = 0, y = 0, rot = 0 } = shape;
+  if (isOpen(shape)) return place(shape.pts ?? [], x, y, rot);
+  if (shape.kind === 'circle') return [];
+  if (shape.kind === 'rect') {
+    const w = Math.max(0.05, shape.wFt || 0), h = Math.max(0.05, shape.hFt || 0);
+    return place([{ x: -w / 2, y: -h / 2 }, { x: w / 2, y: -h / 2 },
+                  { x: w / 2, y: h / 2 }, { x: -w / 2, y: h / 2 }], x, y, rot);
+  }
+  if (shape.kind === 'pen') return place(shape.pts ?? [], x, y, rot);
+  // square, triangle, polygon — one regular n-gon with three names.
+  return place(regularPts(sidesOf(shape), Math.max(0.05, shape.rFt || 0)), x, y, rot);
+}
+
 /** How many sides this shape has, whatever it calls itself. */
 export const sidesOf = (shape) => (
   shape.kind === 'triangle' ? 3
@@ -351,15 +402,14 @@ export const sidesOf = (shape) => (
  * billed for the leg home — on an L across a room that leg is the diagonal, and
  * it is the longest part of what would be ordered.
  */
-export function pathLengthFt(pts, { closed = true } = {}) {
-  let l = 0;
-  const n = pts.length;
-  for (let i = 0; i < (closed ? n : n - 1); i++) {
-    const p = pts[i], q = pts[(i + 1) % n];
-    l += Math.hypot(q.x - p.x, q.y - p.y);
-  }
-  return l;
-}
+/* THE TOOLKIT'S, WITH THIS FILE'S DEFAULT KEPT. `pathLength` in geometry.js is
+   the one implementation — see the note at the top of that file for why there
+   used to be two and what that cost. What stays here is the DEFAULT: a shape's
+   outline is a closed loop unless it says otherwise, which is the opposite of
+   the toolkit's conservative reading of a bare list of points, and flipping it
+   would silently shorten every cove on every plan by one leg. */
+export const pathLengthFt = (pts, { closed = true } = {}) =>
+  pathLength(pts, { closed });
 
 /** How long a shape's tape is, whichever kind it is. */
 export const runLengthFt = (shape) =>
@@ -881,7 +931,169 @@ export function penSpansOutline(ptsFt, polygonFt, tolFt) {
 }
 
 /** A finished shape: whatever the draft was, plus an identity. */
-export const sealShape = (draft) => ({ ...draft, id: newShapeId() });
+/* --- WHAT A SHAPE IS FOR, WHICH IS NOT THE SAME AS WHAT IT IS ---------------
+   EVERY SHAPE IN THIS FILE WAS A COVE, because the only way to draw one was the
+   cove tool. That was never true of the geometry: a rectangle is a rectangle,
+   and the ceiling design taking it up as a pocket is one thing you might do with
+   it. Spots set out in an array round it, offset a foot inside it, is another —
+   and the two have to be the SAME rectangle, or moving one will not move the
+   other.
+
+   SO A SHAPE CARRIES A ROLE, and the cove pipeline consumes only its own.
+
+     cove    the layout takes it up: it cuts the grid, it grows a host chunk
+             round itself, and it produces a length of tape.
+     guide   it is geometry and nothing else. Nothing is billed from it and
+             nothing is drawn on it; it is a line on the ceiling that other
+             tools can measure from.
+
+   'cove' IS THE ABSENT VALUE AND THAT IS DELIBERATE. Every shape ever saved
+   predates this field, and every one of them is a cove — so the default has to
+   be the one that keeps those plans reading as they did. It is also the rule
+   this file's neighbours already follow for an option with a normal answer: a
+   standard ceiling stores nothing (see `designPicks` in App.jsx), and neither
+   does a cove. `role` appears in the record only when somebody drew a guide. */
+/* --- THE ROLES, AND WHAT EACH ONE MEANS FOR THE PIPELINE --------------------
+   THREE THINGS CAN BE DRAWN WITH ONE SET OF PRIMITIVES, and the outline is the
+   only thing they have in common. What separates them is what the drawing DOES
+   with it afterwards:
+
+     cove    A PIECE OF BUILDING. Its setting-out line cuts the ceiling, no grid
+             cell may straddle it, nothing may sit near it, and it is billed as
+             tape by the metre. This is the default, and it is the default
+             because it is the only role with consequences — a shape whose role
+             was lost in a bad read should come back as the one the rest of the
+             app already knows how to handle.
+     guide   A LINE TO SET OUT FROM. Nothing is built on it and nothing is
+             ordered for it; it exists so an array, a cove or a track can be
+             positioned against something exact.
+     track   A MAGNETIC TRACK PROFILE. A carrier: visible from the floor, billed
+             by the metre with a corner join per turn, and carrying modules
+             clipped along it by hand. See lib/magTrack.js.
+
+   `isBuilt` IS THE TEST THE COVE PIPELINE ASKS, and it is stated as "is this a
+   cove" rather than as "is this not a guide". The difference is which way a
+   NEW role falls: written the other way, adding `track` silently fed every
+   track shape into the chunker as a cove — a run of profile re-cutting the grid
+   and appearing in the schedule as tape. A role this file has not been told
+   about is not built. */
+/* A MISSING ROLE IS A COVE AND AN UNRECOGNISED ONE IS ITSELF, which is the
+   safe reading of each. Missing has to be a cove: every plan saved before roles
+   existed holds shapes with no key, and they were coves. An unrecognised STRING
+   is the opposite case — a newer build wrote a role this one has not been told
+   about — and normalising it to 'cove' would quietly BUILD it, re-cutting the
+   grid and billing tape for something nobody here can name. Returned as-is, it
+   is not a cove, not a guide and not a track, and the pipeline leaves it
+   alone. */
+export const roleOf = (shape) => (shape?.role ? shape.role : 'cove');
+export const isGuide = (shape) => roleOf(shape) === 'guide';
+export const isTrack = (shape) => roleOf(shape) === 'track';
+export const isBuilt = (shape) => roleOf(shape) === 'cove';
+
+/* THE ROLE RIDES ALONG UNLESS IT IS THE DEFAULT, which keeps a plan's stored
+   shapes as small as they were and is why `roleOf` reads a missing key as
+   'cove'. IT WAS `role === 'guide' ? ... : {}` and that was a trap with exactly
+   one role in it: sealing a draft as 'track' wrote no role at all and committed
+   a cove. Anything but the default is written out. */
+export const sealShape = (draft, role = 'cove') => ({
+  ...draft, id: newShapeId(),
+  ...(role && role !== 'cove' ? { role } : {}),
+});
+
+/**
+ * MAY THIS PRESS TAKE THIS SHAPE AS THE SHAPE TOOL'S DRAFT?
+ *
+ * A PURE FUNCTION FOR A RULE THAT HAS NOW BEEN GOT WRONG TWICE, which is the
+ * only reason it is not four lines inline in the press handler. It is a truth
+ * table about which tool owns a press, and a truth table belongs somewhere it
+ * can be enumerated — see tools/test-mag-track.mjs.
+ *
+ * --- THE BUG IT EXISTS TO STOP ---------------------------------------------
+ *
+ * THE GEOMETRY BAR STAYS OPEN WHILE A TRACK MODULE IS ARMED, deliberately: you
+ * clip a diffuser on, then draw a second run, and the bar is how the second run
+ * gets drawn. So `shapeMenuOn` is true at the moment somebody presses a track to
+ * place a module on it — and the take-branch, which only asked whether the bar
+ * was open and whether the shape was of another role, swallowed that press and
+ * converted the track into a fresh draft. Nothing was ever placed. The diffuser
+ * and the spot were both simply unreachable.
+ *
+ * --- SO: AN ARMED TOOL OWNS THE PRESS ---------------------------------------
+ *
+ * `addTool` IS THE WHOLE FIX AND IT IS THE CANVAS'S OLDEST RULE. Every branch of
+ * the press handler is ordered by it — "a tool that is armed owns the next
+ * click, and any path that lets selection or a ceiling object see it first is a
+ * path where the click does two things". The shape tool is not exempt from that
+ * simply because its bar is still on screen: a bar with no primitive picked owns
+ * nothing.
+ *
+ * THE OTHER THREE CONDITIONS ARE THE ORIGINAL RULE, unchanged:
+ *   the bar has to be OPEN, armed or not — pressing a guide with the bar merely
+ *   open is how a magnetic track is spanned from one, and requiring a primitive
+ *   first would mean arming a rectangle you are not going to draw;
+ *   no PEN PATH may be in flight, because a click mid-path is a corner;
+ *   and the shape must be of ANOTHER ROLE, or a press on bare ceiling inside an
+ *   existing cove could not span a second one across it.
+ */
+export function canTakeGeometry({ shape, role = 'cove', menuOpen = false,
+                                  addTool = null, penEmpty = true } = {}) {
+  if (!shape || !menuOpen || addTool || !penEmpty) return false;
+  return roleOf(shape) !== (role || 'cove');
+}
+
+/**
+ * THE SAME SHAPE, SET IN OR OUT BY A CONSTANT DISTANCE — as a SHAPE.
+ *
+ * `outlineFt(shape, grow)` ALREADY DOES THIS TO THE OUTLINE, and that is not
+ * the same thing. An outline is a list of points: it can be drawn and it can be
+ * measured, and it cannot be resized by its grips, duplicated, or given a
+ * corner radius afterwards. A magnetic track set out a foot inside a guide has
+ * to be all three, so what the offset produces has to be a shape.
+ *
+ * SO IT MOVES THE SHAPE'S OWN DIMENSIONS, and the arithmetic is `outlineFt`'s,
+ * kept in step with it deliberately rather than re-derived:
+ *
+ *   rect      both sides by 2g, because an offset moves each of the four edges.
+ *   circle    the radius by g, which is the whole of it.
+ *   n-gon     the CIRCUMRADIUS by `g / cos(PI/n)` and not by g. An offset moves
+ *             every EDGE out by g — that is the apothem — and the distance to a
+ *             CORNER grows by exactly that factor. See the same note in
+ *             `outlineFt`, which is where this figure comes from; growing the
+ *             circumradius by g would leave the line short on the flats and past
+ *             it at the corners, visibly so on a triangle.
+ *   pen       through `offsetPolygon`, which is the real thing and refuses
+ *             rather than folds — see its note.
+ *
+ * AN OPEN SHAPE IS RETURNED UNCHANGED, and that is the same answer `outlineFt`
+ * gives: a line has no inside, so "a foot in from it" names two paths and
+ * nothing in the drawing says which. The caller must not offer the control for
+ * one — see `arrayAsks` in lib/cob.js, which makes the same call.
+ *
+ * `null` WHERE THE OFFSET EATS THE SHAPE, so a caller gets a refusal rather
+ * than a shape turned inside out. A rectangle inset past half its short side
+ * has no inside left, and `offsetPolygon` says so for a pen path.
+ */
+export function insetShape(shape, g) {
+  if (!shape) return null;
+  const d = Number(g) || 0;
+  if (!d) return shape;
+  if (isOpen(shape)) return shape;
+  if (shape.kind === 'circle') {
+    const r = (shape.rFt || 0) + d;
+    return r > MIN_SPAN_FT / 2 ? { ...shape, rFt: r } : null;
+  }
+  if (shape.kind === 'rect') {
+    const w = (shape.wFt || 0) + 2 * d, h = (shape.hFt || 0) + 2 * d;
+    return (w > MIN_SPAN_FT && h > MIN_SPAN_FT) ? { ...shape, wFt: w, hFt: h } : null;
+  }
+  if (shape.kind === 'pen') {
+    const pts = offsetPolygon(shape.pts ?? [], d);
+    return pts?.length >= 3 ? { ...shape, pts } : null;
+  }
+  const n = sidesOf(shape);
+  const r = (shape.rFt || 0) + d / Math.cos(Math.PI / n);
+  return r > MIN_SPAN_FT / 2 ? { ...shape, rFt: r } : null;
+}
 
 /** One line of size, for the contextual menu. Feet, because a cove is set out
  *  in feet and the rest of this app's ceiling reads in them. */

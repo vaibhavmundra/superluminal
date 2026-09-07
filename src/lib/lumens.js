@@ -47,6 +47,14 @@
 
 import { toneOf } from './materials.js';
 import { COUNTRIES, DEFAULT_COUNTRY } from './switchboards.js';
+/* THE CONE A DOWNLIGHT CUTS ON THE FLOOR — one function, imported rather than
+   re-derived. It is `2 x drop x tan(beam / 2)` and it lives in cob.js because
+   that is where a beam angle is a thing somebody CHOOSES; this file needs the
+   same number to turn one lamp's output into an illuminance, and two copies of
+   a formula are two chances for the figure in this panel to disagree with the
+   pool drawn under the fitting on the sheet. No cycle: cob.js knows nothing
+   about this file. */
+import { throwDiameterFt, DEFAULT_DROP_FT } from './cob.js';
 
 const SQFT_PER_SQM = 10.7639104;
 const M_PER_FT = 0.3048;
@@ -177,9 +185,80 @@ export const STRIP_LOSS = 0.1;
 /** A recessed COB, per piece. */
 export const COB_WATTS = [3, 5, 7, 9, 12];
 
-/** A panel or diffuser, per piece. Not offered by any tool yet — see the note
- *  on `panel` below. */
+/**
+ * A PANEL OR DIFFUSER LIGHT, PER PIECE — the recessed flat panel.
+ *
+ * BACK TO THE FIVE IT WAS SPECIFIED WITH. It briefly carried 5, 6 and 7 W as
+ * well, on the way to fixing the track diffuser's range — and those figures
+ * belong to the TRACK DIFFUSER, which now has a family and a list of its own
+ * (see TRACK_DIFFUSER_WATTS). A 600x600 recessed panel is not sold at 5 W;
+ * leaving them here would have been this file guessing at the range of a product
+ * no tool in the app places.
+ *
+ * STILL THE ONE STORE FOR ITS OWN FAMILY, and it still reaches the Analysis
+ * panel's chips through `FIXTURE_FAMILIES` — see the note on
+ * TRACK_DIFFUSER_WATTS, which sets out the whole arrangement and applies to
+ * this list identically.
+ */
 export const PANEL_WATTS = [9, 12, 18, 24, 36];
+
+/**
+ * A TRACK DIFFUSER, PER PIECE — AND IT IS ITS OWN LIST BECAUSE IT IS ITS OWN
+ * PRODUCT.
+ *
+ * IT SHARED `panel`'s AND THAT WAS WRONG ABOUT THE THING THAT MATTERS. The two
+ * throw light identically — the `split` below is copied from it deliberately,
+ * because in both the light leaves a face that is already the ceiling and
+ * spreads — and that is the only thing they have in common. A recessed panel is
+ * a 600x600 tile fixed into a grid ceiling; a track diffuser is a 600 mm
+ * extrusion that clips into a busbar. They are two lines in a catalogue, two
+ * lines in a schedule, and two ranges: the panel is sold from 9 to 36 W and the
+ * diffuser range this project specifies is 5, 10 and 18.
+ *
+ * SO A SHARED DISTRIBUTION IS NOT A SHARED FAMILY. A family in this file is
+ * defined by where its light goes AND by what it is — see the header of
+ * FIXTURE_FAMILIES — and `borrowed` is the field that says "these numbers are
+ * somebody else's", which is exactly the honest description of the split here.
+ *
+ * --- THREE FIGURES, AND THE ALLOCATOR IS BUILT ON THE LIST AND NOT ON THEM ---
+ *
+ * 5, 10 AND 18 IS WHAT THIS PROJECT SELLS TODAY. Nothing downstream assumes
+ * three entries, or these three: `chooseDiffusers` in magTrack.js is handed this
+ * array and searches whatever is in it — see its note on `watts`, which has no
+ * default for precisely this reason. The day a brand's catalogue is loaded, THIS
+ * is the array that gets replaced, and both consumers follow it:
+ *
+ *   THE PANEL'S CHIPS. `analyseSpace` copies it onto the row as `wattOptions`.
+ *   THE ALLOCATOR. Corner wattages and balance wattages are both chosen out of
+ *   it, largest-that-fits and smallest-that-finishes respectively.
+ *
+ * ASCENDING, because both of those searches read it in order.
+ */
+export const TRACK_DIFFUSER_WATTS = [5, 10, 18];
+
+/**
+ * A TRACK SPOT, PER PIECE — AND IT IS THE COB'S FIGURES IN ITS OWN ARRAY.
+ *
+ * THE SAME FIVE WATTAGES AND A SEPARATE LIST, which looks like duplication and
+ * is the opposite. A recessed COB and a track spot are two products: one is cut
+ * into plasterboard, one clips into a busbar, and boq.js already bills them as
+ * two lines. That they are currently sold at the same five figures is a fact
+ * about THIS project's catalogue and not a relationship between the products —
+ * so the day a manufacturer's range is loaded and its track heads run 6, 12 and
+ * 20 W against its downlights' 3 to 12, this array changes and `COB_WATTS` does
+ * not.
+ *
+ * WRITTEN OUT RATHER THAN `= COB_WATTS`. An alias would make the two arrays the
+ * same object, and then a catalogue loader replacing one would silently replace
+ * the other — which is precisely the divergence this exists to allow. Copied on
+ * purpose, with this note as the reason.
+ *
+ * THE BEAM ANGLES ARE SHARED AND ARE NOT HERE. An optic is a reflector, the
+ * eight in `BEAM_ANGLES` (lib/cob.js) are what the trade sells, and a track head
+ * takes the same ones. The panel offers that list to any row carrying a `beam`;
+ * see SpaceAnalysis.
+ */
+export const TRACK_SPOT_WATTS = [3, 5, 7, 9, 12];
 
 /** A floor or table lamp, per piece — and what a chandelier is counted as. */
 export const LAMP_WATTS = [5, 7, 9, 12];
@@ -212,6 +291,22 @@ export const SCONCE_WATTS = [7];
  *           PRODUCT rather than about the country. Absent means "ask the
  *           country" — see STRIP_LUMENS_PER_WATT and `lumensPerWattFor`.
  *
+ *   layer   WHICH OF THE THREE JOBS A FITTING IS DOING — 'ambient', 'task' or
+ *           'accent'. It is NOT the same question as `split`, and the two must
+ *           not be collapsed: `split` is where the light physically goes, which
+ *           is a fact about the product, and this is what it is FOR, which is a
+ *           fact about the design. A recessed COB in a grid and a recessed COB
+ *           aimed at a worktop are the same product throwing light the same way
+ *           and they are two different layers of a lighting scheme — which is
+ *           why a GROUP may override this, and the spots do. See `analyseSpace`.
+ *
+ *           THE COVES ARE AMBIENT, both of them, and that is stated rather than
+ *           derived. A reverse cove washes a wall, which is a mark against
+ *           calling it ambient, and it is ambient anyway: it is one of the two
+ *           things in this app that can carry a room's general level on its own,
+ *           and a lighting designer reading this panel is asking "what is
+ *           lighting the room" before "what is lighting the pictures".
+ *
  * THE SIX THE BRIEF NAMES ARE ALL HERE, INCLUDING ONE NOTHING PLACES YET.
  * `panel` has no tool behind it, so no row can currently be built from it — it
  * is in the table because the table is the specification, and a family added the
@@ -222,13 +317,13 @@ export const SCONCE_WATTS = [7];
  */
 export const FIXTURE_FAMILIES = [
   {
-    id: 'cove', label: 'Cove', unit: 'm',
+    id: 'cove', label: 'Cove', unit: 'm', layer: 'ambient',
     split: { ceiling: 0.8, walls: 0.2, floor: 0.0 },
     watts: STRIP_WATTS_PER_M, defaultWatts: 5, lumens: null, loss: STRIP_LOSS,
     lumensPerWatt: STRIP_LUMENS_PER_WATT,
   },
   {
-    id: 'reverse_cove', label: 'Reverse cove', unit: 'm',
+    id: 'reverse_cove', label: 'Reverse cove', unit: 'm', layer: 'ambient',
     split: { ceiling: 0.0, walls: 0.8, floor: 0.2 },
     watts: STRIP_WATTS_PER_M, defaultWatts: 5, lumens: null, loss: STRIP_LOSS,
     lumensPerWatt: STRIP_LUMENS_PER_WATT,
@@ -238,23 +333,63 @@ export const FIXTURE_FAMILIES = [
        AND TWO UNITS, which is why they are two entries sharing a `split`. What
        they have in common is that the light leaves a surface that is already the
        ceiling, so none of it goes back up. */
-    id: 'ceiling_strip', label: 'Ceiling LED strip', unit: 'm',
+    id: 'ceiling_strip', label: 'Ceiling LED strip', unit: 'm', layer: 'ambient',
     split: { ceiling: 0.0, walls: 0.7, floor: 0.3 },
     watts: STRIP_WATTS_PER_M, defaultWatts: 5, lumens: null, loss: STRIP_LOSS,
     lumensPerWatt: STRIP_LUMENS_PER_WATT,
   },
   {
-    id: 'panel', label: 'Diffuser / panel', unit: 'nos',
+    id: 'panel', label: 'Diffuser / panel', unit: 'nos', layer: 'ambient',
     split: { ceiling: 0.0, walls: 0.7, floor: 0.3 },
     watts: PANEL_WATTS, defaultWatts: 18, lumens: null,
   },
   {
-    id: 'cob', label: 'Recessed COB', unit: 'nos',
+    /* --- THE TRACK DIFFUSER, AND IT IS NOT THE PANEL ---------------------
+       ONE DISTRIBUTION, TWO PRODUCTS. The split is the panel's, character for
+       character, because both are a lens over a board fixed flat to the ceiling:
+       nothing goes up, most of it reaches the walls, the rest the floor. That is
+       what `borrowed` says — these figures are somebody else's and are meant to
+       stay in step with them.
+       EVERYTHING ELSE IS DIFFERENT. A different extrusion, a different way of
+       fixing, a different schedule line (`track-diffuser` in boq.js), and a
+       different RANGE — see TRACK_DIFFUSER_WATTS. Filing it under `panel`
+       offered a track run the panel's 9-to-36 W chips, which is a control
+       showing wattages this product is not sold at.
+       AND IT IS THE FAMILY WITH A TOOL BEHIND IT. `panel` still has none — the
+       note at the head of this table says so — and this one is what the
+       magnetic track's drawer places. See lib/magTrack.js. */
+    id: 'track_diffuser', label: 'Track diffuser', unit: 'nos',
+    borrowed: 'panel', layer: 'ambient',
+    split: { ceiling: 0.0, walls: 0.7, floor: 0.3 },
+    watts: TRACK_DIFFUSER_WATTS, defaultWatts: 10, lumens: null,
+  },
+  {
+    id: 'cob', label: 'Recessed COB', unit: 'nos', layer: 'ambient',
     split: { ceiling: 0.0, walls: 0.2, floor: 0.8 },
     watts: COB_WATTS, defaultWatts: 7, lumens: null,
   },
   {
-    id: 'lamp', label: 'Floor / table lamp', unit: 'nos',
+    /* --- THE TRACK SPOT, AND IT IS NOT THE COB -----------------------------
+       ONE DISTRIBUTION, TWO PRODUCTS — the same argument the track diffuser
+       makes against `panel`, one row up. A recessed downlight and a track head
+       both put a cone on the floor, so the split is the COB's character for
+       character and `borrowed` says whose it is. Everything else differs: a
+       different body, a different way of fixing, its own schedule line
+       (`track-spot` in boq.js), and its own range.
+       THE RANGE IS THE SAME FIVE FIGURES TODAY and is a separate array anyway —
+       see TRACK_SPOT_WATTS for why that is not duplication.
+       TASK, NOT AMBIENT. A track spot is aimed: it goes over the console, the
+       worktop, the picture. The COB above is the ambient grid's own lamp and is
+       filed as ambient; the same product aimed at a surface is the task layer,
+       which is the distinction `layer` exists to draw. See the note on it in the
+       header of this table. */
+    id: 'track_spot', label: 'Track spot', unit: 'nos',
+    borrowed: 'cob', layer: 'task',
+    split: { ceiling: 0.0, walls: 0.2, floor: 0.8 },
+    watts: TRACK_SPOT_WATTS, defaultWatts: 5, lumens: null,
+  },
+  {
+    id: 'lamp', label: 'Floor / table lamp', unit: 'nos', layer: 'accent',
     split: { ceiling: 0.25, walls: 0.5, floor: 0.25 },
     watts: LAMP_WATTS, defaultWatts: 9, lumens: null,
   },
@@ -273,12 +408,12 @@ export const FIXTURE_FAMILIES = [
        does. `borrowed` says whose figures these are.
        ONE WATTAGE AND NOT A LIST: a sconce is specified at 7 W. See
        SCONCE_WATTS. */
-    id: 'sconce', label: 'Wall sconce', unit: 'nos', borrowed: 'lamp',
+    id: 'sconce', label: 'Wall sconce', unit: 'nos', borrowed: 'lamp', layer: 'accent',
     split: { ceiling: 0.25, walls: 0.5, floor: 0.25 },
     watts: SCONCE_WATTS, defaultWatts: 7, lumens: null,
   },
   {
-    id: 'shelf_strip', label: 'Shelf LED strip', unit: 'm', borrowed: 'reverse_cove',
+    id: 'shelf_strip', label: 'Shelf LED strip', unit: 'm', borrowed: 'reverse_cove', layer: 'accent',
     split: { ceiling: 0.0, walls: 0.8, floor: 0.2 },
     watts: STRIP_WATTS_PER_M, defaultWatts: 5, lumens: null, loss: STRIP_LOSS,
     lumensPerWatt: STRIP_LUMENS_PER_WATT,
@@ -400,6 +535,54 @@ export const bounceOf = (split, ref) =>
   (split.ceiling * ref.ceiling) + (split.walls * ref.wall) + (split.floor * ref.floor);
 
 /**
+ * HOW BRIGHT THE FLOOR IS DIRECTLY UNDER ONE FITTING, in lux.
+ *
+ * A DIFFERENT QUESTION FROM EVERY OTHER FIGURE IN THIS FILE, and that is why it
+ * is worth having. Everything else here is a room-wide LUMEN budget: how much
+ * light a space is owed and how much of it comes back off the surfaces. This is
+ * a local INTENSITY — stand under this lamp and read a book. A designer
+ * specifying a downlight wants both, and they move in opposite directions when
+ * the optic changes: tighten a 45-degree lamp to 24 and its contribution to the
+ * room does not move at all while the pool under it more than doubles in
+ * brightness. A panel that showed only the first would report that change as
+ * nothing happening.
+ *
+ * PER FITTING AND NOT PER ROW. It is an intensity, so twelve of them do not make
+ * it twelve times brighter — they make twelve pools. The count belongs to the
+ * lumen figures beside it.
+ *
+ * THE DIRECT SHARE ONLY — `split.floor`, which is 0.8 for a COB. What lands on
+ * the floor under the lamp is what the lamp throws down; the rest of the output
+ * goes to the walls and comes back as ambient, which is exactly what
+ * `bounceOf` above is for and must not be counted twice.
+ *
+ * OVER THE POOL AND NOT OVER THE ROOM. The area is the cone's footprint at the
+ * floor — the same circle drawn under the fitting on the drawing — so the figure
+ * is what a meter would read under it rather than an average over a floor most
+ * of which that lamp never reaches.
+ *
+ * WHAT IT IS NOT is a photometric calculation. There is no candela distribution
+ * here, and a real beam does not deliver its lumens evenly across a disc and
+ * nothing outside it — the edge of the cone is by definition where intensity has
+ * fallen to half. It is the lumen method's shape again, said about one fitting,
+ * and it is honest about being that: an average over the pool, good to a
+ * sensible figure rather than to a decimal place.
+ *
+ * `null` where the fitting has no stated optic, which is every family sold by
+ * the metre and every lamp nobody has specified a beam for. A number cannot be
+ * invented for those and a blank line is the honest reading.
+ */
+export function floorLuxOf({ output, split, beam, heightFt }) {
+  if (!(beam > 0) || !(output > 0)) return null;
+  const drop = heightFt > 0 ? heightFt : DEFAULT_DROP_FT;
+  const dFt = throwDiameterFt(beam, drop);
+  if (!(dFt > 0)) return null;
+  const areaSqM = sqftToSqm(Math.PI * (dFt / 2) ** 2);
+  if (!(areaSqM > 0)) return null;
+  return (output * (split?.floor ?? 0)) / areaSqM;
+}
+
+/**
  * What a family's chosen wattage is worth, per piece or per metre.
  *
  * A fixed `lumens` on the family wins over the wattage: it is a real product's
@@ -432,11 +615,21 @@ export const unitOutput = (family, watts, lumensPerWatt) =>
  * named one you have since removed comes back at the new default rather than at
  * a number nothing sells.
  */
-export function wattsFor(familyId, chosen, key = familyId) {
+export function wattsFor(familyId, chosen, key = familyId, fallback = null) {
   const f = FAMILY_BY_ID[familyId];
   if (!f) return null;
   const w = Number(chosen?.[key]);
-  return f.watts.includes(w) ? w : f.defaultWatts;
+  if (f.watts.includes(w)) return w;
+  /* A ROW MAY START SOMEWHERE OTHER THAN ITS FAMILY'S DEFAULT, and the spots are
+     why. A directional spot and an ambient downlight are one FAMILY here — same
+     recessed lamp, same distribution — and two different catalogue lines: 5 W at
+     30 degrees against 7 W at 36. They were one row at one wattage until the
+     Analysis grew its three sections and split them, and a spot row opening at
+     the grid's 7 W would be the panel stating a figure the schedule contradicts.
+     IGNORED UNLESS THE FAMILY SELLS IT, like every stored choice — see the note
+     above. A fallback nothing offers is not a licence to invent a product. */
+  if (fallback != null && f.watts.includes(Number(fallback))) return Number(fallback);
+  return f.defaultWatts;
 }
 
 export const ftToM = (ft) => ft * M_PER_FT;
@@ -465,6 +658,35 @@ export const sqftToSqm = (sqft) => sqft / SQFT_PER_SQM;
  * list is two rows you cannot tell apart, and the wattage chips under them make
  * that a question of which one you are about to change.
  */
+/**
+ * WHAT ONE FITTING OF A FAMILY IS WORTH TO A ROOM, in lumens on the useful side
+ * of the bounce.
+ *
+ * IT IS `analyseSpace`'s OWN PER-ROW ARITHMETIC, FACTORED — `unitOutput` times
+ * `bounceOf`, which is exactly what `netLumens` divided by the quantity is. It
+ * is pulled out rather than reimplemented because the one caller that needs it
+ * is INVERTING the panel: the diffuser allocator asks "how many of these does
+ * this room still want", and the only defensible answer is the model's own
+ * figure. A second formula would be a second opinion about a shortfall the
+ * panel is about to print.
+ *
+ * `ref` AND `lumensPerWatt` COME FROM AN `analyseSpace` RESULT, both of them, so
+ * the marginal figure is computed against the same surfaces and the same country
+ * as the total it is going to be compared with. Passing the room instead would
+ * mean re-deriving the reflectances here, which is the drift this exists to
+ * avoid.
+ *
+ * 0 FOR A FAMILY NOTHING IS KNOWN ABOUT, which a caller reads as "cannot say"
+ * and must not divide by. A family with no output would otherwise make the
+ * allocator ask for infinitely many.
+ */
+export function netPerUnit(familyId, watts, { ref, lumensPerWatt } = {}) {
+  const family = FAMILY_BY_ID[familyId];
+  if (!family || !ref) return 0;
+  const out = unitOutput(family, watts, lumensPerWatt);
+  return out > 0 ? out * bounceOf(family.split, ref) : 0;
+}
+
 export function analyseSpace({
   polygonFt, ceilingMm, materials, projectId, country,
   groups = [], watts = {},
@@ -483,27 +705,77 @@ export function analyseSpace({
     const qty = perMetre ? ftToM(g.lengthFt ?? 0) : (g.count ?? 0);
     if (!(qty > 0)) continue;
     const key = g.key ?? family.id;
-    const w = wattsFor(family.id, watts, key);
-    const totalOutput = qty * unitOutput(family, w, lumensPerWatt);
+    /* --- A GROUP MAY STATE ITS OWN WATTAGE, AND ONE KIND OF FITTING DOES -----
+       `watts` here is the room's store of overrides, keyed by row — the right
+       shape for everything the ENGINE placed, because the fitting itself has no
+       opinion and the room's choice is the only record there is. A COB somebody
+       placed by hand is the other way round: it was specified at the moment it
+       was put down, the figure is ON the fitting the way `manualCoves` carry
+       their own geometry, and there is nothing for a room-level store to hold.
+       So a group that states a wattage is believed, and the store is not asked.
+       See `manualCobs` in App.jsx. */
+    const w = g.watts != null ? Number(g.watts)
+      : wattsFor(family.id, watts, key, g.defaultWatts ?? null);
+    const perUnit = unitOutput(family, w, lumensPerWatt);
+    const totalOutput = qty * perUnit;
     const bounce = bounceOf(family.split, ref);
     rows.push({
-      key, familyId: family.id, label: family.label, unit: family.unit,
+      key, familyId: family.id,
+      /* ...AND ITS OWN NAME. A family's label is what the FAMILY is called, and
+         that is what almost every row wants. It is not what a row wants when two
+         rows of one family are two different things to a reader — twelve COBs
+         the grid laid out, and one COB somebody put over the console — and
+         calling both "Recessed COB" would make the numbering below the only way
+         to tell them apart, which is a worse label than either. */
+      label: g.label ?? family.label,
+      unit: family.unit,
       count: g.count ?? 0, lengthFt: g.lengthFt ?? 0, metres: perMetre ? qty : null,
       watts: w, wattOptions: family.watts, split: family.split,
+      /* THE TWO THINGS A ROW CAN CARRY THAT THE FAMILY CANNOT ------------------
+         `wattRange` is a CONTINUOUS choice where the family offers a list, and
+         `beam` is an optic. Both belong to a hand-placed fitting and to nothing
+         else: the engine buys off the catalogue, where three wattages and three
+         beam angles are the three products, and a slider over a catalogue would
+         be a control that produces order lines nobody can fill. Null on every
+         other row, and the panel draws neither. See lib/cob.js. */
+      wattRange: g.wattRange ?? null,
+      beam: g.beam ?? null,
+      /* WHICH OF THE THREE JOBS THIS ROW IS DOING. The family's answer unless
+         the caller knows better, and for two rows it does: a directional spot
+         and an art spot are both the COB family — same lamp, same distribution
+         — and they are the task layer and the accent layer respectively. Only
+         the thing that knows what a fitting is FOR can say that, and that is the
+         caller. See the note on `layer` in FIXTURE_FAMILIES. */
+      layer: g.layer ?? family.layer ?? 'ambient',
       totalOutput, bounce, netLumens: totalOutput * bounce,
+      /* AND WHAT ONE OF THEM PUTS ON THE FLOOR, where the fitting has an optic
+         to say it with. Null on everything sold by the metre and on any lamp
+         nobody has specified a beam for — see `floorLuxOf`, which explains why
+         this is a different KIND of number from the two beside it and why it is
+         per fitting rather than per row. Computed from the space's own ceiling
+         height, so the same lamp reads brighter in a low room. */
+      floorLux: perMetre ? null : floorLuxOf({
+        output: perUnit, split: family.split,
+        beam: g.beam ?? null, heightFt: areas.heightFt,
+      }),
     });
   }
 
   /* NUMBERED ONLY WHERE THERE IS SOMETHING TO TELL APART. One cove in a room is
      "Cove"; three are "Cove 1", "Cove 2", "Cove 3". A room's only run carrying a
-     1 after it would be the panel counting for the sake of counting. */
+     1 after it would be the panel counting for the sake of counting.
+     BY LABEL AND NOT BY FAMILY, which is the same question asked of what is
+     actually on screen. Two rows of one family that are called different things
+     — the grid's COBs and a COB placed by hand — are already told apart, and
+     numbering them would say they were a series when they are not. */
   const per = {};
-  for (const r of rows) per[r.familyId] = (per[r.familyId] ?? 0) + 1;
+  for (const r of rows) per[r.label] = (per[r.label] ?? 0) + 1;
   const seen = {};
   for (const r of rows) {
-    if (per[r.familyId] < 2) continue;
-    seen[r.familyId] = (seen[r.familyId] ?? 0) + 1;
-    r.label = `${r.label} ${seen[r.familyId]}`;
+    if (per[r.label] < 2) continue;
+    const base = r.label;
+    seen[base] = (seen[base] ?? 0) + 1;
+    r.label = `${base} ${seen[base]}`;
   }
 
   const achieved = rows.reduce((s, r) => s + r.netLumens, 0);

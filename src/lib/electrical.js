@@ -56,6 +56,7 @@
 // ---------------------------------------------------------------------------
 
 import { edges, pointInPolygon, polygonArea, distanceToBoundary } from './geometry.js';
+import { sub, add, mul, dot, len, distToSegment, shortSide } from './geometry.js';
 import { projectOntoWall } from './accentPlace.js';
 import { openingPx, doorWidthAt, MM_PER_FT } from './doors.js';
 
@@ -234,11 +235,8 @@ const SECONDARY = new Set(['toilet', 'balcony', 'store', 'utility', 'pooja_room'
 
 // --- small vector helpers, kept local so this file stays affine and pure -----
 
-const sub = (p, q) => ({ x: p.x - q.x, y: p.y - q.y });
-const add = (p, v) => ({ x: p.x + v.x, y: p.y + v.y });
-const mul = (v, k) => ({ x: v.x * k, y: v.y * k });
-const dot = (a, b) => a.x * b.x + a.y * b.y;
-const len = (v) => Math.hypot(v.x, v.y);
+/* The vector set and the two measurements below it are the toolkit's — see
+   geometry.js, which says why each of them used to live in two files. */
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const centreOf = (r) => ({ x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 });
 
@@ -247,11 +245,10 @@ export function px(mm, pxPerFt) {
   return (mm / MM_PER_FT) * pxPerFt;
 }
 
-/** The room's smaller side, for scaling the tolerances. Same idea as accentPlace. */
-export function roomScale(polygon) {
-  const xs = polygon.map((p) => p.x), ys = polygon.map((p) => p.y);
-  return Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
-}
+/** The room's smaller side, for scaling the tolerances. THE COMMENT HERE USED TO
+ *  SAY "Same idea as accentPlace", which is a duplication that had been noticed
+ *  and written down rather than removed; both files take the toolkit's now. */
+export const roomScale = shortSide;
 
 // --- walls -------------------------------------------------------------------
 
@@ -357,11 +354,6 @@ export function wallFrame(rect, run, polygon, scale = 1) {
 }
 
 /** Distance from a point to a segment. geometry.js keeps its copy private. */
-function distToSegment(p, a, b) {
-  const d = sub(b, a), l2 = dot(d, d);
-  const t = l2 === 0 ? 0 : clamp(dot(sub(p, a), d) / l2, 0, 1);
-  return len(sub(p, add(a, mul(d, t))));
-}
 
 /** The run that continues from this one, in the given direction along it. */
 function adjacentRun(runs, run, dir, tol) {

@@ -149,7 +149,7 @@ export default function ViewerPanel({
               put it in. */}
           {isAdmin && onToggleGrid && (
             <label className="flex items-center gap-2 mb-[7px] text-[#C026D3] cursor-pointer"
-              title="The chunks each space was split into, and the cell lines the fittings were laid on">
+              title="The chunks each space was split into, and the cell lines it was gridded on — drawn whether or not any fittings were placed">
               <input type="checkbox" className="lp-check" checked={showGrid}
                 onChange={onToggleGrid} />
               Planning grid

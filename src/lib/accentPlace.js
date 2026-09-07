@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import { edges, pointInPolygon } from './geometry.js';
+import { sub, add, mul, dot, len, distToSegment, shortSide } from './geometry.js';
 import { FURNITURE_BY_ID, MAX_ZONES } from './accentPrompt.js';
 
 export const PLACE_DEFAULTS = {
@@ -64,11 +65,8 @@ export const PLACE_DEFAULTS = {
   endInsetFrac: 0.04,
 };
 
-const sub = (p, q) => ({ x: p.x - q.x, y: p.y - q.y });
-const add = (p, v) => ({ x: p.x + v.x, y: p.y + v.y });
-const mul = (v, k) => ({ x: v.x * k, y: v.y * k });
-const dot = (a, b) => a.x * b.x + a.y * b.y;
-const len = (v) => Math.hypot(v.x, v.y);
+/* The vector set and the two measurements below it are the toolkit's — see
+   geometry.js, which says why each of them used to live in two files. */
 
 const corners = (r) => [
   { x: r.x0, y: r.y0 }, { x: r.x1, y: r.y0 },
@@ -76,11 +74,6 @@ const corners = (r) => [
 ];
 const centre = (r) => ({ x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 });
 
-function distToSegment(p, a, b) {
-  const d = sub(b, a), l2 = dot(d, d);
-  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, dot(sub(p, a), d) / l2));
-  return len(sub(p, add(a, mul(d, t))));
-}
 
 /**
  * Which wall does this box belong to?
@@ -145,11 +138,9 @@ export function wallForRun(rect, polygon) {
   return best || nearestWall(rect, polygon);
 }
 
-/** The room's smaller side, for scaling the tolerances above. */
-function roomScale(polygon) {
-  const xs = polygon.map((p) => p.x), ys = polygon.map((p) => p.y);
-  return Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
-}
+/** The room's smaller side, for scaling the tolerances above. Named for the
+ *  room here because that is what every caller in this file hands it. */
+const roomScale = shortSide;
 
 /**
  * A box, a room -> the box's footprint expressed IN THE WALL'S OWN FRAME.
