@@ -9950,14 +9950,96 @@ export default function App({
     options: { ...opt, coves: (r.coves ?? []).map((c) => c.line) },
   }), [opt]);
 
+  /* --- ONE LIGHT'S WHOLE GESTURE --------------------------------------------
+
+     NO POINTER CAPTURE, AND THIS IS THE ONE DRAG ON THIS CANVAS THAT REFUSES
+     IT — which is why `capture` is simply not given to the hook. Every other
+     one captures to the <svg> so the gesture survives leaving the thing it
+     started on, but capture RETARGETS the click the browser synthesises on
+     release, and a click on a light already means something: it opens that
+     chunk's ceiling options. Capture would send that click to the canvas
+     instead, and the pill — the way this app's main decision is made — would
+     stop opening on a press that had merely wobbled.
+     IT COSTS NOTHING HERE. The svg carries the move and up handlers itself, so
+     a drag that leaves the fitting is still tracked; and the fitting can only
+     travel ±20% of one cell, so there is no version of this gesture that leaves
+     the sheet. Capture buys the other drags something this one does not need.
+
+     NOTHING IS WRITTEN UNTIL THE DROP, which is the opposite of what the ceiling
+     objects and the cove shapes do, and the difference is what it costs. Those
+     write per move and the layout memo re-runs — which for them is a re-chunk
+     and a re-grid, expensive but survivable. A light's own position is INSIDE
+     that layout: committing per frame would re-run `planLights` for the room on
+     every pointer event, and `planLights` runs its placement up to four times
+     and then two alignment passes. That is a solver in a mousemove. So the
+     gesture carries the live position, the canvas draws the fitting there (see
+     `movingLight`), and the store is written once in `onCommit`. What is lost is
+     the neighbours re-aligning live; what is gained is a drag that keeps up with
+     the pointer. So there is no store to hand the hook.
+
+     THE CLAMP RUNS PER FRAME EVEN SO, and it is the constraint that makes this
+     gesture what it is — so it stays in the caller. It is the cheap half — a
+     band, four predicates and a walk back along one segment — and the light has
+     to STOP at the edge while you are still pushing, or the box drawn on the
+     drawing is decoration.
+
+     ITS THRESHOLD IS A FRACTION OF THE DRAWING, shared with the cove shape and
+     the plate. Here it is doing something it does nowhere else: a click on a
+     light already means "open this chunk's ceiling options", so a press that
+     does not travel is still a click, the pill still opens, and only a press
+     that travels becomes a move. */
+  const light = useDrag({
+    state: [lightDrag, setLightDrag],
+    point: svgPoint,
+    at: (o) => ({ x: o.x, y: o.y }),
+    moved: (from, p) => Math.hypot(p.x - from.x, p.y - from.y)
+      >= Math.max(3, pxPerFt * 0.12),
+    onMove: (q, { drag: d }) => {
+      const r = rooms.find((z) => z.id === d.roomId);
+      const l = r?.plan?.lightsPx?.find((z) => z.cellKey === d.cellKey);
+      if (!l?.cell) return;
+      const want = { x: (q.x - r.geo.origin.x) / pxPerFt,
+                     y: (q.y - r.geo.origin.y) / pxPerFt };
+      const at = clampLightMove(l.cell, want, {
+        ...clampCtxFor(r),
+        // Every OTHER light in the space. The dragged one is excluded by cell
+        // rather than by identity: it is a different object each render.
+        others: r.plan.lights.filter((z) => z.cell?.id !== l.cell.id),
+      });
+      if (!at) return;
+      light.set((cur) => (cur ? { ...cur, at: r.geo.toPx(at) } : cur));
+    },
+    /**
+     * LETTING GO, WHICH IS THE ONLY WRITE.
+     *
+     * A PRESS THAT NEVER TRAVELLED WRITES NOTHING, which is the hook's own rule
+     * and exactly what is wanted here: it was a click on a light, which already
+     * means something, and storing an offset of zero for it would mark the
+     * fitting "moved by hand" for the life of the plan, pinning it out of the
+     * alignment pass for a gesture nobody made.
+     */
+    onCommit: (ids, d) => {
+      if (!pxPerFt) return;
+      lightMoved.current = true;
+      const r = rooms.find((z) => z.id === d.roomId);
+      const l = r?.plan?.lightsPx?.find((z) => z.cellKey === d.cellKey);
+      if (!l?.cell) return;
+      const ft = { x: (d.at.x - r.geo.origin.x) / pxPerFt,
+                   y: (d.at.y - r.geo.origin.y) / pxPerFt };
+      setLightMoves((m) => ({
+        ...m,
+        [d.roomId]: { ...(m[d.roomId] || {}),
+                      [d.cellKey]: { dx: ft.x - l.cell.cx, dy: ft.y - l.cell.cy } },
+      }));
+    },
+  });
+
   /**
    * PICKING A LIGHT UP.
    *
-   * THE PRESS SELECTS AND THE DRAG MOVES, with the usual slop between them —
-   * and here the slop is doing something it does nowhere else on this canvas: a
-   * click on a light already means "open this chunk's ceiling options", and that
-   * meaning has to survive. So a press that does not travel is still a click,
-   * the pill still opens, and only a press that travels becomes a move.
+   * THE PRESS SELECTS AND THE DRAG MOVES, with the slop between them — see
+   * `light` above for why the threshold is carrying more weight here than
+   * anywhere else on this canvas.
    */
   const lightPointerDown = (e, roomId, l) => {
     if (e.button != null && e.button !== 0) return;
@@ -9969,100 +10051,23 @@ export default function App({
     setSel(select('light', lightKey(roomId, l.cellKey)));
     clearShapeEdit();
     lightMoved.current = false;
-    /* NO POINTER CAPTURE, AND THIS IS THE ONE DRAG ON THIS CANVAS THAT REFUSES
-       IT. Every other one captures to the <svg> so the gesture survives leaving
-       the thing it started on — but capture RETARGETS the click the browser
-       synthesises on release, and a click on a light already means something:
-       it opens that chunk's ceiling options. Capture would send that click to
-       the canvas instead, and the pill — the way this app's main decision is
-       made — would stop opening on a press that had merely wobbled.
-       IT COSTS NOTHING HERE. The svg carries the move and up handlers itself, so
-       a drag that leaves the fitting is still tracked; and the fitting can only
-       travel ±20% of one cell, so there is no version of this gesture that
-       leaves the sheet. Capture buys the other drags something this one does not
-       need. */
-    const p = svgPoint(e);
-    setLightDrag({
-      roomId, cellKey: l.cellKey, live: false,
-      // The pointer and the fitting, both in PLAN PIXELS, and the offset between
-      // them held so the light does not jump to the cursor on the first move.
-      from: p, grab: { x: p.x - l.x, y: p.y - l.y }, at: { x: l.x, y: l.y },
+    /* THE MEMBER IS SYNTHETIC, and that is the honest shape of this one. A light
+       is not a row in a list the drag can write to — it is one cell's share of
+       the ambient level, identified by its cell — so what the hook is given is
+       the position it was picked up at, keyed by `cellKey`. That is enough for
+       the grab offset and for the anchor, which is all this gesture needs from
+       it: nothing here applies a delta to a store. */
+    light.down(e, {
+      id: l.cellKey, members: [{ id: l.cellKey, x: l.x, y: l.y }],
+      roomId, cellKey: l.cellKey,
+      // WHERE THE FITTING IS BEING HELD, in plan pixels. The canvas draws it
+      // here for the length of the gesture — see `movingLight`.
+      at: { x: l.x, y: l.y },
     });
   };
 
-  /**
-   * ...AND DRAGGING IT.
-   *
-   * NOTHING IS WRITTEN UNTIL THE DROP, which is the opposite of what the ceiling
-   * objects and the cove shapes do, and the difference is what it costs. Those
-   * write per move and the layout memo re-runs — which for them is a re-chunk
-   * and a re-grid, expensive but survivable. A light's own position is INSIDE
-   * that layout: committing per frame would re-run `planLights` for the room on
-   * every pointer event, and `planLights` runs its placement up to four times
-   * and then two alignment passes. That is a solver in a mousemove.
-   *
-   * So the gesture carries the live position, the canvas draws the fitting there
-   * (see `movingLight`), and the store is written once on release. What is lost
-   * is the neighbours re-aligning live; what is gained is a drag that keeps up
-   * with the pointer. The neighbours tidy onto it the moment you let go, which
-   * is the frame the layout actually re-runs.
-   *
-   * THE CLAMP RUNS PER FRAME EVEN SO. It is the cheap half — a band, four
-   * predicates and a walk back along one segment — and it is the whole point of
-   * the gesture: the light has to STOP at the edge while you are still pushing,
-   * or the box on the drawing is decoration.
-   */
-  const lightPointerMove = (e) => {
-    if (!lightDrag || !pxPerFt) return;
-    const p = svgPoint(e);
-    if (!lightDrag.live) {
-      const slop = Math.max(3, pxPerFt * 0.12);
-      if (Math.hypot(p.x - lightDrag.from.x, p.y - lightDrag.from.y) < slop) return;
-      setLightDrag((d) => (d ? { ...d, live: true } : d));
-    }
-    const r = rooms.find((q) => q.id === lightDrag.roomId);
-    const light = r?.plan?.lightsPx?.find((q) => q.cellKey === lightDrag.cellKey);
-    if (!light?.cell) return;
-    const want = {
-      x: (p.x - lightDrag.grab.x - r.geo.origin.x) / pxPerFt,
-      y: (p.y - lightDrag.grab.y - r.geo.origin.y) / pxPerFt,
-    };
-    const at = clampLightMove(light.cell, want, {
-      ...clampCtxFor(r),
-      // Every OTHER light in the space. The dragged one is excluded by cell
-      // rather than by identity: it is a different object each render.
-      others: r.plan.lights.filter((q) => q.cell?.id !== light.cell.id),
-    });
-    if (!at) return;
-    const px = r.geo.toPx(at);
-    setLightDrag((d) => (d ? { ...d, at: px } : d));
-  };
-
-  /**
-   * LETTING GO, which is the only write.
-   *
-   * A PRESS THAT NEVER TRAVELLED WRITES NOTHING. It was a click on a light,
-   * which already means something — see `lightPointerDown` — and storing an
-   * offset of zero for it would mark the fitting "moved by hand" for the life of
-   * the plan, pinning it out of the alignment pass for a gesture nobody made.
-   */
-  const lightPointerUp = () => {
-    if (!lightDrag) return;
-    const d = lightDrag;
-    setLightDrag(null);
-    if (!d.live || !pxPerFt) return;
-    lightMoved.current = true;
-    const r = rooms.find((q) => q.id === d.roomId);
-    const light = r?.plan?.lightsPx?.find((q) => q.cellKey === d.cellKey);
-    if (!light?.cell) return;
-    const ft = { x: (d.at.x - r.geo.origin.x) / pxPerFt,
-                 y: (d.at.y - r.geo.origin.y) / pxPerFt };
-    setLightMoves((m) => ({
-      ...m,
-      [d.roomId]: { ...(m[d.roomId] || {}),
-                    [d.cellKey]: { dx: ft.x - light.cell.cx, dy: ft.y - light.cell.cy } },
-    }));
-  };
+  const lightPointerMove = (e) => { if (pxPerFt) light.move(e); };
+  const lightPointerUp = light.up;
 
   /**
    * PUT IT BACK UNDER THE RULES. Delete on a selected light, and it is a
@@ -15102,7 +15107,7 @@ export default function App({
               /* THE ONE IN FLIGHT, AND ONLY ONCE THE DRAG IS PAST ITS SLOP —
                  otherwise a press meant as a click would move the fitting by the
                  pixel of wobble that arrives with it. */
-              movingLight={!readOnly && lightDrag?.live ? lightDrag : null}
+              movingLight={!readOnly && lightDrag?.moved ? lightDrag : null}
               /* THE KEEP-OUT BAND, AND ONLY WHILE IT IS BEING MET. Shown when
                  a cove is being drawn, moved or resized — the three states in
                  which somebody is placing one and can be stopped by it. On a
