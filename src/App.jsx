@@ -10152,18 +10152,69 @@ export default function App({
     setSel(select('shape', id));
     const src = ceilingShapes.find((q) => q.id === id);
     if (!src || !pxPerFt) return;
-    svgRef.current?.setPointerCapture?.(e.pointerId);
-    const p = svgPoint(e);
     // AND THE HIGHLIGHT GOES WITH THE PRESS. The move handler stops tracking for
     // the length of a drag, so a value left behind would keep the cursor a hand
     // over a shape that is already moving.
     setGeomHover(null);
-    setShapeDrag({ id, from: { x: p.x / pxPerFt, y: p.y / pxPerFt },
-                   base: { x: src.x, y: src.y }, live: false, copied: false });
+    shape.down(e, { id, members: [src] });
   };
 
+  /* --- A COVE SHAPE'S WHOLE GESTURE -----------------------------------------
+
+     HELD IN FEET, like a ceiling object and for its reason: a shape somebody
+     drew is a real thing of a real size and must survive a scale correction.
+
+     THE ROOM STOPS IT, AND THAT CONSTRAINT LIVES IN `to`. A cove may not come
+     within six inches of the plaster — see coveClearOfOutline — and the honest
+     way to say that during a drag is to have the shape stop, not to let it go
+     anywhere and refuse it once the pointer is up. `clampCoveMove` slides it
+     along the wall it reached, and along a notch the bounding box knows nothing
+     about. THE ROOM IS THE ONE IT IS IN NOW, resolved from where the shape
+     currently sits rather than from where the pointer is: a cove being pushed at
+     a wall must not be handed the room on the other side of it half way through.
+
+     A GUIDE IS NOT KEPT OFF THE PLASTER, AND A COVE IS. `clampCoveMove` holds a
+     shape clear of the outline because a pocket four inches from the wall leaves
+     four inches of board between them and nobody can build that. A guide is not
+     built. It is a line to set out FROM — and the most useful place to put one
+     is very often exactly on the wall, or a foot inside it, which is the one
+     position the cove's rule exists to forbid. Applying it to a guide would make
+     the tool refuse the thing it is for. Hence `shapeIsBuilt`.
+
+     NO SHIFT LOCK AND NO SNAP, which is what this drag has always done: a cove
+     is positioned against the room's own geometry by the clamp, and there is
+     nothing else on the ceiling for it to line up with.
+
+     ITS THRESHOLD IS A FRACTION OF THE DRAWING — a floor of three screen pixels
+     or 12% of a foot, whichever is larger, converted into feet because that is
+     the unit this gesture speaks. Shared with the light drag, which is the other
+     one measured against the plan rather than the screen. */
+  const shape = useDrag({
+    state: [shapeDrag, setShapeDrag],
+    point: (e) => { const p = svgPoint(e); return { x: p.x / pxPerFt, y: p.y / pxPerFt }; },
+    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
+    at: (o) => ({ x: o.x, y: o.y }),
+    to: (o, q) => {
+      const room = roomAt({ x: o.x * pxPerFt, y: o.y * pxPerFt });
+      const at = (shapeIsBuilt(o) && room?.geo?.polygonPlanFt)
+        ? clampCoveMove(o, q, room.geo.polygonPlanFt, COVE_GAP_FT) : q;
+      return { ...o, x: at.x, y: at.y };
+    },
+    setList: setCeilingShapes,
+    moved: (from, p) => Math.hypot(p.x - from.x, p.y - from.y)
+      >= Math.max(3, pxPerFt * 0.12) / pxPerFt,
+    /* ALT LEAVES A COPY BEHIND, AND THE MODIFIER IS READ LIVE — every word of the
+       long note on the COB's own drag applies here unchanged, so it is not
+       repeated. The short of it: "Alt then drag" and "drag then Alt" are one
+       gesture, the ORIGINAL is put back where it was picked up, the TWIN is what
+       keeps moving, and once made it stays made whether or not Alt is let go. */
+    copy: true,
+    mintId: () => newShapeId(),
+    onCopy: ({ ids }) => setSel(select('shape', ids[0])),
+  });
+
   const shapePointerMove = (e) => {
-    if (!shapeDrag || !pxPerFt) return;
+    if (!shape.drag || !pxPerFt) return;
     /* --- A SLOT DOES NOT MOVE, AND THAT IS THE HONEST ANSWER -----------------
        Both its ends are on the plaster — that is what makes it buildable, see
        `spanOnOutline` — so there is no direction it can be dragged in that
@@ -10173,69 +10224,14 @@ export default function App({
        keep-off-the-plaster rule and a slot is deliberately ON the plaster: it
        would find the shape already illegal and refuse every pixel, which is a
        drag that judders rather than one that plainly does nothing. The band is
-       still grabbable, because grabbing it is how it is SELECTED and deleted. */
-    if (shapeIsOpen(ceilingShapes.find((q) => q.id === shapeDrag.id))) return;
-    const p = svgPoint(e);
-    const at = { x: p.x / pxPerFt, y: p.y / pxPerFt };
-    const drag = shapeDrag;
-    /* --- A GUIDE IS NOT KEPT OFF THE PLASTER, AND A COVE IS --------------
-       `clampCoveMove` holds a shape six inches clear of the room's outline,
-       because a pocket four inches from the wall leaves four inches of board
-       between them and nobody can build that. A guide is not built. It is a
-       line to set out FROM — and the most useful place to put one is very often
-       exactly on the wall, or a foot inside it, which is the one position the
-       cove's rule exists to forbid. Applying it to a guide would make the tool
-       refuse the thing it is for. */
-    const settle = (sh, to) => (shapeIsBuilt(sh) && room?.geo?.polygonPlanFt
-      ? clampCoveMove(sh, to, room.geo.polygonPlanFt, COVE_GAP_FT) : to);
-    if (!drag.live) {
-      const slop = Math.max(3, pxPerFt * 0.12) / pxPerFt;
-      if (Math.hypot(at.x - drag.from.x, at.y - drag.from.y) < slop) return;
-      setShapeDrag({ ...drag, live: true });
-    }
-    const dx = at.x - drag.from.x, dy = at.y - drag.from.y;
-    /* AND THE ROOM STOPS IT. A cove may not come within six inches of the
-       plaster — see coveClearOfOutline — and the honest way to say that during a
-       drag is to have the shape stop, not to let it go anywhere and refuse it
-       once the pointer is up. `clampCoveMove` slides it along the wall it
-       reached, and along a notch the bounding box knows nothing about.
-       THE ROOM IS THE ONE IT IS IN NOW, resolved from where it currently sits
-       rather than from where the pointer is: a cove being pushed at a wall must
-       not be handed the room on the other side of it half way through. */
-    const want = { x: drag.base.x + dx, y: drag.base.y + dy };
-    const held = ceilingShapes.find((q) => q.id === drag.id);
-    const room = held ? roomAt({ x: held.x * pxPerFt, y: held.y * pxPerFt }) : null;
-
-    /* ALT LEAVES A COPY BEHIND, AND THE MODIFIER IS READ LIVE — every word of
-       the long note on `objPointerMove` applies here unchanged, so it is not
-       repeated. The short of it: "Alt then drag" and "drag then Alt" are one
-       gesture, the ORIGINAL is put back where it was picked up, the TWIN is what
-       keeps moving, and once made it stays made whether or not Alt is let go.
-       ONE `setCeilingShapes` DOING THE RESTORE AND THE CLONE TOGETHER, then a
-       return, for the reason given there: `shapeDrag` in this closure is the
-       value from the render that installed the handler, so a second write here
-       would move the original. */
-    if (!drag.copied && e.altKey) {
-      const src = ceilingShapes.find((q) => q.id === drag.id);
-      if (!src) return;
-      const to = settle(src, want);
-      const twin = { ...src, id: newShapeId(), x: to.x, y: to.y };
-      setCeilingShapes((l) => [
-        ...l.map((q) => (q.id === drag.id ? { ...q, x: drag.base.x, y: drag.base.y } : q)),
-        twin,
-      ]);
-      setShapeDrag({ ...drag, id: twin.id, live: true, copied: true });
-      setSel(select('shape', twin.id));
-      return;
-    }
-    setCeilingShapes((l) => l.map((q) => {
-      if (q.id !== drag.id) return q;
-      const to = settle(q, want);
-      return { ...q, x: to.x, y: to.y };
-    }));
+       still grabbable, because grabbing it is how it is SELECTED and deleted.
+       AND IT IS THE CALLER'S GUARD, NOT THE HOOK'S. Where an object's drag is
+       deliberately constrained the constraint belongs beside the object, and
+       this one is absolute: the whole frame is declined. */
+    if (shapeIsOpen(ceilingShapes.find((q) => q.id === shape.drag.id))) return;
+    shape.move(e);
   };
-
-  const shapePointerUp = () => { if (shapeDrag) setShapeDrag(null); };
+  const shapePointerUp = shape.up;
 
   /**
    * A GRIP ON THE FRAME, PRESSED.
@@ -15102,7 +15098,7 @@ export default function App({
                  finished sheet it would be a rule drawn over a drawing for
                  nobody. */
               coveClampPx={!readOnly && pxPerFt
-                && ((shapeMenuOn && shapeTool) || shapeDrag?.live || shapeResize)
+                && ((shapeMenuOn && shapeTool) || shapeDrag?.moved || shapeResize)
                 ? COVE_GAP_FT * pxPerFt : null}
               /* THE KEEP-OUT BAND, AND ONLY WHILE IT IS BEING MET. Shown while
                  a cove is being drawn, moved or resized — the three states in
@@ -15110,7 +15106,7 @@ export default function App({
                  finished sheet it would be a rule drawn over a drawing for
                  nobody to meet. */
               coveClampPx={!readOnly && pxPerFt
-                && ((shapeMenuOn && shapeTool) || shapeDrag?.live || shapeResize)
+                && ((shapeMenuOn && shapeTool) || shapeDrag?.moved || shapeResize)
                 ? COVE_GAP_FT * pxPerFt : null}
               coveShapes={coveShapesPx}
               selShapeId={readOnly ? null : selShapeId}
