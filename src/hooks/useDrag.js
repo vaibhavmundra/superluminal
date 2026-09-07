@@ -270,14 +270,26 @@ export function makeDrag({
 /**
  * THE SAME THING WITH ITS STATE IN REACT.
  *
+ * `state` LETS THE CALLER OWN IT, and it is not a convenience. Four of the
+ * deletes on this canvas have to be able to abandon a gesture holding the thing
+ * they are removing — `deleteArray`, `deleteModule`, `deleteShape`, the door
+ * editor's several exits — and every one of them is a `useCallback` declared
+ * hundreds of lines ABOVE where the drag it touches is set up. A setter reached
+ * through the hook's return value cannot go in one of their dependency arrays
+ * without being read before it exists. So those keep their own `useState` where
+ * it always was and hand the pair in; the rest let the hook hold it.
+ *
  * `get` READS THE RENDER'S OWN VALUE and deliberately not a ref. Every handler
  * these replaced read the drag out of its closure, which is the value from the
  * render that installed it — and the copy fork depends on that: the retarget it
  * writes must NOT be visible to the lines after it in the same frame, or the
  * original gets moved as well as copied. A ref would make it visible.
  */
-export function useDrag(cfg) {
-  const [drag, setDrag] = useState(null);
+export function useDrag({ state, ...cfg }) {
+  /* Called unconditionally so the hook order never moves, and ignored when the
+     caller brought its own. */
+  const own = useState(null);
+  const [drag, setDrag] = state ?? own;
   const api = makeDrag({ ...cfg, get: () => drag, set: setDrag });
   // `set` is the escape hatch the deletes need: removing the thing under a
   // pointer has to be able to abandon the gesture holding it.

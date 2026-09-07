@@ -131,7 +131,7 @@ import { collectTargets, snapPoint, SNAP_DEFAULTS } from './lib/snapGuides.js';
    wrong at least once here. See its header. What this file still imports
    directly is what the drags not yet on hooks/useDrag.js are calling by hand;
    the hook is where the rest of it is now spent. */
-import { movedEnough, orthoLock } from './lib/dragMove.js';
+import { movedEnough } from './lib/dragMove.js';
 import { buildSnapIndex, snapAt } from './lib/snap.js';
 import { openPdf, isPdf, pageToImg } from './lib/pdfPlan.js';
 import PdfPagePicker from './components/PdfPagePicker.jsx';
@@ -1244,7 +1244,11 @@ export default function App({
      TRANSIENT. A selection is a fact about what somebody is looking at. */
   const selArrayId = idOf(sel, 'array');
   /* THE ARRAY BEING CARRIED, for one press. Same snapshot-at-the-press rule
-     every other drag on this canvas follows — see rule 2 in lib/dragMove.js. */
+     every other drag on this canvas follows — see rule 2 in lib/dragMove.js.
+     DECLARED HERE AND HANDED TO hooks/useDrag.js rather than held inside it,
+     because `deleteArray` has to be able to abandon a gesture carrying the run
+     it is removing, and it is a `useCallback` four thousand lines above the
+     hook. See the note on `state` there. */
   const [arrayDrag, setArrayDrag] = useState(null);
 
   /* --- THE GEOMETRY UNDER THE POINTER, WHILE SOMETHING CAN TAKE IT ----------
@@ -11566,6 +11570,57 @@ export default function App({
      contextual bars are pinned to the same place at the foot of the stage — see
      the note on BOTTOM in CobSpec — so "the one you just opened" has to be the
      only one up. `closeContextual` is that rule in one place. */
+  /* --- A RUN'S WHOLE GESTURE ------------------------------------------------
+
+     THE SIMPLEST OF THE TEN, and what is left at the call site says so: a
+     displacement, the shift lock, and one rule about where it may be let go.
+
+     WHAT MOVES IS THE ARRAY AND NOT THE GEOMETRY UNDER IT — the displacement is
+     `dxFt`/`dyFt` on the array itself, in feet, so `at` and `to` are the pixel
+     round trip and nothing more.
+
+     NO SNAP AT ALL, WHICH IS A DECISION AND NOT AN OMISSION. No guide is drawn
+     for the frozen axis, and none is drawn for the free one either: an array is
+     set out on a geometry, and a dotted line claiming it had found an alignment
+     of its own would be a claim about the wrong object. */
+  const array = useDrag({
+    state: [arrayDrag, setArrayDrag],
+    point: svgPoint,
+    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
+    at: (o) => ({ x: (o.dxFt || 0) * pxPerFt, y: (o.dyFt || 0) * pxPerFt }),
+    to: (o, q) => ({ ...o, dxFt: q.x / pxPerFt, dyFt: q.y / pxPerFt }),
+    setList: setCobArrays,
+    zoom,
+    /* SHIFT HOLDS IT TO ONE AXIS, from the anchor rather than from the last
+       frame, so a run nudged sideways stays exactly level with where it was —
+       which is the whole reason anybody reaches for the modifier here. */
+    ortho: true,
+    /**
+     * LETTING GO OF A RUN.
+     *
+     * A RUN DROPPED OFF EVERY CEILING GOES BACK WHERE IT CAME FROM — the lamp
+     * drag's own rule (see the COB's `onCommit`), said about twelve at once and
+     * there for its reason rather than as a tidy-up. An array's `roomId` is what
+     * the Analysis counts it under, what its pools are clipped to and what its
+     * ceiling height is read from; carried clear of that room it would be a row
+     * of fittings drawn in the hall, counted in the bedroom, and clipped to a
+     * polygon they are nowhere near — visible on the sheet and absent from every
+     * reading of it.
+     *
+     * ANY ONE LAMP INSIDE A ROOM IS ENOUGH, and it is deliberately that lenient.
+     * A ring set out on a room's own outline has lamps ON the walls, and a strict
+     * "every lamp is inside" test would refuse the array's ordinary position.
+     * What this catches is the run carried right off the plan.
+     */
+    onCommit: (ids, d) => {
+      const own = arrayCobsPx.filter((c) => c.arrayId === d.id);
+      if (!own.length || own.some((c) => roomAt({ x: c.x, y: c.y }))) return;
+      const base = d.startAll[d.id];
+      setCobArrays((l) => l.map((q) => (q.id === d.id
+        ? { ...q, dxFt: base?.dxFt || 0, dyFt: base?.dyFt || 0 } : q)));
+    },
+  });
+
   const arrayGrab = (e, arrayId) => {
     const a = cobArrays.find((q) => q.id === arrayId);
     if (!a || !pxPerFt) return;
@@ -11577,67 +11632,12 @@ export default function App({
        after opening it. Same flag every grip on this canvas sets. */
     shapeTook.current = true;
     openArray(arrayId);
-    svgRef.current?.setPointerCapture?.(e.pointerId);
-    const p = svgPoint(e);
-    setArrayDrag({
-      id: arrayId, pointerId: e.pointerId,
-      from: p,
-      // WHERE THE RUN ALREADY WAS. Every frame's delta is measured from here and
-      // never from the frame before it — rule 2 in lib/dragMove.js.
-      base: { x: a.dxFt || 0, y: a.dyFt || 0 },
-      moved: false,
-    });
+    array.down(e, { id: arrayId, members: [a] });
   };
 
-  const arrayPointerMove = (e) => {
-    if (!arrayDrag || !pxPerFt) return;
-    const p = svgPoint(e);
-    if (!arrayDrag.moved) {
-      if (!movedEnough(arrayDrag.from, p, { zoom })) return;
-      setArrayDrag((d) => (d ? { ...d, moved: true } : d));
-    }
-    /* SHIFT HOLDS IT TO ONE AXIS, from the anchor rather than from the last
-       frame, so a run nudged sideways stays exactly level with where it was —
-       which is the whole reason anybody reaches for the modifier here. No guide
-       is drawn for the frozen axis, and none is drawn for the free one either:
-       an array is set out on a geometry, and a dotted line claiming it had found
-       an alignment of its own would be a claim about the wrong object. */
-    const want = { x: p.x - arrayDrag.from.x, y: p.y - arrayDrag.from.y };
-    const { at } = orthoLock(want, { x: 0, y: 0 }, e.shiftKey);
-    setCobArrays((l) => l.map((q) => (q.id === arrayDrag.id
-      ? { ...q, dxFt: arrayDrag.base.x + at.x / pxPerFt,
-                dyFt: arrayDrag.base.y + at.y / pxPerFt }
-      : q)));
-  };
+  const arrayPointerMove = (e) => { if (pxPerFt) array.move(e); };
 
-  /**
-   * LETTING GO OF A RUN.
-   *
-   * A RUN DROPPED OFF EVERY CEILING GOES BACK WHERE IT CAME FROM — the lamp
-   * drag's own rule (see `cobPointerUp`), said about twelve at once and there
-   * for its reason rather than as a tidy-up. An array's `roomId` is what the
-   * Analysis counts it under, what its pools are clipped to and what its ceiling
-   * height is read from; carried clear of that room it would be a row of
-   * fittings drawn in the hall, counted in the bedroom, and clipped to a
-   * polygon they are nowhere near — visible on the sheet and absent from every
-   * reading of it.
-   *
-   * ANY ONE LAMP INSIDE A ROOM IS ENOUGH, and it is deliberately that lenient. A
-   * ring set out on a room's own outline has lamps ON the walls, and a strict
-   * "every lamp is inside" test would refuse the array's ordinary position. What
-   * this catches is the run carried right off the plan.
-   */
-  const arrayPointerUp = () => {
-    if (!arrayDrag) return;
-    if (arrayDrag.moved) {
-      const own = arrayCobsPx.filter((c) => c.arrayId === arrayDrag.id);
-      if (own.length && !own.some((c) => roomAt({ x: c.x, y: c.y }))) {
-        setCobArrays((l) => l.map((q) => (q.id === arrayDrag.id
-          ? { ...q, dxFt: arrayDrag.base.x, dyFt: arrayDrag.base.y } : q)));
-      }
-    }
-    setArrayDrag(null);
-  };
+  const arrayPointerUp = array.up;
 
   /* --- A MODULE, PICKED UP AND SLID ALONG ITS RUN ---------------------------
 
