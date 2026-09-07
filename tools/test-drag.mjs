@@ -325,12 +325,20 @@ say('THE REST OF THE LIFECYCLE — the release, and a drop that is refused');
   // A GESTURE THAT DOES NOT CARRY ITS MEMBERS WRITES NOTHING TO THEM. One press
   // on a ceiling object can mean move, resize or rotate; only the first is a
   // translation, and only the first may leave a copy behind.
-  const h = rig({ moves: () => false, copy: true, mintId: (n2) => `twin${n2}` });
-  h.down(100, 100);
-  h.move(200, 100, { altKey: true });
+  let snapped = 0;
+  const h = rig({ moves: () => false, copy: true, ortho: true,
+                  mintId: (n2) => `twin${n2}`, snap: (q) => { snapped++; return q; } });
+  h.down(130, 100);              // grabbed 30 px off centre
+  h.move(200, 100, { altKey: true, shiftKey: true });
   ok(h.list.length === 2 && atPt(h.get('a'), 100, 100) && h.frames.length === 1,
     'a frame that is not a translation moves nothing and forks nothing — but the '
     + 'caller still gets the frame');
+  ok(snapped === 0 && h.frames[0].axis === null && h.frames[0].delta === null,
+    'and it resolves NOTHING: no snap, no guides, no lock, no delta — a corner '
+    + 'being dragged is not a thing going anywhere');
+  ok(atPt(h.frames[0].p, 200, 100),
+    'the caller gets the RAW pointer, not a point pulled back by the grab offset — '
+    + 'a resize reads the corner where the hand is');
 
   // AND A HOOK WITH NO STORE WRITES NOTHING AND STILL RUNS THE LIFECYCLE: five
   // of the ten drags write an override in a map, or nothing until the release.

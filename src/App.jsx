@@ -10959,34 +10959,92 @@ export default function App({
   };
 
   /**
-   * WHERE A DRAGGED OBJECT WANTS TO BE, in plan pixels, with Shift holding it to
-   * one axis. Shared by the ordinary move and by the first move of an
-   * Option-drag copy, because "hold Shift to go straight" has to mean the same
-   * thing whichever of the two you are doing — and holding both modifiers at
-   * once (copy, in a straight line) is the gesture that lays out a row.
+   * WHERE A DRAGGED OBJECT LANDS, once the shift lock has had its say.
    *
-   * THE LINE IS MEASURED FROM WHERE THE PRESS WAS, `drag.start`, not from the
-   * last frame. Frame-to-frame would let the constraint creep: each frame is
-   * straight relative to the one before it and the path as a whole bends. From
-   * the anchor, a locked drag is on the same line however long it goes on, and
-   * for a copy that anchor is the ORIGINAL — so Option+Shift leaves the twin
-   * exactly level with the object it came from, which is the whole point.
+   * A CEILING OBJECT IS HELD IN FEET AND THE SNAPPER SPEAKS PIXELS, so this is
+   * the round trip and the exclusion list, and nothing else. The two rules this
+   * used to state — the line measured from the press rather than the last frame,
+   * and the axis re-decided every frame instead of latched on the first pixel —
+   * are stated once in lib/dragMove.js and enforced once in hooks/useDrag.js,
+   * which hands the point here already locked.
    *
-   * WHICHEVER AXIS HAS TRAVELLED FURTHER WINS, re-decided every frame. It is not
-   * latched on the first pixel: a drag that starts off sideways and turns into a
-   * vertical one switches over as it crosses the diagonal, which is what every
-   * other tool with this modifier does and what the hand expects.
+   * IT SERVES THE ORDINARY MOVE AND THE FIRST MOVE OF AN OPTION-COPY ALIKE,
+   * because "hold Shift to go straight" has to mean the same thing whichever of
+   * the two you are doing — and holding both modifiers at once (copy, in a
+   * straight line) is the gesture that lays out a row.
    */
-  const moveTargetPx = (ft, drag, shift, excludeId) => {
-    const ax = drag.start.x * pxPerFt, ay = drag.start.y * pxPerFt;
-    const want = { x: (ft.x - drag.grabFt.x) * pxPerFt,
-                   y: (ft.y - drag.grabFt.y) * pxPerFt };
-    if (!shift) return applySnap(want, excludeId);
-    // Travelled further across than down: it is a row, so `y` is what freezes.
-    const row = Math.abs(want.x - ax) >= Math.abs(want.y - ay);
-    return applySnap(row ? { x: want.x, y: ay } : { x: ax, y: want.y },
-                     excludeId, row ? 'y' : 'x');
+  const objSnapAt = (ftPt, axis, excludeId) => {
+    const r = applySnap({ x: ftPt.x * pxPerFt, y: ftPt.y * pxPerFt }, excludeId, axis);
+    return { x: r.x / pxPerFt, y: r.y / pxPerFt };
   };
+
+  /* --- A CEILING OBJECT'S WHOLE GESTURE -------------------------------------
+
+     ONE PRESS, THREE MEANINGS, AND ONLY ONE OF THEM IS A TRANSLATION. `moves`
+     is that distinction: move carries the members and may leave a copy behind;
+     resize and rotate act on one object's own frame and are handled in `onMove`
+     below, where the arithmetic that is theirs already lives. Their handles are
+     only drawn when exactly one thing is selected (see PlanCanvas), so they can
+     only ever mean `[id]`.
+
+     HELD IN FEET, because a ceiling object is a real thing of a real size that
+     somebody placed and it has to survive a scale correction. So `point` is in
+     feet too, and the snapper's pixels are `objSnapAt`'s round trip.
+
+     NO SLOP, AND IT IS THE ONLY DRAG HERE BESIDES THE DOOR BOX WITH NONE.
+     Selecting a ceiling object is a press with a handle under it or Shift held,
+     never a bare press that might have been a nudge, so there is no click
+     meaning for a threshold to protect. `slopPx: 0`. */
+  const obj = useDrag({
+    state: [objDrag, setObjDrag],
+    point: (e) => { const p = svgPoint(e); return { x: p.x / pxPerFt, y: p.y / pxPerFt }; },
+    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
+    at: (o) => ({ x: o.x, y: o.y }),
+    to: (o, q) => ({ ...o, x: q.x, y: q.y }),
+    setList: setCeilingObjs,
+    slopPx: 0,
+    moves: (d) => d.mode === 'move',
+    ortho: true,
+    snap: (q, axis, { ids }) => objSnapAt(q, axis, ids),
+    copy: true,
+    mintId: () => newCeilingObjectId(),
+    /* THE TWIN IS WHAT KEEPS MOVING, which is the convention everywhere this
+       gesture exists and the one that makes a row of cassettes possible: drag,
+       Option, release — and the thing you just positioned is the one still
+       selected, ready to be dragged again. */
+    onCopy: ({ ids }) => setSel(selectMany('object', ids)),
+    /* RESIZE AND ROTATE, WHICH ARE NOT TRANSLATIONS AND SO GET NO DELTA. Both
+       are singular and both read the object as it was at the PRESS — rule 2
+       again: resizing from a live value compounds each frame's rounding into a
+       cassette that creeps as you drag its corner. */
+    onMove: (ftPt, { drag: d, event: e }) => {
+      if (d.mode === 'move') return;
+      setCeilingObjs((os) => os.map((o) => {
+        if (o.id !== d.id) return o;
+        const base = d.startAll[d.id];
+        if (!base) return o;
+        if (d.mode === 'resize') {
+          if (guides.length) setGuides([]);
+          const { hw, hh } = halfExtents(base);
+          const next = resizeFromCorner(
+            { wFt: hw * 2, hFt: hh * 2, x: base.x, y: base.y, rot: base.rot || 0 },
+            d.corner, ftPt,
+            // Shift locks the ratio; a round object has no ratio to unlock. Alt
+            // resizes about the centre instead of the opposite corner.
+            { uniform: e.shiftKey || isUniform(base), fromCentre: e.altKey });
+          return applyResize(o, next);
+        }
+        if (d.mode === 'rotate') {
+          if (guides.length) setGuides([]);
+          return { ...o, rot: rotateTo(o, ftPt, {
+            startRot: d.startRot, startAngle: d.startAngle, snap: e.shiftKey }) };
+        }
+        return o;
+      }));
+    },
+    // The guides are a property of the GESTURE, not of the object.
+    onRelease: () => setGuides([]),
+  });
 
   const objPointerDown = (e, id, mode, corner = null) => {
     if (e.button != null && e.button !== 0) return;   // middle button is the pan
@@ -11009,8 +11067,6 @@ export default function App({
       return;
     }
 
-    const svg = svgRef.current;
-    svg?.setPointerCapture?.(e.pointerId);
     const o = ceilingObjs.find((q) => q.id === id);
     if (!o) return;
     setObjMode(true);
@@ -11029,170 +11085,23 @@ export default function App({
     const group = mode === 'move' && selObjIds.includes(id) ? selObjIds : [id];
     setSel(selectMany('object', group));
 
-    const p = svgPoint(e);
-    const ft = { x: p.x / pxPerFt, y: p.y / pxPerFt };
-    setObjDrag({
-      id, mode, corner, pointerId: e.pointerId,
-      grabFt: { x: ft.x - o.x, y: ft.y - o.y },
+    const pressPx = svgPoint(e);
+    const ft = { x: pressPx.x / pxPerFt, y: pressPx.y / pxPerFt };
+    /* WHO IS MOVING, AND WHERE THEY ALL WERE WHEN IT STARTED — the hook takes
+       the snapshots from `members`. What rides along on top of them is the two
+       numbers a ROTATION needs, which have no meaning for the other two modes
+       and are cheaper to take once than to re-derive per frame. */
+    obj.down(e, {
+      id, members: ceilingObjs.filter((q) => group.includes(q.id)),
+      mode, corner,
       startRot: o.rot || 0,
       startAngle: Math.atan2(ft.y - o.y, ft.x - o.x),
-      start: { ...o },
-      /* WHO IS MOVING, AND WHERE THEY ALL WERE WHEN IT STARTED. The group is
-         moved by applying ONE delta to each member's snapshot rather than by
-         accumulating per-frame offsets: accumulation drifts, and a set of
-         cassettes that no longer line up with each other after a long drag is a
-         set somebody has to fix by hand. `startAll` is also what the Option copy
-         restores the originals from. */
-      group,
-      startAll: Object.fromEntries(ceilingObjs
-        .filter((q) => group.includes(q.id))
-        .map((q) => [q.id, { ...q }])),
-      moved: false,
-      /* HAS THIS DRAG ALREADY LEFT A COPY BEHIND? Nothing about the modifier is
-         recorded here — see the note in `objPointerMove`, which reads Option
-         live off every move event. This flag exists only so the twin is made
-         once and not once per frame. */
-      copied: false,
     });
   };
 
-  const objPointerMove = (e) => {
-    if (!objDrag || !pxPerFt) return;
-    const p = svgPoint(e);
-    const ft = { x: p.x / pxPerFt, y: p.y / pxPerFt };
+  const objPointerMove = (e) => { if (pxPerFt) obj.move(e); };
 
-    /* OPTION-DRAG LEAVES A COPY BEHIND — a fan, a cassette, a chandelier, any of
-       them, because they are one collection with a type on each row and nothing
-       in here reads the type.
-
-       THE MODIFIER IS READ LIVE, OFF EVERY MOVE EVENT, AND THE ORDER OF THE TWO
-       DOES NOT MATTER. It was latched at the press — `e.altKey` recorded in
-       `objPointerDown` — which meant Option had to be down BEFORE the object was
-       even touched, and that is not how anyone reaches for it: you pick the
-       thing up, you see it move, and then you decide you wanted a copy. Read
-       here, "Option then drag" and "drag then Option" are the same gesture, and
-       it sits with every other modifier on this canvas rather than being the one
-       exception — Shift locks a ratio, Alt resizes from the centre, all read
-       from the move event that uses them.
-
-       THE ORIGINAL IS PUT BACK WHERE IT WAS PICKED UP. This is what reading the
-       modifier late actually costs, and it has to be paid: by the time Option
-       arrives the original may have been dragged half way across the room, and
-       leaving it there would mean one gesture both moved a thing and copied it —
-       two edits, one of which nobody asked for. `objDrag.start` is the object as
-       it was at the press, so restoring from it returns the position AND any
-       rotation the drag had touched. When Option was already down at the press
-       the original never moved and this is a no-op.
-
-       THE TWIN IS WHAT KEEPS MOVING, which is the convention everywhere this
-       gesture exists and the one that makes a row of cassettes possible: drag,
-       Option, release — and the thing you just positioned is the one still
-       selected, ready to be dragged again.
-
-       ONCE MADE, IT STAYS MADE. `copied` latches, so letting go of Option
-       mid-drag does not un-create the twin or hand the drag back to the
-       original; it simply carries on moving what is now under the pointer. A
-       modifier that can undo a thing it already did is a modifier you cannot
-       let go of.
-
-       AND NOTHING HAPPENS WITHOUT MOVEMENT. Pressing a key fires no
-       `pointermove`, so Option on a held-still object mints nothing: no
-       invisible duplicate stacked exactly on its original, doubling a schedule
-       line where nobody can see it.
-
-       ONE `setCeilingObjs` DOING THE RESTORE AND THE CLONE TOGETHER, then a
-       return. `objDrag` in this closure is the value from the render that
-       installed this handler, so the retarget below cannot be seen by the code
-       after it — a second `setCeilingObjs` here would move the ORIGINAL. Every
-       later move event sees the new id and takes the ordinary path.
-
-       THE TWIN MAY SNAP TO THE OBJECT IT CAME FROM. `applySnap` is told to
-       exclude the TWIN's id, which is not in the list yet, so nothing is
-       excluded and the original is a live snap target — which is exactly what
-       lining a second cassette up with the first wants. */
-    if (objDrag.mode === 'move' && !objDrag.copied && e.altKey) {
-      /* THE IDS ARE MINTED BEFORE THE SNAP so the snapper can be told to ignore
-         them — they are not in the list yet, so nothing is actually excluded and
-         the ORIGINALS stay live targets. That is the alignment worth having: the
-         copy catches the centre of the thing it came from. */
-      const pairs = objDrag.group.map((gid) => (
-        { gid, twinId: newCeilingObjectId(), base: objDrag.startAll[gid] }
-      )).filter((q) => q.base);
-      if (!pairs.length) return;
-      const at = moveTargetPx(ft, objDrag, e.shiftKey, pairs.map((q) => q.twinId));
-      const dx = at.x / pxPerFt - objDrag.start.x;
-      const dy = at.y / pxPerFt - objDrag.start.y;
-      const twins = pairs.map(({ twinId, base }) => (
-        { ...base, id: twinId, x: base.x + dx, y: base.y + dy }
-      ));
-      setCeilingObjs((os) => [
-        // Every original straight back to where it was picked up.
-        ...os.map((o) => (objDrag.startAll[o.id] ? { ...objDrag.startAll[o.id] } : o)),
-        ...twins,
-      ]);
-      setSel(selectMany('object', twins.map((t) => t.id)));
-      setObjDrag((d) => (d ? {
-        ...d,
-        // The drag transfers to the twin of the object under the pointer, and the
-        // anchor is untouched: `start` is still the ORIGINAL's position, so later
-        // frames go on computing one delta from the press and applying it to
-        // these snapshots exactly as a plain group move does.
-        id: pairs.find((q) => q.gid === d.id)?.twinId ?? twins[0].id,
-        group: twins.map((t) => t.id),
-        startAll: Object.fromEntries(pairs.map(({ twinId, base }) => [twinId, { ...base, id: twinId }])),
-        copied: true, moved: true,
-      } : d));
-      return;
-    }
-
-    if (!objDrag.moved) setObjDrag((d) => (d ? { ...d, moved: true } : d));
-
-    /* THE MOVE IS THE ONE GESTURE THAT CAN TOUCH MORE THAN ONE OBJECT, so it is
-       lifted out of the per-object map below rather than living inside it.
-       Resize and rotate stay in there and stay singular: their handles are only
-       drawn when exactly one thing is selected.
-       THE OBJECT UNDER THE POINTER IS WHAT SNAPS, and everything else follows by
-       the same delta. Snapping each member independently would pull the group
-       apart — four cassettes would each find their own nearest alignment and
-       arrive no longer in a row. And it is the CENTRE that snaps, not the
-       pointer: aligning on wherever inside the object you happened to grab it
-       would make the same drag land differently each time.
-       Shift holds the delta to one axis — see `moveTargetPx`. */
-    if (objDrag.mode === 'move') {
-      const at = moveTargetPx(ft, objDrag, e.shiftKey, objDrag.group);
-      const dx = at.x / pxPerFt - objDrag.start.x;
-      const dy = at.y / pxPerFt - objDrag.start.y;
-      setCeilingObjs((os) => os.map((o) => {
-        const base = objDrag.startAll[o.id];
-        return base ? { ...o, x: base.x + dx, y: base.y + dy } : o;
-      }));
-      return;
-    }
-
-    setCeilingObjs((os) => os.map((o) => {
-      if (o.id !== objDrag.id) return o;
-      if (objDrag.mode === 'resize') {
-        if (guides.length) setGuides([]);
-        const base = objDrag.start;
-        const { hw, hh } = halfExtents(base);
-        const next = resizeFromCorner(
-          { wFt: hw * 2, hFt: hh * 2, x: base.x, y: base.y, rot: base.rot || 0 },
-          objDrag.corner, ft,
-          // Shift locks the ratio; a round object has no ratio to unlock. Alt
-          // resizes about the centre instead of the opposite corner.
-          { uniform: e.shiftKey || isUniform(base), fromCentre: e.altKey });
-        return applyResize(o, next);
-      }
-      if (objDrag.mode === 'rotate') {
-        if (guides.length) setGuides([]);
-        return { ...o, rot: rotateTo(o, ft, {
-          startRot: objDrag.startRot, startAngle: objDrag.startAngle, snap: e.shiftKey }) };
-      }
-      return o;
-    }));
-  };
-
-  const objPointerUp = () => { if (objDrag) { setObjDrag(null); setGuides([]); } };
+  const objPointerUp = obj.up;
 
   /**
    * Editing an accent fitting.

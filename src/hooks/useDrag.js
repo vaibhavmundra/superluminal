@@ -34,8 +34,11 @@
 // learns which it has.
 //
 // `moves` — DOES THIS GESTURE CARRY THE MEMBERS AT ALL. One press on a ceiling
-// object can mean move, resize or rotate; only the first is a translation, and
-// only the first may leave a copy behind. The predicate is asked per frame.
+// object can mean move, resize or rotate; only the first is a translation. The
+// predicate is asked per frame, and a frame it answers no to resolves NOTHING —
+// no lock, no snap, no guides, no delta, no copy: a corner being dragged is not
+// a thing going anywhere, so there is no point to snap and no alignment to
+// claim. The caller gets the raw pointer instead.
 //
 // `moved` — THE THRESHOLD, WHEN IT IS NOT THE ORDINARY ONE. The default is
 // `movedEnough` in screen pixels over the zoom, which is what the lamp, the
@@ -227,18 +230,26 @@ export function makeDrag({
       if (!past(d.from, p, d)) return;
       set((cur) => (cur ? { ...cur, moved: true } : cur));
     }
-    const carries = moves(d);
+    /* A FRAME THAT IS NOT A TRANSLATION HAS NO TARGET TO RESOLVE, so none of the
+       three steps runs: no lock, no snap and therefore NO GUIDES, and no delta.
+       A ceiling object being resized or rotated is not going anywhere, and a
+       guide drawn during one would be claiming an alignment for a corner that is
+       moving on its own. The caller gets the RAW pointer and does its own work. */
+    if (!moves(d)) {
+      onMove?.(p, { pointer: p, delta: null, axis: null, event: e, drag: d });
+      return;
+    }
     /* THE MODIFIER IS READ LIVE, OFF THIS EVENT, so "Option then drag" and
        "drag then Option" are one gesture — and nothing can happen without
        movement, because pressing a key fires no pointermove. That is what stops
        an invisible duplicate stacked exactly on its original. */
-    if (copy && carries && !d.copied && e?.altKey) { fork(p, e, d); return; }
+    if (copy && !d.copied && e?.altKey) { fork(p, e, d); return; }
     const { target, axis } = resolve(p, e, d, d.group);
     const delta = d.start ? deltaFrom(d.start, target) : null;
     /* ONE MEMBER SNAPS AND THE REST FOLLOW — `resolve` above did the snapping,
        once, for the thing under the pointer. Snapping each member
        independently would pull the group apart. */
-    if (carries && setList && delta) {
+    if (setList && delta) {
       setList((l) => applyDelta(l, d.startAll, delta, unit));
     }
     onMove?.(target, { pointer: p, delta, axis, event: e, drag: d });
