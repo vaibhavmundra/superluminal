@@ -1,9 +1,131 @@
 import { pointInPolygon } from './geometry.js';
 import { SHAPE_BY_ID, outlineFt as shapeOutlineFt, cornersFt as shapeCornersFt,
-         pathLengthFt, isOpen as shapeIsOpen, isTrack as shapeIsTrack } from './ceilingShapes.js';
+         pathLengthFt, isOpen as shapeIsOpen, isTrack as shapeIsTrack,
+         isBuilt as shapeIsBuilt, frameFt as shapeFrameFt, handlesFor } from './ceilingShapes.js';
 import { MODULE_BY_ID, moduleAt, moduleLenIn } from './magTrack.js';
 import { arraySpots, arrayPath, throwDiameterFt, DEFAULT_DROP_FT } from './cob.js';
+import { STRIP_OFFSET_FT } from './cove.js';
 
+
+/**
+ * THE SETTING-OUT LINE OF THE ARRAY THAT IS OPEN — the "connector".
+ *
+ * DRAWN ONLY WHILE ITS ARRAY IS SELECTED, and that is the honest lifetime. It
+ * is not a thing on the ceiling: nobody builds it, it appears on no drawing
+ * that leaves here, and a dashed ring left under every array for ever would be
+ * the sheet claiming a line that is not there. What it IS is the array's
+ * handle — the one mark that says twelve separate lamps are one object — and
+ * the moment that matters is the moment somebody has hold of it.
+ *
+ * IT IS ALSO WHAT MAKES THE RUN DRAGGABLE BY SOMETHING OTHER THAN A LAMP. On
+ * a ring of four the lamps are four small targets a long way apart; the line
+ * between them is the whole geometry and can be grabbed anywhere.
+ */
+export function projectSelectedArrayPathPx(cobArrays, selArrayId, arrayOutline, pxPerFt) {
+    const a = cobArrays.find((q) => q.id === selArrayId);
+    if (!a || !(pxPerFt > 0)) return null;
+    const geo = arrayOutline(a.geomId);
+    if (!geo) return null;
+    const pts = arrayPath(geo.pts, {
+      closed: geo.closed, side: a.side, offsetFt: (a.offsetFt || 0) * pxPerFt,
+      dx: (a.dxFt || 0) * pxPerFt, dy: (a.dyFt || 0) * pxPerFt });
+    return pts?.length > 1 ? { pts, closed: geo.closed, id: a.id } : null;
+  }
+
+/* --- HAND-PLACED COBs, IN THE SPACE THE CANVAS DRAWS IN --------------------
+   THE STORE IS FEET AND EVERY READER WANTS PIXELS, so the conversion happens
+   once, here, rather than in the four places that draw, count and hit-test
+   them. It is the same shape `trackEditPx` and `penDraftPx` take, and the same
+   multiplication: plan feet are plan pixels over `pxPerFt` with no origin to
+   subtract, because unlike a room's own feet they are measured from the
+   sheet's corner. */
+export function projectManualCobsPx(manualCobs, pxPerFt, ceilingMmFor) {
+  return pxPerFt > 0
+    ? manualCobs.map((c) => ({
+        ...c, x: c.xFt * pxPerFt, y: c.yFt * pxPerFt,
+        /* WHAT THIS LAMP THROWS, AS A DIAMETER IN FEET. Computed here rather
+           than on the canvas because it takes the SPACE's ceiling height, and
+           the canvas is handed one flat list of fittings rather than a list per
+           room. It is a real number for once: every other pool on this sheet is
+           read out of THROW_STYLE's three stated diameters, which were worked
+           out on a 9 ft assumption because the app had no height when they were
+           written. A hand-placed lamp states its own beam angle and sits in a
+           space with its own recorded height, so its pool is computed from both.
+           See throwDiameterFt. */
+        throwFt: throwDiameterFt(c.beam,
+          (ceilingMmFor(c.roomId) / 304.8) || DEFAULT_DROP_FT),
+      }))
+    : [];
+}
+
+/* --- THE DRAWN COVES, FOR THE CANVAS ----------------------------------------
+   PLAN PIXELS, because that is the space the canvas draws in, and the
+   conversion is a multiply: a shape is held in the plan's own feet, whose
+   origin is the drawing's own. See ceilingShapes.
+
+   lit IS THE ONE NON-OBVIOUS FIELD. A shape over a lit space is already on
+   the sheet — the room's covesPx carries its setting-out line and the accents
+   carry its tape — so drawing it again in the shapes layer would be two marks
+   for one object, at slightly different weights. A shape the layout did NOT
+   take up has nothing else drawing it, and an object that disappears when you
+   commit it is worse than one drawn twice. So the layer is told which is which
+   and draws only the ones nobody else did. */
+export function projectCoveShapesPx(ceilingShapes, litShapeIds, shapePts, pxPerFt) {
+  return pxPerFt ? ceilingShapes.map((sh) => ({
+    id: sh.id,
+    /* AN OPEN COVE IS ALWAYS "LIT", because the accent layer is always drawing
+       it — it does not go through the ceiling design and so never appears in a
+       room's `coves`, but it does become a run (see `accentZonesPx`) and that
+       run is on the sheet whether the space has a layout or not. Without this it
+       would be drawn twice: the tape, and a dashed line under it. */
+    /* A GUIDE IS NEVER "LIT". `lit` means something else on this sheet is already
+       drawing the shape — its setting-out line among the room's coves, its tape
+       among the accents — so this layer owes it only a way to grab it. Nothing
+       else draws a guide, by definition, so this layer draws it: the dashed
+       outline is the whole of the mark. */
+    /* `lit` MEANS SOMETHING ELSE IS ALREADY DRAWING THIS SHAPE — its
+       setting-out line among the room's coves, its tape among the accents. Only
+       a COVE ever is: a guide is drawn by this layer alone, and a magnetic
+       track by the track layer, which draws the profile itself rather than a
+       dotted line to set out from. */
+    lit: shapeIsBuilt(sh) && (litShapeIds.has(sh.id) || shapeIsOpen(sh)),
+    /* AND WHETHER THIS LAYER OWES IT A DASHED LINE AT ALL. A track is drawn
+       SOLID, as a visible profile with modules on it — see the track layer — so
+       a dotted setting-out line under it would be two marks for one object at
+       two different weights, which is the exact fault `lit` exists to prevent. */
+    track: shapeIsTrack(sh),
+    open: shapeIsOpen(sh),
+    pts: shapePts(sh),
+    /* THE TAPE IS PART OF THE OBJECT AND HAS TO BE GRABBABLE TOO. On the sheet
+       a drawn cove is two marks three inches apart — the dotted setting-out
+       line, and the run of glowing dots outside it — and to anybody looking at
+       it they are one thing. Offering the grab on only the line meant aiming at
+       the fainter of the two, with the brighter one sitting right beside it
+       doing nothing.
+       BOTH LISTS RATHER THAN ONE FAT BAND OVER THE PAIR, because three inches
+       is three inches: at low zoom the two are a pixel apart and one band covers
+       both, and at high zoom they are far enough apart that a band wide enough
+       to span them would be a band reaching well into the room. */
+    /* NO SECOND BAND ON A SLOT. The tape and the setting-out line are three
+       inches apart on a pocket and are the same line on a slot — see `outlineFt`
+       — so offering both here would be two grab bands on one set of points. */
+    tape: (shapeIsOpen(sh) || !shapeIsBuilt(sh)) ? null
+      : shapePts(sh, STRIP_OFFSET_FT),
+    /* THE FRAME AND ITS GRIPS, drawn only on the shape whose dimensions are
+       being asked for. Which grips there are is a fact about the SHAPE — a
+       circle has no edge to drag independently, see `handlesFor` — so it is
+       answered here where the shape is, and the canvas draws what it is given. */
+    frame: (() => { const f = shapeFrameFt(sh);
+      return { x0: f.x0 * pxPerFt, y0: f.y0 * pxPerFt,
+               x1: f.x1 * pxPerFt, y1: f.y1 * pxPerFt }; })(),
+    handles: handlesFor(sh),
+  })) : [];
+}
+
+export function projectDraftShapePx(shapeDraft, shapePts, pxPerFt) {
+  return shapeDraft && pxPerFt
+      ? { pts: shapePts(shapeDraft), open: shapeIsOpen(shapeDraft) } : null;
+}
 /**
  * EVERY MAGNETIC TRACK ON THE DRAWING, RESOLVED — in plan pixels.
  *
@@ -147,4 +269,3 @@ export function projectDraftArrayPx(cobDraftArray, arrayOutline, pxPerFt) {
     return { pts, path, closed: geo.closed, geo };
   
 }
-
