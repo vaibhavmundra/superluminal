@@ -9127,89 +9127,76 @@ export default function App({
   const flowPointerDown = (e, id) => {
     if (e.button != null && e.button !== 0) return;
     // A TOOL IN HAND WINS, exactly as it does for a plate: somebody placing a
-    // fitting across a wire is aiming at the drawing, not at the wire.
-    if (addTool || zoneMode || armed) return;
+    // fitting across a wire is aiming at the drawing, not at the wire. THROUGH
+    // THE ROUTER, like the grip below it — see lib/pressOwner.js.
+    if (!canGrab(pressState)) return;
     e.preventDefault();
     // ONE SELECTION ON THIS CANVAS.
     setSel(select('flow', id));
   };
 
-  /**
-   * AND THEN A GRIP ON IT — the end at the plate, or one leg's own bow.
-   *
-   * THE POINTER IS CAPTURED HERE AND THE WORK HAPPENS IN THE MOVE, which is the
-   * same shape every other drag on this canvas has. `live` turns on once the
-   * pointer has gone past a few pixels, for the reason the board drag gives: a
-   * click that wobbles writes a hand value onto something that was exactly where
-   * the rule put it, and the wire is then marked as moved for the life of the
-   * plan.
-   */
-  const flowGripDown = (e, id, kind, key) => {
-    if (e.button != null && e.button !== 0) return;
-    if (addTool || zoneMode || armed) return;
-    e.preventDefault();
-    setSel(select('flow', id));
-    svgRef.current?.setPointerCapture?.(e.pointerId);
-    const p = svgPoint(e);
-    setFlowDrag({ id, kind, key, origin: p, at: p, live: false, overId: null });
-  };
+  /* --- A WIRE'S GRIP: ITS WHOLE GESTURE -------------------------------------
 
-  const flowPointerMove = (e) => {
-    if (!flowDrag) return;
-    const p = svgPoint(e);
-    if (!flowDrag.live) {
-      const slop = Math.max(3, (pxPerFt || 12) * 0.12);
-      if (Math.hypot(p.x - flowDrag.origin.x, p.y - flowDrag.origin.y) < slop) return;
-      setFlowDrag((d) => (d ? { ...d, live: true } : d));
-    }
-    const flow = flowsPx.find((f) => f.id === flowDrag.id);
-    if (!flow) return;
+     ONE PRESS, TWO KINDS, AND THEY COMMIT AT OPPOSITE ENDS OF THE GESTURE.
 
-    if (flowDrag.kind === 'board') {
-      /* NOTHING IS COMMITTED UNTIL THE DROP. The end is carried — `at` for the
-         rubber band, `overId` for the ring round the plate it would land on —
-         and `flowBoards` is written once, on release. Writing per move would
-         re-order the loop, re-compose two switchboards and repaint the panel on
-         every frame; a board SLIDE writes per move precisely because it does
-         none of those things. */
-      const over = boardUnder(p, allBoardsPx, { pxPerFt });
-      setFlowDrag((d) => (d ? { ...d, at: p, overId: over?.id ?? null } : d));
-      return;
-    }
+     A BEND WRITES PER MOVE. It is the perpendicular distance from the leg's own
+     chord, minus what the rule already bows it by — so what is stored is the
+     DELTA the hand added and a leg's own length still drives the rest. In feet,
+     like every other stored hand position in this file. AGAINST THE LEG AS IT IS
+     DRAWN RIGHT NOW, which includes the bend applied so far: that is what makes
+     the grip track the pointer instead of doubling its movement. `base` is the
+     rule's bow and the pointer's offset from the chord IS the new total, so the
+     delta is one subtraction and not an accumulation.
 
-    /* A BEND IS THE PERPENDICULAR DISTANCE FROM THE LEG'S OWN CHORD, minus what
-       the rule already bows it by — so what is stored is the DELTA the hand
-       added and a leg's own length still drives the rest. In feet, like every
-       other stored hand position in this file.
+     THE END AT THE PLATE COMMITS ON THE DROP. Nothing is written until then —
+     `at` is carried for the rubber band and `overId` for the ring round the
+     plate it would land on — because writing per move would re-order the loop,
+     re-compose two switchboards and repaint the panel on every frame. A board
+     SLIDE writes per move precisely because it does none of those things.
 
-       AGAINST THE LEG AS IT IS DRAWN RIGHT NOW, which includes the bend applied
-       so far. That is what makes the grip track the pointer instead of doubling
-       its movement: `base` is the rule's bow and the pointer's offset from the
-       chord IS the new total, so the delta is one subtraction and not an
-       accumulation. */
-    const leg = [...(flow.legs ?? []), ...(flow.also?.legs ?? [])]
-      .find((l) => l.key === flowDrag.key);
-    if (!leg || !(pxPerFt > 0)) return;
-    const off = (p.x - leg.mid.x) * leg.normal.x + (p.y - leg.mid.y) * leg.normal.y;
-    const bendFt = (off - leg.base) / pxPerFt;
-    setFlowBends((m) => ({
-      ...m, [flowDrag.id]: { ...(m[flowDrag.id] ?? {}), [flowDrag.key]: bendFt },
-    }));
-  };
+     SO NO STORE IS HANDED TO THE HOOK. Neither kind writes a member's position:
+     one writes an override in a map and the other writes nothing at all until
+     `onCommit`.
 
-  const flowPointerUp = () => {
-    if (!flowDrag) return;
+     ITS THRESHOLD IS THE PLATE'S, and for the plate's reason: a click that
+     wobbles writes a hand value onto something that was exactly where the rule
+     put it, and the wire is then marked as moved for the life of the plan. */
+  const flow = useDrag({
+    state: [flowDrag, setFlowDrag],
+    point: svgPoint,
+    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
+    moved: (from, p) => Math.hypot(p.x - from.x, p.y - from.y)
+      >= Math.max(3, (pxPerFt || 12) * 0.12),
+    onMove: (p, { drag: d }) => {
+      const f = flowsPx.find((q) => q.id === d.id);
+      if (!f) return;
+      if (d.kind === 'board') {
+        const over = boardUnder(p, allBoardsPx, { pxPerFt });
+        flow.set((cur) => (cur ? { ...cur, at: p, overId: over?.id ?? null } : cur));
+        return;
+      }
+      const leg = [...(f.legs ?? []), ...(f.also?.legs ?? [])]
+        .find((l) => l.key === d.key);
+      if (!leg || !(pxPerFt > 0)) return;
+      const off = (p.x - leg.mid.x) * leg.normal.x + (p.y - leg.mid.y) * leg.normal.y;
+      const bendFt = (off - leg.base) / pxPerFt;
+      setFlowBends((m) => ({
+        ...m, [d.id]: { ...(m[d.id] ?? {}), [d.key]: bendFt },
+      }));
+    },
     /* THE DROP IS THE COMMIT, for a board drag. A release over nothing is a
-       gesture abandoned and leaves the wire where it was — NOT an un-assignment,
-       because "let go over empty floor" is what a person does when they change
-       their mind, and reading it as "disconnect this" would lose the plate they
-       had picked deliberately last week.
+       gesture abandoned and leaves the wire where it was — NOT an
+       un-assignment, because "let go over empty floor" is what a person does
+       when they change their mind, and reading it as "disconnect this" would
+       lose the plate they had picked deliberately last week.
        A DROP ON THE PLATE IT WAS ALREADY ON CLEARS THE OVERRIDE rather than
-       storing it, which is the way back: dragging a wire home puts it back under
-       the rules instead of pinning it to the answer the rules currently give. */
-    if (flowDrag.kind === 'board' && flowDrag.live && flowDrag.overId) {
-      const flow = flowsPx.find((f) => f.id === flowDrag.id);
-      const home = !flow?.assigned && flow?.boardId === flowDrag.overId;
+       storing it, which is the way back: dragging a wire home puts it back
+       under the rules instead of pinning it to the answer the rules currently
+       give. */
+    onCommit: (ids, d) => {
+      if (d.kind !== 'board' || !d.overId) return;
+      const f = flowsPx.find((q) => q.id === d.id);
+      const home = !f?.assigned && f?.boardId === d.overId;
       /* A WIRE DROPPED ON A SOCKET OUTLET CONVERTS IT, in the same gesture.
          An outlet is one socket and no switch — that is the definition — so
          "this appliance is switched from that plate" is a statement that the
@@ -9220,18 +9207,39 @@ export default function App({
          WHAT THEY GET IS A BOARD SERVING THAT APPLIANCE: the switch for the
          flow, plus the socket that was on the wall and its own switch — see
          `spareAmps`, which is why the rating survives. */
-      const target = allBoardsPx.find((b) => b.id === flowDrag.overId);
+      const target = allBoardsPx.find((b) => b.id === d.overId);
       if (target?.socketOnly) setBoardOutlet(target, false);
       setFlowBoards((m) => {
         if (home) {
-          if (!(flowDrag.id in m)) return m;
-          const out = { ...m }; delete out[flowDrag.id]; return out;
+          if (!(d.id in m)) return m;
+          const out = { ...m }; delete out[d.id]; return out;
         }
-        return { ...m, [flowDrag.id]: flowDrag.overId };
+        return { ...m, [d.id]: d.overId };
       });
-    }
-    setFlowDrag(null);
+    },
+  });
+
+  /**
+   * A GRIP ON A WIRE, PRESSED — the end at the plate, or one leg's own bow.
+   *
+   * THE POINTER IS CAPTURED AND THE WORK HAPPENS IN THE MOVE, which is the
+   * shape every drag on this canvas has. See `flow` above for the two kinds.
+   */
+  const flowGripDown = (e, id, kind, key) => {
+    if (e.button != null && e.button !== 0) return;
+    // AND EVERYTHING ELSE GOES THROUGH THE ROUTER — see lib/pressOwner.js. This
+    // was `addTool || zoneMode || armed`, three machines short.
+    if (!canGrab(pressState)) return;
+    e.preventDefault();
+    setSel(select('flow', id));
+    const p = svgPoint(e);
+    // `at` IS WHERE THE END IS BEING HELD, for the rubber band, and it starts at
+    // the press. `overId` is the plate it would land on, and there is not one yet.
+    flow.down(e, { id, kind, key, at: p, overId: null });
   };
+
+  const flowPointerMove = flow.move;
+  const flowPointerUp = flow.up;
 
   /**
    * PUT A PLATE BACK WHERE THE RULE WANTED IT.
@@ -15041,7 +15049,7 @@ export default function App({
               /* THE END IN FLIGHT, and only once the drag is past its slop —
                  otherwise a press on the grip would paint a rubber band of zero
                  length over the plate before anybody had moved. */
-              flowGrab={flowDrag?.kind === 'board' && flowDrag.live
+              flowGrab={flowDrag?.kind === 'board' && flowDrag.moved
                 ? { id: flowDrag.id, at: flowDrag.at, overId: flowDrag.overId } : null}
               /* The audit layer — now the lit task surfaces and the render
                  pass's wall cells. The BED zones used to be passed here too and
