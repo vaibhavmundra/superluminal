@@ -36,11 +36,77 @@
 export const STATE_VERSION = 1;
 
 /**
- * The editor, as a plain object. `s` is one flat bag of App's current values —
- * the call site names each one, so a rename in App.jsx fails loudly here rather
- * than writing `undefined` into the column.
+ * THE FIELDS CTRL+Z DOES NOT TOUCH, AND THE ONLY LIST OF THEM.
+ *
+ * NOT A FOURTH KIND OF STATE. Every name here is saved and restored exactly like
+ * every other field in this file — the question this answers is not "where does
+ * it live" but "what does undo do to it", and those are different questions. The
+ * viewport and the selection are held back because undoing a change while the
+ * canvas jumps to where it was two gestures ago loses the reader's place and
+ * hides the very thing that just changed. See `applyStep` in App.jsx.
+ *
+ * EXPORTED BECAUSE IT HAD TWO COPIES. `applyStep` used to hand `applyEditor` six
+ * hand-written no-op setters, which is the same class of hand-maintained pair
+ * this whole file exists to warn about: a field added to the document and
+ * forgotten here starts jumping the canvas on every undo, and nothing says so.
+ * One list, read by the reducer and by `applyStep`, checked by test-plan-state.
+ *
+ * FIELD NAMES, NOT SETTER NAMES. `setterFor` below is the mechanical mapping, so
+ * there is nothing to keep in step.
  */
-export function serialiseEditor(s) {
+export const NOT_UNDOABLE = [
+  'focusId', 'selectedOutlineId', 'roomState', 'layers', 'zoom', 'view',
+];
+
+/** `focusId` -> `setFocusId`. The naming rule `stateSetters` already follows. */
+export const setterFor = (field) => `set${field[0].toUpperCase()}${field.slice(1)}`;
+
+/**
+ * THE SAME SIX FIELDS, AS THE KEYS THEY ARE WRITTEN UNDER.
+ *
+ * A THIRD READER OF THE HOLD-BACK LIST, and it was already a third hand-written
+ * COPY of it: `VIEW_FIELDS` in lib/undo.js, which is how `record` decides that a
+ * document differs only in the viewport and is not worth a step. Two of the
+ * three fields are nested under `ui`, so the list undo.js needs is key PATHS
+ * rather than field names — hence this map rather than a second array.
+ *
+ * !!! `roomState` IS MAPPED TO THE WRONG KEY AND IT IS LEFT THAT WAY. This
+ * serialiser writes the field out as `segmentation`, so `undo.js` deleting
+ * `roomState` from a serialised document deletes nothing, and a re-run of the
+ * room detector therefore counts as a substantive change and pushes an undo
+ * step. Undoing that step restores nothing visible, because `applyStep` holds
+ * `setRoomState` back — a Ctrl+Z that appears to do nothing.
+ *
+ * IT IS A PRE-EXISTING DEFECT AND NOT THIS REFACTOR'S TO FIX. Correcting it to
+ * `segmentation` removes an undo step that a re-segmentation produces today,
+ * which is a change in undo granularity — reportable, not silently acceptable.
+ * The wrong value is preserved here EXACTLY so that unifying the three lists
+ * changes no behaviour; the fix is a separate decision. See test-plan-state.
+ */
+export const NOT_UNDOABLE_KEYS = {
+  focusId: 'focusId',
+  selectedOutlineId: 'selectedOutlineId',
+  roomState: 'roomState',        // TODO: should be 'segmentation' — see above
+  layers: 'ui.layers',
+  zoom: 'ui.zoom',
+  view: 'ui.view',
+};
+
+/**
+ * The editor, as a plain object. `doc` is the plan document — one object, so
+ * there is no list of names here to fall out of step with the state itself.
+ *
+ * `pxPerFt` IS A SECOND, NAMED ARGUMENT AND NOT A FIELD OF THE DOCUMENT, because
+ * it is the one thing in the output that is DERIVED — a memo over the scale
+ * settings, the source and the doors (see App.jsx). Passing it in by name is
+ * what keeps the document honest: a derived value living in `doc` would be a
+ * value the reducer cannot own and the undo stack would record as a change.
+ *
+ * IT IS WRITE-ONLY. Nothing reads `pxPerFtAtSave` back — see the note at
+ * `scale` below, and the TODO there.
+ */
+export function serialiseEditor(doc, { pxPerFt } = {}) {
+  const s = doc || {};
   return {
     v: STATE_VERSION,
     savedAt: new Date().toISOString(),
@@ -52,9 +118,18 @@ export function serialiseEditor(s) {
     // pxPerFt itself rides along as a CHECK, not as an input: the restored
     // state recomputes it from these, and a mismatch means the scale rules
     // changed under a saved plan, which is worth knowing.
+    //
+    // TODO: NOTHING PERFORMS THAT CHECK. `pxPerFtAtSave` has been written since
+    // this file was created and no reader has ever compared it to the px/ft the
+    // restored state recomputes. The value is there and the comparison is not,
+    // so a scale rule changed under a year of saved plans would go unremarked —
+    // which is the failure this key was added to catch. Deliberately still not
+    // implemented here: it wants a decision about what the app DOES on a
+    // mismatch (warn, re-measure, or refuse), and that is a change in behaviour
+    // rather than a change in bookkeeping.
     scale: {
       mode: s.scaleMode, refId: s.refId, customFt: s.customFt,
-      measure: s.measure, doorPick: s.doorPick, pxPerFtAtSave: s.pxPerFt ?? null,
+      measure: s.measure, doorPick: s.doorPick, pxPerFtAtSave: pxPerFt ?? null,
     },
     ceilingFt: s.ceilingFt,
 
@@ -544,6 +619,11 @@ export function applyEditor(p, set) {
   set.setRunsOff?.(p.runsOff ?? []);
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
+  /* THE TRUTHINESS GUARD IS ONLY SAFE BECAUSE ZOOM IS CLAMPED. Every write goes
+     through `clampZoom` in App.jsx — ZOOM_MIN is 0.2, and `fitZoom` clamps its
+     own result — so 0 is unreachable and `if (p.ui.zoom)` cannot swallow a real
+     saved value. If that clamp ever admits 0 this line becomes a silent bug:
+     a plan saved at zoom 0 would reopen at 1 with nothing to say it moved. */
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);
   if (p.ui?.view) set.setView(p.ui.view);
 }

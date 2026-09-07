@@ -477,7 +477,9 @@ const PTAB_ON = `${PTAB_SHAPE} text-white border-b-white`;
 // The editor knows nothing about Supabase — see routes/Planner.jsx. What it
 // knows is how to turn its own state into one object and back again, and that
 // contract lives in planState.js so the writer and the reader stay in step.
-import { serialiseEditor, applyEditor, statsFrom, statusFrom } from './lib/planState.js';
+import { serialiseEditor, applyEditor, statsFrom, statusFrom, NOT_UNDOABLE, setterFor }
+  from './lib/planState.js';
+import { usePlanDoc } from './hooks/usePlanDoc.js';
 
 const LS = 'lightPlanner.v1';
 
@@ -872,8 +874,19 @@ export default function App({
      mm. Converting it for storage would mean 2700 coming back as 2699.9.
      THE WALLS ARE INSIDE `materials` AND KEYED BY EDGE INDEX. See materials.js:
      one entry per edge of the room's outline, absent meaning light. */
-  const [ceilingMm, setCeilingMm] = useState({});
-  const [materials, setMaterials] = useState({});
+  /* --- THE PLAN DOCUMENT ----------------------------------------------------
+     ONE REDUCER FOR THE STATE THAT IS THE SAVED PLAN, and the three sparse
+     per-room maps are the first fields in it — see hooks/usePlanDoc.js for what
+     belongs in there and, more importantly, what must not.
+
+     THE READS DO NOT CHANGE. `ceilingMm`, `materials` and `fixtureWatts` are
+     destructured straight back out, so the hundred-odd places that read them go
+     on saying exactly what they said; only the WRITES moved, and they moved into
+     one typed action each. Same shape of change as `sel` and lib/selection.js. */
+  const [doc, docActions, docSetters] = usePlanDoc();
+  const { ceilingMm, materials, fixtureWatts,
+          manualCoves, manualTracks, manualCobs, cobArrays, trackFixtures, autoSpots,
+          ceilingShapes, designPicks, ceilingKinds, chunkPicks } = doc;
 
   /* WHAT WATTAGE EACH FITTING IS IN THIS SPACE — room id -> row key -> watts.
      Sparse like the two above: a row with no entry is at its family's default
@@ -888,8 +901,8 @@ export default function App({
      drop over the bed are two runs at two wattages — so each is keyed by its own
      id. Twelve COBs are one decision about COBs and share one entry; a wattage
      per COB would be twelve rows in the panel saying the same thing, and eleven
-     chances for two of them to disagree. See `roomFixtureGroups`. */
-  const [fixtureWatts, setFixtureWatts] = useState({});
+     chances for two of them to disagree. See `roomFixtureGroups`.
+     IN THE DOCUMENT REDUCER, with `ceilingMm` and `materials` above. */
 
   /* `wallEdit` IS A SCREEN AND IS NOT SAVED, exactly as `zoneEdit` and
      `doorEdit` are not: it holds the id of the space whose walls are being
@@ -1039,7 +1052,7 @@ export default function App({
      clicks, which is what made it possible to be holding half a cove while
      doing something else entirely. */
   const [coveFrom, setCoveFrom] = useState(null);
-  const [manualCoves, setManualCoves] = useState([]);
+  // IN THE DOCUMENT REDUCER — see hooks/usePlanDoc.js.
   /* Why a press or a drag was refused, said where the gesture is rather than in
      a banner. Only ever set by the cove tool, and cleared by the next thing that
      happens. */
@@ -1055,7 +1068,7 @@ export default function App({
      drawn-track pass in the layout memo. Storing room-local points would have
      meant deciding which room owned a path at the moment it was drawn, and a
      path that runs from a bedroom into its dressing has no answer to give. */
-  const [manualTracks, setManualTracks] = useState([]);
+  // IN THE DOCUMENT REDUCER, with the coves.
   /* --- EDITING A DRAWN TRACK'S POINTS ----------------------------------------
      WHICH PATH IS OPEN, WHICH OF ITS POINTS IS PICKED, AND THE DRAG IN FLIGHT.
      Three pieces rather than one for the reason the shape editor keeps three:
@@ -1093,7 +1106,7 @@ export default function App({
      A lamp placed by hand was specified as it was placed, which is what the card
      on the drawing is for, so the specification rides on the fitting. That is
      also what makes the analysis panel give each one a row of its own. */
-  const [manualCobs, setManualCobs] = useState([]);
+  // IN THE DOCUMENT REDUCER, with the coves and the tracks.
   /* WHICH ONE IS PICKED, so Delete has something to act on. Its own selection
      and not `selAccId`: an accent zone is a strip or a sconce out of the accent
      machinery, and filing a COB in that list would mean Delete looking for it in
@@ -1177,7 +1190,7 @@ export default function App({
      real entries in `manualCobs`: they draw, they count, they can be dragged,
      re-specified and deleted one at a time, and once one of them has been
      touched it stops being the toggle's to take away. See `autoplaceIn`. */
-  const [autoSpots, setAutoSpots] = useState([]);
+  // IN THE DOCUMENT REDUCER, with `manualCobs` — one gesture writes both.
 
   /* --- LAMPS SET OUT ON A GEOMETRY -------------------------------------------
      WHAT IS STORED IS THE INSTRUCTION, NOT THE LAMPS. Each entry names a
@@ -1196,7 +1209,7 @@ export default function App({
      One field rather than a shape id beside a room id and a flag saying which,
      because every reader wants the same thing from it — a path — and a prefix is
      the cheapest way to say which list to look in. See `arrayOutline`. */
-  const [cobArrays, setCobArrays] = useState([]);
+  // IN THE DOCUMENT REDUCER.
   /* THE ARRAY BEING SET UP, which is a gesture and not a record: which geometry
      is picked, and what the bar is currently asking about it. It becomes an
      entry above when the tick is pressed, and is thrown away otherwise. */
@@ -1265,7 +1278,7 @@ export default function App({
 
      SAVED, because it is a decision somebody made about a drawing and nothing
      re-derives it. */
-  const [trackFixtures, setTrackFixtures] = useState([]);
+  // IN THE DOCUMENT REDUCER.
   /* THE DRAWER, AND WHICH MODULE IS ARMED. Transient, exactly as the COB's two
      are: which cell of the rail is open and what the next press will clip in. */
   /* WHICH MODULE IS ARMED. There is no `trackOpen` beside it any more: the rail
@@ -1327,7 +1340,7 @@ export default function App({
   const selLightId = idOf(sel, 'light');
   const [lightDrag, setLightDrag] = useState(null);
 
-  const [ceilingShapes, setCeilingShapes] = useState([]);
+  // IN THE DOCUMENT REDUCER.
   /* IS THE FLOATING BAR OPEN? Separate from `shapeTool` because the bar opens
      BEFORE a shape has been chosen — pressing the cove button in the panel puts
      the menu on the drawing, and choosing a primitive from it is the next act.
@@ -1442,7 +1455,7 @@ export default function App({
   // the space, and that intent should survive a nudge of the target-cell
   // slider. Keyed by outline id, and absent means "whatever is recommended" —
   // which is what makes lighting eight rooms one act instead of eight choices.
-  const [chunkPicks, setChunkPicks] = useState({});
+  // IN THE DOCUMENT REDUCER.
   /**
    * WHAT EACH PIECE OF CEILING IS. outline id -> { chunk key -> option id }.
    *
@@ -1467,8 +1480,7 @@ export default function App({
    * That is what the old state meant, so an old plan reopens with its coves
    * where they were and the first per-chunk edit retires the legacy entry.
    */
-  const [designPicks, setDesignPicks] = useState({});
-  const [ceilingKinds, setCeilingKinds] = useState({});
+  // BOTH IN THE DOCUMENT REDUCER.
   /**
    * WHICH CHUNK'S OPTIONS ARE ON SCREEN. { roomId, key } or null.
    *
@@ -2010,8 +2022,8 @@ export default function App({
     // and the three it used to miss — a COB, an array, a module — go with it.
     setSel(clear());
     setZones([]); setZoneMode(false); setDraftZone(null); setZoneEdit(false);
-    setChunkPicks({}); setPickingId(null);
-    setCeilingKinds({}); setDesignPicks({}); setOptionPick(null);
+    docActions.clearChunkPicks(); setPickingId(null);
+    docActions.clearCeilingKinds(); docActions.clearDesignPicks(); setOptionPick(null);
     setDetections([]); setDetectState({ status: 'idle' }); setDismissed([]);
     setRoomState({ status: 'idle' });
     setAccentRoomId(null); setAccentResults({});
@@ -2030,7 +2042,7 @@ export default function App({
     // against another's. `runTrims` was already cleared here and leaving the
     // coves behind would have carried a previous drawing's slots onto a fresh
     // sheet, where they would sit at whatever plan pixels they were drawn at.
-    setManualCoves([]); setCoveFrom(null); setCoveNote('');
+    docActions.clearCoves(); setCoveFrom(null); setCoveNote('');
     setWallState({ status: 'idle', roomId: null }); setWallShot(null);
     setAccDrag(null);
     // BACK TO THE PROJECT'S ANSWER, NOT TO NULL. This runs on every file load,
@@ -2052,7 +2064,7 @@ export default function App({
     // AND THE DRAWN COVES, for the reason the hand-placed slots above go: a
     // shape is set out in ONE plan's feet, and carrying it onto a fresh sheet
     // would put a cove at whatever coordinates it happened to be drawn at.
-    setCeilingShapes([]); setShapeDrag(null);
+    docActions.clearShapes(); setShapeDrag(null);
     setShapeEditId(null); setShapeResize(null);
     // The hand positions go with the grid they were chosen on: a cell key names
     // a rectangle in ONE plan's feet and means nothing in another's.
@@ -2062,17 +2074,17 @@ export default function App({
     setShapeAskSides(false);
     // AND THE DRAWN TRACKS, which go for the same reason the shapes do: a path
     // is clicked out in ONE plan's feet.
-    setManualTracks([]); trackPen.reset();
+    docActions.clearTracks(); trackPen.reset();
     /* AND THE MODULES. The RUNS go with `ceilingShapes` a few lines up — a
        magnetic track is a shape — but a module is keyed by a shape id, so
        leaving these would carry a new plan's first track a set of diffusers
        belonging to the last one. */
-    setTrackFixtures([]); setTrackMode(null);
+    docActions.clearTrackFixtures(); setTrackMode(null);
     setArmed(null); setGuides([]); setGhost(null);
     setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
     setOutlinesOpen(false); setDirtyIds([]);
     setUnitId(null);
-  }, [initialProjectType, covePen, trackPen]);
+  }, [docActions, initialProjectType, covePen, trackPen]);
 
   /**
    * Render one page of an open PDF and become a raster plan.
@@ -2413,30 +2425,34 @@ export default function App({
     setPdfPage,
     setRoomTypes, setDetections, setDismissed, setBedVerdicts, setProvider, setZones,
     setDoors, setDoorState, setDoorsOk, setDetectState,
-    setCeilingObjs, setChunkPicks, setCeilingKinds, setDesignPicks, setCeilingShapes,
-    setLightMoves,
+    setCeilingObjs, setLightMoves,
     setAccentResults, setAccentDismissed, setManualAccents,
     setSurfaceResults, setSurfaceDismissed, setManualSurfaces, setArtDismissed,
     setBoardsOff, setBoardMoves, setBoardPoints, setFlowBoards, setFlowBends,
     setManualBoards, setBoardKinds, setBoardHeights, setBoardOrders,
-    setCeilingMm, setMaterials, setFixtureWatts, setRunsOff,
+    /* THE MIGRATED FIELDS COME BACK THROUGH THE REDUCER, and the bag goes on
+       being one flat object of `setX` functions so neither `applyEditor` nor
+       `applyStep` has to know which fields have moved into the document and
+       which are still loose `useState`. Generated from the reducer's own field
+       table — see DOC_FIELDS — so a field migrated tomorrow needs no line here.
+       The names are `setterFor`'s, which is the rule this bag already followed
+       by hand. */
+    ...docSetters,
+    setRunsOff,
     // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
     // are a few hundred bytes of JSON and the renders are megabytes of
     // somebody's photographs, which do not belong in a jsonb column.
     setWallResults,
     // ...and the lengths somebody dragged. Two numbers per run, and the only
     // thing about these derived fittings a person actually chose.
-    setRunTrims, setManualCoves, setManualTracks,
-    // ...and the downlights somebody put down themselves, which carry their own
-    // wattage and beam angle. See `manualCobs`.
-    setManualCobs, setAutoSpots, setCobArrays, setTrackFixtures,
+    setRunTrims,
     // ...and where the views themselves are. The bytes are fetched back out
     // of the bucket by the effect below, lazily and per space.
     setRenderRefs,
     // MERGED OVER THE DEFAULTS, not assigned. See LAYER_DEFAULTS.
     setLayers: (saved) => setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
     setZoom, setView,
-  }), []);
+  }), [docSetters]);
 
   useEffect(() => {
     if (!restore || restored.current || !source) return;
@@ -3228,38 +3244,27 @@ export default function App({
    *  rather than refused: 27 is somebody halfway through typing 2700, and a
    *  field that rejects it cannot be typed in at all. An empty box is the
    *  default, which is the only reading of "no height" there is. */
-  const setCeilingMmFor = useCallback((id, raw) => {
-    const n = Math.round(Number(raw));
-    setCeilingMm((m) => {
-      if (raw === '' || !Number.isFinite(n)) {
-        if (!(id in m)) return m;
-        const next = { ...m }; delete next[id]; return next;
-      }
-      const mm = Math.min(CEILING_MM_MAX, Math.max(CEILING_MM_MIN, n));
-      return m[id] === mm ? m : { ...m, [id]: mm };
-    });
-  }, []);
+  /* THE CLAMP TRAVELS WITH THE ACTION rather than being applied here, because
+     it is part of what the edit MEANS — see the reducer. What this call site
+     owns is the intent and the two bounds; what a legal height is, is the
+     document's business. */
+  const setCeilingMmFor = useCallback(
+    (id, raw) => docActions.setCeilingMm(id, raw,
+      { min: CEILING_MM_MIN, max: CEILING_MM_MAX }),
+    [docActions]);
 
-  const setSurfaceTone = useCallback((id, surface, tone) => {
-    setMaterials((m) => {
-      const cur = materialsOf(m, id);
-      if (cur[surface] === tone) return m;
-      return { ...m, [id]: { ...cur, [surface]: tone } };
-    });
-  }, []);
+  /* THESE DO NOT RESOLVE THE ROOM'S CURRENT TONES AND MUST NOT. The reducer
+     reads them off its own state, which is what the `setMaterials` updater these
+     replace did — see the note there. Resolving here would read the materials of
+     the render that queued the action, and the second of two tone changes in one
+     batch would quietly undo the first. */
+  const setSurfaceTone = useCallback(
+    (id, surface, tone) => docActions.setSurfaceTone(id, surface, tone),
+    [docActions]);
 
-  const setWallTone = useCallback((id, edge, tone) => {
-    setMaterials((m) => {
-      const cur = materialsOf(m, id);
-      const walls = { ...cur.walls };
-      // A WALL BACK AT THE DEFAULT IS A WALL WITH NO ENTRY, so a room somebody
-      // set dark and then set light again stores nothing — the same rule
-      // `boardKinds` follows, and it is what keeps a saved plan honest about
-      // which decisions were actually taken.
-      if (tone === 'light') delete walls[edge]; else walls[edge] = tone;
-      return { ...m, [id]: { ...cur, walls } };
-    });
-  }, []);
+  const setWallTone = useCallback(
+    (id, edge, tone) => docActions.setWallTone(id, edge, tone),
+    [docActions]);
 
   /* WHAT THE CANVAS IS HANDED WHILE THE WALL STEP IS OPEN: one polygon and one
      tone per edge, in plan pixels. Null the rest of the time, which is what
@@ -6322,7 +6327,7 @@ export default function App({
          undoing a decision the ceiling design made. */
     const zones = room.plan?.zonesPx ?? [];
     const chunksPx = room.plan?.gridChunksPx ?? [];
-    setManualCobs((list) => {
+    docActions.replaceCobs(((list) => {
       const mine = list.filter((c) => c.roomId === room.id);
       const taken = (cell) => mine.some((c) => {
         const x = c.xFt * pxPerFt, y = c.yFt * pxPerFt;
@@ -6371,8 +6376,8 @@ export default function App({
         });
       }
       return add.length ? [...list, ...add] : list;
-    });
-  }, [pxPerFt, cobBasisFor]);
+    })(manualCobs));
+  }, [pxPerFt, cobBasisFor, manualCobs, docActions]);
 
   /**
    * KEEP THE ARRAY — the tick on the bar, and the only way one gets onto the
@@ -6398,24 +6403,21 @@ export default function App({
     if (!d?.geomId || !(d.count > 0)) return;
     const geo = arrayOutline(d.geomId);
     if (!geo) return;
-    setCobArrays((l) => [...l, {
-      id: `carr-${Date.now().toString(36)}-${l.length}`,
+    docActions.addArray({
       geomId: d.geomId, roomId: d.roomId ?? geo.roomId,
       count: d.count, side: geo.closed ? d.side : 'on',
       offsetFt: geo.closed ? d.offsetFt : 0,
       watts: clampWatts(d.watts ?? 7), beam: nearestBeam(d.beam ?? 36),
-    }]);
+    }, Date.now().toString(36));
     setCobDraftArray(null);
     setSel(clear());
-  }, [cobDraftArray, arrayOutline]);
+  }, [docActions, cobDraftArray, arrayOutline]);
 
   /** ONE ARRAY'S SPECIFICATION, from the Analysis panel. Every lamp in it moves
    *  together, because there is only one figure and they all read it. */
   const setArraySpec = useCallback((id, patch) => {
-    setCobArrays((l) => l.map((a) => (a.id === id ? { ...a,
-      ...(patch.watts != null ? { watts: clampWatts(patch.watts) } : {}),
-      ...(patch.beam != null ? { beam: nearestBeam(patch.beam) } : {}) } : a)));
-  }, []);
+    docActions.setArraySpec(id, patch);
+  }, [docActions]);
 
   /**
    * ONE ARRAY'S SETTING-OUT, from its own bar — how many, which side, how far.
@@ -6433,25 +6435,23 @@ export default function App({
    * which of the three a given geometry may honestly be asked at all.
    */
   const setArrayShape = useCallback((id, patch) => {
-    setCobArrays((l) => l.map((a) => {
-      if (a.id !== id) return a;
-      /* THE COUNT IS QUANTISED AGAINST THIS ARRAY'S OWN GEOMETRY, here rather
-         than at the control, and that is the point: the number box steps in the
-         right units already (see `countStep` on the bar) but a typed figure, a
-         held arrow key and a stored plan all reach this too. One place decides
-         what a count may be, so the drawing can never hold a run of five on a
-         rectangle. See `quantiseCount`. */
-      const geo = patch.count != null ? arrayOutline(a.geomId) : null;
+    /* THE COUNT IS QUANTISED AGAINST THIS ARRAY'S OWN GEOMETRY, and the
+       quantiser is handed to the action rather than applied here — see
+       ARRAY_SHAPE_SET. The number box steps in the right units already (see
+       `countStep` on the bar) but a typed figure, a held arrow key and a stored
+       plan all reach this too, so one place has to decide what a count may be
+       and the drawing can never hold a run of five on a rectangle.
+       IT IS A CLOSURE AND NOT A NUMBER BECAUSE THE GEOMETRY IS DERIVED.
+       `arrayOutline` is a memo over the shapes and the rooms, which is state the
+       document may not contain; the array being edited is found by the reducer,
+       so what it needs from here is the arithmetic and not its answer. */
+    const quantise = (count) => {
+      const geo = arrayOutline(cobArrays.find((a) => a.id === id)?.geomId);
       const q = geo ? arrayQuanta(geo.corners, geo.closed) : null;
-      return { ...a,
-        ...(patch.count != null
-          ? { count: Math.min(200, quantiseCount(patch.count, q ?? { free: true })) }
-          : {}),
-        ...(patch.side != null ? { side: patch.side } : {}),
-        ...(patch.offsetFt != null
-          ? { offsetFt: Math.max(0, Number(patch.offsetFt) || 0) } : {}) };
-    }));
-  }, [arrayOutline]);
+      return Math.min(200, quantiseCount(count, q ?? { free: true }));
+    };
+    docActions.setArrayShape(id, patch, quantise);
+  }, [arrayOutline, cobArrays, docActions]);
 
   /**
    * ONE RUN'S MODULES, RE-SPECIFIED — from the Analysis panel's own chips.
@@ -6481,12 +6481,8 @@ export default function App({
        See `roomFixtureGroups`.
        WHOLE WATTS, because a module is specified in them and the length bands
        are keyed on them — see `DIFFUSER_LENGTHS_MM`. */
-    setTrackFixtures((l) => l.map((f) => (f.id === id
-      ? { ...f,
-          ...(patch.watts != null ? { watts: Math.max(1, Math.round(patch.watts)) } : {}),
-          ...(patch.beam != null ? { beam: nearestBeam(patch.beam) } : {}) }
-      : f)));
-  }, []);
+    docActions.setTrackModuleSpec(id, patch);
+  }, [docActions]);
 
   /** IS THIS ROW A TRACK'S MODULES? One test, because three handlers ask it and
    *  a row key is the only thing they are given. */
@@ -6496,21 +6492,19 @@ export default function App({
   /** THE WHOLE RUN, OFF THE DRAWING. The geometry it was set out on stays — see
    *  the note at the Delete key. */
   const deleteArray = useCallback((id) => {
-    setCobArrays((l) => l.filter((a) => a.id !== id));
+    docActions.removeArray(id);
     setSel((cur) => (idOf(cur, 'array') === id ? clear() : cur));
     setArrayDrag((d) => (d?.id === id ? null : d));
-  }, []);
+  }, [docActions]);
 
   /** THE TOGGLE. On fills the grid; off takes back only what is still the
    *  toggle's — see `autoplaceIn` for why that distinction is the whole safety
    *  of the control. */
   const setAutoplace = useCallback((roomId, on) => {
-    setAutoSpots((ids) => (on
-      ? (ids.includes(roomId) ? ids : [...ids, roomId])
-      : ids.filter((x) => x !== roomId)));
+    docActions.setAutoplace(roomId, on);
     if (on) autoplaceIn(rooms.find((r) => r.id === roomId));
-    else setManualCobs((l) => l.filter((c) => !(c.roomId === roomId && c.auto)));
-  }, [autoplaceIn, rooms]);
+    else docActions.dropAutoCobs(roomId);
+  }, [docActions, autoplaceIn, rooms]);
 
   /**
    * EVERY LAMP NOBODY HAS OVERRULED FOLLOWS ITS CHUNK.
@@ -6545,7 +6539,7 @@ export default function App({
    */
   useEffect(() => {
     if (readOnly || !(pxPerFt > 0) || !rooms.length) return;
-    setManualCobs((list) => {
+    docActions.replaceCobs(((list) => {
       let changed = false;
       const next = list.map((c) => {
         if (c.spec) return c;
@@ -6567,8 +6561,8 @@ export default function App({
         return { ...c, watts: want.watts, beam: want.beam };
       });
       return changed ? next : list;
-    });
-  }, [rooms, pxPerFt, cobBasisFor, readOnly]);
+    })(manualCobs));
+  }, [rooms, pxPerFt, cobBasisFor, readOnly, manualCobs, docActions]);
 
   /** RE-SPECIFYING A LAMP SOMEBODY PLACED, from the analysis panel.
    *
@@ -6585,35 +6579,21 @@ export default function App({
    *  — it decides where the light lands, and this app's model is about how much
    *  there is. It is stored because it is half of what was ordered. */
   const setCobSpec = useCallback((id, patch) => {
-    setManualCobs((l) => l.map((c) => (c.id === id
-      ? { ...c,
-          ...(patch.watts != null ? { watts: clampWatts(patch.watts) } : {}),
-          ...(patch.beam != null ? { beam: nearestBeam(patch.beam) } : {}),
-          /* RE-SPECIFIED IS SPECIFIED. A lamp placed on the engine's own
-             recommendation and then dialled to 18 W in the panel is no longer
-             carrying the engine's answer, and the flag has to say so or it would
-             be recording where the figure came from at birth rather than what it
-             is now. */
-          spec: true,
-          /* ...AND IT IS NO LONGER THE TOGGLE'S TO TAKE AWAY. Switching autoplace
-             off removes the lamps that are still the rule's answer; one somebody
-             has re-specified is theirs. See `autoplaceIn`. */
-          auto: false }
-      : c)));
-  }, []);
+    /* THE CLAMPS, `spec: true` AND `auto: false` ALL RIDE WITH THE ACTION —
+       see COB_SPEC_SET. Re-specified is specified, and a re-specified lamp is no
+       longer the autoplace toggle's to take away. */
+    docActions.setCobSpec(id, patch);
+  }, [docActions]);
 
-  const setRowWatts = useCallback((roomId, key, familyId, watts) => {
-    setFixtureWatts((m) => {
-      const room = { ...(m[roomId] ?? {}) };
-      if (watts === FAMILY_BY_ID[familyId]?.defaultWatts) delete room[key];
-      else room[key] = watts;
-      if (!Object.keys(room).length) {
-        if (!(roomId in m)) return m;
-        const next = { ...m }; delete next[roomId]; return next;
-      }
-      return { ...m, [roomId]: room };
-    });
-  }, []);
+  /* THE FAMILY'S DEFAULT IS RESOLVED HERE, for the reason `materialsOf` is
+     above: FAMILY_BY_ID is the catalogue and the catalogue is not the document's
+     to know. What the action carries is the number a row at its default would
+     be, which is the whole of what the reducer needs to decide whether this
+     wattage is a decision or a restatement. */
+  const setRowWatts = useCallback(
+    (roomId, key, familyId, watts) =>
+      docActions.setRowWatts(roomId, key, watts, FAMILY_BY_ID[familyId]?.defaultWatts),
+    [docActions]);
 
   /**
    * RUNS OF TAPE ON THE DRAWING — coves, reverse coves, shelf strips and every
@@ -7408,12 +7388,12 @@ export default function App({
      else. The next tool to earn a step adds a row here or renders no count. */
   const PLACED = {
     cove:  { n: manualCoves.length, one: 'cove', many: 'coves',
-             clear: () => setManualCoves([]) },
+             clear: () => docActions.clearCoves() },
     track: { n: manualTracks.length, one: 'run', many: 'runs',
              // AND THE EDITOR GOES WITH THEM. It is open on one of these paths
              // by id, and clearing the list would leave it holding an id that
              // no longer names anything.
-             clear: () => { setManualTracks([]); closeTrackEdit(); } },
+             clear: () => { docActions.clearTracks(); closeTrackEdit(); } },
   };
   const placedHere = PLACED[stepTool?.id]
     ?? { n: manualSurfaces.length, one: 'spot', many: 'spots',
@@ -7966,13 +7946,13 @@ export default function App({
        is the corners alone, with `closed` saying the leg back exists. Storing
        the repeat of the first point would make it a corner in its own right. */
     const pts = closed ? segs.map((sg) => sg.a) : [segs[0].a, ...segs.map((sg) => sg.b)];
-    setManualTracks((l) => [...l, {
-      id: `mtrack-${Date.now().toString(36)}-${l.length}`,
-      ptsFt: pts, closed,
-      lengthFt: penLengthFt(pts, { closed }),
-    }]);
+    /* THE ID IS MINTED IN THE REDUCER, from the list's own length, and the
+       timestamp is passed in so the reducer stays a pure function of its
+       arguments — see LIST_ADDED_MINTED. Same format as before. */
+    docActions.addTrack({ ptsFt: pts, closed, lengthFt: penLengthFt(pts, { closed }) },
+      Date.now().toString(36));
     trackPen.reset();
-  }, [trackPen]);
+  }, [docActions, trackPen]);
 
   /* --- DRAWING A COVE ---------------------------------------------------------
      THE SAME SHAPE AS THE OTHER STEPS ON THIS SCREEN — it owns the pointer, it
@@ -8904,26 +8884,26 @@ export default function App({
        and a 10 W in the middle of a rail, and those are two figures on one
        profile. The Analysis panel groups by wattage for the same reason — see
        `roomFixtureGroups`. */
-    setTrackFixtures((l) => [...l, ...plan.map((mod, i) => placeModule({
+    docActions.addTrackFixtures(plan.map((mod, i) => placeModule({
       trackId: shape.id, kind: 'diffuser', u: mod.u, watts: mod.watts,
-      seq: `a${i}` }))]);
+      seq: `a${i}` })));
     /* AND THE PANEL GOES TO THE SPACE, because the two figures at the top of it
        have just moved by the whole of what the run adds. A tool that changed a
        room's verdict silently would be the one act on this drawing worth
        watching, performed off screen. */
     setFocusId(home.id); setOptionPick(null); setView('spaces');
-  }, [pxPerFt, rooms, spaceAnalysis]);
+  }, [docActions, pxPerFt, rooms, spaceAnalysis]);
 
   const commitShape = useCallback(() => {
     if (!shapeToCommit || !bigEnough(shapeToCommit)) return;
     const shape = sealShape(shapeToCommit, shapeRole);
-    setCeilingShapes((l) => [...l, shape]);
+    docActions.addShape(shape);
     closeShapeTool();
     // ONE SELECTION ON THIS CANVAS, exactly as picking one off the sheet does.
     setSel(select('shape', shape.id));
     // ...AND IF IT IS A TRACK, IT ARRIVES FILLED. See `allocateOnTrack`.
     allocateOnTrack(shape);
-  }, [shapeToCommit, shapeRole, closeShapeTool, allocateOnTrack]);
+  }, [docActions, shapeToCommit, shapeRole, closeShapeTool, allocateOnTrack]);
 
   /** Pick a primitive off the bar. The polygon is the one that asks a question
    *  first, because "how many sides" has no sensible default to assume. */
@@ -8943,7 +8923,7 @@ export default function App({
     // pure, React is entitled to run it twice, and a `setSel` in the
     // middle of one would be selecting whichever of the two copies it ran last.
     const copy = { ...src, id: newShapeId(), x: src.x + 0.5, y: src.y + 0.5 };
-    setCeilingShapes((l) => [...l, copy]);
+    docActions.addShape(copy);
     setSel(select('shape', copy.id));
     /* --- AND A TRACK BRINGS ITS MODULES WITH IT ---------------------------
        COPYING A RUN AND LEAVING ITS FITTINGS BEHIND WOULD NOT BE A COPY. A
@@ -8961,14 +8941,14 @@ export default function App({
        the filter is empty and the write is skipped. */
     const mods = trackFixtures.filter((f) => f.trackId === id);
     if (mods.length) {
-      setTrackFixtures((l) => [...l, ...mods.map((f, i) => ({
+      docActions.addTrackFixtures(mods.map((f, i) => ({
         ...f, id: newModuleId(`d${i}`), trackId: copy.id,
-      }))]);
+      })));
     }
-  }, [ceilingShapes, trackFixtures]);
+  }, [docActions, ceilingShapes, trackFixtures]);
 
   const deleteShape = useCallback((id) => {
-    setCeilingShapes((l) => l.filter((q) => q.id !== id));
+    docActions.removeShape(id);
     setSel((cur) => (idOf(cur, 'shape') === id ? clear() : cur));
     setShapeEditId((cur) => (cur === id ? null : cur));
     /* AND THE MODULES GO WITH THE RUN THEY WERE CLIPPED INTO. A module with no
@@ -8976,8 +8956,8 @@ export default function App({
        would be an entry nothing draws and nothing can reach to delete — it would
        simply sit in every saved plan for ever. `trackModulesPx` also drops one
        whose run has gone, which is the belt to this braces. */
-    setTrackFixtures((l) => l.filter((f) => f.trackId !== id));
-  }, []);
+    docActions.dropTrackModules(id);
+  }, [docActions]);
 
   /**
    * PICKING ONE UP OFF THE SHEET.
@@ -9300,7 +9280,7 @@ export default function App({
         ? clampCoveMove(o, q, room.geo.polygonPlanFt, COVE_GAP_FT) : q;
       return { ...o, x: at.x, y: at.y };
     },
-    setList: setCeilingShapes,
+    setList: docActions.updateShapes,
     moved: (from, p) => Math.hypot(p.x - from.x, p.y - from.y)
       >= Math.max(3, pxPerFt * 0.12) / pxPerFt,
     /* ALT LEAVES A COPY BEHIND, AND THE MODIFIER IS READ LIVE — every word of the
@@ -9367,11 +9347,10 @@ export default function App({
     if (!trackGrip || !pxPerFt) return;
     const p = svgPoint(e);
     const at = { x: p.x / pxPerFt, y: p.y / pxPerFt };
-    setManualTracks((l) => l.map((t) => {
-      if (t.id !== trackGrip.id) return t;
-      const pts = penMovePoint(t.ptsFt, trackGrip.i, at);
-      return { ...t, ptsFt: pts, lengthFt: penLengthFt(pts) };
-    }));
+    const held = manualTracks.find((t) => t.id === trackGrip.id);
+    if (!held) return;
+    const pts = penMovePoint(held.ptsFt, trackGrip.i, at);
+    docActions.patchTrack(trackGrip.id, { ptsFt: pts, lengthFt: penLengthFt(pts) });
   };
 
   /**
@@ -9388,9 +9367,9 @@ export default function App({
    * removed, and this only has to stop being consulted.
    */
   const deleteTrack = useCallback((id) => {
-    setManualTracks((l) => l.filter((t) => t.id !== id));
+    docActions.removeTrack(id);
     setTrackEditId(null); setSelTrackPt(null); setTrackGrip(null);
-  }, []);
+  }, [docActions]);
 
   /**
    * A POINT TAKEN OUT, AND THE PATH PUT BACK ON ITS AXES BEHIND IT.
@@ -9411,10 +9390,10 @@ export default function App({
     if (t.ptsFt.length <= (t.closed ? 3 : 2)) { deleteTrack(id); return; }
     const cut = [...t.ptsFt.slice(0, i), ...t.ptsFt.slice(i + 1)];
     const pts = penRelock(cut, Math.max(1, i));
-    setManualTracks((l) => l.map((q) => (q.id === id
-      ? { ...q, ptsFt: pts, lengthFt: penLengthFt(pts, { closed: !!q.closed }) } : q)));
+    docActions.patchTrack(id, { ptsFt: pts,
+      lengthFt: penLengthFt(pts, { closed: !!t.closed }) });
     setSelTrackPt(null);
-  }, [manualTracks, deleteTrack]);
+  }, [docActions, manualTracks, deleteTrack]);
 
   /**
    * OPENING A PATH FROM A RAIL SOMEBODY CLICKED.
@@ -9499,7 +9478,10 @@ export default function App({
     if (!shapeResize || !pxPerFt) return;
     const p = svgPoint(e);
     const at = { x: p.x / pxPerFt, y: p.y / pxPerFt };
-    setCeilingShapes((l) => l.map((q) => {
+    /* THE UPDATER FORM, because a resize is per-frame: two pointermoves can
+       land before a re-render and the second must see the first. See
+       LIST_UPDATED in usePlanDoc. */
+    docActions.updateShapes((l) => l.map((q) => {
       if (q.id !== shapeResize.id) return q;
       const next = resizeShape(q, shapeResize.handle, at, { uniform: e.shiftKey });
       /* A GRIP MAY NOT PUSH THE COVE INTO THE KEEP-OUT BAND EITHER. Growing a
@@ -10538,7 +10520,7 @@ export default function App({
                         put it, so switching autoplace off must not take it
                         away — see `autoplaceIn`. */
                      auto: false }),
-    setList: setManualCobs,
+    setList: docActions.updateCobs,
     zoom,
     ortho: true,
     snap: (q, axis, { ids }) => cobSnapAt(q, axis, ids),
@@ -10557,12 +10539,18 @@ export default function App({
        reading of it, and impossible to account for. Refusing the drop is kinder
        than keeping a stale `roomId`, which would put a lamp visibly in the hall
        and count it in the bedroom. */
-    onCommit: (ids, d) => setManualCobs((list) => list.map((c) => {
-      if (!ids.includes(c.id)) return c;
-      if (c.roomId && roomAt({ x: c.xFt * pxPerFt, y: c.yFt * pxPerFt })) return c;
-      const base = d.startAll[c.id];
-      return base ? { ...c, xFt: base.xFt, yFt: base.yFt, roomId: base.roomId } : c;
-    })),
+    onCommit: (ids, d) => docActions.replaceCobs(((list) => {
+      let changed = false;
+      const next = list.map((c) => {
+        if (!ids.includes(c.id)) return c;
+        if (c.roomId && roomAt({ x: c.xFt * pxPerFt, y: c.yFt * pxPerFt })) return c;
+        const base = d.startAll[c.id];
+        if (!base) return c;
+        changed = true;
+        return { ...c, xFt: base.xFt, yFt: base.yFt, roomId: base.roomId };
+      });
+      return changed ? next : list;
+    })(manualCobs)),
     // The guides are a property of the GESTURE, not of the lamp.
     onRelease: () => setGuides([]),
   });
@@ -10668,7 +10656,7 @@ export default function App({
     capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
     at: (o) => ({ x: (o.dxFt || 0) * pxPerFt, y: (o.dyFt || 0) * pxPerFt }),
     to: (o, q) => ({ ...o, dxFt: q.x / pxPerFt, dyFt: q.y / pxPerFt }),
-    setList: setCobArrays,
+    setList: docActions.updateArrays,
     zoom,
     /* SHIFT HOLDS IT TO ONE AXIS, from the anchor rather than from the last
        frame, so a run nudged sideways stays exactly level with where it was —
@@ -10695,8 +10683,7 @@ export default function App({
       const own = arrayCobsPx.filter((c) => c.arrayId === d.id);
       if (!own.length || own.some((c) => roomAt({ x: c.x, y: c.y }))) return;
       const base = d.startAll[d.id];
-      setCobArrays((l) => l.map((q) => (q.id === d.id
-        ? { ...q, dxFt: base?.dxFt || 0, dyFt: base?.dyFt || 0 } : q)));
+      docActions.patchArray(d.id, { dxFt: base?.dxFt || 0, dyFt: base?.dyFt || 0 });
     },
   });
 
@@ -10758,7 +10745,7 @@ export default function App({
                            taken, f.kind,
                            { closed: run.closed, watts: f.watts });
       if (u == null) return;   // the rest of the run is full — leave it where it is
-      setTrackFixtures((l) => l.map((q) => (q.id === f.id ? { ...q, u } : q)));
+      docActions.patchTrackFixture(f.id, { u });
     },
   });
 
@@ -10800,10 +10787,10 @@ export default function App({
   /** ONE MODULE, OFF THE RUN. Its own act, unlike deleting the run — which takes
    *  every module with it (see `deleteShape`). */
   const deleteModule = useCallback((id) => {
-    setTrackFixtures((l) => l.filter((f) => f.id !== id));
+    docActions.removeTrackFixture(id);
     setSel((cur) => (idOf(cur, 'module') === id ? clear() : cur));
     setModuleDrag((d) => (d?.id === id ? null : d));
-  }, []);
+  }, [docActions]);
 
   /**
    * DELETE A SPOT — WHICH MEANS DELETING THE THING IT WAS PLACED FOR.
@@ -11124,7 +11111,7 @@ export default function App({
          below states, arrived at the same way. */
       if ((e.key === 'Delete' || e.key === 'Backspace') && selCobId && !cob.drag) {
         e.preventDefault();
-        setManualCobs((l) => l.filter((c) => c.id !== selCobId));
+        docActions.removeCob(selCobId);
         setSel(clear());
         return;
       }
@@ -11165,7 +11152,7 @@ export default function App({
         } else if (zone?.derived && zone.trimId) {
           const gone = zone.trimId;
           if (manualCoves.some((c) => c.id === gone)) {
-            setManualCoves((list) => list.filter((c) => c.id !== gone));
+            docActions.removeCove(gone);
           } else {
             setRunsOff((d) => (d.includes(gone) ? d : [...d, gone]));
           }
@@ -11268,7 +11255,7 @@ export default function App({
       finishTrack, trackPen, trackEditId, selTrackPt, trackGrip,
       deleteTrackPoint, deleteTrack, closeTrackEdit,
       manualAccents, accentZonesPx, manualCoves, focusId, readOnly, selSpotId, deleteSpot,
-      setManualCoves,
+      docActions,
       selBoardId, deleteBoard, selFlowId, flowDrag, boardPlace, closeBoardPlace,
       doorEdit, selDoorId, doorDrag, deleteDoor, closeDoorEdit,
       zoneEdit, closeZoneEdit, wallEdit, closeWallEdit,
@@ -11484,8 +11471,8 @@ export default function App({
       if (d.key !== key && want !== 'standard') base[d.key] = want;
     }
     if (next === 'standard') delete base[key]; else base[key] = next;
-    setDesignPicks((m) => ({ ...m, [roomId]: base }));
-  }, [rooms, hideCoach]);
+    docActions.setDesignPick(roomId, base);
+  }, [docActions, rooms, hideCoach]);
 
   const onCanvasClick = (e) => {
     // Ceiling objects are handled entirely in the pointer events — see the note
@@ -11993,8 +11980,8 @@ export default function App({
                              taken, trackMode,
                              { closed: run.closed, watts: moduleWatts(trackMode) });
         if (u == null) return;   // the run is full — see `placeableU`
-        setTrackFixtures((l) => [...l,
-          placeModule({ trackId: run.id, kind: trackMode, u, seq: l.length })]);
+        docActions.addTrackFixtures([
+          placeModule({ trackId: run.id, kind: trackMode, u, seq: trackFixtures.length })]);
         /* AND THE PANEL GOES TO THE SPACE IT LANDED IN, on the first module of
            a run, for the reason the first COB of a run opens its space: a
            diffuser is an ambient source and the two figures at the top of the
@@ -12115,7 +12102,7 @@ export default function App({
           watts: spec.watts, beam: spec.beam,
           spec: !!override, seq: manualCobs.length,
         });
-        setManualCobs((l) => [...l, lamp]);
+        docActions.addCob(lamp);
         /* AND IT JOINS THE RUN, which is what the tick and the cross on the bar
            act on. See `cobRun`. */
         setCobRun((r) => [...r, lamp.id]);
@@ -12548,7 +12535,7 @@ export default function App({
         setCoveNote('That is too short to be a slot — press at one end and drag to the other.');
         return;
       }
-      setManualCoves((l) => [...l, c]);
+      docActions.addCove(c);
       /* ARMED FOR THE NEXT RUN, FOR THE REASON THE SPOT IS — see the note in
          the spot's branch below. Arming the cove empties the panel to a step,
          and a tool that puts itself away after one slot would close that step
@@ -13107,9 +13094,20 @@ export default function App({
   // fresh every render the effect below would fire again on that re-render, and
   // that is a loop that writes to the database forever. Identity stability IS
   // the termination condition, so every dependency here is a piece of state and
-  // nothing is derived.
+  // nothing is derived — with ONE named exception, `pxPerFt`, which is a memo
+  // over the scale settings and is passed as the serialiser's second argument
+  // rather than smuggled in as a field. It is safe because it is a stable memo
+  // and because it is WRITE-ONLY: it is stamped as `scale.pxPerFtAtSave` and
+  // nothing reads it back. Naming it in the signature is what stops the next
+  // derived value being added here quietly. See serialiseEditor.
   const editorState = useMemo(() => serialiseEditor({
-    unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
+    // THE MIGRATED FIELDS, AS ONE OBJECT. Every field in the document reaches
+    // the serialiser by being IN it, so there is no name here to forget — which
+    // is the whole reason the reducer exists. The loose names below are the
+    // fields not yet migrated; each domain that moves deletes lines from both
+    // this object and the dependency array, and the two shrink together.
+    ...doc,
+    unitId, scaleMode, refId, customFt, measure, doorPick, ceilingFt,
     outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState,
     projectType: projectId, roomTypes, pdfPage,
     detections, dismissed, bedVerdicts, provider, zones,
@@ -13125,9 +13123,9 @@ export default function App({
     // WHAT EACH SPACE IS FINISHED IN, AND HOW HIGH ITS CEILING IS — see the
     // note in planState.js. Both are sparse; both are the answer rather than an
     // adjustment to one, so both have to be kept.
-    ceilingMm, materials, fixtureWatts, runsOff,
+    runsOff,
     layers, zoom, view,
-  }), [unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
+  }, { pxPerFt }), [doc, unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
        outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
        detections, dismissed, bedVerdicts, provider, zones, doors, doorsOk,
        ceilingObjs, chunkPicks, designPicks, ceilingKinds, ceilingShapes,
@@ -13137,7 +13135,7 @@ export default function App({
        wallResults, runTrims, manualCoves, manualTracks, manualCobs, autoSpots,
        cobArrays, trackFixtures, renderRefs, boardsOff, boardMoves, boardPoints,
        flowBoards, flowBends, manualBoards, boardKinds, boardHeights, boardOrders,
-       ceilingMm, materials, fixtureWatts, runsOff,
+       runsOff,
        layers, zoom, view]);
 
   // --- UNDO, THE HALF THAT NEEDS THE DOCUMENT -------------------------------
@@ -13179,33 +13177,46 @@ export default function App({
     return () => clearTimeout(quietTimer.current);
   }, [editorState, readOnly, restoreApplied]);
 
+  /* THE FIELDS CTRL+Z LEAVES ALONE, AS NO-OP SETTERS.
+   *
+   * READ FROM planState.js's `NOT_UNDOABLE` AND NOT WRITTEN OUT HERE. These six
+   * names used to be six hand-typed `setX: hold` entries, which made them a
+   * second hand-maintained list of document fields sitting a thousand lines away
+   * from the first — the exact pair this refactor exists to remove. A field
+   * added to the document and forgotten in a hand-written copy starts jumping
+   * the canvas on every undo and nothing says so. One list, two readers, and
+   * test-plan-state asserts they agree.
+   */
+  const heldBack = useMemo(() => {
+    const hold = () => {};
+    return Object.fromEntries(NOT_UNDOABLE.map((f) => [setterFor(f), hold]));
+  }, []);
+
   /**
    * APPLY A STEP.
    *
    * THE VIEWPORT AND THE SELECTION ARE HELD BACK, by handing `applyEditor`
-   * no-ops for them. The document carries zoom, pan, the layer switches, the
-   * selected space — because reopening a plan should put you back where you were
-   * looking — and none of that is what Ctrl+Z is for. Undoing a change while the
-   * canvas jumps to where it was two gestures ago is a worse experience than not
-   * having undo: the person loses their place and cannot see what changed.
+   * no-ops for them — see `heldBack` above for the list and where it lives. The
+   * document carries zoom, pan, the layer switches, the selected space — because
+   * reopening a plan should put you back where you were looking — and none of
+   * that is what Ctrl+Z is for. Undoing a change while the canvas jumps to where
+   * it was two gestures ago is a worse experience than not having undo: the
+   * person loses their place and cannot see what changed.
    *
    * Zoom and layers are left ALONE rather than restored, which is the only
    * behaviour that makes the two independent: pan somewhere, undo three
    * gestures, and you are still looking at the thing you were looking at.
    */
-  const applyStep = useCallback((doc) => {
-    if (!doc) return;
+  const applyStep = useCallback((step) => {
+    if (!step) return;
     undoing.current = true;
-    const hold = () => {};
-    applyEditor(doc, { ...stateSetters,
-                       setFocusId: hold, setSelectedOutlineId: hold, setRoomState: hold,
-                       setLayers: hold, setZoom: hold, setView: hold });
+    applyEditor(step, { ...stateSetters, ...heldBack });
     // A FITTING THAT NO LONGER EXISTS CANNOT STAY SELECTED. Cheaper and more
     // honest than reconciling every selection against the restored document:
     // whatever was picked, the picture just changed under it.
     setSel(clear());
     setUndoDepth(historyDepth(history.current));
-  }, [stateSetters]);
+  }, [stateSetters, heldBack]);
 
   const undo = useCallback(() => {
     // THE IN-FLIGHT BURST IS CLOSED FIRST, so a change made half a second ago is
@@ -13955,7 +13966,7 @@ export default function App({
             recommendedId={picking.chunking.recommendedId}
             initialId={chunkPicks[picking.id] ?? null}
             onConfirm={(id) => {
-              setChunkPicks((m) => ({ ...m, [picking.id]: id }));
+              docActions.setChunkPick(picking.id, id);
               setPickingId(null);
             }}
             onCancel={() => setPickingId(null)}
@@ -14387,7 +14398,7 @@ export default function App({
                 }}
                 onDiscard={() => {
                   const doomed = new Set(cobRun);
-                  setManualCobs((l) => l.filter((c) => !doomed.has(c.id)));
+                  docActions.removeCobs([...doomed]);
                   setSel((cur) => (doomed.has(idOf(cur, 'cob')) ? clear() : cur));
                   setCobOpen(false); setCobMode(null); disarmAdd();
                 }}
@@ -14511,8 +14522,7 @@ export default function App({
                   if (shapeAskSides) { setShapeAskSides(false); setShapeTool(null); return; }
                   abandonShape();
                 }}
-                onRadius={(ft) => selShape && setCeilingShapes((l) => l.map((q) => (
-                  q.id === selShape.id ? { ...q, radiusFt: ft } : q)))}
+                onRadius={(ft) => selShape && docActions.patchShape(selShape.id, { radiusFt: ft })}
                 onDuplicate={() => selShape && duplicateShape(selShape.id)}
                 onDelete={() => selShape && deleteShape(selShape.id)} />
             )}
@@ -15859,7 +15869,7 @@ export default function App({
                 wholesale. */}
             {manualCoves.length > 0 && (
               <button className={`${BTN_FULL} mt-2`}
-                onClick={() => { setManualCoves([]); disarmAdd(); }}>
+                onClick={() => { docActions.clearCoves(); disarmAdd(); }}>
                 Clear the {manualCoves.length} reverse cove
                 {manualCoves.length === 1 ? '' : 's'} placed by hand
               </button>

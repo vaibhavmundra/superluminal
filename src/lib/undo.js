@@ -37,6 +37,8 @@
 // ---------------------------------------------------------------------------
 
 /** How many steps back. Forty gestures is more than anybody re-does by hand. */
+import { NOT_UNDOABLE_KEYS } from './planState.js';
+
 export const HISTORY_LIMIT = 40;
 
 /**
@@ -60,8 +62,7 @@ export const QUIET_MS = 400;
  * level keys of the serialised document, except the three under `ui`, which are
  * listed as `ui.*` and handled by `strip`.
  */
-export const VIEW_FIELDS = ['savedAt', 'focusId', 'selectedOutlineId', 'roomState',
-                            'ui.layers', 'ui.zoom', 'ui.view'];
+export const VIEW_FIELDS = ['savedAt', ...Object.values(NOT_UNDOABLE_KEYS)];
 
 /** The document reduced to the part an undo is about. */
 export function substantive(doc, ignore = VIEW_FIELDS) {
