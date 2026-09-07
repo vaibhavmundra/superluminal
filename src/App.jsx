@@ -130,7 +130,11 @@ import { collectTargets, snapPoint, SNAP_DEFAULTS } from './lib/snapGuides.js';
    every draggable object on this canvas needs and each of which has been got
    wrong at least once here. Nothing in this file calls that arithmetic by hand
    any more: hooks/useDrag.js is where it is spent, and every drag here reaches
-   it through that. Read the header of lib/dragMove.js for the rules themselves. */
+   it through that. Read the header of lib/dragMove.js for the rules themselves.
+   The one thing still imported directly is the slop, which one drag departs
+   from by naming a floor — a threshold that reads the shared number is a
+   departure you can see; a local `= 3` was one you could not. */
+import { DRAG_SLOP_PX } from './lib/dragMove.js';
 import { buildSnapIndex, snapAt } from './lib/snap.js';
 import { openPdf, isPdf, pageToImg } from './lib/pdfPlan.js';
 import PdfPagePicker from './components/PdfPagePicker.jsx';
@@ -1974,10 +1978,6 @@ export default function App({
      A saved plan still comes back on whatever tab it was left on: this is the
      default, not an override — see `ui.view` in planState.js. */
   const [view, setView] = useState('spaces');  // spaces | design | boards | boq | admin
-  // How far the pointer must travel before a press becomes a drag, in SCREEN
-  // pixels — divided by the zoom at the point of use, so it is the same
-  // distance under the hand at 40% and at 300%.
-  const DRAG_SLOP_PX = 3;
   const [over, setOver] = useState(false);
   // null = not editing. An empty string is a legitimate draft mid-edit, so the
   // two cannot share a value.
@@ -11149,45 +11149,6 @@ export default function App({
     });
   }, []);
 
-  const accPointerDown = (e, roomId, id, mode) => {
-    if (e.button != null && e.button !== 0) return;   // middle button is the pan
-    // A DERIVED RUN HAS NO BODY DRAG. A reverse cove is a slot at a wall and a
-    // shelf strip is inside joinery: neither can be picked up and moved
-    // somewhere else, because neither is a thing somebody placed. Only the ends
-    // move, and they only move along the run's own axis. The canvas does not
-    // offer the body handle for these, and this is the second half of that —
-    // belt and braces on the one gesture that would silently do nothing.
-    const derived = accentZonesPx.find((z) => z.id === id && z.derived);
-    if (derived && mode !== 'end0' && mode !== 'end1') {
-      // ...but it is still SELECTABLE, and it has to be: without a body handle
-      // there would be nothing on it to click, and a fitting you cannot select
-      // is one you cannot find the grips of.
-      e.stopPropagation();
-      e.preventDefault();
-      setSel(select('acc', id)); setArmed(null);
-      return;
-    }
-    e.stopPropagation();
-    e.preventDefault();
-    svgRef.current?.setPointerCapture?.(e.pointerId);
-    setSel(select('acc', id));
-    setArmed(null);
-    // WHERE THE GESTURE STARTED, twice over. `from` advances with the pointer,
-    // because a run must move by the DELTA and not jump to centre itself under
-    // the cursor — grab a strip near one end and it stays grabbed near that end.
-    // `origin` does not, because it is what the drag threshold is measured from.
-    const at = svgPoint(e);
-    setAccDrag({ roomId, id, mode, pointerId: e.pointerId, from: at, origin: at, live: false,
-                 // Carried on the GESTURE, not looked up per frame. The item is
-                 // rebuilt by a memo on every trim, so a fresh lookup mid-drag
-                 // would read the base off the run the last frame produced and
-                 // the end would run away from the pointer.
-                 derived: derived
-                   ? { trimId: derived.trimId, horizontal: derived.horizontal,
-                       base: derived.base }
-                   : null });
-  };
-
   /**
    * The tolerances, converted once per drag.
    *
@@ -11207,81 +11168,147 @@ export default function App({
     };
   };
 
-  const accPointerMove = (e) => {
-    if (!accDrag) return;
-    const p = svgPoint(e);
+  /* --- AN ACCENT RUN'S WHOLE GESTURE ----------------------------------------
 
-    // A CLICK IS NOT A DRAG. Pointerdown on a strip's body both selects it and
-    // arms the move, because needing one click to select and a second to drag
-    // is the thing that makes a canvas feel slow. The cost of that is that
-    // every plain click would otherwise translate the run by whatever fraction
-    // of a pixel the hand wobbled, and mark it `edited` for it — a fitting
-    // claiming to have been moved by hand when nobody moved it.
-    //
-    // So the move does not begin until the pointer has genuinely travelled.
-    // Measured from the ORIGIN, not from the last frame, so a slow drag still
-    // crosses it.
-    if (accDrag.mode === 'move' && !accDrag.live) {
-      const slop = Math.max(2, DRAG_SLOP_PX / (zoom || 1));
-      if (Math.hypot(p.x - accDrag.origin.x, p.y - accDrag.origin.y) < slop) return;
-      setAccDrag((d) => (d ? { ...d, live: true, from: d.origin } : d));
-    }
+     THE ONE THAT WRITES A RELATIVE DELTA ON PURPOSE, and it is the exception
+     rule 2 in lib/dragMove.js is about — so it is worth saying why it is not a
+     violation. `moveRun` is handed the pointer and the PREVIOUS pointer, and
+     `last` advances every frame. That is because a run is not moved to a point:
+     it is projected onto whichever wall of its room can hold it, and the answer
+     is a fresh projection each frame rather than an offset from a snapshot. A
+     press-anchored delta would have nothing to add itself to.
 
-    // --- a derived run: the ends write a TRIM, and nothing else moves.
-    if (accDrag.derived) {
-      const { trimId, horizontal, base } = accDrag.derived;
-      if (!base || !(pxPerFt > 0)) return;
-      // Only the along-wall component of the pointer counts. A cove is on its
-      // wall and stays there, so the across component is not a degree of
-      // freedom — dragging away from the wall shortens nothing.
-      const v = horizontal ? p.x : p.y;
-      // Shift is the FINE drag here — the opposite hand of the same key on an
-      // ordinary strip, where it locks the axis. There is no axis to lock on a
-      // run that only moves along one, so the modifier is spent on the thing
-      // there is a use for: the exact position, off the setting-out increment.
-      const step = e?.shiftKey ? 0 : RUN_TRIM.snapFt;
-      const round = (ft) => (step > 0 ? Math.round(ft / step) * step : ft);
-      setRunTrims((m) => {
-        const cur = m[trimId] ?? { a: 0, b: 0 };
-        const next = accDrag.mode === 'end0'
-          ? { ...cur, a: round((v - base.lo) / pxPerFt) }
-          : { ...cur, b: round((base.hi - v) / pxPerFt) };
-        // BACK TO NOTHING RATHER THAN TO ZERO. A run dragged to where the rule
-        // put it is a run with no edit on it, and leaving {a:0,b:0} behind would
-        // mark it as hand-edited for ever and keep a row in the saved plan.
-        if (Math.abs(next.a) < 1e-6 && Math.abs(next.b) < 1e-6) {
-          if (!(trimId in m)) return m;
-          const out = { ...m }; delete out[trimId]; return out;
-        }
-        return { ...m, [trimId]: next };
+     WHICH IS ALSO WHY NO STORE IS HANDED TO THE HOOK. An accent zone lives in
+     one of two stores and the write has to follow the zone — see
+     `updateAccentZone`, which is the fix for a real bug — so `onMove` is the
+     write and there is no `at`/`to` to give.
+
+     ITS THRESHOLD IS ITS OWN, in two ways. It has a FLOOR of two plan pixels,
+     so a strip on a site plan at 6 px/ft does not need a five-foot drag to
+     start; and it applies to the BODY drag only. The ends and the sconce slide
+     have grips of their own under the pointer, so there is no click meaning for
+     a threshold to protect — where a press on a strip's body both selects it and
+     arms the move, and every plain click on one would otherwise translate the
+     run by whatever fraction of a pixel the hand wobbled, and mark it `edited`
+     for it: a fitting claiming to have been moved by hand when nobody moved it.
+
+     EVERYTHING IN PLAN PIXELS, unlike the ceiling objects. A ceiling object is a
+     real thing of a real size that someone placed, so it is held in feet and
+     survives a scale correction. An accent fitting is DERIVED — from a box the
+     model drew on a crop, projected onto a wall that is itself in plan pixels —
+     so pixels are the space it already lives in, and converting to feet and back
+     would only add two roundings to every drag. */
+  const acc = useDrag({
+    state: [accDrag, setAccDrag],
+    point: svgPoint,
+    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
+    moved: (from, p, d) => d.mode !== 'move'
+      || Math.hypot(p.x - from.x, p.y - from.y) >= Math.max(2, DRAG_SLOP_PX / (zoom || 1)),
+    onMove: (p, { drag: d, event: e }) => {
+      // --- a derived run: the ends write a TRIM, and nothing else moves.
+      if (d.derived) {
+        const { trimId, horizontal, base } = d.derived;
+        if (!base || !(pxPerFt > 0)) return;
+        // Only the along-wall component of the pointer counts. A cove is on its
+        // wall and stays there, so the across component is not a degree of
+        // freedom — dragging away from the wall shortens nothing.
+        const v = horizontal ? p.x : p.y;
+        // Shift is the FINE drag here — the opposite hand of the same key on an
+        // ordinary strip, where it locks the axis. There is no axis to lock on a
+        // run that only moves along one, so the modifier is spent on the thing
+        // there is a use for: the exact position, off the setting-out increment.
+        const step = e?.shiftKey ? 0 : RUN_TRIM.snapFt;
+        const round = (ft) => (step > 0 ? Math.round(ft / step) * step : ft);
+        setRunTrims((m) => {
+          const cur = m[trimId] ?? { a: 0, b: 0 };
+          const next = d.mode === 'end0'
+            ? { ...cur, a: round((v - base.lo) / pxPerFt) }
+            : { ...cur, b: round((base.hi - v) / pxPerFt) };
+          // BACK TO NOTHING RATHER THAN TO ZERO. A run dragged to where the rule
+          // put it is a run with no edit on it, and leaving {a:0,b:0} behind
+          // would mark it as hand-edited for ever and keep a row in the saved
+          // plan.
+          if (Math.abs(next.a) < 1e-6 && Math.abs(next.b) < 1e-6) {
+            if (!(trimId in m)) return m;
+            const out = { ...m }; delete out[trimId]; return out;
+          }
+          return { ...m, [trimId]: next };
+        });
+        return;
+      }
+
+      const o = runOpts(d.roomId, e);
+      updateAccentZone(d.roomId, d.id, (z) => {
+        if (d.mode === 'slide') return slideSconceTo(z, p);
+        if (d.mode === 'end0') return setRunEnd(z, 0, p, o);
+        if (d.mode === 'end1') return setRunEnd(z, 1, p, o);
+        if (d.mode === 'move') return moveRun(z, p, d.last, o);
+        return z;
       });
+      // The body drag is relative, so the cursor it measures from advances.
+      if (d.mode === 'move') acc.set((cur) => (cur ? { ...cur, last: p } : cur));
+    },
+    onRelease: (d) => {
+      // A derived run keeps no per-gesture state on itself — the trim is the
+      // whole of it — so there is nothing to tidy up.
+      if (d.derived) return;
+      // The snap indicator is a property of the GESTURE, not of the fitting, so
+      // it goes when the gesture does. Left on the zone it would draw a guide
+      // line through a strip nobody is touching.
+      updateAccentZone(d.roomId, d.id, (z) => (z.snap ? { ...z, snap: null } : z));
+    },
+  });
+
+  const accPointerDown = (e, roomId, id, mode) => {
+    if (e.button != null && e.button !== 0) return;   // middle button is the pan
+    /* AND EVERYTHING ELSE GOES THROUGH THE ROUTER. This handler had no guard of
+       its own at all: the caller withheld it while a tool was armed, which left
+       a no-light zone being boxed across a strip, the switchboard step and the
+       door editor all having their presses swallowed here. See
+       lib/pressOwner.js — this is the one rule, and it answers `grab` in exactly
+       the states where a fitting is meant to be pickable. */
+    if (!canGrab(pressState)) return;
+    // A DERIVED RUN HAS NO BODY DRAG. A reverse cove is a slot at a wall and a
+    // shelf strip is inside joinery: neither can be picked up and moved
+    // somewhere else, because neither is a thing somebody placed. Only the ends
+    // move, and they only move along the run's own axis. The canvas does not
+    // offer the body handle for these, and this is the second half of that —
+    // belt and braces on the one gesture that would silently do nothing.
+    const derived = accentZonesPx.find((z) => z.id === id && z.derived);
+    if (derived && mode !== 'end0' && mode !== 'end1') {
+      // ...but it is still SELECTABLE, and it has to be: without a body handle
+      // there would be nothing on it to click, and a fitting you cannot select
+      // is one you cannot find the grips of.
+      e.stopPropagation();
+      e.preventDefault();
+      setSel(select('acc', id)); setArmed(null);
       return;
     }
-
-    const o = runOpts(accDrag.roomId, e);
-    updateAccentZone(accDrag.roomId, accDrag.id, (z) => {
-      if (accDrag.mode === 'slide') return slideSconceTo(z, p);
-      if (accDrag.mode === 'end0') return setRunEnd(z, 0, p, o);
-      if (accDrag.mode === 'end1') return setRunEnd(z, 1, p, o);
-      if (accDrag.mode === 'move') return moveRun(z, p, accDrag.from, o);
-      return z;
+    e.stopPropagation();
+    e.preventDefault();
+    setSel(select('acc', id));
+    setArmed(null);
+    acc.down(e, {
+      id, roomId, mode,
+      // WHERE THE POINTER WAS LAST. It advances with the pointer, because a run
+      // must move by the DELTA and not jump to centre itself under the cursor —
+      // grab a strip near one end and it stays grabbed near that end. The
+      // gesture's own `from` does not advance, because that is what the
+      // threshold is measured from.
+      last: svgPoint(e),
+      // Carried on the GESTURE, not looked up per frame. The item is rebuilt by
+      // a memo on every trim, so a fresh lookup mid-drag would read the base off
+      // the run the last frame produced and the end would run away from the
+      // pointer.
+      derived: derived
+        ? { trimId: derived.trimId, horizontal: derived.horizontal,
+            base: derived.base }
+        : null,
     });
-    // The body drag is relative, so the origin advances with the pointer.
-    if (accDrag.mode === 'move') setAccDrag((d) => (d ? { ...d, from: p } : d));
   };
 
-  const accPointerUp = () => {
-    if (!accDrag) return;
-    // A derived run keeps no per-gesture state on itself — the trim is the whole
-    // of it — so there is nothing to tidy up.
-    if (accDrag.derived) { setAccDrag(null); return; }
-    // The snap indicator is a property of the GESTURE, not of the fitting, so
-    // it goes when the gesture does. Left on the zone it would draw a guide
-    // line through a strip nobody is touching.
-    const { roomId, id } = accDrag;
-    updateAccentZone(roomId, id, (z) => (z.snap ? { ...z, snap: null } : z));
-    setAccDrag(null);
-  };
+  const accPointerMove = acc.move;
+  const accPointerUp = acc.up;
 
   // --- picking a spot, and deleting one ---------------------------------------
 
