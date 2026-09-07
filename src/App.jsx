@@ -33,7 +33,7 @@ import { bbox, pointInPolygon, maxInset } from './lib/geometry.js';
 import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, openingPx, DOOR_WIDTHS } from './lib/doors.js';
 import { proposeOutlines } from './lib/outlineSources.js';
-import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, plausibleBed, ZONE_CLASSES, PROVIDERS, DEFAULT_PROVIDER, wireProvider } from './lib/furniture.js';
+import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, plausibleBed, ZONE_CLASSES, PROVIDERS, wireProvider } from './lib/furniture.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import { LIGHT_TOOLS, GESTURE } from './components/LightPalette.jsx';
@@ -477,7 +477,8 @@ const PTAB_ON = `${PTAB_SHAPE} text-white border-b-white`;
 // The editor knows nothing about Supabase — see routes/Planner.jsx. What it
 // knows is how to turn its own state into one object and back again, and that
 // contract lives in planState.js so the writer and the reader stay in step.
-import { serialiseEditor, applyEditor, statsFrom, statusFrom, NOT_UNDOABLE, setterFor }
+import { serialiseEditor, applyEditor, statsFrom, statusFrom, NOT_UNDOABLE, setterFor,
+         LAYER_DEFAULTS, clampZoom }
   from './lib/planState.js';
 import { usePlanDoc } from './hooks/usePlanDoc.js';
 
@@ -650,20 +651,11 @@ const ftin = (v) => {
 // the note in PlanCanvas. A key left in this object would come back true on
 // every saved plan and turn on nothing, which is the failure the comment above
 // is about, in the other direction.
-const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: true,
-  lights: true, labels: false, fan: true, zones: true, accents: true,
-  objects: true, spots: true, switchboards: true,
-  /* THE LOOPING, OFF BY DEFAULT. A lighting drawing and a wiring drawing are
-     two sheets read by two trades, and the arcs cross the layout everywhere
-     they exist — so they are asked for. Serialised with the rest, so a plan
-     reopens showing whatever it was left showing. */
-  electrical: false,
-  /* DARK MODE FOR THE DRAWING, AND IT IS A PIXEL INVERSION OF THE SCAN — the
-     same thing ⌘I does in Photoshop, applied to the plan image and nothing
-     else. It lives in `layers` because it is a preference about the picture
-     rather than a decision about the design, which means it is serialised with
-     the rest of them and the plan reopens the way it was left. */
-  invert: false };
+/* THE LAYER DEFAULTS MOVED TO lib/planState.js, and they had to: the document
+   reducer needs them for the value a fresh plan starts at, `applyEditor` MERGES
+   a saved plan's answer over them rather than assigning, and the test's fixture
+   has to agree with both. Three readers and one copy — see LAYER_DEFAULTS
+   there, which carries the note on the looping and on the inversion. */
 
 export default function App({
   planName = null, planId = null, initialFile = null, restore = null, saveState = 'idle',
@@ -793,20 +785,17 @@ export default function App({
   // difference. What is held here is only what the raster cannot say for itself:
   // which page it came from (so a reopened plan renders the same one) and, while
   // a drawing set is being chosen from, the open document.
-  const [pdfPage, setPdfPage] = useState(null);
   const [pdfPick, setPdfPick] = useState(null);  // {name, pages, thumbs, doc} while asking
-  const [unitId, setUnitId] = useState(null);    // user override of the file's own units
   // Outlines traced over the drawing, in RAW DRAWING UNITS — see toDu/fromDu in
   // planSource. Several per drawing; one is lit at a time. This is the shape a
   // whole-floor version needs: one layout per outline id.
-  const [outlines, setOutlines] = useState([]);
-  const [selectedOutlineId, setSelectedOutlineId] = useState(null);   // tracer highlight
+  // The outlines and the tracer's highlight are in the document reducer — see
+  // the domain-6b block in hooks/usePlanDoc.js.
   // THE WHOLE PLAN IS LIT AT ONCE. This was one id, and it being one id was an
   // artefact of an outline having been something you traced by hand: tracing
   // four rooms to light one of them is work nobody would do, so the app only
   // ever had one. Now that the rooms arrive together from the detector, they
   // are lit together — one layout per outline, all on screen, one export.
-  const [litIds, setLitIds] = useState([]);
   /* --- GOING BACK TO THE OUTLINES NO LONGER THROWS THE LAYOUT AWAY ---------
      `step` USED TO BE DERIVED FROM `litIds` ALONE, and that one line was the
      whole reason the Outlines tab had to ask "are you sure". There was no screen
@@ -845,8 +834,6 @@ export default function App({
      IT IS SERIALISED (see planState.js). The marks are the difference between
      "relight three spaces" and "relight eleven", so losing them on a reload
      would quietly put the bill back up. */
-  const [dirtyIds, setDirtyIds] = useState([]);
-  const [focusId, setFocusId] = useState(null);       // which room the panel is editing
   /* THE OPEN SPACE'S ROW, SO THE PANEL CAN SCROLL TO IT. The list has no box
      of its own any more — see the note at it — but the panel column is still a
      scroller, and the room that gets opened is very often one the canvas was
@@ -883,10 +870,33 @@ export default function App({
      destructured straight back out, so the hundred-odd places that read them go
      on saying exactly what they said; only the WRITES moved, and they moved into
      one typed action each. Same shape of change as `sel` and lib/selection.js. */
-  const [doc, docActions, docSetters] = usePlanDoc();
+  /* THE ONE FIELD SEEDED FROM A PROP. `projectType` — the kind of BUILDING —
+     is answered once at the PROJECT level, so a plan added to a project already
+     classified as a hotel arrives classified. Read once, on the first render,
+     which is exactly the lifetime `useState(initialProjectType ?? null)` had;
+     `resetForNewPlan` is what re-applies it on every file load. */
+  const [doc, docActions, docSetters] = usePlanDoc({
+    projectType: initialProjectType ?? null,
+  });
   const { ceilingMm, materials, fixtureWatts,
           manualCoves, manualTracks, manualCobs, cobArrays, trackFixtures, autoSpots,
-          ceilingShapes, designPicks, ceilingKinds, chunkPicks } = doc;
+          ceilingShapes, designPicks, ceilingKinds, chunkPicks,
+          accentResults, accentDismissed, manualAccents,
+          surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
+          wallResults, runTrims, runsOff, doors, doorsOk, zones,
+          boardsOff, boardMoves, boardPoints, flowBoards, flowBends,
+          manualBoards, boardKinds, boardHeights, boardOrders,
+          unitId, pdfPage, scaleMode, refId, customFt, measure, doorPick, ceilingFt,
+          roomTypes,
+          outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState,
+          detections, dismissed, bedVerdicts, provider,
+          ceilingObjs, lightMoves, renderRefs, layers, zoom, view } = doc;
+  /* THE ALIAS IS DELIBERATE AND IT IS THE ONE IN THIS FILE WORTH KEEPING.
+     `projectId` is what a hundred reads below call the kind of BUILDING, and it
+     is the one thing it is not — the database project's id never enters this
+     component. The document calls it `projectType`, which is also what
+     planState.js writes; the rename is here, once, rather than at every read. */
+  const { projectType: projectId } = doc;
 
   /* WHAT WATTAGE EACH FITTING IS IN THIS SPACE — room id -> row key -> watts.
      Sparse like the two above: a row with no entry is at its family's default
@@ -928,28 +938,10 @@ export default function App({
   const [materialsEdit, setMaterialsEdit] = useState(null);
 
   /* --- THE DERIVED RUNS SOMEBODY THREW AWAY --------------------------------
-     A LIST OF IDS, AND IT IS THE ONLY WAY A DERIVED RUN CAN BE DELETED. A
-     reverse cove and a shelf strip are both re-derived on every render out of
-     `wallResults` — nothing stores them — so removing one from the drawing means
-     recording that it is gone, exactly as `boardsOff`, `artDismissed` and
-     `surfaceDismissed` do for the three other things a pass produces.
-
-     NOT `accentDismissed`, WHICH IS WHERE THIS USED TO GO AND WHY DELETE DID
-     NOTHING. Both of these reach the drawing as accent zones, so Delete filed
-     their ids in the accent pass's dismissal list — and that list is only ever
-     applied to the accent pass's OWN zones. The id went in, nothing read it, and
-     the run stayed on the sheet. The two lists are separated because they are
-     applied in two different places: an accent zone is filtered where the accent
-     zones are built, and a reverse cove has to be filtered where the COVE is
-     built, or the tape would go and the slot it sits in would stay.
-
-     BY THE RUN'S OWN ID, which is `rcove-<element>-<n>` or `shelf-<element>-<n>`
-     — two namespaces that cannot collide, which is what lets one list serve
-     both. A HAND-PLACED cove is not in here at all: it has a store of its own
-     (`manualCoves`) and is removed from it, for the reason the accent branch
-     gives — a dismissal for a thing with no generator would suppress an id for
-     the life of the plan long after the thing itself was gone. */
-  const [runsOff, setRunsOff] = useState([]);
+     IN THE DOCUMENT REDUCER, with the two dismissal lists it sits beside — see
+     `runsOff` in hooks/usePlanDoc.js for why it is a list of its own rather than
+     an entry in `accentDismissed`, which is where it used to go and is why
+     Delete on a reverse cove did nothing at all. Written through `dropRun`. */
 
   const [busy, setBusy] = useState('');
 
@@ -965,7 +957,6 @@ export default function App({
   // underneath it.
   //
   // To the planner they are all one thing — see ceilingObjects.js.
-  const [ceilingObjs, setCeilingObjs] = useState([]);
   const [objType, setObjType] = useState('fan');
   const [fanSweepMm, setFanSweepMm] = useState(1200);
   /* --- WHAT IS PICKED ON THIS CANVAS, AND IT IS ONE VALUE -------------------
@@ -1082,8 +1073,9 @@ export default function App({
   const [trackEditId, setTrackEditId] = useState(null);
   const [selTrackPt, setSelTrackPt] = useState(null);
   const [trackGrip, setTrackGrip] = useState(null);
-  const [manualAccents, setManualAccents] = useState([]);
-  const [manualSurfaces, setManualSurfaces] = useState([]);
+  /* THE ACCENTS AND TASK SURFACES PLACED BY HAND. In the document reducer with
+     the two passes they sit beside — see hooks/usePlanDoc.js. Written through
+     `addAccent` / `addSurface` and their removals. */
 
   /* --- RECESSED COBs SOMEBODY PUT DOWN THEMSELVES ----------------------------
      A FLAT LIST IN PLAN FEET, kept for the reason `manualCoves` and
@@ -1334,7 +1326,6 @@ export default function App({
      cell centre: "a foot right of centre" stays legal if the cell shifts a
      hair, where a pair of absolute coordinates could quietly fall outside the
      band that admitted them. */
-  const [lightMoves, setLightMoves] = useState({});
   /* WHICH LIGHT IS PICKED, as `${outlineId}|${cellKey}` — the same pairing the
      store is keyed on, flattened, because a selection is one value. */
   const selLightId = idOf(sel, 'light');
@@ -1429,12 +1420,12 @@ export default function App({
   const [overRoom, setOverRoom] = useState(false); // is the pointer on a ceiling
   const [ghost, setGhost] = useState(null);       // where an armed object would land
 
-  const [zones, setZones] = useState([]);        // no-light rects in image px {id,x0,y0,x1,y1}
+  // The no-light rectangles are in the document reducer — see `zones` in
+  // hooks/usePlanDoc.js for why they are not the same thing as a detection.
   // Furniture found on the plan. Deliberately NOT the same thing as a zone:
   // a detection is a property of the IMAGE and is found once, whereas whether
   // it is a no-light zone depends on which room is being lit. Keeping them
   // apart is what lets the detection run before a boundary exists.
-  const [detections, setDetections] = useState([]);          // {id,cls,conf,rect} in image px
   const [detectState, setDetectState] = useState({ status: 'idle' });
   // THE TWO ANSWERS, KEPT APART. The ordinary path walks the whole `both`
   // response at once so that dedupe() collapses two boxes over one bed into one
@@ -1443,10 +1434,7 @@ export default function App({
   const [bedSets, setBedSets] = useState(null);   // {roboflow:[...], openai:[...]}
   // What the judge decided, per room, so the panel can say why a bed is where
   // it is. Keyed by outline id.
-  const [bedVerdicts, setBedVerdicts] = useState({});
-  const [dismissed, setDismissed] = useState([]);            // detection ids the user rejected
   const [detectNonce, setDetectNonce] = useState(0);         // bumping this re-runs detection
-  const [provider, setProvider] = useState(DEFAULT_PROVIDER);
   const [zoneMode, setZoneMode] = useState(false);
   const [draftZone, setDraftZone] = useState(null);
 
@@ -1536,7 +1524,6 @@ export default function App({
 
   // The room detector. Runs on upload, like the bed one, and for the same
   // reason: by the time there is anything to light the answer is already in.
-  const [roomState, setRoomState] = useState({ status: 'idle' });
   const [roomNonce, setRoomNonce] = useState(0);
 
   // --- accent lighting ------------------------------------------------------
@@ -1549,12 +1536,12 @@ export default function App({
   // Keyed by outline id throughout, so switching rooms in the panel does not
   // lose the answer the last one gave.
   const [accentRoomId, setAccentRoomId] = useState(null);
-  const [accentResults, setAccentResults] = useState({});   // roomId -> parsed reply, boxes in PLAN px
+  // The pass's answers — roomId -> parsed reply, boxes in PLAN px — are in the
+  // document reducer, with the dismissals that qualify them. See usePlanDoc.js.
   // Carries its own roomId. Everything else here is keyed by room, and a bare
   // status was the odd one out: a failure on room A left its error banner sitting
   // under room B's controls, over a button still offering to run.
   const [accentState, setAccentState] = useState({ status: 'idle', roomId: null });
-  const [accentDismissed, setAccentDismissed] = useState([]);
   /* --- THE ELECTRICALS, AND THERE IS NO LONGER A PASS TO STORE --------------
      `sbResults` WAS HERE — one entry per room, written by a bolt in the list of
      spaces that ran a vision call and kept its answer. Both are gone. The rules
@@ -1571,7 +1558,7 @@ export default function App({
      A board is derived, so "not this one" cannot be expressed by removing it
      from a list — the next render would put it straight back. Same shape and
      the same reasoning as `accentDismissed` next door. */
-  const [boardsOff, setBoardsOff] = useState([]);   // board ids somebody removed
+  // ...and it is in the document reducer — see `boardsOff` in usePlanDoc.js.
   /* ...AND WHERE THEY DRAGGED ONE TO: board id -> distance round that space's
      walls, in feet. Same kind of store as `boardsOff` and for the same reason —
      a board is derived, so a hand position has to live outside the derivation or
@@ -1579,7 +1566,6 @@ export default function App({
      THE COORDINATE IS ARC LENGTH AND NOT A POINT. See `wallPath` in
      electrical.js: a run index renumbers when somebody re-traces a corner, and a
      point in plan pixels moves when somebody corrects the scale. */
-  const [boardMoves, setBoardMoves] = useState({});
   /* ...AND WHAT THEY PUT ON ONE: board id -> the points somebody added by hand,
      `[{ id, kind, amps, label }]`, in the order they added them.
 
@@ -1596,7 +1582,6 @@ export default function App({
      is stored because the chip that removes an addition has to say what it is
      removing, and a plan whose project moves country would otherwise print a
      15A socket's chip using India's word for it. */
-  const [boardPoints, setBoardPoints] = useState({});
   const selBoardId = idOf(sel, 'board');
   const [boardDrag, setBoardDrag] = useState(null);   // {id, roomId, origin, live}
 
@@ -1625,8 +1610,7 @@ export default function App({
      `editorState`, so the undo already covers a bend nudged too far or a wire
      dropped on the wrong plate — and a panel control for undoing the last thing
      you did is a second undo with a smaller scope. */
-  const [flowBoards, setFlowBoards] = useState({});
-  const [flowBends, setFlowBends] = useState({});
+  // Both are in the document reducer — see usePlanDoc.js.
   const selFlowId = idOf(sel, 'flow');
   /* THE GESTURE IN FLIGHT: `{ id, kind, key, origin, live, at, overId }`.
      `kind` is 'board' or 'bend'; `at` is where the pointer is now, and `overId`
@@ -1655,7 +1639,6 @@ export default function App({
      WHERE IT IS, AND NOTHING ABOUT WHAT IT IS. Whether a plate is a socket
      outlet or a full switchboard lives in `boardKinds` below, because that is a
      question every plate on the drawing can be asked and not only these. */
-  const [manualBoards, setManualBoards] = useState([]);
 
   /* --- OUTLET OR SWITCHBOARD: `{ [boardId]: { outlet, amps } }` -------------
      TWO STATES OF ONE PLATE, AND A CHECKBOX BETWEEN THEM.
@@ -1686,7 +1669,6 @@ export default function App({
      `manualBoards` for one reason: it survives the conversion. A 16A outlet
      ticked into a switchboard is a board with a 16A socket on it, and a rating
      that lived on the outlet would have been lost on the way through. */
-  const [boardKinds, setBoardKinds] = useState({});
 
   /* --- HOW HIGH OFF THE FINISHED FLOOR: `{ [boardId]: mm }` -----------------
      THE ONE THING ABOUT A SWITCHBOARD A PLAN VIEW CANNOT SHOW. A plate is the
@@ -1705,7 +1687,6 @@ export default function App({
      second alone. Writing a single number over the whole list would silently
      turn a two-plate board into a one-plate board, which is a change to what
      gets ORDERED made by editing a dimension. */
-  const [boardHeights, setBoardHeights] = useState({});
 
   /* --- AND THE ORDER THE MODULES SIT IN: `{ [boardId]: [unitKey, ...] }` -----
      THE RULES DECIDE WHAT IS ON A PLATE AND A PERSON DECIDES WHERE. Which
@@ -1718,7 +1699,6 @@ export default function App({
      PAIR — a fan's switch with its regulator, a socket with its switch — so
      there is no arrangement this can express in which the thing you press is
      separated from the thing it works. See `order` in switchboards.js. */
-  const [boardOrders, setBoardOrders] = useState({});
   /* IS THE SWITCHBOARD TOOL OPEN? A step, like the door editor and the zone
      editor — it takes the panel over and stays open across placements, because
      somebody putting a board on one wall is usually putting one on three. */
@@ -1755,8 +1735,6 @@ export default function App({
    * has no path and works perfectly well for the pass, and a render restored
    * from the bucket has a path before its bytes have arrived.
    */
-  const [renderRefs, setRenderRefs] = useState({});
-  const [wallResults, setWallResults] = useState({});  // roomId -> { elements: [...] }
   const [wallState, setWallState] = useState({ status: 'idle', roomId: null });
   // The gridded crop, made eagerly so the panel can show it — same argument as
   // accentShot, one step stronger: a grid drawn the wrong way up is invisible in
@@ -1770,19 +1748,10 @@ export default function App({
   // of the plan, and it would be stale the moment anything was re-analysed. It
   // belongs to the session, like the renders it came from. See planState.js.
   const [wallTranscripts, setWallTranscripts] = useState({});
-  /**
-   * THE LENGTHS SOMEBODY CHANGED BY HAND. run id -> { a, b } in FEET.
-   *
-   * Reverse coves and shelf strips are derived, not placed — see trimWallRun for
-   * why the EDIT is stored rather than the result. Two numbers per run: how far
-   * each end was moved from where the rule put it. Everything else stays
-   * derived, so a trimmed cove still follows its wall when the outline moves and
-   * still redraws at the right size when the scale changes.
-   *
-   * Keyed by the run's own id rather than per room, because a room can hold
-   * several and they are edited one at a time.
-   */
-  const [runTrims, setRunTrims] = useState({});
+  /* THE LENGTHS SOMEBODY CHANGED BY HAND — run id -> { a, b } in FEET. In the
+     document reducer beside the `wallResults` it qualifies; see `runTrims` there
+     for why the EDIT is stored rather than the result, and RUN_TRIM_SET for the
+     rule that a run dragged back to where the rule put it stores nothing. */
 
   /**
    * WHICH CATEGORY OF THE EDIT TOOLBOX IS OPEN.
@@ -1808,21 +1777,16 @@ export default function App({
   // not the database project, whose id never enters this component. Seeded from
   // the project when the project knows: a plan added to a project already
   // classified as a hotel arrives classified.
-  const [projectId, setProjectId] = useState(initialProjectType ?? null);
-  const [roomTypes, setRoomTypes] = useState({});   // outline id -> {type,confidence,why}
+  // Both are in the document reducer — `projectType` and `roomTypes`. The
+  // reason this file goes on calling the first one `projectId` is at the
+  // destructure above.
   // The pipeline's own state while it runs. Null when it is not running, which
   // is also what the loader keys off.
   const [prep, setPrep] = useState(null);
   const cancelPrep = useRef(false);
 
   const [surfaceRoomId, setSurfaceRoomId] = useState(null);
-  const [surfaceResults, setSurfaceResults] = useState({});
   const [surfaceState, setSurfaceState] = useState({ status: 'idle', roomId: null });
-  const [surfaceDismissed, setSurfaceDismissed] = useState([]);
-  // THE ART SOMEBODY DECIDED NOT TO LIGHT, by wall-element id. Deleting a spot
-  // aimed at a painting takes the piece out of the LIGHTING design, not out of
-  // the render pass's reading of the wall — see planState.js.
-  const [artDismissed, setArtDismissed] = useState([]);
   // WHICH SPOT IS PICKED. Its own selection and not `selAccId`, because a spot
   // is not an accent: the two panels describe different things and a click on
   // one must not leave the other looking selected. Same shape and same lifetime
@@ -1856,7 +1820,6 @@ export default function App({
   const [accDrag, setAccDrag] = useState(null);   // {roomId, id, mode}
   // Not on the plan, and every mounting height and throw distance depends on
   // it. One field, and load-bearing — see the header of accentPrompt.js.
-  const [ceilingFt, setCeilingFt] = useState(10);
 
   // TWO WAYS TO SET THE SCALE, and there used to be four.
   //
@@ -1872,15 +1835,12 @@ export default function App({
   // on the plan first and was strictly worse than a door once doors could be
   // found. Fans are still detected and still become ceiling obstacles — they
   // have simply stopped being a ruler.
-  const [scaleMode, setScaleMode] = useState('door');   // door | ref
-  const [refId, setRefId] = useState('door900');
-  const [customFt, setCustomFt] = useState(3);
-  const [measure, setMeasure] = useState({ a: null, b: null });
+  // ...and all four of the scale's own fields are in the document reducer —
+  // see the `scaleMode` block in usePlanDoc.js, which carries this note's list.
 
-  // The doors found on upload, and the one the user picked as the ruler.
-  const [doors, setDoors] = useState([]);
+  // The doors found on upload are in the document reducer — see usePlanDoc.js —
+  // and the one the user picked as the ruler is `doorPick` below.
   const [doorState, setDoorState] = useState({ status: 'idle' });
-  const [doorPick, setDoorPick] = useState(null);   // {id, mm} | {id, mm:null} while choosing
   const [doorNonce, setDoorNonce] = useState(0);    // bumping this looks again
 
   // --- THE DOORS, CONFIRMED BEFORE THE WIRING IS DRAWN ----------------------
@@ -1904,7 +1864,7 @@ export default function App({
   // `doorsOk` IS A DECISION AND IS SAVED; `doorEdit` IS A SCREEN AND IS NOT.
   // Reopening a plan whose doors were confirmed must not ask again — the answer
   // is part of the design — but it must not reopen mid-edit either.
-  const [doorsOk, setDoorsOk] = useState(false);
+  // `doorsOk` is in the document reducer; `doorEdit` is a screen and stays here.
   const [doorEdit, setDoorEdit] = useState(false);
 
   /* --- WHICH MACHINE OWNS THE NEXT PRESS ----------------------------------
@@ -1947,8 +1907,9 @@ export default function App({
   // nothing draws them and nothing toggles them, so a key here would be a
   // setting with no effect, which is the kind of thing that survives three
   // refactors and then gets wired to the wrong render.
-  const [layers, setLayers] = useState(LAYER_DEFAULTS);
-  const [zoom, setZoom] = useState(1);
+  // The layer switches, the zoom and the tab are all in the document reducer —
+  // see the domain-6c block in hooks/usePlanDoc.js. All three are saved (a plan
+  // reopens the way it was left) and all three are held back from undo.
   // WHICH HALF OF THE DELIVERABLE IS ON SCREEN. A schedule is not a second view
   // of the drawing — it is the other half of what leaves the studio, read at a
   // different moment by a different person. So it replaces the canvas rather
@@ -1959,7 +1920,6 @@ export default function App({
      be what it is FOR, which is the list of spaces and what each of them is.
      A saved plan still comes back on whatever tab it was left on: this is the
      default, not an override — see `ui.view` in planState.js. */
-  const [view, setView] = useState('spaces');  // spaces | design | boards | boq | admin
   const [over, setOver] = useState(false);
   // null = not editing. An empty string is a legitimate draft mid-edit, so the
   // two cannot share a value.
@@ -2008,35 +1968,39 @@ export default function App({
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(LS) || '{}');
-      if (saved.provider) setProvider(saved.provider);
+      if (saved.provider) docActions.setProvider(saved.provider);
     } catch { /* first run */ }
-  }, []);
+  }, [docActions]);
   useEffect(() => {
     try { localStorage.setItem(LS, JSON.stringify({ provider })); } catch { /* private mode */ }
   }, [provider]);
 
   // --- load -----------------------------------------------------------------
   const resetForNewPlan = useCallback(() => {
-    setMeasure({ a: null, b: null }); setZoom(1);
+    docActions.clearMeasure(); docActions.setZoom(1);
     // NOTHING IS PICKED ON A FRESH SHEET. One line for what used to be eight,
     // and the three it used to miss — a COB, an array, a module — go with it.
     setSel(clear());
-    setZones([]); setZoneMode(false); setDraftZone(null); setZoneEdit(false);
+    docActions.clearZones(); setZoneMode(false); setDraftZone(null); setZoneEdit(false);
     docActions.clearChunkPicks(); setPickingId(null);
     docActions.clearCeilingKinds(); docActions.clearDesignPicks(); setOptionPick(null);
-    setDetections([]); setDetectState({ status: 'idle' }); setDismissed([]);
-    setRoomState({ status: 'idle' });
-    setAccentRoomId(null); setAccentResults({});
+    docActions.clearDetections(); setDetectState({ status: 'idle' });
+    docActions.clearDismissed();
+    docActions.setRoomState({ status: 'idle' });
+    setAccentRoomId(null); docActions.clearAccentResults();
     // The plates somebody threw away go with the plan they were on: a board id
     // names a room and a rule, and neither means anything on a fresh sheet.
-    setBoardsOff([]); setBoardMoves({}); setBoardPoints({});
+    docActions.clearBoardsOff(); docActions.clearBoardMoves();
+    docActions.clearBoardPoints();
     setBoardDrag(null);
-    setFlowBoards({}); setFlowBends({}); setFlowDrag(null);
-    setManualBoards([]); setBoardKinds({}); setBoardHeights({}); setBoardOrders({});
+    docActions.clearFlowBoards(); docActions.clearFlowBends(); setFlowDrag(null);
+    docActions.clearManualBoards(); docActions.clearBoardKinds();
+    docActions.clearBoardHeights(); docActions.clearBoardOrders();
     setBoardPlace(false);
-    setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
-    setRenders({}); setRenderRefs({});
-    setWallResults({}); setWallTranscripts({}); setRunTrims({});
+    setAccentState({ status: 'idle', roomId: null });
+    docActions.clearAccentDismissed(); setAccentShot(null);
+    setRenders({}); docActions.clearRenderRefs();
+    docActions.clearWallResults(); setWallTranscripts({}); docActions.clearRunTrims();
     // The hand-placed coves go with the trims, because they are the same
     // subject: a slot is set out against ONE plan's walls and means nothing
     // against another's. `runTrims` was already cleared here and leaving the
@@ -2049,18 +2013,19 @@ export default function App({
     // including the one that opens a saved plan, and blanking it here would put
     // the plan-level dialog back in front of a user whose project already
     // answered the question.
-    setProjectId(initialProjectType ?? null);
-    setRoomTypes({}); setPrep(null); cancelPrep.current = false;
-    setDoors([]); setDoorPick(null); setDoorState({ status: 'idle' });
+    docActions.setProjectType(initialProjectType ?? null);
+    docActions.clearRoomTypes(); setPrep(null); cancelPrep.current = false;
+    docActions.clearDoors(); docActions.setDoorPick(null);
+    setDoorState({ status: 'idle' });
     // ...AND THE CONFIRMATION GOES WITH THEM. It is an answer about ONE set of
     // door boxes; carrying it onto a fresh sheet would draw wiring off a
     // detection nobody has looked at.
-    setDoorsOk(false); setDoorEdit(false);
+    docActions.setDoorsOk(false); setDoorEdit(false);
     setDoorDraft(null); setDoorDrag(null);
-    setSurfaceRoomId(null); setSurfaceResults({});
-    setSurfaceState({ status: 'idle', roomId: null }); setSurfaceDismissed([]);
-    setArtDismissed([]);
-    setCeilingObjs([]); setObjMode(false); setObjDrag(null);
+    setSurfaceRoomId(null); docActions.clearSurfaceResults();
+    setSurfaceState({ status: 'idle', roomId: null }); docActions.clearSurfaceDismissed();
+    docActions.clearArtDismissed();
+    docActions.clearObjects(); setObjMode(false); setObjDrag(null);
     // AND THE DRAWN COVES, for the reason the hand-placed slots above go: a
     // shape is set out in ONE plan's feet, and carrying it onto a fresh sheet
     // would put a cove at whatever coordinates it happened to be drawn at.
@@ -2068,7 +2033,7 @@ export default function App({
     setShapeEditId(null); setShapeResize(null);
     // The hand positions go with the grid they were chosen on: a cell key names
     // a rectangle in ONE plan's feet and means nothing in another's.
-    setLightMoves({}); setLightDrag(null);
+    docActions.clearLightMoves(); setLightDrag(null);
     setShapeMenuOn(false); setShapeTool(null);
     setShapeSpan(null); covePen.reset(); setShapeAt(null); setShapeHeld(null);
     setShapeAskSides(false);
@@ -2081,9 +2046,10 @@ export default function App({
        belonging to the last one. */
     docActions.clearTrackFixtures(); setTrackMode(null);
     setArmed(null); setGuides([]); setGhost(null);
-    setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
-    setOutlinesOpen(false); setDirtyIds([]);
-    setUnitId(null);
+    docActions.clearOutlines(); docActions.setSelectedOutlineId(null);
+    docActions.clearLit(); docActions.setFocusId(null);
+    setOutlinesOpen(false); docActions.clearDirty();
+    docActions.setUnitId(null);
   }, [docActions, initialProjectType, covePen, trackPen]);
 
   /**
@@ -2100,10 +2066,10 @@ export default function App({
       const im = await pageToImg(await doc.render(pageNo), { name });
       setDxf(null);
       setImg(im);
-      setPdfPage(pageNo);
+      docActions.setPdfPage(pageNo);
       resetForNewPlan();
     } finally { setBusy(''); }
-  }, [resetForNewPlan]);
+  }, [resetForNewPlan, docActions]);
 
   // Bumped on every PDF opened, so the thumbnail loop of an abandoned document
   // stops rendering into a picker nobody is looking at.
@@ -2412,46 +2378,39 @@ export default function App({
    * forgotten in one reader is a change that silently does not come back. One
    * bundle, one place to add to.
    *
-   * Stable for the life of the component: every value in it is a useState setter
-   * except the `setLayers` wrapper, which closes over one.
+   * EVERY ENTRY BUT ONE IS GENERATED NOW. `docSetters` is built from the
+   * reducer's own field table, so a field added tomorrow needs no line here at
+   * all; the single hand-written entry left is `setLayers`, which MERGES over
+   * the defaults rather than assigning and says why below.
    */
   const stateSetters = useMemo(() => ({
-    setUnitId, setScaleMode, setRefId, setCustomFt, setMeasure, setDoorPick, setCeilingFt,
-    setOutlines, setLitIds, setDirtyIds, setFocusId, setSelectedOutlineId, setRoomState,
-    // `projectId` in here is the kind of BUILDING (residential, hospitality —
-    // see roomTypes.js), not the database project. The alias is the whole
-    // reason planState.js calls it projectType.
-    setProjectType: setProjectId,
-    setPdfPage,
-    setRoomTypes, setDetections, setDismissed, setBedVerdicts, setProvider, setZones,
-    setDoors, setDoorState, setDoorsOk, setDetectState,
-    setCeilingObjs, setLightMoves,
-    setAccentResults, setAccentDismissed, setManualAccents,
-    setSurfaceResults, setSurfaceDismissed, setManualSurfaces, setArtDismissed,
-    setBoardsOff, setBoardMoves, setBoardPoints, setFlowBoards, setFlowBends,
-    setManualBoards, setBoardKinds, setBoardHeights, setBoardOrders,
-    /* THE MIGRATED FIELDS COME BACK THROUGH THE REDUCER, and the bag goes on
-       being one flat object of `setX` functions so neither `applyEditor` nor
-       `applyStep` has to know which fields have moved into the document and
-       which are still loose `useState`. Generated from the reducer's own field
-       table — see DOC_FIELDS — so a field migrated tomorrow needs no line here.
-       The names are `setterFor`'s, which is the rule this bag already followed
-       by hand. */
+    /* THE TWO THAT ARE NOT DOCUMENT FIELDS, AND THE ONLY TWO LEFT. `applyEditor`
+       calls sixty-three setters: the sixty-one fields of the document, and these
+       two — which restore SESSION state DERIVED from what was just restored. A
+       reopened plan with doors in it has a door detector that reads as `done`,
+       so nothing offers to spend a model call finding doors that are already on
+       the drawing. Neither is saved; both are computed off `p.doors` and
+       `p.detections` in applyEditor. */
+    setDoorState, setDetectState,
+    /* AND EVERY OTHER FIELD COMES BACK THROUGH THE REDUCER, GENERATED. The bag
+       is one flat object of `setX` functions so neither `applyEditor` nor
+       `applyStep` has to know where a field lives — built from the reducer's own
+       field table, so a field added tomorrow needs no line here at all. The
+       names are `setterFor`'s, which is the rule this bag used to follow by
+       hand and is now held to mechanically. See DOC_FIELDS. */
     ...docSetters,
-    setRunsOff,
-    // THE ELEMENTS COME BACK, THE RENDERS DO NOT. See planState.js: the cells
-    // are a few hundred bytes of JSON and the renders are megabytes of
-    // somebody's photographs, which do not belong in a jsonb column.
-    setWallResults,
-    // ...and the lengths somebody dragged. Two numbers per run, and the only
-    // thing about these derived fittings a person actually chose.
-    setRunTrims,
-    // ...and where the views themselves are. The bytes are fetched back out
-    // of the bucket by the effect below, lazily and per space.
-    setRenderRefs,
-    // MERGED OVER THE DEFAULTS, not assigned. See LAYER_DEFAULTS.
-    setLayers: (saved) => setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
-    setZoom, setView,
+    /* MERGED OVER THE DEFAULTS, NOT ASSIGNED, AND THIS LINE IS WHY THE BAG STILL
+       HAS A HAND-WRITTEN ENTRY IN IT. `docSetters.setLayers` is the blunt
+       restore the reducer generates — it writes what it is given — and a plan
+       saved before a layer existed has no key for it, so assigning would leave
+       that layer `undefined` and it would read as off on a sheet whose author
+       never decided. The merge is the same class of defaulting as `applyEditor`'s
+       own `??`, and it belongs on the same side of the door: what reaches
+       DOC_FIELD_RESTORED is already the value that plan restores to.
+       IT MUST STAY AFTER THE SPREAD. Declared above it, the generated setter
+       would win and the merge would silently stop happening. See LAYER_DEFAULTS
+       in planState.js. */
+    setLayers: (saved) => docSetters.setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
   }), [docSetters]);
 
   useEffect(() => {
@@ -2505,11 +2464,15 @@ export default function App({
     () => outlinesPx.filter((o) => litIds.includes(o.id)),
     [outlinesPx, litIds]);
 
-  /* WHICH SPACES ARE LIT, READABLE FROM A CALLBACK. `markChanged` runs inside
-     the edit handlers and has to know whether the outline it is about to mark is
-     already lit; reading `litIds` through a `setLitIds` reducer to peek at it
-     would mean a `setDirtyIds` call inside another setter's reducer, and React
-     is free to invoke a reducer twice. Same pattern as `roomsRef` below. */
+  /* WHICH SPACES ARE LIT, READABLE FROM A CALLBACK — AND STILL A REF NOW THAT
+     BOTH LISTS ARE IN THE REDUCER. `markChanged` runs inside the edit handlers
+     and has to know whether the outline it is about to mark is already lit. It
+     could not read `litIds` from inside the document reducer to decide whether
+     to write `dirtyIds`: that is a decision taken while reducing, and React is
+     free to invoke a reducer twice, so a rule that read one field to gate a
+     write to another would be a rule running an unknown number of times. The
+     ref keeps the DECISION at the call site and leaves the reducer with a plain
+     `markDirty(id)`. Same pattern as `roomsRef` below. */
   const litRef = useRef(litIds);
   litRef.current = litIds;
 
@@ -2519,9 +2482,9 @@ export default function App({
     const stored = { id: o.id, name: o.name, rectify: o.rectify,
                      detected: false, reviewed: true,
                      pointsDu: pointsPx.map(source.toDu) };
-    setOutlines((os) => [...os, stored]);
-    setSelectedOutlineId(stored.id);   // highlight it; confirming is a separate act
-  }, [source, outlines]);
+    docActions.addOutline(stored);
+    docActions.setSelectedOutlineId(stored.id);   // highlight it; confirming is separate
+  }, [source, outlines, docActions]);
 
   /**
    * A ROOM IS MARKED DIRTY ONLY IF IT IS LIT. An outline nobody has lit yet is
@@ -2531,27 +2494,23 @@ export default function App({
    */
   const markChanged = useCallback((id) => {
     if (!litRef.current.includes(id)) return;
-    setDirtyIds((d) => (d.includes(id) ? d : [...d, id]));
-  }, []);
+    docActions.markDirty(id);
+  }, [docActions]);
 
   const updateOutline = useCallback((id, patch) => {
     // `rectify` SQUARES THE POLYGON, so it moves corners and counts as a change.
     // A rename does not, and marking on one would offer a paid relight for
     // having typed a better name.
     if ('rectify' in patch) markChanged(id);
-    setOutlines((os) => os.map((o) => (o.id === id ? { ...o, ...patch } : o)));
-  }, [markChanged]);
+    docActions.patchOutline(id, patch);
+  }, [markChanged, docActions]);
 
-  const deleteOutline = useCallback((id) => {
-    setOutlines((os) => os.filter((o) => o.id !== id));
-    setSelectedOutlineId((s) => (s === id ? null : s));
-    setLitIds((ids) => ids.filter((x) => x !== id));
-    // A SPACE THAT IS GONE IS NOT A SPACE THAT CHANGED. Left in, its id would
-    // sit in the dirty list for ever, and the tracer would offer a relight of a
-    // room that no longer exists.
-    setDirtyIds((d) => d.filter((x) => x !== id));
-    setFocusId((f) => (f === id ? null : f));
-  }, []);
+  /* ONE ACT, AND IT TOUCHES FIVE FIELDS. The lit list, the dirty list, the
+     tracer's highlight and the panel's focus all refer to a space by id, so all
+     four have to let go of it together — see OUTLINE_DELETED, which carries the
+     reason the dirty list is filtered rather than left alone. */
+  const deleteOutline = useCallback(
+    (id) => docActions.deleteOutline(id), [docActions]);
 
   /**
    * Editing an outline's corners.
@@ -2570,14 +2529,17 @@ export default function App({
   const editPoints = useCallback((id, fn) => {
     if (!source) return;
     markChanged(id);
-    setOutlines((os) => os.map((o) => {
-      if (o.id !== id) return o;
-      const px = o.pointsDu.map(source.fromDu);
-      const next = fn(px);
-      if (!next || next.length < 3) return o;
-      return { ...o, reviewed: true, pointsDu: next.map(source.toDu) };
-    }));
-  }, [source, markChanged]);
+    /* THE CONVERSION RIDES IN WITH THE EDIT, and that is what keeps this
+       honest: `source.fromDu`/`toDu` are a memo — derived state the document
+       may not hold — so the reducer is handed a pure `pointsDu -> pointsDu`
+       that has the conversion folded into it. See OUTLINE_POINTS_EDITED, which
+       also says why the points must be read from the reducer's own state and
+       not from here. */
+    docActions.editOutlinePoints(id, (pointsDu) => {
+      const next = fn(pointsDu.map(source.fromDu));
+      return next ? next.map(source.toDu) : null;
+    });
+  }, [source, markChanged, docActions]);
 
   const movePoint = useCallback((id, index, pointPx) => {
     editPoints(id, (px) => px.map((p, i) => (i === index ? pointPx : p)));
@@ -2764,28 +2726,21 @@ export default function App({
   /** Light everything traced or proposed. The primary act on the tracer screen. */
   const lightWholePlan = useCallback(async () => {
     if (!await claimSpaces(outlines.map((o) => o.id))) return;
-    setOutlines((os) => os.map((o) => ({ ...o, reviewed: true })));
-    setLitIds(outlines.map((o) => o.id));
-    // NOTHING IS SELECTED TO BEGIN WITH. `focusId` used to be seeded with the
-    // first outline, which was harmless while it only decided which room the
-    // panel described — it now also draws a blue outline on the canvas, and a
-    // space highlighted because it happens to be first is a selection nobody
-    // made. `focus` still falls back to rooms[0] for the panel's own purposes,
-    // so the details pane is unaffected.
-    setFocusId(null);
+    /* ONE ACT. Marking everything reviewed, lighting the lot, clearing the
+       dirty list and dropping the focus are four writes and one decision — see
+       PLAN_LIT, which also carries the note on why nothing is selected to begin
+       with. The lit list is read off the document in there rather than from
+       `outlines` here. */
+    docActions.lightWholePlan();
+    docActions.clearDirty();
     setPickingId(null);
-    setDirtyIds([]);
     setOutlinesOpen(false);
-  }, [outlines, claimSpaces]);
+  }, [outlines, claimSpaces, docActions]);
 
   const lightOneRoom = useCallback(async (id) => {
     if (!await claimSpaces([id])) return;
-    setOutlines((os) => os.map((o) => (o.id === id ? { ...o, reviewed: true } : o)));
-    setSelectedOutlineId(id);
-    setLitIds([id]);
-    setFocusId(id);
+    docActions.lightOneRoom(id);
     setPickingId(null);
-    setDirtyIds((d) => d.filter((x) => x !== id));
     setOutlinesOpen(false);
     // CONFIRMING THE SPACES IS ITS OWN DATAPOINT — "here is what the segmenter
     // proposed and here is what a person accepted" — and it is worth recording
@@ -2797,7 +2752,7 @@ export default function App({
     // quarter of a second is far longer than a commit needs and short enough
     // that nothing else can have happened.
     setTimeout(() => milestone.current?.('outlines'), 250);
-  }, [claimSpaces]);
+  }, [claimSpaces, docActions]);
 
   /* NO PLAN-SIZE BRANCHING IN THE BED PASSES, and this is the shape the whole
      thing settled into: the WHOLE SHEET goes to both detectors on every plan,
@@ -3684,7 +3639,7 @@ export default function App({
           (st.roomId === r.id ? { ...st, phase } : st)),
         onCall: record,
       });
-      setWallResults((m) => ({ ...m, [r.id]: out.result }));
+      docActions.setWallResult(r.id, out.result);
       if (out.shot) setWallShot({ ...out.shot, roomId: r.id });
       setWallState({ status: 'done', roomId: r.id, ms: Date.now() - t0 });
       console.log(`[render pass] ${r.outline.name || r.id}:`,
@@ -3700,7 +3655,7 @@ export default function App({
       setWallState({ status: 'error', roomId: r.id, error: String(err.message || err),
                      ms: Date.now() - t0 });
     }
-  }, [focus, renders, computeWallItems, onClaimPass, onReleasePass, readOnly]);
+  }, [focus, renders, computeWallItems, onClaimPass, onReleasePass, readOnly, docActions]);
 
   /** Files in -> downscaled renders on the selected space. See renderImage.js
    *  for why nothing that arrives here is ever sent at the size it arrived. */
@@ -3736,14 +3691,14 @@ export default function App({
         renderStore.put(renderBlob(v), { roomId: r.id, index: base + i })
           .then((path) => {
             if (!path) return;
-            setRenderRefs((m) => ({ ...m, [r.id]: [...(m[r.id] ?? []), renderRef(v, path)] }));
+            docActions.addRenderRef(r.id, renderRef(v, path));
           })
           .catch((err) => console.warn('[render pass] a view was not stored', err));
       });
     } catch (err) {
       setWallState({ status: 'error', roomId: r.id, error: String(err.message || err) });
     }
-  }, [focus, renders, renderRefs, renderStore]);
+  }, [focus, renders, renderRefs, renderStore, docActions]);
 
   /**
    * THE VIEWS, BACK OUT OF THE BUCKET — for the space that is open, and no other.
@@ -4004,10 +3959,10 @@ export default function App({
         kept: mine.length, fresh: fresh.length,
       };
     }
-    if (found.length) setDetections((prev) => [...prev, ...found]);
-    setBedVerdicts((prev) => ({ ...prev, ...verdicts }));
+    if (found.length) docActions.addDetections(found);
+    docActions.mergeBedVerdicts(verdicts);
     return { found, verdicts };
-  }, []);
+  }, [docActions]);
 
   /**
    * LOOK AGAIN — the admin's manual version of the bedroom pass.
@@ -4995,9 +4950,8 @@ export default function App({
   const heightOf = useCallback(
     (b) => b?.heightsMm?.[0] ?? heightsFor(b?.role)[0] ?? 1200, []);
 
-  const setBoardHeight = useCallback((id, mm) => {
-    setBoardHeights((m) => ({ ...m, [id]: mm }));
-  }, []);
+  const setBoardHeight = useCallback(
+    (id, mm) => docActions.setBoardHeight(id, mm), [docActions]);
 
   const allBoardsPx = useMemo(() => {
     const out = [];
@@ -5283,7 +5237,7 @@ export default function App({
     // land back where it was.
     next.splice(Math.max(0, Math.min(next.length, toIndex > from ? toIndex - 1 : toIndex)),
       0, key);
-    setBoardOrders((m) => ({ ...m, [id]: next }));
+    docActions.setBoardOrder(id, next);
     /* AND THE THING JUST MOVED IS WHAT IS SELECTED, where it is on a wire. The
        card lights the dropped unit by its own key — see `movedKey` there, which
        is what a unit with no flow needs — and this is the other half of it: the
@@ -5291,7 +5245,7 @@ export default function App({
        disagree about what was just touched. */
     const flowId = units[from]?.flowId ?? null;
     if (flowId) setSel(select('flow', flowId));
-  }, [selBoard, selBoardParts]);
+  }, [selBoard, selBoardParts, docActions]);
 
   /**
    * A PLATE IS A SOCKET OUTLET, OR IT IS A SWITCHBOARD.
@@ -5328,20 +5282,12 @@ export default function App({
     // and everything a rule put on a wall is a board. `placed` survives the
     // outlet transform (see `asOutlet`), so it is readable in either state.
     const born = !!b.placed;
-    setBoardKinds((m) => {
-      const cur = m[b.id] ?? {};
-      if (outlet === born && cur.amps == null) {
-        if (!(b.id in m)) return m;
-        const out = { ...m }; delete out[b.id]; return out;
-      }
-      return { ...m, [b.id]: { ...cur, outlet } };
-    });
-  }, []);
+    docActions.setBoardOutlet(b.id, outlet, born);
+  }, [docActions]);
 
   /** Re-rate the selected plate's socket. Its switch follows, wherever it is. */
-  const setBoardAmps = useCallback((id, amps) => {
-    setBoardKinds((m) => ({ ...m, [id]: { ...(m[id] ?? {}), amps } }));
-  }, []);
+  const setBoardAmps = useCallback(
+    (id, amps) => docActions.setBoardAmps(id, amps), [docActions]);
 
   /**
    * EVERY PLATE ON THE JOB, GROUPED BY SPACE AND ORDERED BY SIZE — the sheet.
@@ -5420,19 +5366,14 @@ export default function App({
        plate is an ordinary thing to want, and they have to be removable one at
        a time — which `socket:16` used as a key cannot express. */
     const id = `bp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-    setBoardPoints((m) => ({
-      ...m,
-      [selBoardId]: [...(m[selBoardId] ?? []),
-        { id, kind: p.kind, amps: p.amps ?? null, label: p.label }],
-    }));
-  }, [selBoardId, selBoard, setBoardOutlet]);
+    docActions.addBoardPoint(selBoardId,
+      { id, kind: p.kind, amps: p.amps ?? null, label: p.label });
+  }, [selBoardId, selBoard, setBoardOutlet, docActions]);
 
   const removeBoardPoint = useCallback((pid) => {
     if (!selBoardId) return;
-    setBoardPoints((m) => ({
-      ...m, [selBoardId]: (m[selBoardId] ?? []).filter((e) => e.id !== pid),
-    }));
-  }, [selBoardId]);
+    docActions.removeBoardPoint(selBoardId, pid);
+  }, [selBoardId, docActions]);
 
   /**
    * The layout, in the one number a lighting drawing is actually judged on.
@@ -6210,9 +6151,9 @@ export default function App({
     if (!tag) { revealed.current = ''; return; }
     if (tag === revealed.current) return;
     revealed.current = tag;
-    if (roomId) { setFocusId(roomId); setOptionPick(null); }
-    setView('spaces');
-  }, [analysisHighlight]);
+    if (roomId) { docActions.setFocusId(roomId); setOptionPick(null); }
+    docActions.setView('spaces');
+  }, [analysisHighlight, docActions]);
 
   /** ONE ROW'S WATTAGE, IN ONE ROOM — a run's own, or a counted family's. `key`
    *  is whatever `roomFixtureGroups` said identifies the row; `familyId` is only
@@ -6987,14 +6928,14 @@ export default function App({
       for (const d of dedupe(loose)) won.push({ ...d, roomId: null, contest: 'unjudged' });
 
       bedsNow = won;
-      setBedVerdicts(verdicts);
+      docActions.setBedVerdicts(verdicts);
       // A DISMISSAL CANNOT SURVIVE THIS. The ids it holds are the merged set's
       // (`det-3-...`); the judged list's are the winning detector's
       // (`det-rf-0-...`), so a kept dismissal would silently apply to nothing —
       // a box the user struck out would come back with no way to tell that it
       // had. Cleared, so the list on screen is the list that was decided.
-      setDismissed([]);
-      setDetections(won);
+      docActions.clearDismissed();
+      docActions.replaceDetections(won);
 
       const asked = rows.filter((r) => r.rec.asked).length;
       const withBeds = rows.filter((r) => r.rec.kind !== 'none').length;
@@ -7012,21 +6953,13 @@ export default function App({
       // Not a model call: mark everything lit so the memo produces the ambient
       // layout the rest of this depends on. AFTER the beds, so it is computed
       // once with their zones in it rather than once without and once with.
-      setOutlines((os) => os.map((o) => (inRun(o.id) ? { ...o, reviewed: true } : o)));
-      // A UNION, NOT AN ASSIGNMENT. On a partial relight the spaces that were
-      // already lit have to stay lit — assigning the subset here would blank the
-      // rest of the sheet, which is the very thing this whole change exists to
-      // stop happening.
-      setLitIds((prev) => (ids
-        ? [...prev, ...ids.filter((id) => !prev.includes(id))]
-        : outlines.map((o) => o.id)));
-      // NOTHING IS SELECTED TO BEGIN WITH. `focusId` used to be seeded with the
-      // first outline, which was harmless while it only decided which room the
-      // panel described — it now also draws a blue outline on the canvas, and a
-      // space highlighted because it happens to be first is a selection nobody
-      // made. `focus` still falls back to rooms[0] for the panel's own purposes,
-      // so the details pane is unaffected.
-      setFocusId(null);
+      /* ONE ACT AGAIN, AND THE LIT LIST IS A UNION. On a partial relight the
+         spaces that were already lit have to STAY lit — assigning the subset
+         would blank the rest of the sheet, which is the very thing the partial
+         run exists to stop doing. `ids` null is the whole sheet, and RELIT
+         reads that off the document rather than from `outlines` here. It also
+         carries the note on why nothing is selected to begin with. */
+      docActions.relight(ids);
       setPickingId(null);
       stepTo('geometry');
       paint({ detail: 'Working out where the spaces are' });
@@ -7084,7 +7017,7 @@ export default function App({
       // the rooms in this run, and replacing the map would drop the type of
       // every room that was not.
       types = { ...roomTypes, ...found };
-      setRoomTypes((m) => ({ ...m, ...found }));
+      docActions.mergeRoomTypes(found);
       const named = (r) => roomTypeIn(projectId, found[r.id]?.type)?.label ?? 'unclassified';
       note('types', withFails(list.map((r) => named(r)).slice(0, 4).join(', ')
         + (list.length > 4 ? `, +${list.length - 4}` : ''), failed.types));
@@ -7206,9 +7139,8 @@ export default function App({
       // A re-run REPLACES a room's fittings, so its dismissals go too — the ids
       // are positional and would otherwise strike out whatever takes that index
       // next.
-      setAccentDismissed((d) => d.filter((x) =>
-        !forAccents.some((r) => x.startsWith(`acc-${r.id}-`))));
-      setAccentResults((m) => ({ ...m, ...got }));
+      docActions.dropAccentDismissals(forAccents.map((r) => r.id));
+      docActions.mergeAccentResults(got);
       const fittings = Object.values(got)
         .reduce((n, a) => n + a.zones.filter((z) => !z.rejected).length, 0);
       if (forAccents.length) {
@@ -7235,9 +7167,8 @@ export default function App({
         return null;
       });
       if (cancelPrep.current) { setPrep(null); return; }
-      setSurfaceDismissed((d) => d.filter((x) =>
-        !forSpots.some((r) => x.startsWith(`surf-${r.id}-`))));
-      setSurfaceResults((m) => ({ ...m, ...got }));
+      docActions.dropSurfaceDismissals(forSpots.map((r) => r.id));
+      docActions.mergeSurfaceResults(got);
       const n = Object.values(got).reduce((acc, sr) => acc + sr.surfaces.length, 0);
       if (forSpots.length) note('spots', withFails(`${n} surface${n === 1 ? '' : 's'}`, failed.surfaces));
     }
@@ -7256,7 +7187,7 @@ export default function App({
     // WHAT THE RUN ANSWERED IS NO LONGER OUTSTANDING. A full run clears the list
     // outright; a partial one clears only the ids it was given, so a space
     // somebody moved WHILE this was running stays marked and is still offered.
-    if (relight) setDirtyIds((d) => (ids ? d.filter((x) => !ids.includes(x)) : []));
+    if (relight) docActions.clearDirty(ids);
     // ...AND THE TRACER GETS OUT OF THE WAY. A relight is the act of leaving the
     // outlines, so finishing one lands on the drawing it just built rather than
     // back on the screen the user pressed the button from.
@@ -7264,7 +7195,7 @@ export default function App({
        the spaces have been taken up; what somebody does next is go into one and
        say how high it is and what it is finished in — see AUTO_GRID. Design is
        the tab with nothing on it until a tool has been used. */
-    if (relight) { setOutlinesOpen(false); setView('spaces'); }
+    if (relight) { setOutlinesOpen(false); docActions.setView('spaces'); }
     /* AND THE DESIGN SCREEN INTRODUCES ITSELF WHEN IT ARRIVES — but nothing
        about that is arranged here. The run used to raise the flag itself, which
        made a hint about the ceiling a property of HOW you got to the design
@@ -7279,7 +7210,7 @@ export default function App({
     milestone.current?.('design');
   }, [source, outlines, projectId, roomTypes, PREP_STEPS, pxPerFt, useBoundingRect,
       bedSets, detections, computeBedFit, computeRoomType, computeAccents, computeSurfaces,
-      refindBeds, absorbBedRows, planAreaSqft, claimSpaces]);
+      refindBeds, absorbBedRows, planAreaSqft, claimSpaces, docActions]);
 
   /** Stop the run where it is and land on whatever finished. */
   const stopPipeline = useCallback(() => {
@@ -7397,7 +7328,7 @@ export default function App({
   };
   const placedHere = PLACED[stepTool?.id]
     ?? { n: manualSurfaces.length, one: 'spot', many: 'spots',
-         clear: () => setManualSurfaces([]) };
+         clear: () => docActions.clearSurfaces() };
 
   /* --- ARRIVING AT THE DESIGN SCREEN TURNS THE PLAN DARK -------------------
      THE TWO STEPS WANT OPPOSITE GROUNDS AND THAT IS NOT AN INCONSISTENCY.
@@ -7442,10 +7373,10 @@ export default function App({
   useEffect(() => {
     const lit = litIds.length > 0;
     if (restoreApplied && hadLights.current === false && lit) {
-      setLayers((l) => (l.invert ? l : { ...l, invert: true }));
+      docActions.setLayer('invert', true);
     }
     hadLights.current = restoreApplied ? lit : null;
-  }, [litIds, restoreApplied]);
+  }, [litIds, restoreApplied, docActions]);
   // The BOQ tab takes the whole stage. Gated on `source` as well as on the tab
   // so that a stale `view` cannot survive a Clear and render a schedule of a
   // plan that is no longer loaded.
@@ -7520,12 +7451,12 @@ export default function App({
     // cannot survive the crossing.
     // ...AND SO DOES THE SWITCHBOARD SHEET, for exactly the same reason: both
     // replace the stage, and the tracer needs the stage.
-    setView((v) => (v === 'boq' || v === 'boards' ? 'design' : v));
+    docActions.requireStageView();
     return true;
   };
 
   /** ...and the way back, which is the same flag and no questions either. */
-  const backToDesign = () => { setOutlinesOpen(false); setView('design'); };
+  const backToDesign = () => { setOutlinesOpen(false); docActions.setView('design'); };
 
 
   // --- interactions ---------------------------------------------------------
@@ -8136,18 +8067,12 @@ export default function App({
       if (!poly?.length) return;
       const sFt = slideBoardTo(p, { polygonPx: poly, pxPerFt });
       if (sFt == null) return;
-      /* A HAND-PLACED PLATE HAS ONE POSITION AND IT IS THIS ONE. `boardMoves` is
-         an OVERRIDE — it exists so a rule's board can be somewhere the rule did
-         not put it, and so the card can say both. A board somebody dropped on a
-         wall has no rule behind it, so writing a move for one would be storing
-         "moved from" a position that was itself a hand position: two records of
-         one fact, and a plate that could be reset to a place nobody chose. */
-      if (manualBoards.some((m) => m.id === d.id)) {
-        setManualBoards((list) => list.map((m) => (
-          m.id === d.id ? { ...m, sFt } : m)));
-        return;
-      }
-      setBoardMoves((m) => ({ ...m, [d.id]: sFt }));
+      /* WHICH STORE THIS LANDS IN IS DECIDED IN THE REDUCER, and on a
+         per-frame path that is not a style preference: read from here it would
+         be the membership as of the render that QUEUED the write, which is a
+         frame behind. See BOARD_SLID, which also carries the reason a
+         hand-placed plate has no `boardMoves` entry of its own. */
+      docActions.slideBoard(d.id, sFt);
     },
   });
 
@@ -8171,7 +8096,7 @@ export default function App({
        NOT FROM `admin`, WHICH IS NOT A STEP IN THIS WORK. It is a different
        audience's tab and yanking an operator out of it because they clicked the
        drawing would lose whatever they were reading. */
-    setView((v) => (v === 'admin' ? v : 'design'));
+    docActions.requestDesignView();
     /* NO ROOM, NO DRAG, AND STILL A SELECTION. A plate the board pass produced
        outside any space has no outline to slide along, so there is nothing for
        the gesture to resolve the pointer to — but it is still a thing you can
@@ -8244,9 +8169,7 @@ export default function App({
       if (!leg || !(pxPerFt > 0)) return;
       const off = (p.x - leg.mid.x) * leg.normal.x + (p.y - leg.mid.y) * leg.normal.y;
       const bendFt = (off - leg.base) / pxPerFt;
-      setFlowBends((m) => ({
-        ...m, [d.id]: { ...(m[d.id] ?? {}), [d.key]: bendFt },
-      }));
+      docActions.setFlowBend(d.id, d.key, bendFt);
     },
     /* THE DROP IS THE COMMIT, for a board drag. A release over nothing is a
        gesture abandoned and leaves the wire where it was — NOT an
@@ -8273,13 +8196,7 @@ export default function App({
          `spareAmps`, which is why the rating survives. */
       const target = allBoardsPx.find((b) => b.id === d.overId);
       if (target?.socketOnly) setBoardOutlet(target, false);
-      setFlowBoards((m) => {
-        if (home) {
-          if (!(d.id in m)) return m;
-          const out = { ...m }; delete out[d.id]; return out;
-        }
-        return { ...m, [d.id]: d.overId };
-      });
+      docActions.setFlowBoard(d.id, d.overId, home);
     },
   });
 
@@ -8321,12 +8238,7 @@ export default function App({
    * offers it next; deleting it would mean rediscovering the paragraph above.
    */
   // eslint-disable-next-line no-unused-vars
-  const resetBoard = useCallback((id) => {
-    setBoardMoves((m) => {
-      if (!(id in m)) return m;
-      const out = { ...m }; delete out[id]; return out;
-    });
-  }, []);
+  const resetBoard = useCallback((id) => docActions.resetBoard(id), [docActions]);
 
   const deleteBoard = useCallback((id) => {
     /* TWO VERBS, AND THE SAME DISTINCTION `accentDismissed` MAKES. A rule's
@@ -8335,13 +8247,9 @@ export default function App({
        has to persist. A hand-placed board has no rule to come back from, so
        dismissing one would leave an id in `boardsOff` for the life of the plan,
        suppressing something that no longer exists. It is removed instead. */
-    if (manualBoards.some((m) => m.id === id)) {
-      setManualBoards((list) => list.filter((m) => m.id !== id));
-    } else {
-      setBoardsOff((off) => (off.includes(id) ? off : [...off, id]));
-    }
+    docActions.deleteBoard(id);
     setSel((cur) => (idOf(cur, 'board') === id ? clear() : cur));
-  }, [manualBoards]);
+  }, [docActions]);
 
   const closeDoorEdit = useCallback(() => {
     setDoorEdit(false); setSel(clear()); setDoorDraft(null); setDoorDrag(null);
@@ -8387,13 +8295,13 @@ export default function App({
      does. One pointer pipeline, one owner. */
   const openWallEdit = useCallback((roomId) => {
     setWallEdit(roomId); setWallPick(null);
-    setFocusId(roomId); setSel(clear());
+    docActions.setFocusId(roomId); setSel(clear());
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
     setBoardPlace(false); closeShapeTool();
     setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
     setArmed(null); setGhost(null); setGuides([]);
     disarmAdd();
-  }, [disarmAdd, closeShapeTool]);
+  }, [disarmAdd, closeShapeTool, docActions]);
 
   const closeWallEdit = useCallback(() => {
     setWallEdit(null); setWallPick(null);
@@ -8434,8 +8342,8 @@ export default function App({
        electricals switched off lands invisibly — the gesture appears to do
        nothing at all — and the entire point of the red plate is that somebody
        can see it is not connected yet. */
-    setLayers((l) => (l.electrical ? l : { ...l, electrical: true }));
-  }, [disarmAdd, closeShapeTool]);
+    docActions.setLayer('electrical', true);
+  }, [disarmAdd, closeShapeTool, docActions]);
 
   const closeBoardPlace = useCallback(() => setBoardPlace(false), []);
 
@@ -8891,7 +8799,7 @@ export default function App({
        have just moved by the whole of what the run adds. A tool that changed a
        room's verdict silently would be the one act on this drawing worth
        watching, performed off screen. */
-    setFocusId(home.id); setOptionPick(null); setView('spaces');
+    docActions.setFocusId(home.id); setOptionPick(null); docActions.setView('spaces');
   }, [docActions, pxPerFt, rooms, spaceAnalysis]);
 
   const commitShape = useCallback(() => {
@@ -9090,11 +8998,7 @@ export default function App({
       if (!l?.cell) return;
       const ft = { x: (d.at.x - r.geo.origin.x) / pxPerFt,
                    y: (d.at.y - r.geo.origin.y) / pxPerFt };
-      setLightMoves((m) => ({
-        ...m,
-        [d.roomId]: { ...(m[d.roomId] || {}),
-                      [d.cellKey]: { dx: ft.x - l.cell.cx, dy: ft.y - l.cell.cy } },
-      }));
+      docActions.moveLight(d.roomId, d.cellKey, ft.x - l.cell.cx, ft.y - l.cell.cy);
     },
   });
 
@@ -9144,16 +9048,8 @@ export default function App({
    */
   const resetLightMove = useCallback((key) => {
     const [roomId, ck] = String(key).split('|');
-    setLightMoves((m) => {
-      const room = m[roomId];
-      if (!room || !(ck in room)) return m;
-      const next = { ...room };
-      delete next[ck];
-      const out = { ...m };
-      if (Object.keys(next).length) out[roomId] = next; else delete out[roomId];
-      return out;
-    });
-  }, []);
+    docActions.resetLightMove(roomId, ck);
+  }, [docActions]);
 
   /* --- THE PRESS THAT PICKED A SHAPE UP, REMEMBERED FOR ONE CLICK -----------
      A REF AND NOT STATE, because nothing renders from it and it has to be
@@ -9451,8 +9347,8 @@ export default function App({
     setArmed(null); setGhost(null); setGuides([]);
     disarmAdd();
     const roomId = cobArrays.find((a) => a.id === id)?.roomId ?? null;
-    if (roomId) { setFocusId(roomId); setView('spaces'); }
-  }, [closeShapeTool, clearShapeEdit, closeTrackEdit, closeBoardPlace,
+    if (roomId) { docActions.setFocusId(roomId); docActions.setView('spaces'); }
+  }, [docActions, closeShapeTool, clearShapeEdit, closeTrackEdit, closeBoardPlace,
       disarmAdd, cobArrays]);
 
   const shapeHandleDown = (e, id, handle) => {
@@ -9811,8 +9707,8 @@ export default function App({
        plate — see `boardMode` — and defaults are not written down. Both are
        changed in the panel afterwards: a checkbox for which of the two things it
        is, and a chip for the rating. */
-    setManualBoards((m) => [...m, { id, roomId: best.roomId, sFt: best.seat.sFt }]);
-  }, [rooms, pxPerFt]);
+    docActions.addManualBoard({ id, roomId: best.roomId, sFt: best.seat.sFt });
+  }, [rooms, pxPerFt, docActions]);
 
   /**
    * THE ANSWER, AND THE ONE THING IT TURNS ON.
@@ -9823,14 +9719,14 @@ export default function App({
    */
   const confirmDoors = useCallback(() => {
     closeDoorEdit();
-    setDoorsOk(true);
-    setLayers((l) => ({ ...l, electrical: true }));
-  }, [closeDoorEdit]);
+    docActions.setDoorsOk(true);
+    docActions.setLayer('electrical', true);
+  }, [closeDoorEdit, docActions]);
 
   const deleteDoor = useCallback((id) => {
-    setDoors((ds) => ds.filter((d) => d.id !== id));
+    docActions.removeDoor(id);
     setSel((cur) => (idOf(cur, 'door') === id ? clear() : cur));
-  }, []);
+  }, [docActions]);
 
   /**
    * The door boxes AS DRAWN — the list, with the box being dragged at where the
@@ -9888,8 +9784,7 @@ export default function App({
        select a box would re-run every one of them for nothing. */
     onCommit: (ids, d) => {
       if (d.rect.x0 === d.base.x0 && d.rect.y0 === d.base.y0) return;
-      setDoors((ds) => ds.map((q) => (q.id === d.id
-        ? { ...q, rect: d.rect, openingPx: openingPx(d.rect) } : q)));
+      docActions.moveDoor(d.id, { rect: d.rect, openingPx: openingPx(d.rect) });
     },
   });
 
@@ -10127,7 +10022,7 @@ export default function App({
     capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
     at: (o) => ({ x: o.x, y: o.y }),
     to: (o, q) => ({ ...o, x: q.x, y: q.y }),
-    setList: setCeilingObjs,
+    setList: docActions.updateObjects,
     slopPx: 0,
     moves: (d) => d.mode === 'move',
     ortho: true,
@@ -10145,12 +10040,18 @@ export default function App({
        cassette that creeps as you drag its corner. */
     onMove: (ftPt, { drag: d, event: e }) => {
       if (d.mode === 'move') return;
-      setCeilingObjs((os) => os.map((o) => {
+      /* THE GUIDES ARE DROPPED HERE AND NOT INSIDE THE UPDATER. They are a
+         property of the GESTURE — see `onRelease` — and clearing them was a
+         `setGuides([])` sitting inside the `setCeilingObjs` updater, which a
+         reducer may not carry: React is free to invoke it twice. The condition
+         read `guides` from this closure either way, so lifting it out changes
+         nothing except that the write happens once. */
+      if (guides.length) setGuides([]);
+      docActions.updateObjects((os) => os.map((o) => {
         if (o.id !== d.id) return o;
         const base = d.startAll[d.id];
         if (!base) return o;
         if (d.mode === 'resize') {
-          if (guides.length) setGuides([]);
           const { hw, hh } = halfExtents(base);
           const next = resizeFromCorner(
             { wFt: hw * 2, hFt: hh * 2, x: base.x, y: base.y, rot: base.rot || 0 },
@@ -10161,7 +10062,6 @@ export default function App({
           return applyResize(o, next);
         }
         if (d.mode === 'rotate') {
-          if (guides.length) setGuides([]);
           return { ...o, rot: rotateTo(o, ftPt, {
             startRot: d.startRot, startAngle: d.startAngle, snap: e.shiftKey }) };
         }
@@ -10243,37 +10143,19 @@ export default function App({
   /**
    * APPLY AN EDIT TO ONE ACCENT FITTING, WHEREVER IT LIVES.
    *
-   * THIS IS THE FIX FOR A REAL BUG: a strip or sconce placed BY HAND could not
-   * be moved at all. The grips appeared, the drag armed, and nothing happened.
-   *
-   * The cause is that accent fittings live in two stores and the editor only
-   * knew one. `accentResults[roomId].zones` holds what the accent pass produced;
-   * `manualAccents` is a flat list of the ones placed with the palette. The
-   * canvas draws the MERGE of the two (see accentZonesPx), so a hand-placed
-   * strip looks and behaves identically right up until it is dragged, at which
-   * point the write went `setAccentResults(...)` and the id was not in there.
-   * Worse in a room with no accent pass at all, where `res?.zones` is undefined
-   * and the updater bailed on the first line.
-   *
-   * SO THE WRITE FOLLOWS THE ZONE INSTEAD OF ASSUMING THE STORE. Both updaters
-   * run; each returns its own state UNCHANGED when the id is not one of its
-   * own, so the miss costs a referential no-op and never a re-render. That is
-   * deliberately not "look up which store first" — the lookup would have to
-   * happen outside a setState updater, against a possibly stale copy, which is
-   * the same class of bug one level down.
+   * ONE ACTION, BECAUSE IT IS ONE ACT. An accent fitting lives in two stores —
+   * `accentResults[roomId].zones` for the ones the pass produced, `manualAccents`
+   * for the ones placed with the palette — and the write has to FOLLOW THE ZONE
+   * rather than assume the store, which is the fix for a real bug: a hand-placed
+   * strip could not be moved at all. See ACCENT_ZONE_UPDATED in
+   * hooks/usePlanDoc.js for the whole argument and for why `fn` may be a
+   * function in an action.
    *
    * `fn` must be pure: it can be invoked more than once for one edit.
    */
-  const updateAccentZone = useCallback((roomId, id, fn) => {
-    setManualAccents((list) => (list.some((z) => z.id === id)
-      ? list.map((z) => (z.id === id ? fn(z) : z))
-      : list));
-    setAccentResults((m) => {
-      const res = m[roomId];
-      if (!res?.zones || !res.zones.some((z) => z.id === id)) return m;
-      return { ...m, [roomId]: { ...res, zones: res.zones.map((z) => (z.id === id ? fn(z) : z)) } };
-    });
-  }, []);
+  const updateAccentZone = useCallback(
+    (roomId, id, fn) => docActions.updateAccentZone(roomId, id, fn),
+    [docActions]);
 
   /**
    * The tolerances, converted once per drag.
@@ -10345,21 +10227,13 @@ export default function App({
         // there is a use for: the exact position, off the setting-out increment.
         const step = e?.shiftKey ? 0 : RUN_TRIM.snapFt;
         const round = (ft) => (step > 0 ? Math.round(ft / step) * step : ft);
-        setRunTrims((m) => {
-          const cur = m[trimId] ?? { a: 0, b: 0 };
-          const next = d.mode === 'end0'
-            ? { ...cur, a: round((v - base.lo) / pxPerFt) }
-            : { ...cur, b: round((base.hi - v) / pxPerFt) };
-          // BACK TO NOTHING RATHER THAN TO ZERO. A run dragged to where the rule
-          // put it is a run with no edit on it, and leaving {a:0,b:0} behind
-          // would mark it as hand-edited for ever and keep a row in the saved
-          // plan.
-          if (Math.abs(next.a) < 1e-6 && Math.abs(next.b) < 1e-6) {
-            if (!(trimId in m)) return m;
-            const out = { ...m }; delete out[trimId]; return out;
-          }
-          return { ...m, [trimId]: next };
-        });
+        /* THE CONVERSION IS HERE AND THE SPARSE RULE IS NOT. Getting from a
+           pointer position to a length needs `pxPerFt`, which is derived and
+           cannot live in the document; what a stored trim MEANS — and that a run
+           dragged back to where the rule put it stores nothing — is the
+           reducer's. See RUN_TRIM_SET. */
+        if (d.mode === 'end0') docActions.setRunTrim(trimId, 'a', round((v - base.lo) / pxPerFt));
+        else docActions.setRunTrim(trimId, 'b', round((base.hi - v) / pxPerFt));
         return;
       }
 
@@ -10492,7 +10366,7 @@ export default function App({
     setSel(select('spot', id));
     setArmed(null);
     const sp = taskSpotsPx.find((q) => q.id === id);
-    if (sp?.roomId) setFocusId(sp.roomId);
+    if (sp?.roomId) docActions.setFocusId(sp.roomId);
   };
 
   /* --- A LAMP'S WHOLE GESTURE ------------------------------------------------
@@ -10831,16 +10705,16 @@ export default function App({
     if (!sp) return;
     if (sp.surfaceId) {
       if (manualSurfaces.some((sf) => sf.id === sp.surfaceId)) {
-        setManualSurfaces((list) => list.filter((sf) => sf.id !== sp.surfaceId));
+        docActions.removeSurface(sp.surfaceId);
       } else {
-        setSurfaceDismissed((d) => (d.includes(sp.surfaceId) ? d : [...d, sp.surfaceId]));
+        docActions.dismissSurface(sp.surfaceId);
       }
       return;
     }
     if (sp.wallId) {
-      setArtDismissed((d) => (d.includes(sp.wallId) ? d : [...d, sp.wallId]));
+      docActions.dismissArt(sp.wallId);
     }
-  }, [taskSpotsPx, manualSurfaces]);
+  }, [taskSpotsPx, manualSurfaces, docActions]);
 
   /** Escape backs out, Delete removes. The two keys every editor answers to. */
   useEffect(() => {
@@ -11046,7 +10920,7 @@ export default function App({
         else if (selBoardId) setSel(clear());
         else if (selFlowId) setSel(clear());
         else if (selObjId) setSel(clear());
-        else if (focusId) setFocusId(null);
+        else if (focusId) docActions.setFocusId(null);
         else setObjMode(false);
       }
       /* A SELECTED LIGHT, AND DELETE MEANS "PUT IT BACK WHERE THE RULES HAD IT".
@@ -11148,13 +11022,13 @@ export default function App({
         e.preventDefault();
         const zone = accentZonesPx.find((z) => z.id === selAccId);
         if (manualAccents.some((z) => z.id === selAccId)) {
-          setManualAccents((list) => list.filter((z) => z.id !== selAccId));
+          docActions.removeAccent(selAccId);
         } else if (zone?.derived && zone.trimId) {
           const gone = zone.trimId;
           if (manualCoves.some((c) => c.id === gone)) {
             docActions.removeCove(gone);
           } else {
-            setRunsOff((d) => (d.includes(gone) ? d : [...d, gone]));
+            docActions.dropRun(gone);
           }
         } else if (zone?.source === 'cove' && zone.shapeId) {
           /* A DRAWN COVE'S TAPE IS A HANDLE ON THE SHAPE. The run is not an
@@ -11165,7 +11039,7 @@ export default function App({
              act. */
           deleteShape(zone.shapeId);
         } else {
-          setAccentDismissed((d) => (d.includes(selAccId) ? d : [...d, selAccId]));
+          docActions.dismissAccent(selAccId);
         }
         setSel(clear());
         return;
@@ -11195,12 +11069,7 @@ export default function App({
          Delete would take the room out of the layout. */
       if ((e.key === 'Delete' || e.key === 'Backspace') && selFlowId && !flowDrag) {
         e.preventDefault();
-        const drop = (m) => {
-          if (!(selFlowId in m)) return m;
-          const out = { ...m }; delete out[selFlowId]; return out;
-        };
-        setFlowBoards(drop);
-        setFlowBends(drop);
+        docActions.dropFlowOverrides(selFlowId);
         return;
       }
       // THE WHOLE SELECTION, not just the primary. Deleting one of four
@@ -11208,8 +11077,7 @@ export default function App({
       // nobody expects, and it is the one a single-id delete gives.
       if ((e.key === 'Delete' || e.key === 'Backspace') && selObjIds.length && !objDrag) {
         e.preventDefault();
-        const doomed = new Set(selObjIds);
-        setCeilingObjs((os) => os.filter((q) => !doomed.has(q.id)));
+        docActions.removeObjects(selObjIds);
         setSel(clear());
         return;
       }
@@ -11240,8 +11108,8 @@ export default function App({
       if ((e.key === 'Delete' || e.key === 'Backspace') && focusId
           && !accDrag && !objDrag && !addTool && !armed && !boardPlace) {
         e.preventDefault();
-        setLitIds((ids) => ids.filter((x) => x !== focusId));
-        setFocusId(null);
+        docActions.unlightRoom(focusId);
+        docActions.setFocusId(null);
       }
     };
     // READ-ONLY: not bound at all. Every branch of this handler deletes
@@ -11278,9 +11146,9 @@ export default function App({
   const pickChunkOptions = useCallback((roomId, key) => {
     if (!roomId || !key) return;
     hideCoach();
-    setFocusId(roomId);
+    docActions.setFocusId(roomId);
     setOptionPick({ roomId, key });
-  }, [hideCoach]);
+  }, [hideCoach, docActions]);
 
   /**
    * SELECT A SPACE FROM THE PANEL'S LIST — and open its ceiling options with it.
@@ -11367,7 +11235,7 @@ export default function App({
     setLanded(false);
     const at = introSpace(rooms, roomTypes, projectId);
     if (!at) return;
-    setFocusId(at.roomId);
+    docActions.setFocusId(at.roomId);
     setOptionPick({ roomId: at.roomId, key: at.key });
     /* THE PILL ALWAYS, THE CARD ONLY IF IT HAS NOT BEEN SWITCHED OFF HERE. They
        are two different promises: opening the pill is the app showing you what
@@ -11375,7 +11243,7 @@ export default function App({
        worth doing on every landing; the card is a sentence explaining the
        arrows, which is worth doing until somebody says stop. */
     if (!coachOff(planId)) setCoach({ roomId: at.roomId, key: at.key, ticked: false });
-  }, [landed, prep, step, rooms, roomTypes, projectId, planId]);
+  }, [landed, prep, step, rooms, roomTypes, projectId, planId, docActions]);
 
   /* --- IS THE CARD SHOWING, AND WHAT DOES ITS COPY OF THE PILL SAY ---------
      ONE CONDITION IN ONE PLACE. `coach` names the pill the card was raised for
@@ -11402,7 +11270,7 @@ export default function App({
   const pickSpace = useCallback((roomId) => {
     const off = focusId === roomId;
     hideCoach();
-    setFocusId(off ? null : roomId);
+    docActions.setFocusId(off ? null : roomId);
     setOptionPick(off ? null : optionPickFor(roomId));
     /* AND THE FINISHES COLLAPSE ON THE WAY OUT. Leaving a room with its
        materials open would mean coming back to it on the editor rather than on
@@ -11432,7 +11300,7 @@ export default function App({
     if (!off && !shapeMenuOn && !boardPlace && !zoneEdit) {
       openShapeTool('guide', { arm: false });
     }
-  }, [focusId, optionPickFor, hideCoach, shapeMenuOn, boardPlace, zoneEdit,
+  }, [docActions, focusId, optionPickFor, hideCoach, shapeMenuOn, boardPlace, zoneEdit,
       openShapeTool]);
 
   /**
@@ -11540,7 +11408,7 @@ export default function App({
     // the space under it and yank the panel to a different room.
     const hit = roomAt(svgPoint(e));
     hideCoach();
-    setFocusId(hit ? hit.id : null);
+    docActions.setFocusId(hit ? hit.id : null);
     /* AND THE PANEL GOES TO THE SPACE THAT WAS CLICKED. Picking a space on the
        drawing is now the way into everything a space HAS — its height, its
        finishes, whether it is bright enough — and all of that lives on the
@@ -11549,7 +11417,7 @@ export default function App({
        is a click that appears to do nothing. Only on a hit: clicking off the
        plan means "never mind", and yanking the tab strip about would be a
        strange thing for it to also mean. */
-    if (hit) setView('spaces');
+    if (hit) docActions.setView('spaces');
     /* --- ...AND IT PUTS THE GEOMETRY TOOLS IN FRONT OF YOU ------------------
        CLICKING A SPACE IS THE ONLY WAY THE GEOMETRY BAR OPENS. It had a cell in
        the rail as well and that cell has been removed — see the note above
@@ -11663,24 +11531,45 @@ export default function App({
    * all three of which move the drawing around inside the scroll box as it
    * changes size, and none of which this has to know about.
    */
-  const ZOOM_MIN = 0.2, ZOOM_MAX = 6;
-  const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +z.toFixed(3)));
+  /* `clampZoom` COMES FROM lib/planState.js, AND THE SECOND COPY IS WHY. The
+     restore guard on `ui.zoom` is a truthiness test and is only safe while
+     ZOOM_MIN is above zero — see the note at that guard. Two clamps is one that
+     can drift down to 0 while the guard goes on trusting it. The reducer applies
+     the same function to every write; `fitZoom` below applies it to its own
+     result before handing it over. */
   const zoomAnchor = useRef(null);
 
-  const zoomTo = useCallback((next, at = null) => {
+  /* REMEMBER WHAT THE POINTER IS OVER, so the layout effect below can hold that
+     point still while the drawing changes size under it. Split out of `zoomTo`
+     because there are two zooms now and both anchor identically. */
+  const anchorZoom = useCallback((at) => {
     const svg = svgRef.current;
-    if (svg && at) {
-      const r = svg.getBoundingClientRect();
-      // The plan-space point under the cursor, from the element's LIVE rect —
-      // so it is right whatever the padding and centring are doing.
-      zoomAnchor.current = {
-        px: (at.x - r.left) / (r.width || 1),
-        py: (at.y - r.top) / (r.height || 1),
-        clientX: at.x, clientY: at.y,
-      };
-    }
-    setZoom((z) => clampZoom(typeof next === 'function' ? next(z) : next));
+    if (!svg || !at) return;
+    const r = svg.getBoundingClientRect();
+    // The plan-space point under the cursor, from the element's LIVE rect — so
+    // it is right whatever the padding and centring are doing.
+    zoomAnchor.current = {
+      px: (at.x - r.left) / (r.width || 1),
+      py: (at.y - r.top) / (r.height || 1),
+      clientX: at.x, clientY: at.y,
+    };
   }, []);
+
+  /* TO A FIGURE, OR BY A FACTOR — AND THE FACTOR IS A NUMBER.
+     This was one function taking either a value or a `z => z * k` closure, and
+     every caller of the closure form was a plain multiplication. The reducer
+     does the arithmetic against its OWN zoom (see ZOOM_SCALED), which is what a
+     closure was buying, so the factor travels as a factor and there is one less
+     function riding in an action. Both clamp in there. */
+  const zoomTo = useCallback((to, at = null) => {
+    anchorZoom(at);
+    docActions.setZoom(to);
+  }, [anchorZoom, docActions]);
+
+  const zoomBy = useCallback((by, at = null) => {
+    anchorZoom(at);
+    docActions.scaleZoom(by);
+  }, [anchorZoom, docActions]);
 
   // AFTER THE LAYOUT, NOT AFTER THE RENDER. The scroll correction reads the
   // SVG's new size, so it has to run once the browser has applied it and before
@@ -11732,11 +11621,11 @@ export default function App({
       // as large ones. One factor per notch reads the same on both because the
       // step is fixed rather than proportional to the delta.
       const k = e.deltaY > 0 ? 1 / 1.09 : 1.09;
-      zoomTo((z) => z * k, { x: e.clientX, y: e.clientY });
+      zoomBy(k, { x: e.clientX, y: e.clientY });
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [zoomTo]);
+  }, [zoomTo, zoomBy]);
 
   // THE SAME KEYS THE TRACER USES, so the two screens do not have to be learned
   // separately: F fits the plan, + and − step, 0 goes back to actual size.
@@ -11748,16 +11637,16 @@ export default function App({
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement
           || e.target instanceof HTMLTextAreaElement) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === 'f' || e.key === 'F') { setZoom(fitZoom()); }
-      else if (e.key === '0') { setZoom(1); }
-      else if (e.key === '+' || e.key === '=') { zoomTo((z) => z * 1.2); }
-      else if (e.key === '-' || e.key === '_') { zoomTo((z) => z / 1.2); }
+      if (e.key === 'f' || e.key === 'F') { zoomTo(fitZoom()); }
+      else if (e.key === '0') { zoomTo(1); }
+      else if (e.key === '+' || e.key === '=') { zoomBy(1.2); }
+      else if (e.key === '-' || e.key === '_') { zoomBy(1 / 1.2); }
       else return;
       e.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [source, sheetOpen, fitZoom, zoomTo]);
+  }, [source, sheetOpen, fitZoom, zoomTo, zoomBy]);
 
   const stageMouseDown = (e) => {
     if (e.button !== 1) return;
@@ -11988,7 +11877,7 @@ export default function App({
            Analysis move as you clip them on, which is the only reason watching
            them is worth anything. */
         if (run.roomId && !trackFixtures.some((f) => f.trackId === run.id)) {
-          setFocusId(run.roomId); setOptionPick(null); setView('spaces');
+          docActions.setFocusId(run.roomId); setOptionPick(null); docActions.setView('spaces');
         }
         return;
       }
@@ -12122,9 +12011,9 @@ export default function App({
            opened a different space mid-run to compare a figure. */
         if (!cobLock) {
           setCobLock(room.id);
-          setFocusId(room.id);
+          docActions.setFocusId(room.id);
           setOptionPick(null);
-          setView('spaces');
+          docActions.setView('spaces');
         }
         if (cobOnce) setCobOnce(null);
         return;
@@ -12143,7 +12032,7 @@ export default function App({
                        source: 'placed', label: 'Sconce',
                        rect: { x0: p.x - r, y0: p.y - r, x1: p.x + r, y1: p.y + r } };
         const placed = placeZone(seed, poly);
-        setManualAccents((m) => [...m, placed]);
+        docActions.addAccent(placed);
         setSel(select('acc', placed.id));
         disarmAdd();
         return;
@@ -12168,7 +12057,7 @@ export default function App({
           rect: { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y),
                   x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) },
         };
-        setManualAccents((m) => [...m, z]);
+        docActions.addAccent(z);
         setSel(select('acc', z.id));
         disarmAdd();
         return;
@@ -12204,7 +12093,7 @@ export default function App({
         const snapped = applySnap(p, null);
         let o = makeCeilingObject(armed, { x: snapped.x / pxPerFt, y: snapped.y / pxPerFt });
         if (o.kind === 'fan') o = withSweep(o, fanSweepMm);
-        setCeilingObjs((os) => [...os, o]);
+        docActions.addObject(o);
         setSel(select('object', o.id));
         setArmed(null);
         setGuides([]); setGhost(null); setGuides([]); setGhost(null);
@@ -12494,7 +12383,7 @@ export default function App({
         id: `door-hand-${Date.now().toString(36)}`,
         cls: 'door', conf: 1, rect: r, openingPx: openingPx(r), placed: true,
       };
-      setDoors((ds) => [...ds, made]);
+      docActions.addDoor(made);
       setSel(select('door', made.id));
       return;
     }
@@ -12556,10 +12445,10 @@ export default function App({
       setDraftZone(null);
       const minPx = Math.max(6, (pxPerFt || 0) * 0.5);
       if (r.x1 - r.x0 >= minPx && r.y1 - r.y0 >= minPx) {
-        setManualSurfaces((m) => [...m, {
+        docActions.addSurface({
           id: `mansurf-${Date.now().toString(36)}`, roomId, rect: r,
           kind: 'custom', label: 'Task area', confidence: 1, source: 'placed',
-        }]);
+        });
       }
       /* THE TOOL STAYS ARMED, AND THIS IS THE HALF THAT MAKES THE STEP WORK.
          It called `disarmAdd()` here — the one-shot every other hand tool has,
@@ -12583,7 +12472,13 @@ export default function App({
     setDraftZone(null);
     const minPx = Math.max(6, (pxPerFt || 0) * 0.5); // ignore accidental clicks / sub-half-foot slivers
     if (z.x1 - z.x0 >= minPx && z.y1 - z.y0 >= minPx) {
-      setZones((zs) => [...zs, { id: Date.now() + Math.random(), ...z }]);
+      /* THE ID IS MINTED HERE AND NOT IN THE REDUCER. `Date.now()` inside an
+         updater is not a pure function of its arguments, and React is free to
+         invoke a reducer twice — the two runs would mint two different ids. See
+         LIST_ADDED_MINTED for the one case that has to read the list's length
+         and therefore takes the stamp as an argument instead; a zone's id does
+         not depend on the list, so it is simply made before the dispatch. */
+      docActions.addZone({ id: Date.now() + Math.random(), ...z });
     }
   };
 
@@ -12620,7 +12515,7 @@ export default function App({
     const ctl = new AbortController();
 
     (async () => {
-      setRoomState({ status: 'running' });
+      docActions.setRoomState({ status: 'running' });
       const t0 = Date.now();
       let meta = null;
       const res = await proposeOutlines('roboflow-rooms', {
@@ -12642,7 +12537,7 @@ export default function App({
 
       if (!res.ok) {
         console.warn('[rooms] failed:', res.reason);
-        setRoomState({ status: 'error', error: res.reason, ms: Date.now() - t0 });
+        docActions.setRoomState({ status: 'error', error: res.reason, ms: Date.now() - t0 });
         return;
       }
       console.log(`[rooms] ${res.outlines.length} proposed`, { meta, outlines: res.outlines });
@@ -12651,8 +12546,18 @@ export default function App({
       // outranks a proposal; re-running the detector must not delete it. The
       // previous run's proposals DO go, because they are the same answer to the
       // same question and keeping both would double every room.
-      let added = 0;
-      setOutlines((os) => {
+      /* ONE ACTION FOR BOTH FIELDS, AND THE COUNT COMES BACK RATHER THAN OUT.
+         This was a `let added` assigned from inside a `setState` updater and
+         read by the `setRoomState` below it — which a reducer may not do,
+         because React is free to invoke it twice. So the merge returns the pair
+         and there is no side effect left to be invoked at all.
+         IT RUNS AGAINST THE LATEST OUTLINES, which is the whole reason it is a
+         function rather than a finished list: this lands when a network call
+         returns, and this effect's dependencies are `[source, roomNonce]`, so a
+         room traced by hand while the detector was thinking is not one frame
+         stale in that closure — it is not in it. See ROOMS_PROPOSED. */
+      const ms = Date.now() - t0;
+      docActions.proposeOutlines((os) => {
         // MERGE, NEVER REPLACE, and the rule is about work rather than about
         // provenance: anything the user has TOUCHED survives, whether they drew
         // it or dragged a corner of it. Only untouched proposals go, because they
@@ -12708,19 +12613,20 @@ export default function App({
               ? prop.enclosingPx.map((poly) => poly.map(source.toDu)) : null,
           });
         }
-        added = made.length;
-        return [...kept, ...made];
-      });
-
-      setRoomState({
-        status: 'done', ms: Date.now() - t0,
-        // What is on screen, not what came back: a proposal that landed on a
-        // room the user had already corrected was not added, and reporting it as
-        // found would have them looking for an outline that is not there.
-        proposed: added,
-        returned: res.outlines.length,
-        dropped: meta?.rejected?.length ?? 0,
-        meta,
+        return {
+          outlines: [...kept, ...made],
+          roomState: {
+            status: 'done', ms,
+            // What is on screen, not what came back: a proposal that landed on
+            // a room the user had already corrected was not added, and
+            // reporting it as found would have them looking for an outline that
+            // is not there.
+            proposed: made.length,
+            returned: res.outlines.length,
+            dropped: meta?.rejected?.length ?? 0,
+            meta,
+          },
+        };
       });
     })();
 
@@ -12777,7 +12683,7 @@ export default function App({
           { image: { w: source.w, h: source.h } });
         console.log(`[doors] ${found.length} found, ${rejected.length} rejected`
           + `, median opening ${medianPx ? medianPx.toFixed(0) : '—'}px`, { found, rejected });
-        setDoors(found);
+        docActions.replaceDoors(found);
         setDoorState({ status: 'done', count: found.length, rejected,
                        ms: Date.now() - t0, meta: payload?.meta ?? null });
       } catch (err) {
@@ -12786,7 +12692,7 @@ export default function App({
         // No doors means the user measures something by hand, which is what
         // they did before this feature.
         console.warn('[doors] failed:', err);
-        setDoors([]);
+        docActions.clearDoors();
         setDoorState({ status: 'error', error: String(err.message || err), ms: Date.now() - t0 });
       }
     })();
@@ -12895,8 +12801,8 @@ export default function App({
         // judge has nothing to arbitrate. Setting this to null is what leaves
         // the contest path dormant instead of removed.
         setBedSets(null);
-        setBedVerdicts({});
-        setDetections(kept.map((k, i) => ({
+        docActions.clearBedVerdicts();
+        docActions.replaceDetections(kept.map((k, i) => ({
           ...k, id: `bed-sheet-${i}-${Math.round(k.rect.x0)}-${Math.round(k.rect.y0)}`,
         })));
 
@@ -13005,9 +12911,9 @@ export default function App({
             BED_SOURCES.map((x) => `${x.label} ${sets[x.id].length}`).join(', '));
         }
         setBedSets(sets);
-        setBedVerdicts({});
+        docActions.clearBedVerdicts();
 
-        setDetections(kept.map((k, i) => ({ ...k, id: `det-${i}-${Math.round(k.rect.x0)}-${Math.round(k.rect.y0)}` })));
+        docActions.replaceDetections(kept.map((k, i) => ({ ...k, id: `det-${i}-${Math.round(k.rect.x0)}-${Math.round(k.rect.y0)}` })));
         // THE REASONS, NOT JUST THE COUNT. A size gate that quietly drops every
         // box on a plan is indistinguishable from a detector that found nothing,
         // and the two want completely different fixes. This is the difference
@@ -13047,7 +12953,7 @@ export default function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, img, detectNonce, provider]);
 
-  const toggle = (k) => () => setLayers((l) => ({ ...l, [k]: !l[k] }));
+  const toggle = (k) => () => docActions.toggleLayer(k);
 
   const base = source ? source.name.replace(/\.[^.]+$/, '') : 'plan';
   /* THE UPLOAD'S OWN KIND, from its own name. Read off `initialFile` and not off
@@ -13100,43 +13006,22 @@ export default function App({
   // and because it is WRITE-ONLY: it is stamped as `scale.pxPerFtAtSave` and
   // nothing reads it back. Naming it in the signature is what stops the next
   // derived value being added here quietly. See serialiseEditor.
-  const editorState = useMemo(() => serialiseEditor({
-    // THE MIGRATED FIELDS, AS ONE OBJECT. Every field in the document reaches
-    // the serialiser by being IN it, so there is no name here to forget — which
-    // is the whole reason the reducer exists. The loose names below are the
-    // fields not yet migrated; each domain that moves deletes lines from both
-    // this object and the dependency array, and the two shrink together.
-    ...doc,
-    unitId, scaleMode, refId, customFt, measure, doorPick, ceilingFt,
-    outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState,
-    projectType: projectId, roomTypes, pdfPage,
-    detections, dismissed, bedVerdicts, provider, zones,
-    doors, doorsOk,
-    ceilingObjs, chunkPicks, designPicks, ceilingKinds, ceilingShapes,
-    lightMoves,
-    accentResults, accentDismissed, manualAccents,
-    surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-    wallResults, runTrims, manualCoves, manualTracks, manualCobs, autoSpots,
-    cobArrays, trackFixtures,
-    renderRefs, boardsOff, boardMoves, boardPoints, flowBoards, flowBends, manualBoards, boardKinds,
-    boardHeights, boardOrders,
-    // WHAT EACH SPACE IS FINISHED IN, AND HOW HIGH ITS CEILING IS — see the
-    // note in planState.js. Both are sparse; both are the answer rather than an
-    // adjustment to one, so both have to be kept.
-    runsOff,
-    layers, zoom, view,
-  }, { pxPerFt }), [doc, unitId, scaleMode, refId, customFt, measure, doorPick, pxPerFt, ceilingFt,
-       outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState, projectId, roomTypes, pdfPage,
-       detections, dismissed, bedVerdicts, provider, zones, doors, doorsOk,
-       ceilingObjs, chunkPicks, designPicks, ceilingKinds, ceilingShapes,
-       lightMoves,
-       accentResults, accentDismissed, manualAccents,
-       surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
-       wallResults, runTrims, manualCoves, manualTracks, manualCobs, autoSpots,
-       cobArrays, trackFixtures, renderRefs, boardsOff, boardMoves, boardPoints,
-       flowBoards, flowBends, manualBoards, boardKinds, boardHeights, boardOrders,
-       runsOff,
-       layers, zoom, view]);
+  /* THE DOCUMENT, AND ONE NAMED DERIVED ARGUMENT. THERE IS NO LIST HERE ANY
+     MORE, and that is the whole of what this refactor was for: `serialiseEditor`
+     and `applyEditor` were two hand-written lists of the same sixty-one fields
+     and this memo was the THIRD, naming every one of them twice — once in the
+     object and once in the dependency array. A field added to two of the three
+     was a user's edit that was quietly not saved, and nothing said so.
+     `doc` IS ONE OBJECT AND IT IS THE ONLY DEPENDENCY THAT CARRIES STATE, so a
+     field migrated, added or renamed tomorrow reaches the serialiser by being in
+     the reducer's own field table and by nothing else. See DOC_FIELDS.
+     `pxPerFt` STAYS THE ONE EXCEPTION, by name, in the signature. It is the only
+     derived value in the output, it is stamped as `scale.pxPerFtAtSave`, and it
+     is WRITE-ONLY — nothing reads it back. Naming it in the signature is what
+     stops the next derived value being added here quietly, and what stops one
+     being smuggled in as a document field. See serialiseEditor. */
+  const editorState = useMemo(
+    () => serialiseEditor(doc, { pxPerFt }), [doc, pxPerFt]);
 
   // --- UNDO, THE HALF THAT NEEDS THE DOCUMENT -------------------------------
   //
@@ -13328,7 +13213,7 @@ export default function App({
       {/* ONE QUESTION, BEFORE ANYTHING ELSE. Shown the moment a plan is
           readable and dismissed only by answering — see ProjectTypeDialog. */}
       {source && !readOnly && (!projectId || doorState.status === 'running') && (
-        <ProjectTypeDialog planName={source.name} onPick={setProjectId}
+        <ProjectTypeDialog planName={source.name} onPick={docActions.setProjectType}
           busy={doorState.status === 'running' ? 'Looking for doors…' : null}
           note="A door is a standard width, so one of them is the drawing's ruler." />
       )}
@@ -13638,7 +13523,7 @@ export default function App({
                      button reads as live before you press it. */
                   + (live ? 'text-ink' : 'text-subtle hover:text-ink')}
                 aria-pressed={live} title={label}
-                onClick={() => setLayers((l) => ({ ...l, invert: on }))}>
+                onClick={() => docActions.setLayer('invert', on)}>
                 <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
                   stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
                   strokeLinejoin="round" aria-hidden="true">
@@ -13918,7 +13803,7 @@ export default function App({
             pxPerFt={pxPerFt}
             outlines={outlinesPx}
             selectedId={selectedOutlineId}
-            onSelect={setSelectedOutlineId}
+            onSelect={docActions.setSelectedOutlineId}
             onCommit={commitOutline}
             onUpdateOutline={updateOutline}
             onDeleteOutline={deleteOutline}
@@ -13940,23 +13825,30 @@ export default function App({
             onRedetect={() => setRoomNonce((n) => n + 1)}
             unitId={source.unitId}
             unitCandidates={UNITS}
-            onUnitChange={(u) => { setUnitId(u); }}
+            onUnitChange={(u) => { docActions.setUnitId(u); }}
             /* The scale controls live on the tracer screen for an image, but the
                state stays here: it is the same scale the sidebar edits later,
                and two copies of it would drift the moment either was touched. */
+            /* THE FOUR SETTERS THE CHILD IS HANDED TAKE A VALUE, which is why
+               they are the reducer's own named creators and not `dispatch`.
+               OutlineTracer calls `setMode('ref')`, `setCustomFt(3)` and
+               `setMeasure({a, b})` with finished values — see the measuring
+               branch in its `onCanvasClick` — and it must not have to know that
+               the state behind them is a reducer. */
             scale={isVector ? null : {
-              mode: scaleMode, setMode: setScaleMode,
-              refId, setRefId, customFt, setCustomFt,
-              measure, setMeasure,
+              mode: scaleMode, setMode: docActions.setScaleMode,
+              refId, setRefId: docActions.setRefId,
+              customFt, setCustomFt: docActions.setCustomFt,
+              measure, setMeasure: docActions.setMeasure,
               doors, doorState, pick: doorPick,
               /* THE RECT RIDES ALONG WITH THE ID. See the note in `pxPerFt`:
                  the door boxes are editable from the electrical step now, so
                  the scale has to be anchored to the box that was measured
                  rather than looked up in a list that can change. */
-              onPickDoor: (id) => setDoorPick(id
+              onPickDoor: (id) => docActions.setDoorPick(id
                 ? { id, mm: null, rect: doors.find((d) => d.id === id)?.rect ?? null }
                 : null),
-              onSetWidth: (mm) => setDoorPick((d) => (d ? { ...d, mm } : d)),
+              onSetWidth: (mm) => docActions.setDoorWidth(mm),
               onRetryDoors: () => setDoorNonce((n) => n + 1),
               widths: DOOR_WIDTHS,
             }} />
@@ -14807,7 +14699,7 @@ export default function App({
               ...(isAdmin ? [['admin', 'Admin']] : [])].map(([k, label]) => (
               <button key={k} role="tab" aria-selected={panelView === k}
                 className={panelView === k ? PTAB_ON : PTAB}
-                onClick={() => setView(k)}>{label}</button>
+                onClick={() => docActions.setView(k)}>{label}</button>
             ))}
           </nav>
         )}
@@ -14914,7 +14806,7 @@ export default function App({
           <ViewerPanel
             rooms={rooms} totals={totals} boq={boq}
             layers={layers} onToggleLayer={toggle}
-            focusId={focusId} onFocus={setFocusId}
+            focusId={focusId} onFocus={docActions.setFocusId}
             surfaceCount={surfacesPx.length}
             accentCount={accentZonesPx.length}
             spotCount={taskSpotsPx.length}
@@ -14935,7 +14827,7 @@ export default function App({
               ? () => download(initialFile.name || 'original', initialFile,
                                initialFile.type || 'application/octet-stream')
               : null}
-            onOpenBOQ={() => setView('boq')}
+            onOpenBOQ={() => docActions.setView('boq')}
             onExport={async (kind) => {
               /* ALL THREE BEHIND ONE GATE, at the top, before any of the work.
                  The DXF is built synchronously and the PDF re-renders the base
@@ -15159,7 +15051,7 @@ export default function App({
                   <div className={KV_HEAD}>
                     <span>{manualBoards.length} socket{manualBoards.length === 1 ? '' : 's'} placed</span>
                     <button className={BTN_TINY}
-                      onClick={() => setManualBoards([])}>Clear all</button>
+                      onClick={() => docActions.clearManualBoards()}>Clear all</button>
                   </div>
                 </div>
               )}
@@ -15234,7 +15126,8 @@ export default function App({
                 <div className="w-full text-left">
                   <div className={KV_HEAD}>
                     <span>{zones.length} zone{zones.length === 1 ? '' : 's'}</span>
-                    <button className={BTN_TINY} onClick={() => setZones([])}>Clear all</button>
+                    <button className={BTN_TINY}
+                      onClick={() => docActions.clearZones()}>Clear all</button>
                   </div>
                   {zones.map((z, i) => (
                     <div className={KV} key={z.id}>
@@ -15244,7 +15137,7 @@ export default function App({
                           ? `${((z.x1 - z.x0) / pxPerFt).toFixed(1)} × ${((z.y1 - z.y0) / pxPerFt).toFixed(1)} ft`
                           : `${Math.round(z.x1 - z.x0)} × ${Math.round(z.y1 - z.y0)} px`}
                         <button className={BTN_NUDGE} title="Remove zone"
-                          onClick={() => setZones((zs) => zs.filter((q) => q.id !== z.id))}>×</button>
+                          onClick={() => docActions.removeZone(z.id)}>×</button>
                       </b>
                     </div>
                   ))}
@@ -15744,7 +15637,7 @@ export default function App({
                     + 'focus-visible:outline-2 focus-visible:outline-accent '
                     + 'focus-visible:outline-offset-2 '
                     + 'text-white/70 decoration-white/25 hover:text-white'}
-                  onClick={() => setView('boards')}>
+                  onClick={() => docActions.setView('boards')}>
                   See all switchboards →
                 </button>
               </div>
@@ -15886,7 +15779,8 @@ export default function App({
                 to be reconciled. */}
             {(manualAccents.length > 0 || manualSurfaces.length > 0) && (
               <button className={`${BTN_FULL} mt-2`}
-                onClick={() => { setManualAccents([]); setManualSurfaces([]); disarmAdd(); }}>
+                onClick={() => { docActions.clearAccents(); docActions.clearSurfaces();
+                                 disarmAdd(); }}>
                 Clear the {manualAccents.length + manualSurfaces.length} placed by hand
               </button>
             )}
@@ -15944,9 +15838,7 @@ export default function App({
                            than refused: selecting two fans and a cassette and
                            setting a sweep is a perfectly clear instruction
                            about the fans. */
-                        const picked = new Set(selObjIds);
-                        setCeilingObjs((os) => os.map((o) => (
-                          picked.has(o.id) && o.kind === 'fan' ? withSweep(o, mm) : o)));
+                        docActions.setObjectSweep(selObjIds, mm);
                       }}>{mm} sweep</button>
                   ))}
                 </div>
@@ -16066,13 +15958,13 @@ export default function App({
                   substitute. */}
               <div className={`${BTNROW} mb-1.5`}>
                 <button className={BTN} title="Zoom out (−)"
-                  onClick={() => zoomTo((z) => z / 1.2, stageCentre())}>−</button>
+                  onClick={() => zoomBy(1 / 1.2, stageCentre())}>−</button>
                 <button className={BTN} title="Actual size (0)"
                   onClick={() => zoomTo(1, stageCentre())}>{Math.round(zoom * 100)}%</button>
                 <button className={BTN} title="Zoom in (+)"
-                  onClick={() => zoomTo((z) => z * 1.2, stageCentre())}>+</button>
+                  onClick={() => zoomBy(1.2, stageCentre())}>+</button>
                 <button className={BTN} title="Fit the plan to the window (F)"
-                  onClick={() => setZoom(fitZoom())}>Fit</button>
+                  onClick={() => zoomTo(fitZoom())}>Fit</button>
               </div>
               <p className={`${N} mt-0 mb-2`}>
                 Scroll to zoom, middle-drag to pan. <b>F</b> fits, <b>0</b> is
@@ -16509,11 +16401,11 @@ export default function App({
                    can answer whether the doors are right, and this panel writes
                    nothing — see ViewerPanel. They see the wiring the owner
                    confirmed. */
-                if (readOnly) { setLayers((l) => ({ ...l, electrical: !l.electrical })); return; }
+                if (readOnly) { docActions.toggleLayer('electrical'); return; }
                 if (zoneEdit) closeZoneEdit();
                 if (doorEdit) { closeDoorEdit(); return; }
                 if (!doorsOk) { openDoorEdit(); return; }
-                setLayers((l) => ({ ...l, electrical: !l.electrical }));
+                docActions.toggleLayer('electrical');
               }}>
               {/* THE LABEL, AND IT DOES NOT MOVE. The wire itself beside it:
                   two arcs and a plate, which is exactly what the layer draws.

@@ -54,6 +54,52 @@ export const STATE_VERSION = 1;
  * FIELD NAMES, NOT SETTER NAMES. `setterFor` below is the mechanical mapping, so
  * there is nothing to keep in step.
  */
+/**
+ * WHICH LAYERS A DRAWING OPENS SHOWING, AND WHY IT IS PART OF THIS FILE.
+ *
+ * IT WAS MODULE-PRIVATE IN App.jsx, AND IT STOPPED BEING PRIVATE THE MOMENT THE
+ * DOCUMENT OWNED `layers`. Three things need it now: the reducer, for the value
+ * a fresh document starts at; `applyEditor`, which MERGES a saved plan's answer
+ * over it rather than assigning; and the test, whose fixture has to agree with
+ * both. A second copy of it is a plan that reopens with a layer nobody chose.
+ *
+ * THE MERGE IS THE WHOLE REASON IT LIVES BESIDE THE READER. A plan saved before
+ * a layer existed has no key for it, and assigning the stored object would leave
+ * that layer `undefined` — which reads as off, on a sheet whose author never
+ * decided. Merged over these, it arrives at the default the rest of the app was
+ * written against. See `setLayers` in App's setter bag.
+ *
+ * THE LOOPING IS OFF BY DEFAULT. A lighting drawing and a wiring drawing are two
+ * sheets read by two trades, and the arcs cross the layout everywhere they
+ * exist — so they are asked for. Serialised with the rest, so a plan reopens
+ * showing whatever it was left showing.
+ */
+export const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: true,
+  lights: true, labels: false, fan: true, zones: true, accents: true,
+  objects: true, spots: true, switchboards: true,
+  electrical: false,
+  /* DARK MODE FOR THE DRAWING, AND IT IS A PIXEL INVERSION OF THE SCAN — the
+     same thing Cmd-I does in Photoshop, applied to the plan image and nothing
+     else. It lives in `layers` because it is a preference about the PICTURE
+     rather than a decision about the design, which means it is serialised with
+     the rest of them and the plan reopens the way it was left. */
+  invert: false };
+
+/**
+ * WHAT A LEGAL ZOOM IS, AND THE ONE PLACE IT IS DECIDED.
+ *
+ * HERE RATHER THAN IN App.jsx BECAUSE THE RESTORE GUARD DEPENDS ON IT. `ui.zoom`
+ * is restored behind `if (p.ui.zoom)` — see applyEditor — and that truthiness
+ * test is only safe because ZOOM_MIN is above zero, so 0 is unreachable and the
+ * guard cannot swallow a real saved value. Two copies of the clamp is one copy
+ * that can drift down to 0 while the guard goes on trusting it, silently.
+ *
+ * READ BY TWO CALLERS: the reducer, which clamps every write, and `fitZoom` in
+ * App, which clamps its own result before handing it over.
+ */
+export const ZOOM_MIN = 0.2, ZOOM_MAX = 6;
+export const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +z.toFixed(3)));
+
 export const NOT_UNDOABLE = [
   'focusId', 'selectedOutlineId', 'roomState', 'layers', 'zoom', 'view',
 ];
@@ -620,10 +666,12 @@ export function applyEditor(p, set) {
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);
   /* THE TRUTHINESS GUARD IS ONLY SAFE BECAUSE ZOOM IS CLAMPED. Every write goes
-     through `clampZoom` in App.jsx — ZOOM_MIN is 0.2, and `fitZoom` clamps its
-     own result — so 0 is unreachable and `if (p.ui.zoom)` cannot swallow a real
-     saved value. If that clamp ever admits 0 this line becomes a silent bug:
-     a plan saved at zoom 0 would reopen at 1 with nothing to say it moved. */
+     through `clampZoom` — exported above, applied by the document reducer on
+     every write, and applied by `fitZoom` in App to its own result — so with
+     ZOOM_MIN at 0.2 a stored 0 is unreachable and `if (p.ui.zoom)` cannot
+     swallow a real saved value. If that clamp ever admits 0 this line becomes a
+     silent bug: a plan saved at zoom 0 would reopen at 1 with nothing to say it
+     moved. There is a test on the pair. */
   if (p.ui?.zoom) set.setZoom(p.ui.zoom);
   if (p.ui?.view) set.setView(p.ui.view);
 }
