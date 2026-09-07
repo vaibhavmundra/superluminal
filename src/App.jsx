@@ -29,6 +29,7 @@ import { penSegments, penLengthFt, penRelock, penMovePoint, penAim, axisLock,
          MIN_SEG_FT } from './lib/pen.js';
 import { newHistory, record, stepBack, stepForward, historyDepth,
          QUIET_MS } from './lib/undo.js';
+import { NONE, select, selectMany, clear, idOf, idsOf } from './lib/selection.js';
 import { bbox, pointInPolygon, maxInset } from './lib/geometry.js';
 import { REFERENCES, scaleFromReference } from './lib/scale.js';
 import { detectDoors, doorsFromPayload, scaleFromDoor, openingPx, DOOR_WIDTHS } from './lib/doors.js';
@@ -980,9 +981,20 @@ export default function App({
   const [ceilingObjs, setCeilingObjs] = useState([]);
   const [objType, setObjType] = useState('fan');
   const [fanSweepMm, setFanSweepMm] = useState(1200);
-  /* THE SELECTION IS A LIST NOW, because Shift-clicking builds one.
-     `selObjIds` is the truth; the two things beside it are conveniences that
-     stop fifteen call sites having to care.
+  /* --- WHAT IS PICKED ON THIS CANVAS, AND IT IS ONE VALUE -------------------
+     ONE SELECTION HERE IS A RULE AND IT IS NOW STRUCTURAL. Eleven pieces of
+     useState held it and every handler that picked one was answerable for
+     putting the other ten away by hand; the register cannot hold two, so there
+     is nowhere for a second contextual bar to come from. See lib/selection.js.
+
+     THE OLD NAMES ARE DERIVED AND STAY DERIVED, each one beside the note that
+     says why that thing is its own selection rather than filed under another.
+     A hundred read sites and fifteen component props go on saying what they
+     always said; only the WRITES moved. */
+  const [sel, setSel] = useState(NONE);
+
+  /* THE SELECTION IS A LIST FOR CEILING OBJECTS, because Shift-clicking builds
+     one, and they are the only kind that can be several — see `selectMany`.
 
      `selObjId` IS THE PRIMARY — the most recently added — and it is what the
      property panels read. "What sweep is this fan?" and "is this an AC or a
@@ -991,17 +1003,18 @@ export default function App({
      applied to everything selected of the right kind, which is what a
      properties panel does everywhere else.
 
-     `setSelObjId` REPLACES THE WHOLE SELECTION with one id, or clears it for
-     null. Every place that used to select exactly one thing — placing a new
-     object, clicking a row, Escape, a click on empty ceiling — means precisely
-     that and still says it in one call. */
-  const [selObjIds, setSelObjIds] = useState([]);
-  const selObjId = selObjIds.length ? selObjIds[selObjIds.length - 1] : null;
-  const setSelObjId = useCallback(
-    (id) => setSelObjIds(id == null ? [] : [id]), []);
+     THERE IS NO `setSelObjId` ANY MORE and it is not missed. It existed to say
+     "this one object and nothing else" in one call; `select('object', id)` is
+     that sentence, and it says the "nothing else" part about the whole canvas
+     rather than about this list. */
+  const selObjIds = idsOf(sel, 'object');
+  const selObjId = idOf(sel, 'object');
   /** Add an object to the selection, or take it out if it is already in. */
-  const toggleSelObj = useCallback((id) => setSelObjIds(
-    (ids) => (ids.includes(id) ? ids.filter((q) => q !== id) : [...ids, id])), []);
+  const toggleSelObj = useCallback((id) => setSel((cur) => {
+    const ids = idsOf(cur, 'object');
+    return selectMany('object',
+      ids.includes(id) ? ids.filter((q) => q !== id) : [...ids, id]);
+  }), []);
   const [objDrag, setObjDrag] = useState(null);   // {id, mode, ...} while dragging
 
   // TWO SEPARATE THINGS, and conflating them was half of why this felt wrong.
@@ -1111,7 +1124,7 @@ export default function App({
      and not `selAccId`: an accent zone is a strip or a sconce out of the accent
      machinery, and filing a COB in that list would mean Delete looking for it in
      three stores that have never heard of it. */
-  const [selCobId, setSelCobId] = useState(null);
+  const selCobId = idOf(sel, 'cob');
   /* THE DRAG IN FLIGHT, and it lives for one press. Everything in it is a
      snapshot taken when the pointer went down — see `cobPointerDown`, and rule 2
      in lib/dragMove.js for why every frame is measured from there rather than
@@ -1229,7 +1242,7 @@ export default function App({
      `arrayCobsPx`) and were never in that store.
 
      TRANSIENT. A selection is a fact about what somebody is looking at. */
-  const [selArrayId, setSelArrayId] = useState(null);
+  const selArrayId = idOf(sel, 'array');
   /* THE ARRAY BEING CARRIED, for one press. Same snapshot-at-the-press rule
      every other drag on this canvas follows — see rule 2 in lib/dragMove.js. */
   const [arrayDrag, setArrayDrag] = useState(null);
@@ -1290,7 +1303,7 @@ export default function App({
      So it has to be movable, and the only direction it CAN move is along the run:
      a module clips anywhere on a profile and nowhere across one. That is why the
      drag writes a fraction rather than a point. */
-  const [selModuleId, setSelModuleId] = useState(null);
+  const selModuleId = idOf(sel, 'module');
   const [moduleDrag, setModuleDrag] = useState(null);
   /* WHERE THE POINTER IS ON THE PLAN, and only that. It is what the
      recommendation and the two warnings are computed from — the bar that shows
@@ -1334,7 +1347,7 @@ export default function App({
   const [lightMoves, setLightMoves] = useState({});
   /* WHICH LIGHT IS PICKED, as `${outlineId}|${cellKey}` — the same pairing the
      store is keyed on, flattened, because a selection is one value. */
-  const [selLightId, setSelLightId] = useState(null);
+  const selLightId = idOf(sel, 'light');
   const [lightDrag, setLightDrag] = useState(null);
 
   const [ceilingShapes, setCeilingShapes] = useState([]);
@@ -1405,7 +1418,7 @@ export default function App({
      same act — see `insetShape`. */
   const [heldSrc, setHeldSrc] = useState(null);
   const [heldOff, setHeldOff] = useState({ side: 'on', ft: 1 });
-  const [selShapeId, setSelShapeId] = useState(null);
+  const selShapeId = idOf(sel, 'shape');
   const [shapeDrag, setShapeDrag] = useState(null);        // moving one already there
   /* WHICH SHAPE IS SHOWING ITS HANDLES, and it is NOT the same thing as which
      one is selected. Selection is one press and gets the contextual bar — the
@@ -1595,7 +1608,7 @@ export default function App({
      removing, and a plan whose project moves country would otherwise print a
      15A socket's chip using India's word for it. */
   const [boardPoints, setBoardPoints] = useState({});
-  const [selBoardId, setSelBoardId] = useState(null);
+  const selBoardId = idOf(sel, 'board');
   const [boardDrag, setBoardDrag] = useState(null);   // {id, roomId, origin, live}
 
   /* --- THE WIRES ------------------------------------------------------------
@@ -1625,7 +1638,7 @@ export default function App({
      you did is a second undo with a smaller scope. */
   const [flowBoards, setFlowBoards] = useState({});
   const [flowBends, setFlowBends] = useState({});
-  const [selFlowId, setSelFlowId] = useState(null);
+  const selFlowId = idOf(sel, 'flow');
   /* THE GESTURE IN FLIGHT: `{ id, kind, key, origin, live, at, overId }`.
      `kind` is 'board' or 'bend'; `at` is where the pointer is now, and `overId`
      the plate a board drag would land on. Both are here rather than in
@@ -1825,7 +1838,7 @@ export default function App({
   // is not an accent: the two panels describe different things and a click on
   // one must not leave the other looking selected. Same shape and same lifetime
   // as `selObjId` next door.
-  const [selSpotId, setSelSpotId] = useState(null);
+  const selSpotId = idOf(sel, 'spot');
 
   // --- UNDO ------------------------------------------------------------------
   //
@@ -1850,7 +1863,7 @@ export default function App({
   const undoRef = useRef(null);
   const [undoDepth, setUndoDepth] = useState({ past: 0, future: 0 });
 
-  const [selAccId, setSelAccId] = useState(null);
+  const selAccId = idOf(sel, 'acc');
   const [accDrag, setAccDrag] = useState(null);   // {roomId, id, mode}
   // Not on the plan, and every mounting height and throw distance depends on
   // it. One field, and load-bearing — see the header of accentPrompt.js.
@@ -1911,7 +1924,7 @@ export default function App({
      ask for one. They are set and cleared together by `openZoneEdit` /
      `closeZoneEdit` and nowhere else, which is what keeps them honest. */
   const [zoneEdit, setZoneEdit] = useState(false);
-  const [selDoorId, setSelDoorId] = useState(null);
+  const selDoorId = idOf(sel, 'door');
   const [doorDraft, setDoorDraft] = useState(null);  // the rubber band, in plan px
   // A MOVE IN FLIGHT, HELD OUTSIDE `doors` ON PURPOSE. Writing the rect on every
   // pointermove would recompute the board pass, the bay pass and the flows forty
@@ -2002,6 +2015,9 @@ export default function App({
   // --- load -----------------------------------------------------------------
   const resetForNewPlan = useCallback(() => {
     setMeasure({ a: null, b: null }); setZoom(1);
+    // NOTHING IS PICKED ON A FRESH SHEET. One line for what used to be eight,
+    // and the three it used to miss — a COB, an array, a module — go with it.
+    setSel(clear());
     setZones([]); setZoneMode(false); setDraftZone(null); setZoneEdit(false);
     setChunkPicks({}); setPickingId(null);
     setCeilingKinds({}); setDesignPicks({}); setOptionPick(null);
@@ -2011,8 +2027,8 @@ export default function App({
     // The plates somebody threw away go with the plan they were on: a board id
     // names a room and a rule, and neither means anything on a fresh sheet.
     setBoardsOff([]); setBoardMoves({}); setBoardPoints({});
-    setSelBoardId(null); setBoardDrag(null);
-    setFlowBoards({}); setFlowBends({}); setSelFlowId(null); setFlowDrag(null);
+    setBoardDrag(null);
+    setFlowBoards({}); setFlowBends({}); setFlowDrag(null);
     setManualBoards([]); setBoardKinds({}); setBoardHeights({}); setBoardOrders({});
     setBoardPlace(false);
     setAccentState({ status: 'idle', roomId: null }); setAccentDismissed([]); setAccentShot(null);
@@ -2025,7 +2041,7 @@ export default function App({
     // sheet, where they would sit at whatever plan pixels they were drawn at.
     setManualCoves([]); setCoveFrom(null); setCoveNote('');
     setWallState({ status: 'idle', roomId: null }); setWallShot(null);
-    setSelAccId(null); setAccDrag(null);
+    setAccDrag(null);
     // BACK TO THE PROJECT'S ANSWER, NOT TO NULL. This runs on every file load,
     // including the one that opens a saved plan, and blanking it here would put
     // the plan-level dialog back in front of a user whose project already
@@ -2037,19 +2053,19 @@ export default function App({
     // door boxes; carrying it onto a fresh sheet would draw wiring off a
     // detection nobody has looked at.
     setDoorsOk(false); setDoorEdit(false);
-    setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setDoorDraft(null); setDoorDrag(null);
     setSurfaceRoomId(null); setSurfaceResults({});
     setSurfaceState({ status: 'idle', roomId: null }); setSurfaceDismissed([]);
-    setArtDismissed([]); setSelSpotId(null);
-    setCeilingObjs([]); setObjMode(false); setSelObjId(null); setObjDrag(null);
+    setArtDismissed([]);
+    setCeilingObjs([]); setObjMode(false); setObjDrag(null);
     // AND THE DRAWN COVES, for the reason the hand-placed slots above go: a
     // shape is set out in ONE plan's feet, and carrying it onto a fresh sheet
     // would put a cove at whatever coordinates it happened to be drawn at.
-    setCeilingShapes([]); setSelShapeId(null); setShapeDrag(null);
+    setCeilingShapes([]); setShapeDrag(null);
     setShapeEditId(null); setShapeResize(null);
     // The hand positions go with the grid they were chosen on: a cell key names
     // a rectangle in ONE plan's feet and means nothing in another's.
-    setLightMoves({}); setSelLightId(null); setLightDrag(null);
+    setLightMoves({}); setLightDrag(null);
     setShapeMenuOn(false); setShapeTool(null);
     setShapeSpan(null); covePen.reset(); setShapeAt(null); setShapeHeld(null);
     setShapeAskSides(false);
@@ -2065,7 +2081,7 @@ export default function App({
     setOutlines([]); setSelectedOutlineId(null); setLitIds([]); setFocusId(null);
     setOutlinesOpen(false); setDirtyIds([]);
     setUnitId(null);
-  }, [initialProjectType, setSelObjId, covePen, trackPen]);
+  }, [initialProjectType, covePen, trackPen]);
 
   /**
    * Render one page of an open PDF and become a raster plan.
@@ -6088,10 +6104,8 @@ export default function App({
    * finding somewhere empty to click.
    */
   const pickFlow = useCallback((id) => {
-    setSelFlowId((cur) => (cur === id ? null : id));
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null);
-    setSelCobId(null); setSelArrayId(null);
-  }, [setSelObjId]);
+    setSel((cur) => (idOf(cur, 'flow') === id ? clear() : select('flow', id)));
+  }, []);
 
   /* The points somebody added to THIS plate. Its own memo because it is a
      dependency of the composition, and `boardPoints[id]` computed inline would
@@ -6166,12 +6180,8 @@ export default function App({
        wire goes green on the drawing at the same moment, so the two views do not
        disagree about what was just touched. */
     const flowId = units[from]?.flowId ?? null;
-    if (flowId) {
-      setSelFlowId(flowId);
-      setSelSpotId(null); setSelAccId(null); setSelObjId(null);
-    setSelCobId(null); setSelArrayId(null);
-    }
-  }, [selBoard, selBoardParts, setSelObjId]);
+    if (flowId) setSel(select('flow', flowId));
+  }, [selBoard, selBoardParts]);
 
   /**
    * A PLATE IS A SOCKET OUTLET, OR IT IS A SWITCHBOARD.
@@ -7291,7 +7301,7 @@ export default function App({
       watts: clampWatts(d.watts ?? 7), beam: nearestBeam(d.beam ?? 36),
     }]);
     setCobDraftArray(null);
-    setSelShapeId(null);
+    setSel(clear());
   }, [cobDraftArray, arrayOutline]);
 
   /** ONE ARRAY'S SPECIFICATION, from the Analysis panel. Every lamp in it moves
@@ -7382,7 +7392,7 @@ export default function App({
    *  the note at the Delete key. */
   const deleteArray = useCallback((id) => {
     setCobArrays((l) => l.filter((a) => a.id !== id));
-    setSelArrayId((cur) => (cur === id ? null : cur));
+    setSel((cur) => (idOf(cur, 'array') === id ? clear() : cur));
     setArrayDrag((d) => (d?.id === id ? null : d));
   }, []);
 
@@ -8928,7 +8938,7 @@ export default function App({
        it lands in exactly the place the array's bar is standing — see
        `openArray` for why one is the limit. Nothing else in the takeover below
        has to happen for an unarmed bar, but this does. */
-    setSelArrayId(null);
+    setSel(clear());
     /* THE TAKEOVER BELOW BELONGS TO ARMING AND NOT TO OPENING, which is why it
        stops here when nothing was armed. Everything under this line exists to
        make this tool the sole owner of the next press; a bar showing six
@@ -8943,7 +8953,7 @@ export default function App({
        meanings, and this one draws across the whole ceiling rather than at a
        point, so it is the least forgiving of the three about sharing. */
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
-    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
     setBoardPlace(false);
     setArmed(null); setGhost(null); setGuides([]);
     disarmAdd();
@@ -8993,9 +9003,9 @@ export default function App({
    */
   const openDoorEdit = useCallback(() => {
     setDoorEdit(true);
-    setSelArrayId(null);
+    setSel(clear());
     setZoneEdit(false); setBoardPlace(false); closeShapeTool();
-    setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setDoorDraft(null); setDoorDrag(null);
     setZoneMode(false); setDraftZone(null);
     setArmed(null); setGhost(null); setGuides([]);
     disarmAdd();
@@ -9021,7 +9031,9 @@ export default function App({
     // rule every other selectable thing on this canvas follows.
     if (addTool || zoneMode || armed) return;
     e.preventDefault();
-    setSelBoardId(id);
+    // ONE SELECTION ON THIS CANVAS. A plate and a fitting both picked would be
+    // two things Delete could mean.
+    setSel(select('board', id));
     /* AND THE PANEL COMES WITH IT. Selecting a plate puts its composition in the
        panel — see the Switchboard section — and that section lives in the Design
        tab, so a click made from the BOQ or the spaces list would otherwise open
@@ -9031,10 +9043,6 @@ export default function App({
        audience's tab and yanking an operator out of it because they clicked the
        drawing would lose whatever they were reading. */
     setView((v) => (v === 'admin' ? v : 'design'));
-    // ONE SELECTION ON THIS CANVAS. A plate and a fitting both picked would be
-    // two things Delete could mean.
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelFlowId(null);
-    setSelCobId(null); setSelArrayId(null);
     /* AND THE DRAG IS ARMED BUT NOT LIVE. `live` turns on once the pointer has
        moved past a few pixels — the accent runs' own slop, and for the same
        reason: without it a click that wobbles one pixel writes a hand position
@@ -9106,10 +9114,8 @@ export default function App({
     // fitting across a wire is aiming at the drawing, not at the wire.
     if (addTool || zoneMode || armed) return;
     e.preventDefault();
-    setSelFlowId(id);
     // ONE SELECTION ON THIS CANVAS.
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelBoardId(null);
-    setSelCobId(null); setSelArrayId(null);
+    setSel(select('flow', id));
   };
 
   /**
@@ -9126,7 +9132,7 @@ export default function App({
     if (e.button != null && e.button !== 0) return;
     if (addTool || zoneMode || armed) return;
     e.preventDefault();
-    setSelFlowId(id);
+    setSel(select('flow', id));
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const p = svgPoint(e);
     setFlowDrag({ id, kind, key, origin: p, at: p, live: false, overId: null });
@@ -9246,11 +9252,11 @@ export default function App({
     } else {
       setBoardsOff((off) => (off.includes(id) ? off : [...off, id]));
     }
-    setSelBoardId((cur) => (cur === id ? null : cur));
+    setSel((cur) => (idOf(cur, 'board') === id ? clear() : cur));
   }, [manualBoards]);
 
   const closeDoorEdit = useCallback(() => {
-    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setDoorEdit(false); setSel(clear()); setDoorDraft(null); setDoorDrag(null);
   }, []);
 
   /* --- THE NO-LIGHT ZONE, AS A STEP RATHER THAN A TAB ----------------------
@@ -9271,10 +9277,10 @@ export default function App({
      pointer pipeline, one owner. */
   const openZoneEdit = useCallback(() => {
     setZoneEdit(true);
-    setSelArrayId(null);
+    setSel(clear());
     setBoardPlace(false); closeShapeTool();
     setZoneMode(true); setDraftZone(null);
-    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
     setArmed(null); setGhost(null); setGuides([]);
     disarmAdd();
   }, [disarmAdd, closeShapeTool]);
@@ -9293,10 +9299,10 @@ export default function App({
      does. One pointer pipeline, one owner. */
   const openWallEdit = useCallback((roomId) => {
     setWallEdit(roomId); setWallPick(null);
-    setFocusId(roomId); setSelArrayId(null);
+    setFocusId(roomId); setSel(clear());
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
     setBoardPlace(false); closeShapeTool();
-    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
     setArmed(null); setGhost(null); setGuides([]);
     disarmAdd();
   }, [disarmAdd, closeShapeTool]);
@@ -9330,12 +9336,11 @@ export default function App({
      do: one pointer pipeline, one owner. */
   const openBoardPlace = useCallback(() => {
     setBoardPlace(true);
-    setSelArrayId(null);
+    setSel(clear());
     closeShapeTool();
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
-    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
     setArmed(null); setGhost(null); setGuides([]);
-    setSelBoardId(null); setSelFlowId(null);
     disarmAdd();
     /* THE WIRING LAYER COMES ON WITH IT. A plate placed on a sheet with the
        electricals switched off lands invisibly — the gesture appears to do
@@ -9485,7 +9490,7 @@ export default function App({
      primitive means you are drawing, whatever is selected underneath. */
   /* --- ...AND `edit` DOES NOT SURVIVE ANOTHER TOOL OWNING THE BAR ------------
      `otherBar` IS A FIX FOR TWO CONTEXTUAL BARS STACKED IN ONE PLACE. The COB
-     array tool selects the geometry it is setting out on — `setSelShapeId` in
+     array tool selects the geometry it is setting out on — `select('shape', …)` in
      its branch of the canvas press, and rightly so: that ring is what says which
      shape the run belongs to. But a selected shape with the shape tool CLOSED is
      this bar's `edit` state, so arming the array put the shape's corner radius,
@@ -9806,14 +9811,11 @@ export default function App({
     const shape = sealShape(shapeToCommit, shapeRole);
     setCeilingShapes((l) => [...l, shape]);
     closeShapeTool();
-    setSelShapeId(shape.id);
+    // ONE SELECTION ON THIS CANVAS, exactly as picking one off the sheet does.
+    setSel(select('shape', shape.id));
     // ...AND IF IT IS A TRACK, IT ARRIVES FILLED. See `allocateOnTrack`.
     allocateOnTrack(shape);
-    // ONE SELECTION ON THIS CANVAS, exactly as picking one off the sheet does.
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null);
-    setSelCobId(null); setSelArrayId(null); setSelModuleId(null);
-    setSelObjIds([]); setSelBoardId(null); setSelFlowId(null);
-  }, [shapeToCommit, shapeRole, closeShapeTool, setSelObjId, allocateOnTrack]);
+  }, [shapeToCommit, shapeRole, closeShapeTool, allocateOnTrack]);
 
   /** Pick a primitive off the bar. The polygon is the one that asks a question
    *  first, because "how many sides" has no sensible default to assume. */
@@ -9830,11 +9832,11 @@ export default function App({
     // than a shape that appears not to have been copied at all. The same offset
     // a duplicate gets in every editor, for the same reason.
     // THE ID IS MINTED OUT HERE and not inside the updater: an updater has to be
-    // pure, React is entitled to run it twice, and a `setSelShapeId` in the
+    // pure, React is entitled to run it twice, and a `setSel` in the
     // middle of one would be selecting whichever of the two copies it ran last.
     const copy = { ...src, id: newShapeId(), x: src.x + 0.5, y: src.y + 0.5 };
     setCeilingShapes((l) => [...l, copy]);
-    setSelShapeId(copy.id);
+    setSel(select('shape', copy.id));
     /* --- AND A TRACK BRINGS ITS MODULES WITH IT ---------------------------
        COPYING A RUN AND LEAVING ITS FITTINGS BEHIND WOULD NOT BE A COPY. A
        magnetic track is a profile with modules clipped into it, and "duplicate"
@@ -9859,7 +9861,7 @@ export default function App({
 
   const deleteShape = useCallback((id) => {
     setCeilingShapes((l) => l.filter((q) => q.id !== id));
-    setSelShapeId((cur) => (cur === id ? null : cur));
+    setSel((cur) => (idOf(cur, 'shape') === id ? clear() : cur));
     setShapeEditId((cur) => (cur === id ? null : cur));
     /* AND THE MODULES GO WITH THE RUN THEY WERE CLIPPED INTO. A module with no
        profile is not a fitting anybody can install, and an orphan in the store
@@ -9939,11 +9941,9 @@ export default function App({
     if (!l.bandPx || !l.cellKey || !pxPerFt) return;
     e.preventDefault();
     e.stopPropagation();
-    setSelLightId(lightKey(roomId, l.cellKey));
     // ONE SELECTION ON THIS CANVAS.
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelObjIds([]);
-    setSelCobId(null); setSelArrayId(null);
-    setSelBoardId(null); setSelFlowId(null); setSelShapeId(null); clearShapeEdit();
+    setSel(select('light', lightKey(roomId, l.cellKey)));
+    clearShapeEdit();
     lightMoved.current = false;
     /* NO POINTER CAPTURE, AND THIS IS THE ONE DRAG ON THIS CANVAS THAT REFUSES
        IT. Every other one captures to the <svg> so the gesture survives leaving
@@ -10136,10 +10136,7 @@ export default function App({
     // A press on a shape is an act on THAT shape, so the bar becomes its
     // contextual menu — see `shapeMode`.
     setShapeMenuOn(false); setShapeTool(null); abandonShape();
-    setSelShapeId(id);
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null);
-    setSelCobId(null); setSelArrayId(null);
-    setSelObjIds([]); setSelBoardId(null); setSelFlowId(null);
+    setSel(select('shape', id));
     const src = ceilingShapes.find((q) => q.id === id);
     if (!src || !pxPerFt) return;
     svgRef.current?.setPointerCapture?.(e.pointerId);
@@ -10215,7 +10212,7 @@ export default function App({
         twin,
       ]);
       setShapeDrag({ ...drag, id: twin.id, live: true, copied: true });
-      setSelShapeId(twin.id);
+      setSel(select('shape', twin.id));
       return;
     }
     setCeilingShapes((l) => l.map((q) => {
@@ -10350,26 +10347,25 @@ export default function App({
    * also be changed, so the two have to be looking at the same room.
    */
   const openArray = useCallback((id) => {
-    setSelArrayId(id);
-    /* THE SHAPE BAR AND THE SHAPE ITSELF. Selecting a shape is what puts the bar
+    // ONE SELECTION ON THIS CANVAS. Two things picked would be two things Delete
+    // could mean, and taking the register is how this one stops being a list of
+    // ten clears that had to be kept in step with the ten selections.
+    setSel(select('array', id));
+    /* THE SHAPE BAR GOES WITH THE SHAPE. Selecting a shape is what puts the bar
        into its `edit` state — see `shapeMode` — so clearing the tool is not
-       enough on its own; the selection has to go too, or the bar comes straight
-       back up over the array's. */
-    closeShapeTool(); clearShapeEdit(); setSelShapeId(null);
+       enough on its own; the selection has to go too, which the line above now
+       does, or the bar comes straight back up over the array's. */
+    closeShapeTool(); clearShapeEdit();
     closeTrackEdit(); closeBoardPlace();
     setTrackMode(null);
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
-    setDoorEdit(false); setSelDoorId(null); setDoorDraft(null); setDoorDrag(null);
+    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
     setArmed(null); setGhost(null); setGuides([]);
     disarmAdd();
-    // ONE SELECTION ON THIS CANVAS. Two things picked would be two things Delete
-    // could mean.
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelObjIds([]);
-    setSelCobId(null); setSelBoardId(null); setSelFlowId(null); setSelLightId(null);
     const roomId = cobArrays.find((a) => a.id === id)?.roomId ?? null;
     if (roomId) { setFocusId(roomId); setView('spaces'); }
   }, [closeShapeTool, clearShapeEdit, closeTrackEdit, closeBoardPlace,
-      disarmAdd, cobArrays, setSelObjId, setSelObjIds]);
+      disarmAdd, cobArrays]);
 
   const shapeHandleDown = (e, id, handle) => {
     if (e.button != null && e.button !== 0) return;
@@ -10378,7 +10374,7 @@ export default function App({
     // The click this press will synthesise lands on the <svg> once the pointer
     // is captured — see `shapeTook` — and must not read as a press on bare plan.
     shapeTook.current = true;
-    setSelShapeId(id); setShapeEditId(id);
+    setSel(select('shape', id)); setShapeEditId(id);
     svgRef.current?.setPointerCapture?.(e.pointerId);
     setShapeResize({ id, handle });
   };
@@ -10742,7 +10738,7 @@ export default function App({
 
   const deleteDoor = useCallback((id) => {
     setDoors((ds) => ds.filter((d) => d.id !== id));
-    setSelDoorId((cur) => (cur === id ? null : cur));
+    setSel((cur) => (idOf(cur, 'door') === id ? clear() : cur));
   }, []);
 
   /**
@@ -11018,7 +11014,7 @@ export default function App({
        frame, and the handles are only drawn when exactly one thing is selected
        (see PlanCanvas), so a resize press can only ever mean `[id]`. */
     const group = mode === 'move' && selObjIds.includes(id) ? selObjIds : [id];
-    setSelObjIds(group);
+    setSel(selectMany('object', group));
 
     const p = svgPoint(e);
     const ft = { x: p.x / pxPerFt, y: p.y / pxPerFt };
@@ -11121,7 +11117,7 @@ export default function App({
         ...os.map((o) => (objDrag.startAll[o.id] ? { ...objDrag.startAll[o.id] } : o)),
         ...twins,
       ]);
-      setSelObjIds(twins.map((t) => t.id));
+      setSel(selectMany('object', twins.map((t) => t.id)));
       setObjDrag((d) => (d ? {
         ...d,
         // The drag transfers to the twin of the object under the pointer, and the
@@ -11246,16 +11242,13 @@ export default function App({
       // is one you cannot find the grips of.
       e.stopPropagation();
       e.preventDefault();
-      setSelAccId(id); setSelObjId(null); setArmed(null);
+      setSel(select('acc', id)); setArmed(null);
       return;
     }
     e.stopPropagation();
     e.preventDefault();
     svgRef.current?.setPointerCapture?.(e.pointerId);
-    setSelAccId(id);
-    setSelObjId(null);
-    setSelBoardId(null);
-    setSelFlowId(null);
+    setSel(select('acc', id));
     setArmed(null);
     // WHERE THE GESTURE STARTED, twice over. `from` advances with the pointer,
     // because a run must move by the DELTA and not jump to centre itself under
@@ -11416,12 +11409,7 @@ export default function App({
     if ((addTool && addTool !== 'spot') || zoneMode) return;
     e.stopPropagation();
     e.preventDefault();
-    setSelSpotId(id);
-    setSelAccId(null);
-    setSelObjId(null);
-    setSelBoardId(null);
-    setSelFlowId(null);
-    setSelCobId(null); setSelArrayId(null);
+    setSel(select('spot', id));
     setArmed(null);
     const sp = taskSpotsPx.find((q) => q.id === id);
     if (sp?.roomId) setFocusId(sp.roomId);
@@ -11474,12 +11462,7 @@ export default function App({
     if (!c) return;
     e.stopPropagation();
     e.preventDefault();
-    setSelCobId(id);
-    setSelSpotId(null);
-    setSelAccId(null);
-    setSelObjId(null);
-    setSelBoardId(null);
-    setSelFlowId(null);
+    setSel(select('cob', id));
     setArmed(null);
     /* THE SPACE AND THE TAB ARE NOT SET HERE. Selecting a fitting reveals it in
        the Analysis, and that is one behaviour shared by every fitting on this
@@ -11583,7 +11566,7 @@ export default function App({
           pairs.map(({ twinId, base }) => [twinId, { ...base, id: twinId }])),
         copied: true, moved: true,
       } : cur));
-      setSelCobId(twinOf[cobDrag.id] ?? pairs[0].twinId);
+      setSel(select('cob', twinOf[cobDrag.id] ?? pairs[0].twinId));
       return;
     }
 
@@ -11740,9 +11723,7 @@ export default function App({
        not read as one on bare plan — which would clear the selection and swap
        whatever bar is up for the space's own. */
     shapeTook.current = true;
-    setSelModuleId(id);
-    setSelCobId(null); setSelArrayId(null); setSelSpotId(null);
-    setSelAccId(null); setSelObjId(null); setSelBoardId(null); setSelFlowId(null);
+    setSel(select('module', id));
     svgRef.current?.setPointerCapture?.(e.pointerId);
     setModuleDrag({ id, pointerId: e.pointerId, from: svgPoint(e), moved: false });
   };
@@ -11772,7 +11753,7 @@ export default function App({
    *  every module with it (see `deleteShape`). */
   const deleteModule = useCallback((id) => {
     setTrackFixtures((l) => l.filter((f) => f.id !== id));
-    setSelModuleId((cur) => (cur === id ? null : cur));
+    setSel((cur) => (idOf(cur, 'module') === id ? clear() : cur));
     setModuleDrag((d) => (d?.id === id ? null : d));
   }, []);
 
@@ -11811,7 +11792,7 @@ export default function App({
    */
   const deleteSpot = useCallback((id) => {
     const sp = taskSpotsPx.find((q) => q.id === id);
-    setSelSpotId(null);
+    setSel(clear());
     if (!sp) return;
     if (sp.surfaceId) {
       if (manualSurfaces.some((sf) => sf.id === sp.surfaceId)) {
@@ -11967,7 +11948,7 @@ export default function App({
       if (doorEdit) {
         if (e.key === 'Escape') {
           e.preventDefault();
-          if (selDoorId) setSelDoorId(null); else closeDoorEdit();
+          if (selDoorId) setSel(clear()); else closeDoorEdit();
           return;
         }
         if ((e.key === 'Delete' || e.key === 'Backspace') && selDoorId && !doorDrag) {
@@ -12000,13 +11981,13 @@ export default function App({
            undoes the last thing you asked for, and asking for dimensions was
            the last thing. */
         if (shapeEditId) { setShapeEditId(null); return; }
-        if (selShapeId) { setSelShapeId(null); return; }
+        if (selShapeId) { setSel(clear()); return; }
         /* THE ARRAY'S BAR IS A CONTEXTUAL MENU AND CLOSES LIKE ONE, ahead of the
            plain selections below: it is the innermost thing open, and Escape
            undoes the last thing you asked for. */
-        if (selArrayId) { setSelArrayId(null); return; }
-        if (selModuleId) { setSelModuleId(null); return; }
-        if (selLightId) { setSelLightId(null); return; }
+        if (selArrayId) { setSel(clear()); return; }
+        if (selModuleId) { setSel(clear()); return; }
+        if (selLightId) { setSel(clear()); return; }
         /* THE COB DRAWER CLOSES WITH THE TOOL IT ARMED. `disarmAdd` puts the
            gesture away; leaving the drawer hanging open with neither cell
            latched would be a menu still claiming to be the live thing. */
@@ -12024,12 +12005,12 @@ export default function App({
           if (trackMode) { setTrackMode(null); closeShapeTool(); }
         }
         if (armed) { setArmed(null); setGhost(null); setGuides([]); }
-        else if (selSpotId) setSelSpotId(null);
-        else if (selCobId) setSelCobId(null);
-        else if (selAccId) setSelAccId(null);
-        else if (selBoardId) setSelBoardId(null);
-        else if (selFlowId) setSelFlowId(null);
-        else if (selObjId) setSelObjId(null);
+        else if (selSpotId) setSel(clear());
+        else if (selCobId) setSel(clear());
+        else if (selAccId) setSel(clear());
+        else if (selBoardId) setSel(clear());
+        else if (selFlowId) setSel(clear());
+        else if (selObjId) setSel(clear());
         else if (focusId) setFocusId(null);
         else setObjMode(false);
       }
@@ -12096,7 +12077,7 @@ export default function App({
       if ((e.key === 'Delete' || e.key === 'Backspace') && selCobId && !cobDrag) {
         e.preventDefault();
         setManualCobs((l) => l.filter((c) => c.id !== selCobId));
-        setSelCobId(null);
+        setSel(clear());
         return;
       }
       /* --- A SELECTED RUN, AND THERE ARE THREE KINDS OF IT ------------------
@@ -12151,7 +12132,7 @@ export default function App({
         } else {
           setAccentDismissed((d) => (d.includes(selAccId) ? d : [...d, selAccId]));
         }
-        setSelAccId(null);
+        setSel(clear());
         return;
       }
       /* A SELECTED SWITCHBOARD. Above the ceiling objects and the space for the
@@ -12194,7 +12175,7 @@ export default function App({
         e.preventDefault();
         const doomed = new Set(selObjIds);
         setCeilingObjs((os) => os.filter((q) => !doomed.has(q.id)));
-        setSelObjIds([]);
+        setSel(clear());
         return;
       }
       /* A SELECTED SPACE, AND THIS IS LAST ON PURPOSE. A fitting or a ceiling
@@ -12235,7 +12216,7 @@ export default function App({
     if (readOnly) return undefined;
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [objMode, armed, selObjId, selObjIds, setSelObjId, objDrag, selAccId, accDrag, addTool, disarmAdd,
+  }, [objMode, armed, selObjId, selObjIds, objDrag, selAccId, accDrag, addTool, disarmAdd,
       finishTrack, trackPen, trackEditId, selTrackPt, trackGrip,
       deleteTrackPoint, deleteTrack, closeTrackEdit,
       manualAccents, accentZonesPx, manualCoves, focusId, readOnly, selSpotId, deleteSpot,
@@ -12495,20 +12476,18 @@ export default function App({
     if (shapeTook.current) { shapeTook.current = false; return; }
     // ...and the click at the end of a light's drag is not one either.
     if (lightMoved.current) { lightMoved.current = false; return; }
-    if (selShapeId) setSelShapeId(null);
+    /* AND EVERYTHING LETS GO. A press that really was on bare plan is how every
+       selection on this canvas is cleared — the shape, the array whose dashed
+       setting-out line would otherwise stay on the sheet as a drawn line (see
+       `selArrayPathPx`), the module, the light, and the four below that used to
+       be cleared only outside a room. One register, one line. */
+    setSel(clear());
     if (shapeEditId) setShapeEditId(null);
-    /* AND THE ARRAY LETS GO. A press that really was on bare plan is how every
-       other selection on this canvas is cleared, and a run whose dashed
-       setting-out line stayed on the sheet would be a drawn line — see
-       `selArrayPathPx` for why that line exists only while it is held. */
-    if (selArrayId) setSelArrayId(null);
-    if (selModuleId) setSelModuleId(null);
     // AND THE TRACK'S POINTS, which are a selection like any other: a path left
     // open with its grips on the drawing reads as part of the drawing. A press
     // that came off a grip never reaches here — see `shapeTook` above, which
     // the grip sets for exactly this.
     if (trackEditId) closeTrackEdit();
-    if (selLightId) setSelLightId(null);
     // THE SCALE IS SETTLED BY THE TIME WE ARE HERE. Measuring belongs to the
     // tracer screen, where the scale is actually being decided; leaving the
     // click live on this screen meant a stray click could redefine px-per-foot
@@ -12603,7 +12582,6 @@ export default function App({
     setOptionPick((cur) => (hit
       ? (cur?.roomId === hit.id ? cur : optionPickFor(hit.id))
       : null));
-    if (!hit) { setSelAccId(null); setSelObjId(null); setSelBoardId(null); setSelFlowId(null); }
   };
 
   // no-light zones are drawn by dragging a rectangle on the plan
@@ -12806,14 +12784,14 @@ export default function App({
       const p = svgPoint(e);
       const hit = doorHitAt(p);
       if (hit) {
-        setSelDoorId(hit.id);
+        setSel(select('door', hit.id));
         // `base` IS THE RECT AT THE PRESS AND NEVER MOVES; `rect` is where the
         // pointer has it now. See the move handler for why the offset is
         // measured from the press rather than accumulated frame by frame.
         setDoorDrag({ id: hit.id, from: p, base: hit.rect, rect: hit.rect });
         return;
       }
-      setSelDoorId(null);
+      setSel(clear());
       setDoorDraft({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
       return;
     }
@@ -13069,7 +13047,7 @@ export default function App({
           count: d?.geomId === geomId ? quantiseCount(d.count, q) : q.base,
           watts: d?.watts ?? cobShow.watts, beam: d?.beam ?? cobShow.beam,
         }));
-        setSelShapeId(hitSh ? hitSh.id : null);
+        setSel(select('shape', hitSh ? hitSh.id : null));
         return;
       }
 
@@ -13131,7 +13109,7 @@ export default function App({
                        rect: { x0: p.x - r, y0: p.y - r, x1: p.x + r, y1: p.y + r } };
         const placed = placeZone(seed, poly);
         setManualAccents((m) => [...m, placed]);
-        setSelAccId(placed.id);
+        setSel(select('acc', placed.id));
         disarmAdd();
         return;
       }
@@ -13156,7 +13134,7 @@ export default function App({
                   x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) },
         };
         setManualAccents((m) => [...m, z]);
-        setSelAccId(z.id);
+        setSel(select('acc', z.id));
         disarmAdd();
         return;
       }
@@ -13184,7 +13162,7 @@ export default function App({
       // else, so there is no path by which a click out here places something.
       if (!insideAnyRoom(p)) {
         setArmed(null); setGhost(null); setGuides([]);
-        setSelObjId(null); setSelAccId(null);
+        setSel(clear());
         return;
       }
       if (armed) {
@@ -13192,14 +13170,11 @@ export default function App({
         let o = makeCeilingObject(armed, { x: snapped.x / pxPerFt, y: snapped.y / pxPerFt });
         if (o.kind === 'fan') o = withSweep(o, fanSweepMm);
         setCeilingObjs((os) => [...os, o]);
-        setSelObjId(o.id);
+        setSel(select('object', o.id));
         setArmed(null);
         setGuides([]); setGhost(null); setGuides([]); setGhost(null);
       } else {
-        setSelObjId(null);
-        setSelAccId(null);
-        setSelBoardId(null);
-        setSelFlowId(null);
+        setSel(clear());
       }
       return;
     }
@@ -13506,7 +13481,7 @@ export default function App({
         cls: 'door', conf: 1, rect: r, openingPx: openingPx(r), placed: true,
       };
       setDoors((ds) => [...ds, door]);
-      setSelDoorId(door.id);
+      setSel(select('door', door.id));
       return;
     }
     if (objDrag) { objPointerUp(); return; }
@@ -14201,11 +14176,9 @@ export default function App({
     // A FITTING THAT NO LONGER EXISTS CANNOT STAY SELECTED. Cheaper and more
     // honest than reconciling every selection against the restored document:
     // whatever was picked, the picture just changed under it.
-    setSelSpotId(null); setSelAccId(null); setSelObjId(null); setSelBoardId(null);
-    setSelCobId(null); setSelArrayId(null);
-    setSelFlowId(null);
+    setSel(clear());
     setUndoDepth(historyDepth(history.current));
-  }, [stateSetters, setSelObjId]);
+  }, [stateSetters]);
 
   const undo = useCallback(() => {
     // THE IN-FLIGHT BURST IS CLOSED FIRST, so a change made half a second ago is
@@ -14710,7 +14683,7 @@ export default function App({
             closeShapeTool(); closeTrackEdit(); closeBoardPlace();
             // AND THE ARRAY THAT WAS OPEN, whose bar stands exactly where this
             // gesture's bar is about to — see `openArray`.
-            setSelArrayId(null);
+            setSel(clear());
             // ...AND THE TRACK'S ARMED MODULE. Two live tools is a press with
             // two meanings.
             setTrackMode(null);
@@ -14781,7 +14754,7 @@ export default function App({
             setZoneMode(false); setDraftZone(null);
             closeTrackEdit(); closeBoardPlace();
             setArmed(null); setGhost(null);
-            setCobOpen(false); setCobMode(null); setSelArrayId(null);
+            setCobOpen(false); setCobMode(null); setSel(clear());
             setAddTool(next ? 'module' : null);
             setTrackMode(next);
           }}
@@ -14820,7 +14793,7 @@ export default function App({
             closeShapeTool();
             // ...AND THE COB DRAWER, which is a third machine and closes on the
             // way in like the other two. `disarmAdd` takes the bar with it.
-            setCobOpen(false); setCobMode(null); setSelArrayId(null);
+            setCobOpen(false); setCobMode(null); setSel(clear());
             setTrackMode(null);
             if (arms === 'object') {
               disarmAdd();
@@ -15390,7 +15363,7 @@ export default function App({
                 onDiscard={() => {
                   const doomed = new Set(cobRun);
                   setManualCobs((l) => l.filter((c) => !doomed.has(c.id)));
-                  setSelCobId((id) => (doomed.has(id) ? null : id));
+                  setSel((cur) => (doomed.has(idOf(cur, 'cob')) ? clear() : cur));
                   setCobOpen(false); setCobMode(null); disarmAdd();
                 }}
                 /* --- THE ARRAY, WHERE THAT IS THE GESTURE --------------------
@@ -16916,9 +16889,9 @@ export default function App({
                 selected. It is the one property of the four that is a standard
                 size rather than something to drag to. */}
             {(() => {
-              const sel = ceilingObjs.find((o) => o.id === selObjId);
-              if (armed !== 'fan' && sel?.kind !== 'fan') return null;
-              const current = sel?.kind === 'fan' ? sweepMm(sel) : fanSweepMm;
+              const obj = ceilingObjs.find((o) => o.id === selObjId);
+              if (armed !== 'fan' && obj?.kind !== 'fan') return null;
+              const current = obj?.kind === 'fan' ? sweepMm(obj) : fanSweepMm;
               return (
                 <div className="flex gap-1 mt-[7px]">
                   {FAN_SWEEPS.map((mm) => (
