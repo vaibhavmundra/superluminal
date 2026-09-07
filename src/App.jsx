@@ -25,6 +25,7 @@ import { STRIP_OFFSET_FT, coveHostFor, bandBetween, bandFixtureFor, COVE_GAP_FT,
 import { absorbPoints, planDrawnTrack, drawnTrackRefusal,
          TRACK_REFUSALS, SPOT_LEN_FT, DODGE_FT } from './lib/track.js';
 import usePen from './hooks/usePen.js';
+import { useDrag } from './hooks/useDrag.js';
 import { penSegments, penLengthFt, penRelock, penMovePoint, penAim, axisLock,
          MIN_SEG_FT } from './lib/pen.js';
 import { newHistory, record, stepBack, stepForward, historyDepth,
@@ -127,11 +128,10 @@ import { CEILING_BY_ID, makeCeilingObject, toObstaclePx,
 import { collectTargets, snapPoint, SNAP_DEFAULTS } from './lib/snapGuides.js';
 /* PICKING A THING UP, MOVING IT, AND LEAVING A COPY BEHIND — the four rules
    every draggable object on this canvas needs and each of which has been got
-   wrong at least once here. See its header. The COB is the first store wired
-   through it; the ceiling objects still carry their own copy of the same
-   arithmetic, and moving them across is the next job. */
-import { movedEnough, grabOffset, wantedCentre, orthoLock,
-         deltaFrom, applyDelta, forkCopy } from './lib/dragMove.js';
+   wrong at least once here. See its header. What this file still imports
+   directly is what the drags not yet on hooks/useDrag.js are calling by hand;
+   the hook is where the rest of it is now spent. */
+import { movedEnough, orthoLock } from './lib/dragMove.js';
 import { buildSnapIndex, snapAt } from './lib/snap.js';
 import { openPdf, isPdf, pageToImg } from './lib/pdfPlan.js';
 import PdfPagePicker from './components/PdfPagePicker.jsx';
@@ -1126,11 +1126,10 @@ export default function App({
      machinery, and filing a COB in that list would mean Delete looking for it in
      three stores that have never heard of it. */
   const selCobId = idOf(sel, 'cob');
-  /* THE DRAG IN FLIGHT, and it lives for one press. Everything in it is a
-     snapshot taken when the pointer went down — see `cobPointerDown`, and rule 2
-     in lib/dragMove.js for why every frame is measured from there rather than
-     from the frame before it. */
-  const [cobDrag, setCobDrag] = useState(null);
+  /* THE DRAG IN FLIGHT is `cob.drag` — see `cob` below, which is
+     hooks/useDrag.js. Everything in it is a snapshot taken when the pointer
+     went down, and rule 2 in lib/dragMove.js is why every frame is measured
+     from there rather than from the frame before it. */
 
   /* --- THE COB DRAWER, AND WHAT THE NEXT LAMP WILL BE ------------------------
      ALL TRANSIENT. None of this is saved: it is which cell of the rail is open,
@@ -8598,42 +8597,34 @@ export default function App({
     [cobTargets, zoom]);
 
   /**
-   * WHERE A LAMP BEING DRAGGED WANTS TO BE, with Shift holding it to one axis.
+   * WHERE A LAMP BEING DRAGGED LANDS, once the shift lock has had its say.
    *
-   * DELIBERATELY `moveTargetPx` FOR DOWNLIGHTS, and it is the same three rules
-   * said about a different store — read that one first if this is unfamiliar.
-   *
-   *   THE LINE IS MEASURED FROM THE PRESS, not from the last frame. Frame to
-   *   frame the constraint creeps: each frame is straight relative to the one
-   *   before it and the path as a whole bends. From the anchor, a locked drag is
-   *   on the same line however long it goes on — and for a COPY that anchor is
-   *   the ORIGINAL, so Option+Shift leaves the twin exactly level with the lamp
-   *   it came from, which is the gesture that lays out a row.
-   *
-   *   WHICHEVER AXIS HAS TRAVELLED FURTHER WINS, re-decided every frame rather
-   *   than latched on the first pixel: a drag that starts off sideways and turns
-   *   into a vertical one switches over as it crosses the diagonal, which is
-   *   what every other tool with this modifier does.
-   *
-   *   THE FROZEN AXIS TAKES NO SNAP AND DRAWS NO GUIDE. A guide is a claim that
-   *   the point took an alignment, and one drawn for an axis that was held still
-   *   by a modifier would be claiming credit for the modifier's work.
+   * THE TWO RULES THIS USED TO STATE ARE THE HOOK'S NOW — the line measured
+   * from the press rather than the last frame, and the axis re-decided every
+   * frame instead of latched on the first pixel. Both are stated once in
+   * lib/dragMove.js and enforced once in hooks/useDrag.js. What is left here is
+   * the half that is a fact about DOWNLIGHTS.
    *
    * WHAT IT SNAPS TO IS THE OTHER PLACED LAMPS AND NOTHING ELSE — the same
    * targets the placing gesture uses, so "level with that one" means one thing
    * whether you are putting a lamp down or moving it afterwards.
+   *
+   * AND THE FROZEN AXIS TAKES NO SNAP AND DRAWS NO GUIDE. A guide is a claim
+   * that the point took an alignment, and one drawn for an axis that was held
+   * still by a modifier would be claiming credit for the modifier's work.
    */
-  const cobMoveTarget = useCallback((p, drag, shift, exclude) => {
-    /* THE THREE STEPS, IN THIS ORDER, AND THE ORDER IS LOAD-BEARING.
-       The lock is applied FIRST and the snap SECOND: snapping first would let a
-       lamp four feet away pull the point off the line the modifier had just held
-       it to, and the row would come out crooked with the lock silently undone.
-       Then the frozen axis is dropped from both the snap's result and its guides
-       — see `orthoLock` for why a guide on a held axis is a false claim. */
-    const { at, axis } = orthoLock(wantedCentre(p, drag.grabPx), drag.start, shift);
-    const sn = cobSnap(at, exclude);
+  const cobSnapAt = useCallback((p, axis, exclude) => {
+    /* THE LOCK IS APPLIED BEFORE THIS AND THE ORDER IS LOAD-BEARING — see
+       `resolve` in hooks/useDrag.js, which holds the point to its line and then
+       hands it here. Snapping first would let a lamp four feet away pull the
+       point off the line the modifier had just held it to, and the row would
+       come out crooked with the lock silently undone.
+       SO ALL THAT IS LEFT IS TO KEEP THE FROZEN AXIS OUT OF BOTH THE SNAP'S
+       RESULT AND ITS GUIDES — see `orthoLock` for why a guide on a held axis is
+       a false claim. */
+    const sn = cobSnap(p, exclude);
     setGuides(sn.guides.filter((g) => g.axis !== axis));
-    return { x: axis === 'x' ? at.x : sn.x, y: axis === 'y' ? at.y : sn.y };
+    return { x: axis === 'x' ? p.x : sn.x, y: axis === 'y' ? p.y : sn.y };
   }, [cobSnap]);
 
   /* --- WHAT THE NEXT COB WILL BE --------------------------------------------
@@ -11439,6 +11430,60 @@ export default function App({
     if (sp?.roomId) setFocusId(sp.roomId);
   };
 
+  /* --- A LAMP'S WHOLE GESTURE ------------------------------------------------
+
+     THE LIFECYCLE IS hooks/useDrag.js AND THE ARITHMETIC IS lib/dragMove.js.
+     What is left here is the six things that are facts about a DOWNLIGHT, and
+     nothing else — which is why this is worth reading as the shape every drag
+     on this canvas now has.
+
+     PLAN FEET AT THE STORE AND PLAN PIXELS AT THE POINTER, which is why `at`
+     and `to` exist at all: `manualCobs` holds `xFt`/`yFt` so that a scale
+     correction does not move a lamp (see the store's own note), and the pointer
+     only ever speaks pixels. */
+  const cob = useDrag({
+    point: svgPoint,
+    /* THE POINTER IS CAPTURED ON THE SVG, exactly as the object drag captures
+       it: a lamp dragged toward the edge of the sheet routinely releases outside
+       the element the press landed on, and without capture that release is
+       somebody else's event and the drag never ends. */
+    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
+    at: (o) => ({ x: o.xFt * pxPerFt, y: o.yFt * pxPerFt }),
+    to: (o, q) => ({ ...o, xFt: q.x / pxPerFt, yFt: q.y / pxPerFt,
+                     roomId: roomAt(q)?.id ?? o.roomId,
+                     /* MOVING A LAMP ADOPTS IT. It is no longer where the rule
+                        put it, so switching autoplace off must not take it
+                        away — see `autoplaceIn`. */
+                     auto: false }),
+    setList: setManualCobs,
+    zoom,
+    ortho: true,
+    snap: (q, axis, { ids }) => cobSnapAt(q, axis, ids),
+    copy: true,
+    mintId: (n) => newCobId(`c${n}`),
+    /* THE TWIN IS WHAT KEEPS MOVING, which is the convention everywhere this
+       gesture exists and the one that makes a row of lamps possible: drag,
+       Option, release — and the thing you just positioned is the one still
+       selected, ready to be dragged again. */
+    onCopy: ({ ids, twinOf, drag }) => setSel(select('cob', twinOf[drag.id] ?? ids[0])),
+    /* A LAMP DROPPED OFF EVERY CEILING GOES BACK WHERE IT CAME FROM, and that is
+       the one thing this drag does on release beyond clearing the gesture.
+       `roomId` is what the Analysis counts a lamp under, what its throw is
+       clipped to and what its ceiling height is read from, so a lamp belonging
+       to no space is a fitting that is drawn on the sheet, absent from every
+       reading of it, and impossible to account for. Refusing the drop is kinder
+       than keeping a stale `roomId`, which would put a lamp visibly in the hall
+       and count it in the bedroom. */
+    onCommit: (ids, d) => setManualCobs((list) => list.map((c) => {
+      if (!ids.includes(c.id)) return c;
+      if (c.roomId && roomAt({ x: c.xFt * pxPerFt, y: c.yFt * pxPerFt })) return c;
+      const base = d.startAll[c.id];
+      return base ? { ...c, xFt: base.xFt, yFt: base.yFt, roomId: base.roomId } : c;
+    })),
+    // The guides are a property of the GESTURE, not of the lamp.
+    onRelease: () => setGuides([]),
+  });
+
   /**
    * PICKING UP A COB SOMEBODY PLACED — and it can be MOVED, which is a reversal.
    *
@@ -11461,11 +11506,6 @@ export default function App({
    * one thing somebody does twenty times in a row fail the moment two of them
    * were near each other. Put the tool down to pick one up — which is one press
    * on the cell that is latched right in front of them.
-   *
-   * THE POINTER IS CAPTURED ON THE SVG, exactly as the object drag captures it:
-   * a lamp dragged toward the edge of the sheet routinely releases outside the
-   * element the press landed on, and without capture that release is somebody
-   * else's event and the drag never ends.
    */
   const cobPointerDown = (e, id) => {
     if (e.button != null && e.button !== 0) return;   // middle button is the pan
@@ -11496,137 +11536,16 @@ export default function App({
        canvas — so it lives in one effect over `analysisHighlight` rather than
        being written out in this handler and the three like it. */
 
-    svgRef.current?.setPointerCapture?.(e.pointerId);
-    const p = svgPoint(e);
-    const centre = { x: c.xFt * pxPerFt, y: c.yFt * pxPerFt };
-    setCobDrag({
-      id, pointerId: e.pointerId,
-      /* WHERE INSIDE THE LAMP IT WAS GRABBED, subtracted from every later
-         pointer position so the symbol does not jump to centre itself under the
-         cursor on the first move. */
-      grabPx: grabOffset(p, centre),
-      /* WHERE IT WAS AT THE PRESS. Every frame's delta is measured from here and
-         never from the frame before — see rule 2 in lib/dragMove.js — and it is
-         also the anchor the ortho lock holds the line to, and what the Option
-         copy puts the original back to. */
-      start: centre,
-      from: p,
-      /* WHO IS MOVING AND WHAT THEY LOOKED LIKE. One lamp today, because a COB
-         has no multi-selection; kept in the group shape anyway so that adding
-         one is a change to the SELECTION and not to this gesture. */
-      group: [id],
-      startAll: { [id]: { ...c } },
-      moved: false,
-      copied: false,
-    });
+    /* WHO IS MOVING AND WHAT THEY LOOKED LIKE. One lamp today, because a COB
+       has no multi-selection; kept in the group shape anyway so that adding one
+       is a change to the SELECTION and not to this gesture. The hook takes the
+       capture, the grab offset, the press anchor and the snapshots from here —
+       see hooks/useDrag.js. */
+    cob.down(e, { id, members: [c] });
   };
 
-  /**
-   * THE LAMP FOLLOWING THE POINTER — and, if Option arrives, its twin.
-   *
-   * EVERYTHING IN PLAN FEET AT THE STORE AND PLAN PIXELS AT THE POINTER, which
-   * is why `at`/`to` are handed to the library: `manualCobs` holds `xFt`/`yFt`
-   * so that a scale correction does not move a lamp (see the store's own note),
-   * and the pointer only ever speaks pixels.
-   */
-  const cobPointerMove = (e) => {
-    if (!cobDrag || !pxPerFt) return;
-    const p = svgPoint(e);
-    /* NOT A DRAG UNTIL IT HAS TRAVELLED. Before that this handler does nothing
-       at all: no write, no guides, no copy — so a click that wobbles is a click.
-       Once past the slop the flag latches and stays latched, because a drag that
-       came back to within three pixels of its origin is still a drag. */
-    if (!cobDrag.moved) {
-      if (!movedEnough(cobDrag.from, p, { zoom })) return;
-      setCobDrag((d) => (d ? { ...d, moved: true } : d));
-    }
-
-    /* PLAN FEET IN, PLAN FEET OUT — the two adapters the library asks for. */
-    const inFt = (o) => ({ x: o.xFt * pxPerFt, y: o.yFt * pxPerFt });
-    const outFt = (o, q) => ({ ...o, xFt: q.x / pxPerFt, yFt: q.y / pxPerFt,
-                               roomId: roomAt(q)?.id ?? o.roomId,
-                               /* MOVING A LAMP ADOPTS IT. It is no longer where
-                                  the rule put it, so switching autoplace off
-                                  must not take it away — see `autoplaceIn`. */
-                               auto: false });
-
-    /* --- OPTION LEAVES A COPY BEHIND ------------------------------------
-       READ LIVE OFF THE MOVE and not latched at the press, so "Option then
-       drag" and "drag then Option" are the same gesture. `forkCopy` puts the
-       original back where it was picked up, which is what reading the modifier
-       late costs — see its note. The twins' ids are minted first so they can be
-       kept out of the snap targets, which leaves the ORIGINAL a live target:
-       exactly what lining a second lamp up with the first wants.
-       ONE WRITE DOING THE RESTORE AND THE CLONE TOGETHER, then a return. Every
-       line below this branch reads `cobDrag` as it was when this handler was
-       created — the retarget has not landed yet — so a second pass through them
-       would take the ORIGINAL for the twin and move it after all. */
-    if (!cobDrag.copied && e.altKey) {
-      /* THE IDS ARE MINTED HERE, OUTSIDE THE WRITE, and that is not tidiness.
-         `setManualCobs` takes an UPDATER because two moves can fire before a
-         re-render and a plain value would write a stale list — but an updater
-         runs whenever React chooses, so anything computed inside it is not
-         available to the two lines after it. The retarget below needs to know
-         which twin each original became, so the mapping is decided up front and
-         `forkCopy` is handed a minter that reads it. */
-      const pairs = cobDrag.group
-        .map((gid, i) => ({ gid, twinId: newCobId(`c${i}`), base: cobDrag.startAll[gid] }))
-        .filter((q) => q.base);
-      if (!pairs.length) return;
-      const twinOf = Object.fromEntries(pairs.map((q) => [q.gid, q.twinId]));
-      /* THE TWINS ARE EXCLUDED FROM THE SNAP TARGETS — they are not in the list
-         yet, so nothing is actually excluded and the ORIGINALS stay live, which
-         is exactly what lining a copy up with the lamp it came from wants. */
-      const at = cobMoveTarget(p, cobDrag, e.shiftKey, pairs.map((q) => q.twinId));
-      const d = deltaFrom(cobDrag.start, at);
-      setManualCobs((list) => forkCopy(list, cobDrag.startAll, d,
-        (_n, base) => twinOf[base.id], { at: inFt, to: outFt }).list);
-      setCobDrag((cur) => (cur ? {
-        ...cur,
-        /* THE DRAG TRANSFERS TO THE TWIN and the anchor is untouched: `start` is
-           still the ORIGINAL's position, so later frames go on computing one
-           delta from the press and applying it to these snapshots exactly as a
-           plain move does. */
-        id: twinOf[cur.id] ?? pairs[0].twinId,
-        group: pairs.map((q) => q.twinId),
-        startAll: Object.fromEntries(
-          pairs.map(({ twinId, base }) => [twinId, { ...base, id: twinId }])),
-        copied: true, moved: true,
-      } : cur));
-      setSel(select('cob', twinOf[cobDrag.id] ?? pairs[0].twinId));
-      return;
-    }
-
-    const at = cobMoveTarget(p, cobDrag, e.shiftKey, cobDrag.group);
-    const d = deltaFrom(cobDrag.start, at);
-    setManualCobs((list) => applyDelta(list, cobDrag.startAll, d,
-                                       { at: inFt, to: outFt }));
-  };
-
-  /**
-   * LETTING GO.
-   *
-   * A LAMP DROPPED OFF EVERY CEILING GOES BACK WHERE IT CAME FROM, and that is
-   * the one thing this does beyond clearing the gesture. `roomId` is what the
-   * Analysis counts a lamp under, what its throw is clipped to and what its
-   * ceiling height is read from, so a lamp belonging to no space is a fitting
-   * that is drawn on the sheet, absent from every reading of it, and impossible
-   * to account for. Refusing the drop is kinder than keeping a stale `roomId`,
-   * which would put a lamp visibly in the hall and count it in the bedroom.
-   */
-  const cobPointerUp = () => {
-    if (!cobDrag) return;
-    if (cobDrag.moved) {
-      setManualCobs((list) => list.map((c) => {
-        if (!cobDrag.group.includes(c.id)) return c;
-        if (c.roomId && roomAt({ x: c.xFt * pxPerFt, y: c.yFt * pxPerFt })) return c;
-        const base = cobDrag.startAll[c.id];
-        return base ? { ...c, xFt: base.xFt, yFt: base.yFt, roomId: base.roomId } : c;
-      }));
-    }
-    setCobDrag(null);
-    setGuides([]);
-  };
+  const cobPointerMove = (e) => { if (pxPerFt) cob.move(e); };
+  const cobPointerUp = cob.up;
 
   /* --- AN ARRAY: OPENED BY ITS LAMPS, CARRIED BY ANY OF THEM -----------------
 
@@ -12109,7 +12028,7 @@ export default function App({
          and removing it from the list removes it from the drawing, the analysis
          and the plan that gets saved. Same rule the first of the three run cases
          below states, arrived at the same way. */
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selCobId && !cobDrag) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selCobId && !cob.drag) {
         e.preventDefault();
         setManualCobs((l) => l.filter((c) => c.id !== selCobId));
         setSel(clear());
@@ -12262,7 +12181,7 @@ export default function App({
       shapeMenuOn, shapeTool, shapeDraft, covePen, shapeSpan, abandonShape, closeShapeTool,
       canFinishOpen, finishOpenCove,
       selShapeId, shapeDrag, deleteShape, shapeEditId,
-      selLightId, lightDrag, resetLightMove, selCobId, cobDrag, cobOpen,
+      selLightId, lightDrag, resetLightMove, selCobId, cob.drag, cobOpen,
       selArrayId, arrayDrag, deleteArray, trackMode,
       selModuleId, moduleDrag, deleteModule]);
 
@@ -13310,7 +13229,7 @@ export default function App({
     // A LAMP BEING DRAGGED, with the rest of the in-flight gestures and for
     // their reason: a gesture that has the pointer owns it until it is released,
     // whatever else is armed.
-    if (cobDrag) { cobPointerMove(e); return; }
+    if (cob.drag) { cobPointerMove(e); return; }
     // A WHOLE RUN BEING CARRIED — the same rule, said about an array rather than
     // about one lamp. See `arrayGrab`.
     if (arrayDrag) { arrayPointerMove(e); return; }
@@ -13520,7 +13439,7 @@ export default function App({
       return;
     }
     if (objDrag) { objPointerUp(); return; }
-    if (cobDrag) { cobPointerUp(); return; }
+    if (cob.drag) { cobPointerUp(); return; }
     if (arrayDrag) { arrayPointerUp(); return; }
     if (moduleDrag) { modulePointerUp(); return; }
     if (accDrag) { accPointerUp(); return; }
