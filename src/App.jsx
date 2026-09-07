@@ -23,14 +23,14 @@ import { drawnTrackRefusal, TRACK_REFUSALS } from './lib/track.js';
 import usePen from './hooks/usePen.js';
 import { useDrag } from './hooks/useDrag.js';
 import useViewPrefs from './hooks/useViewPrefs.js';
+import useScale from './hooks/useScale.js';
 import { penSegments, penLengthFt, penRelock, penMovePoint, penAim, axisLock,
          MIN_SEG_FT } from './lib/pen.js';
 import { newHistory, record, stepBack, stepForward, historyDepth,
          QUIET_MS } from './lib/undo.js';
 import { NONE, select, selectMany, clear, idOf, idsOf } from './lib/selection.js';
 import { bbox, pointInPolygon, maxInset } from './lib/geometry.js';
-import { REFERENCES, scaleFromReference } from './lib/scale.js';
-import { detectDoors, doorsFromPayload, scaleFromDoor, openingPx, DOOR_WIDTHS } from './lib/doors.js';
+import { detectDoors, doorsFromPayload, openingPx, DOOR_WIDTHS } from './lib/doors.js';
 import { proposeOutlines } from './lib/outlineSources.js';
 import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, plausibleBed, ZONE_CLASSES, PROVIDERS, wireProvider } from './lib/furniture.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
@@ -496,7 +496,7 @@ export default function App({
           wallResults, runTrims, runsOff, doors, doorsOk, zones,
           boardsOff, boardMoves, boardPoints, flowBoards, flowBends,
           manualBoards, boardKinds, boardHeights, boardOrders,
-          unitId, pdfPage, scaleMode, refId, customFt, measure, doorPick, ceilingFt,
+          unitId, pdfPage, doorPick,
           roomTypes,
           outlines, litIds, dirtyIds, focusId, selectedOutlineId, roomState,
           detections, dismissed, bedVerdicts, provider,
@@ -1729,6 +1729,9 @@ export default function App({
   }, [dxf, img, unitId]);
   const isVector = source?.kind === 'vector';
   const {
+    ceilingFt, scaleMode, refId, customFt, measure, pxPerFt,
+  } = useScale({ doc, isVector, source, doors, doorPick });
+  const {
     layers, zoom, view,
     over, setOver,
     nameDraft, setNameDraft,
@@ -2124,38 +2127,6 @@ export default function App({
   // preference for holding an obstacle clear, `cellIsAwkward`. Those never cared
   // where an obstacle came from — planner.js calls them "fans" because that was
   // the first kind it met.
-
-  // --- scale ----------------------------------------------------------------
-  const pxPerFt = useMemo(() => {
-    // A DXF states its own scale. There is nothing to measure and nothing to
-    // guess, so the scale controls are not offered at all.
-    if (isVector) return source.pxPerFt;
-    if (scaleMode === 'ref') {
-      if (!measure.a || !measure.b) return null;
-      const len = Math.hypot(measure.b.x - measure.a.x, measure.b.y - measure.a.y);
-      const ref = REFERENCES.find((r) => r.id === refId);
-      return scaleFromReference(len, ref?.ft ?? customFt);
-    }
-    // A door picked and named. Until BOTH have happened there is no scale —
-    // a clicked door with no width yet is a question, not an answer.
-    if (!doorPick?.id || !doorPick.mm) return null;
-    // THE PICK CARRIES ITS OWN RECT, AND THAT IS WHAT MAKES THE DOOR EDITOR
-    // SAFE. This used to read the rect out of `doors` and nothing else — which
-    // was fine while that list was written once by the detector and never
-    // touched. The confirm-the-doors step can now move a box or throw one away,
-    // and if that box happened to be the ruler the scale of the entire drawing
-    // changed underneath a finished layout: every fitting, every metre of strip
-    // and the whole schedule, silently, from a gesture about switchboards.
-    //
-    // The snapshot is taken when the door is CLICKED as the ruler — see
-    // `onPickDoor` on the tracer screen — so the scale is anchored to the box
-    // that was measured rather than to whatever is in the list now. The lookup
-    // stays first, and is what keeps a plan saved before this existed working:
-    // its `doorPick` has no rect, and its doors have never been editable.
-    const d = doors.find((q) => q.id === doorPick.id);
-    const rect = d?.rect ?? doorPick.rect ?? null;
-    return rect ? scaleFromDoor(rect, doorPick.mm) : null;
-  }, [isVector, source, scaleMode, measure, refId, customFt, doors, doorPick]);
 
   const obstaclesPx = useMemo(() => projectObstaclesPx(ceilingObjs, pxPerFt), [ceilingObjs, pxPerFt]);
 
