@@ -41,12 +41,14 @@
 // claim. The caller gets the raw pointer instead.
 //
 // `moved` — THE THRESHOLD, WHEN IT IS NOT THE ORDINARY ONE. The default is
-// `movedEnough` in screen pixels over the zoom, which is what the lamp, the
-// array and the module use. Four other drags have their own — a floor in plan
-// pixels, a fraction of a cell, none at all for the door box — and one of them
-// applies the threshold to only one of its four modes. Those are real
-// differences in how much travel means "I meant to move this", so they stay
-// the caller's to state rather than being averaged into one number here.
+// `movedEnough` in screen pixels over the zoom, and three drags use it: the
+// lamp, the array and the module. Five have their own — the accent run's floor
+// of two plan pixels, and the fraction-of-a-foot the cove shape, the plate and
+// the light share — and one of those applies it to only one of its four modes.
+// Two have none at all: the ceiling object and the door box pass `slopPx: 0`,
+// because neither is selectable by a bare press that might have been a nudge.
+// Those are real differences in how much travel means "I meant to move this",
+// so they stay the caller's to state rather than being averaged here.
 //
 // WHERE AN OBJECT'S DRAG IS DELIBERATELY CONSTRAINED, THE CONSTRAINT STAYS IN
 // THE CALLER. A slot does not move at all; a light is clamped to its own cell;
@@ -55,12 +57,32 @@
 // which sees the resolved point and may put the member anywhere it likes, or by
 // the caller's own handler declining to call `move` at all.
 //
-// NO STORE IS REQUIRED. Give the hook `list`/`setList` and it applies one delta
-// to the press-time snapshots — rule 2, said about a group. Give it neither and
-// it writes nothing: `onMove` receives the resolved point and the frame is the
-// caller's. Five of the ten drags are that shape, because what they write is
-// not a member's position but an override in a map, or nothing at all until the
-// release.
+// NO STORE IS REQUIRED. Give the hook `setList` and it applies one delta to the
+// press-time snapshots — rule 2, said about a group. Give it none and it writes
+// nothing: `onMove` receives the resolved point and the frame is the caller's.
+// SIX OF THE TEN ARE THAT SHAPE, because what they write is not a member's
+// position: the module writes a fraction of a path, the plate a distance along
+// an outline, the wire an override in a map, and the light and the door box
+// write nothing at all until the release.
+//
+// NOR IS A CAPTURE. Two drags are given none: the light, because capture
+// retargets the click that opens its chunk's ceiling options, and the door box,
+// whose branch in `onZoneDown` has already taken one for both the drag and the
+// new-box path.
+//
+// --- THE TEN, AND WHERE EACH ONE LIVES IN App.jsx --------------------------
+//
+//   cob      lamp        feet   store   ortho  copy  snap-back on a bad drop
+//   array    run         feet   store   ortho        snap-back on a bad drop
+//   obj      ceiling     feet   store   ortho  copy  three modes, no slop
+//   shape    cove        feet   store          copy  clamped off the plaster
+//   mod      module      —      —                    a fraction of its rail
+//   acc      accent run  px     —                    relative, four modes
+//   board    plate       px     —                    slides along walls only
+//   flow     wire grip   px     —                    two kinds, one commits late
+//   light    light       px     —                    clamped, no capture
+//   door     door box    px     —                    a rect, no slop, no capture
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -82,7 +104,7 @@ export function makeDrag({
   // --- reading the pointer, and holding on to it
   point, capture,
   // --- the store, when the hook is the one writing it
-  at, to, list, setList,
+  at, to, setList,
   // --- the four rules
   grab = true,          // subtract where inside the thing it was grabbed
   ortho = false,        // does this object honour the shift lock
@@ -108,7 +130,7 @@ export function makeDrag({
 
   /**
    * WHERE THE THING WANTS TO BE THIS FRAME. Three steps and the order is
-   * load-bearing — see `orthoLock` and `cobMoveTarget`: the lock is applied
+   * load-bearing — see `orthoLock` and `cobSnapAt` in App.jsx: the lock is applied
    * FIRST and the snap SECOND, because snapping first would let something four
    * feet away pull the point off the line the modifier had just held it to.
    *
