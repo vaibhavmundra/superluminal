@@ -32,6 +32,9 @@ import { useSceneElectricalProjections } from './features/scene/useSceneElectric
 import { useSceneTrackProjections, useSceneArrayProjections, useSceneManualProjections,
          useSceneShapeProjections } from './features/scene/useSceneFixtureProjections.js';
 import usePlanRecognition from './features/recognition/usePlanRecognition.js';
+import useRoomIntelligence from './features/room-intelligence/useRoomIntelligence.js';
+import useRoomEditing from './features/room-intelligence/useRoomEditing.js';
+import { absorbContest } from './features/room-intelligence/bedContest.js';
 import { mapLimit } from './lib/mapLimit.js';
 import { penSegments, penLengthFt, penRelock, penMovePoint, penAim, axisLock,
          MIN_SEG_FT } from './lib/pen.js';
@@ -40,7 +43,6 @@ import { newHistory, record, stepBack, stepForward, historyDepth,
 import { NONE, select, selectMany, clear, idOf, idsOf } from './lib/selection.js';
 import { bbox, pointInPolygon, maxInset } from './lib/geometry.js';
 import { openingPx, DOOR_WIDTHS } from './lib/doors.js';
-import { dedupe } from './lib/furniture.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import { LIGHT_TOOLS, GESTURE } from './components/LightPalette.jsx';
@@ -86,22 +88,17 @@ import OptionCoach from './components/OptionCoach.jsx';
 /* The walkthrough, playing in the panel rather than linked out of it. Named
    export: the default one is the line of type that opens it in a dialog. */
 import { HowToVideo } from './components/HowToLink.jsx';
-import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
 import { chunkFor } from './lib/taskSpots.js';
-import { roomSnapshot, requestAccents, toPlanRect } from './lib/accentMask.js';
 import { bedsIn, contestFor, judgeNote,
          applyVerdict } from './lib/bedFit.js';
-import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
-import { WALL_BY_ID, joinPlacements } from './lib/wallPrompt.js';
-import { gridFor, anchorLines } from './lib/wallGrid.js';
-import { fitAll, RENDER_DEFAULTS, renderBlob, renderRef, fetchRender }
-  from './lib/renderImage.js';
-import { manualReverseCove, RUN_TRIM } from './lib/reverseCove.js';
-/* RenderPassPanel IS NO LONGER MOUNTED — see the note in the Spaces list where
-   it used to be. The import goes with it rather than sitting here unused; the
-   component, its state and every handler that fed it are intact. */
-import { zonesFromFurniture, slideSconceTo, setRunEnd, moveRun, placeZone,
-         nearestWall, alongWallAt, RUN_EDIT } from './lib/accentPlace.js';
+import { manualReverseCove } from './lib/reverseCove.js';
+/* THE ROOM PASSES' OWN IMPORTS WENT WITH THEM to
+   features/room-intelligence/ — the crop and the request, the furniture,
+   surface and wall-feature tables, the 1ft grid, the render downscaler and the
+   accent-run edits. RenderPassPanel is still not mounted (see the note in the
+   Spaces list where it used to be) and its handlers are still intact; they are
+   in useRenderPass.js now rather than in this file. */
+import { placeZone, nearestWall, alongWallAt } from './lib/accentPlace.js';
 import { planSwitchboards, planChunkBoards, asDrawn, slideBoardTo,
          innerSpaceFor, nearestBoardTo, boardUnder, nearestSeat, placedBoards,
          asOutlet, heightsFor, SB_COLOUR } from './lib/electrical.js';
@@ -128,10 +125,8 @@ import { collectTargets, snapPoint, SNAP_DEFAULTS } from './lib/snapGuides.js';
    wrong at least once here. Nothing in this file calls that arithmetic by hand
    any more: hooks/useDrag.js is where it is spent, and every drag here reaches
    it through that. Read the header of lib/dragMove.js for the rules themselves.
-   The one thing still imported directly is the slop, which one drag departs
-   from by naming a floor — a threshold that reads the shared number is a
-   departure you can see; a local `= 3` was one you could not. */
-import { DRAG_SLOP_PX } from './lib/dragMove.js';
+   The slop is imported directly by the one drag that departs from it by naming
+   a floor — see useAccentEditing.js in features/room-intelligence/. */
 import { buildSnapIndex, snapAt } from './lib/snap.js';
 import { openPdf } from './lib/pdfPlan.js';
 import PdfPagePicker from './components/PdfPagePicker.jsx';
@@ -492,29 +487,6 @@ export default function App({
      per COB would be twelve rows in the panel saying the same thing, and eleven
      chances for two of them to disagree. See `roomFixtureGroups`.
      IN THE DOCUMENT REDUCER, with `ceilingMm` and `materials` above. */
-
-  /* `wallEdit` IS A SCREEN AND IS NOT SAVED, exactly as `zoneEdit` and
-     `doorEdit` are not: it holds the id of the space whose walls are being
-     answered for, and it means "the panel is a step and the sheet is inert".
-     What it PRODUCES — the tones — is in `materials` above, which is saved.
-     `wallPick` is the popup: which edge was clicked and where on the screen, so
-     the card can stand on its own answer. Null the rest of the time. */
-  const [wallEdit, setWallEdit] = useState(null);
-  const [wallPick, setWallPick] = useState(null);
-
-  /* WHICH SPACE HAS ITS FINISHES OPEN — a room id, or null, and it is a SCREEN
-     rather than a decision so it is not saved. Setting the finishes replaces the
-     analysis in the space panel; see SpaceDetail for why that is a swap and not
-     a disclosure.
-     A ROOM ID AND NOT A BOOLEAN, which is what makes it close itself: opening a
-     different space is a different id, so the finishes collapse with no effect
-     to watch `focusId` and no way for the two to disagree.
-     IT SURVIVES THE WALL STEP, which is the reason it lives up here with the
-     rest of the editor's state rather than inside SpaceDetail. "Configure walls"
-     is reached FROM the finishes and unmounts the whole panel while it runs;
-     local state would put somebody back on the analysis when they pressed Done,
-     one step further out than they left. */
-  const [materialsEdit, setMaterialsEdit] = useState(null);
 
   /* --- THE DERIVED RUNS SOMEBODY THREW AWAY --------------------------------
      IN THE DOCUMENT REDUCER, with the two dismissal lists it sits beside — see
@@ -1085,23 +1057,6 @@ export default function App({
     return () => clearTimeout(t);
   }, [coach?.ticked]);
   const [pickingId, setPickingId] = useState(null);   // the room whose chunking is being chosen
-
-  // --- accent lighting ------------------------------------------------------
-  // A SECOND QUESTION ABOUT A ROOM THAT ALREADY HAS A CEILING. Everything above
-  // is the ambient layer: a grid, and a light at the centre of every cell. This
-  // is the layer that goes on top of it — coves, sconces, picture lights, strips
-  // — and it is asked ROOM BY ROOM rather than plan-wide, because the image that
-  // goes over the wire is one room with every other room on the sheet erased.
-  //
-  // Keyed by outline id throughout, so switching rooms in the panel does not
-  // lose the answer the last one gave.
-  const [accentRoomId, setAccentRoomId] = useState(null);
-  // The pass's answers — roomId -> parsed reply, boxes in PLAN px — are in the
-  // document reducer, with the dismissals that qualify them. See usePlanDoc.js.
-  // Carries its own roomId. Everything else here is keyed by room, and a bare
-  // status was the odd one out: a failure on room A left its error banner sitting
-  // under room B's controls, over a button still offering to run.
-  const [accentState, setAccentState] = useState({ status: 'idle', roomId: null });
   /* --- THE ELECTRICALS, AND THERE IS NO LONGER A PASS TO STORE --------------
      `sbResults` WAS HERE — one entry per room, written by a bolt in the list of
      spaces that ran a vision call and kept its answer. Both are gone. The rules
@@ -1263,56 +1218,6 @@ export default function App({
      editor — it takes the panel over and stays open across placements, because
      somebody putting a board on one wall is usually putting one on three. */
   const [boardPlace, setBoardPlace] = useState(false);
-  // The image that is actually sent. Held in state rather than made at call
-  // time so the panel can show it: "what did it look at" is the first question
-  // whenever an answer is strange, and a crop that is off the room or washed
-  // out the wrong way is invisible in a list of zones.
-  const [accentShot, setAccentShot] = useState(null);
-
-  // --- the render pass ------------------------------------------------------
-  //
-  // THE ONE PASS THAT DOES NOT READ THE DRAWING. Everything else in this app
-  // starts from the plan; a plan is a horizontal cut and cannot say that there
-  // is fluted panelling behind the bed. So this one takes PHOTOGRAPHS — renders,
-  // views — of a space, reads the wall features off them in English, and then
-  // puts that English back onto the plan against a 1ft grid. Two model calls,
-  // both in wallPrompt.js, which is also where both prompts live.
-  //
-  // Keyed by outline id like the accent pass, and for the same reason: the
-  // renders somebody uploaded for Bedroom 2 must still be there after they click
-  // through to Bedroom 3 and back.
-  const [renders, setRenders] = useState({});          // roomId -> [shrunk render]
-  /**
-   * WHERE THOSE RENDERS WENT. roomId -> [{ path, name, w, h, bytes, ... }].
-   *
-   * The pointers, and the half of the pair that is SAVED — see planState.js.
-   * `renders` above is the working copy: base64 in memory, which is what goes to
-   * the model and what the thumbnails draw. This is a storage key and ninety
-   * bytes of description per view, which is what survives a reload.
-   *
-   * Two lists rather than one field with a mode, because they genuinely differ
-   * in lifetime: a render dropped while the plan's row is still being inserted
-   * has no path and works perfectly well for the pass, and a render restored
-   * from the bucket has a path before its bytes have arrived.
-   */
-  const [wallState, setWallState] = useState({ status: 'idle', roomId: null });
-  // The gridded crop, made eagerly so the panel can show it — same argument as
-  // accentShot, one step stronger: a grid drawn the wrong way up is invisible in
-  // a list of cell references and obvious in a thumbnail with numbers on it.
-  const [wallShot, setWallShot] = useState(null);
-  // WHAT WENT AND WHAT CAME BACK, per room, so the panel can put both on screen.
-  //
-  // NOT IN `wallResults`, AND THEREFORE NOT SAVED. The results are a few hundred
-  // bytes of cells that must survive a reload; a transcript is several kilobytes
-  // of prompt and worksheet per room, it describes ONE run rather than the state
-  // of the plan, and it would be stale the moment anything was re-analysed. It
-  // belongs to the session, like the renders it came from. See planState.js.
-  const [wallTranscripts, setWallTranscripts] = useState({});
-  /* THE LENGTHS SOMEBODY CHANGED BY HAND — run id -> { a, b } in FEET. In the
-     document reducer beside the `wallResults` it qualifies; see `runTrims` there
-     for why the EDIT is stored rather than the result, and RUN_TRIM_SET for the
-     rule that a run dragged back to where the rule put it stores nothing. */
-
   /**
    * WHICH CATEGORY OF THE EDIT TOOLBOX IS OPEN.
    *
@@ -1322,14 +1227,6 @@ export default function App({
    * reopening it with a tool armed under a tab you cannot see would be a bug,
    * and the two arrive together the moment this is persisted.
    */
-
-  // Editing what the model proposed. A fitting is a starting point, not a
-  // verdict — see the note in accentPlace.js.
-  // --- task surfaces --------------------------------------------------------
-  // The third layer. Ambient covers the ceiling, accent picks out a surface for
-  // the look of it, and a TASK surface is a plane somebody works at. This pass
-  // only FINDS them — same order the accent pass was built in, and the order
-  // that made its one real failure obvious instead of mysterious.
   // WHAT KIND OF PROJECT. Asked once, on upload, and everything conditional
   // downstream reads it — see roomTypes.js for why it is asked rather than
   // guessed.
@@ -1344,9 +1241,6 @@ export default function App({
   // is also what the loader keys off.
   const [prep, setPrep] = useState(null);
   const cancelPrep = useRef(false);
-
-  const [surfaceRoomId, setSurfaceRoomId] = useState(null);
-  const [surfaceState, setSurfaceState] = useState({ status: 'idle', roomId: null });
   // WHICH SPOT IS PICKED. Its own selection and not `selAccId`, because a spot
   // is not an accent: the two panels describe different things and a click on
   // one must not leave the other looking selected. Same shape and same lifetime
@@ -1377,7 +1271,6 @@ export default function App({
   const [undoDepth, setUndoDepth] = useState({ past: 0, future: 0 });
 
   const selAccId = idOf(sel, 'acc');
-  const [accDrag, setAccDrag] = useState(null);   // {roomId, id, mode}
   // Not on the plan, and every mounting height and throw distance depends on
   // it. One field, and load-bearing — see the header of accentPrompt.js.
 
@@ -1469,6 +1362,14 @@ export default function App({
   // resolved source. A ref bridges that callback cycle without copying state or
   // changing the source loader's callback identity on every recognition update.
   const recognitionReset = useRef(null);
+  /* AND THE SAME CALLBACK REF FOR THE ROOM-INTELLIGENCE RESETS, for the reason
+     the one above it exists: `resetForNewPlan` is handed to `usePlanSource`
+     eighty lines below this and the feature is composed hundreds of lines
+     further down again, so the reset it calls does not exist yet when this
+     function is defined. A ref is how the earlier definition reaches the later
+     value without duplicating any state. Both groups are merged into it at the
+     second call site — see `roomEditing`. */
+  const roomIntelReset = useRef(null);
 
   // --- load -----------------------------------------------------------------
   const resetForNewPlan = useCallback(() => {
@@ -1482,7 +1383,7 @@ export default function App({
     recognitionReset.current.furniture();
     docActions.clearDismissed();
     recognitionReset.current.rooms();
-    setAccentRoomId(null); docActions.clearAccentResults();
+    roomIntelReset.current.accentRoom();
     // The plates somebody threw away go with the plan they were on: a board id
     // names a room and a rule, and neither means anything on a fresh sheet.
     docActions.clearBoardsOff(); docActions.clearBoardMoves();
@@ -1492,18 +1393,16 @@ export default function App({
     docActions.clearManualBoards(); docActions.clearBoardKinds();
     docActions.clearBoardHeights(); docActions.clearBoardOrders();
     setBoardPlace(false);
-    setAccentState({ status: 'idle', roomId: null });
-    docActions.clearAccentDismissed(); setAccentShot(null);
-    setRenders({}); docActions.clearRenderRefs();
-    docActions.clearWallResults(); setWallTranscripts({}); docActions.clearRunTrims();
+    roomIntelReset.current.accentProposals();
+    roomIntelReset.current.renders();
     // The hand-placed coves go with the trims, because they are the same
     // subject: a slot is set out against ONE plan's walls and means nothing
     // against another's. `runTrims` was already cleared here and leaving the
     // coves behind would have carried a previous drawing's slots onto a fresh
     // sheet, where they would sit at whatever plan pixels they were drawn at.
     docActions.clearCoves(); setCoveFrom(null); setCoveNote('');
-    setWallState({ status: 'idle', roomId: null }); setWallShot(null);
-    setAccDrag(null);
+    roomIntelReset.current.renderState();
+    roomIntelReset.current.accentEditing();
     // BACK TO THE PROJECT'S ANSWER, NOT TO NULL. This runs on every file load,
     // including the one that opens a saved plan, and blanking it here would put
     // the plan-level dialog back in front of a user whose project already
@@ -1516,9 +1415,7 @@ export default function App({
     // detection nobody has looked at.
     docActions.setDoorsOk(false); setDoorEdit(false);
     setDoorDraft(null); setDoorDrag(null);
-    setSurfaceRoomId(null); docActions.clearSurfaceResults();
-    setSurfaceState({ status: 'idle', roomId: null }); docActions.clearSurfaceDismissed();
-    docActions.clearArtDismissed();
+    roomIntelReset.current.surfaces();
     docActions.clearObjects(); setObjMode(false); setObjDrag(null);
     // AND THE DRAWN COVES, for the reason the hand-placed slots above go: a
     // shape is set out in ONE plan's feet, and carrying it onto a fresh sheet
@@ -1615,103 +1512,6 @@ export default function App({
   const stepTool = addTool && GESTURE[addTool] && !readOnly && !prep
     ? LIGHT_TOOLS.find((t) => t.id === addTool) ?? null
     : null;
-
-  /* INVERTED MEANS THE PLAN AND WHAT IS ON THE CEILING, AND NOTHING ELSE. Cell
-     shading, the grid, space outlines and tags are all our WORKING drawn over
-     somebody's plan, and on a black ground they are what stops it reading as
-     the drawing. The fade goes too: it exists to keep black ink legible over a
-     black scan, which is the opposite problem.
-
-     `zones: false` WAS IN THIS LIST AND IS THE SAME MISTAKE AS `fan: false`
-     BELOW, ONE ITEM ALONG. It filed the no-light boxes with the scaffolding on
-     the reading that they are working marks — but a hand-drawn zone is not
-     working, it is an INSTRUCTION somebody gave with a marquee, and the only
-     evidence it landed is the box on the drawing. This ground is not the
-     presentation ground either: night mode arms itself the moment a plan gets
-     its first lights (see `hadLights`), so it is where the design is DONE. The
-     result was that boxing out a wardrobe in the normal working view drew
-     nothing at all — press, drag, release, and the plan is exactly as it was —
-     which reads as the gesture having failed rather than as a layer being off.
-     Nothing in the panel says this override exists, and the zone list a few
-     inches away says the zone does.
-     Nor does it cost the sheet anything: the beds are already held out of
-     `drawnZones` for that reason, and the PDF plot has never drawn zones. What
-     DOES have to change with the ground is their ink — a #737373 hatch on black
-     is very nearly nothing — and that is handled in PlanCanvas, next to the
-     ceiling objects' own night tone, rather than here.
-
-     `fan: false` WAS IN THIS LIST AND SHOULD NOT HAVE BEEN. It filed ceiling
-     objects with the scaffolding, and they are not scaffolding: a fan, a
-     chandelier and an AC cassette are ITEMS somebody placed, they are the reason
-     the lights are where they are, and every one of them holds a two-foot
-     clearance the layout obeys. Turning them off in night mode meant a plan you
-     could not check — the hole in the grid was there and the thing that made it
-     was not — and it read as the objects having failed to place rather than as a
-     layer being off, because nothing in the panel says this override exists.
-     They are drawn in both modes now. What DOES have to change with the ground
-     is their ink, and that is handled in PlanCanvas rather than here. */
-  /* AND THE WIRING IS OFF WHILE THE DOORS ARE BEING CONFIRMED. The door editor
-     is a question about the door boxes, and the answer to it is what MOVES the
-     plates and re-runs the loops — so drawing the old answer under the question
-     would be showing somebody wiring derived from boxes they are in the middle
-     of correcting. It comes back the moment the editor closes; `layers.electrical`
-     itself is untouched, so nothing has to be put back. */
-  /* --- AND THE COVE STEP TURNS THE OUTLINES UP AND THE PLAN DOWN -----------
-     THE GESTURE IS AIMED AT A LINE, WHICH NO OTHER GESTURE ON THIS CANVAS IS.
-     A no-light zone is boxed over open ceiling, a spot's box encloses a piece
-     of furniture, a sconce is a click at a wall with a foot of tolerance either
-     side. A cove is dragged ALONG a wall and seats on the wall it starts on —
-     so the one thing the drawing has to make easy to hit is the outline, and
-     for the whole of this app's life that outline has been OFF by default and
-     the thing under it — somebody else's scan, at full strength, with its own
-     wall lines a few pixels away from ours — has been on.
-
-     SO `region: true` AND `dim: true`, FOR THE LENGTH OF THE STEP ONLY. Our
-     polygon is what the press is projected onto (see `coveWallAt`), so it is
-     the only line on the sheet that is actually true here; the scan's own walls
-     are a picture of the same wall, off by however much the trace was off by.
-     Turning ours on and fading theirs makes the line you can hit the line you
-     can see. Both are derived, not set: `layers` is untouched, so the View
-     switches and the saved plan come back exactly as they were the moment Done
-     is pressed.
-
-     THE FADE IS NOT `layers.dim`, AND THAT IS THE ONE SUBTLE PART. `dim` is
-     ELEMENT OPACITY on the plan itself, which does not wash a drawing towards
-     the ground — it makes it SEE-THROUGH, and what is behind it in night mode
-     is the page, which carries this app's graph-paper wallpaper. Turning it on
-     over a scan on the negative would have put 24px graph paper through every
-     room; the DXF branch in PlanCanvas has a note about the same hole, which is
-     why it paints its own black sheet. Night mode drops `dim` for a related
-     reason of its own: it exists to keep black ink legible over a black scan.
-     So the wash is a SCRIM of the ground's own colour laid over the plan and
-     under our line work — see `wash` in PlanCanvas. It cannot reveal anything
-     behind it because it is opaque paint, it works on both grounds by taking
-     the ground's colour, and it leaves every layer switch alone.
-
-     THE OUTLINE'S INK FOLLOWS THE GROUND TOO — see `regionInk` in PlanCanvas,
-     the same rule the no-light zones take — so neither mode is left drawing a
-     line in the colour of the thing behind it. */
-  const canvasLayers = useMemo(() => {
-    const base = layers.invert
-      ? { ...layers, dim: false, cells: false, region: false, labels: false }
-      : layers;
-    const aiming = stepTool?.id === 'cove' ? { ...base, region: true } : base;
-    const doors = doorEdit ? { ...aiming, electrical: false } : aiming;
-    /* --- AND THE WALL STEP TAKES EVERYTHING OFF BUT THE PLAN ---------------
-       ONE SPACE'S EDGES ARE THE SUBJECT, so they have to be the only thing on
-       the sheet that reads. Every layer here is a mark our own drawing makes —
-       a fitting, a tag, a plate, a wire, a cell — and every one of them sits
-       within a few pixels of the wall being clicked. The scan itself stays, at
-       half strength (see `wash`), because you still have to know which room you
-       are in.
-       DERIVED AND NOT SET, exactly as the cove step's `region` is: `layers` is
-       untouched, so the View switches and the saved plan come back precisely as
-       they were the moment Done is pressed. */
-    return wallEdit ? { ...doors,
-      cells: false, region: false, lights: false, labels: false, fan: false,
-      zones: false, accents: false, spots: false, switchboards: false,
-      electrical: false } : doors;
-  }, [layers, doorEdit, stepTool, wallEdit]);
 
   // --- opening a saved plan -------------------------------------------------
   //
@@ -1952,536 +1752,129 @@ export default function App({
       { min: CEILING_MM_MIN, max: CEILING_MM_MAX }),
     [docActions]);
 
-  /* THESE DO NOT RESOLVE THE ROOM'S CURRENT TONES AND MUST NOT. The reducer
-     reads them off its own state, which is what the `setMaterials` updater these
-     replace did — see the note there. Resolving here would read the materials of
-     the render that queued the action, and the second of two tone changes in one
-     batch would quietly undo the first. */
-  const setSurfaceTone = useCallback(
-    (id, surface, tone) => docActions.setSurfaceTone(id, surface, tone),
-    [docActions]);
+  /* --- WHAT THE MODELS SAY ABOUT ONE ROOM ----------------------------------
+     Room-type classification, the accent pass, the task-surface pass, the
+     render pass and the wall-finishes step, all in features/room-intelligence/.
+     THE DOCUMENT IS NOT SPLIT AND NOTHING IS COPIED INTO IT: every answer,
+     every dismissal, every hand-placed fitting and every stored render pointer
+     is still `usePlanDoc`'s and is still written through `docActions`. See the
+     header of useRoomIntelligence for the whole boundary.
+     HERE, AND NOT HIGHER UP, for the reason `claimSpaces` sits where it does: a
+     hook's arguments are evaluated DURING RENDER, so this cannot stand above
+     the `rooms` and `focus` it is handed. */
+  const roomIntel = useRoomIntelligence({
+    source, img, wallLayerSet, pxPerFt, ceilingFt, projectId,
+    rooms, focus, materials, accentResults, doors, renderRefs, renderStore,
+    readOnly, onClaimPass, onReleasePass, docActions,
+  });
+  /* THE NAMES THIS FILE ALREADY USED, and no more of them than have call sites
+     here. `wallEdit` is the id — a step is open — and `wallEditGeo` is what the
+     canvas draws from; the three compute functions are the pipeline's. Anything
+     with one reader is read off `roomIntel` where it is read. */
+  const { wallEdit: wallEditGeo, wallEditId: wallEdit,
+          onWallSegment: pickWallSegment } = roomIntel.canvas;
+  const { wallPick, setWallPick, wallEditRoom,
+          materialsEdit, setMaterialsEdit } = roomIntel.panel;
+  const { computeRoomType, computeAccents, computeSurfaces,
+          setSurfaceTone, setWallTone,
+          openWallEdit: enterWallEdit, closeWallEdit } = roomIntel.commands;
 
-  const setWallTone = useCallback(
-    (id, edge, tone) => docActions.setWallTone(id, edge, tone),
-    [docActions]);
+  /* INVERTED MEANS THE PLAN AND WHAT IS ON THE CEILING, AND NOTHING ELSE. Cell
+     shading, the grid, space outlines and tags are all our WORKING drawn over
+     somebody's plan, and on a black ground they are what stops it reading as
+     the drawing. The fade goes too: it exists to keep black ink legible over a
+     black scan, which is the opposite problem.
 
-  /* WHAT THE CANVAS IS HANDED WHILE THE WALL STEP IS OPEN: one polygon and one
-     tone per edge, in plan pixels. Null the rest of the time, which is what
-     turns the step off in PlanCanvas — there is no second flag. */
-  const wallEditRoom = useMemo(
-    () => (wallEdit ? rooms.find((q) => q.id === wallEdit) ?? null : null),
-    [wallEdit, rooms]);
+     `zones: false` WAS IN THIS LIST AND IS THE SAME MISTAKE AS `fan: false`
+     BELOW, ONE ITEM ALONG. It filed the no-light boxes with the scaffolding on
+     the reading that they are working marks — but a hand-drawn zone is not
+     working, it is an INSTRUCTION somebody gave with a marquee, and the only
+     evidence it landed is the box on the drawing. This ground is not the
+     presentation ground either: night mode arms itself the moment a plan gets
+     its first lights (see `hadLights`), so it is where the design is DONE. The
+     result was that boxing out a wardrobe in the normal working view drew
+     nothing at all — press, drag, release, and the plan is exactly as it was —
+     which reads as the gesture having failed rather than as a layer being off.
+     Nothing in the panel says this override exists, and the zone list a few
+     inches away says the zone does.
+     Nor does it cost the sheet anything: the beds are already held out of
+     `drawnZones` for that reason, and the PDF plot has never drawn zones. What
+     DOES have to change with the ground is their ink — a #737373 hatch on black
+     is very nearly nothing — and that is handled in PlanCanvas, next to the
+     ceiling objects' own night tone, rather than here.
 
-  const wallEditGeo = useMemo(() => {
-    const r = wallEditRoom;
-    if (!r) return null;
-    return {
-      roomId: r.id,
-      polygonPx: r.geo.polygonPx,
-      tones: materialsOf(materials, r.id).walls,
-      selected: wallPick?.edge ?? null,
-    };
-  }, [wallEditRoom, materials, wallPick]);
+     `fan: false` WAS IN THIS LIST AND SHOULD NOT HAVE BEEN. It filed ceiling
+     objects with the scaffolding, and they are not scaffolding: a fan, a
+     chandelier and an AC cassette are ITEMS somebody placed, they are the reason
+     the lights are where they are, and every one of them holds a two-foot
+     clearance the layout obeys. Turning them off in night mode meant a plan you
+     could not check — the hole in the grid was there and the thing that made it
+     was not — and it read as the objects having failed to place rather than as a
+     layer being off, because nothing in the panel says this override exists.
+     They are drawn in both modes now. What DOES have to change with the ground
+     is their ink, and that is handled in PlanCanvas rather than here. */
+  /* AND THE WIRING IS OFF WHILE THE DOORS ARE BEING CONFIRMED. The door editor
+     is a question about the door boxes, and the answer to it is what MOVES the
+     plates and re-runs the loops — so drawing the old answer under the question
+     would be showing somebody wiring derived from boxes they are in the middle
+     of correcting. It comes back the moment the editor closes; `layers.electrical`
+     itself is untouched, so nothing has to be put back. */
+  /* --- AND THE COVE STEP TURNS THE OUTLINES UP AND THE PLAN DOWN -----------
+     THE GESTURE IS AIMED AT A LINE, WHICH NO OTHER GESTURE ON THIS CANVAS IS.
+     A no-light zone is boxed over open ceiling, a spot's box encloses a piece
+     of furniture, a sconce is a click at a wall with a foot of tolerance either
+     side. A cove is dragged ALONG a wall and seats on the wall it starts on —
+     so the one thing the drawing has to make easy to hit is the outline, and
+     for the whole of this app's life that outline has been OFF by default and
+     the thing under it — somebody else's scan, at full strength, with its own
+     wall lines a few pixels away from ours — has been on.
 
-  /* THE POPUP GOES WHERE THE POINTER IS, IN VIEWPORT COORDINATES — the stage
-     scrolls and zooms under it, and a card anchored to the drawing would have to
-     be chased. See WallTonePopup. */
-  const pickWallSegment = useCallback((edge, e) => {
-    setWallPick({ edge, x: e.clientX, y: e.clientY });
-  }, []);
+     SO `region: true` AND `dim: true`, FOR THE LENGTH OF THE STEP ONLY. Our
+     polygon is what the press is projected onto (see `coveWallAt`), so it is
+     the only line on the sheet that is actually true here; the scan's own walls
+     are a picture of the same wall, off by however much the trace was off by.
+     Turning ours on and fading theirs makes the line you can hit the line you
+     can see. Both are derived, not set: `layers` is untouched, so the View
+     switches and the saved plan come back exactly as they were the moment Done
+     is pressed.
 
-  // --- accent lighting, room by room ----------------------------------------
-  //
-  // THE MODEL IS NEVER ASKED FOR A COORDINATE. It is asked for a REGION — a
-  // rough box round the wall a cove runs along, or round the painting a spot
-  // should graze — and the placement of the fitting inside that region is
-  // arithmetic done here, later, by code that can measure. That is the whole
-  // architecture of this feature and the reason it can work at all where
-  // asking for the bed's exact bounds could not: a box 20% too big still
-  // contains the right wall, so the several-percent error that makes a point
-  // useless is simply absorbed. See the header of accentPrompt.js.
-  //
-  // Nothing is placed yet. This step produces the zones and draws them; turning
-  // a zone into a fixture is the next one.
-  const accentRoom = useMemo(
-    () => rooms.find((r) => r.id === accentRoomId) || rooms[0] || null,
-    [rooms, accentRoomId]);
+     THE FADE IS NOT `layers.dim`, AND THAT IS THE ONE SUBTLE PART. `dim` is
+     ELEMENT OPACITY on the plan itself, which does not wash a drawing towards
+     the ground — it makes it SEE-THROUGH, and what is behind it in night mode
+     is the page, which carries this app's graph-paper wallpaper. Turning it on
+     over a scan on the negative would have put 24px graph paper through every
+     room; the DXF branch in PlanCanvas has a note about the same hole, which is
+     why it paints its own black sheet. Night mode drops `dim` for a related
+     reason of its own: it exists to keep black ink legible over a black scan.
+     So the wash is a SCRIM of the ground's own colour laid over the plan and
+     under our line work — see `wash` in PlanCanvas. It cannot reveal anything
+     behind it because it is opaque paint, it works on both grounds by taking
+     the ground's colour, and it leaves every layer switch alone.
 
-  /**
-   * The picture that goes over the wire, made ahead of the call.
-   *
-   * Eagerly and not at call time, for two reasons. The panel shows it, and "what
-   * did it actually look at" is the first question whenever an answer is odd —
-   * a crop that missed the room or a wash that came out the wrong way round is
-   * invisible in a list of zones and obvious in a thumbnail. And it re-renders
-   * when the LAYOUT changes, not just when the room does, because the ambient
-   * lights are drawn onto it: send yesterday's crop and the model is being told
-   * about downlights that have since moved.
-   */
-  useEffect(() => {
-    if (!source || !accentRoom?.plan?.ok) { setAccentShot(null); return; }
-    let alive = true;
-    (async () => {
-      try {
-        const shot = await roomSnapshot({
-          source, img,
-          polygonPx: accentRoom.plan.polygonPx,
-          lightsPx: accentRoom.plan.lightsPx,
-          wallLayers: wallLayerSet,
-        });
-        if (alive) setAccentShot({ ...shot, roomId: accentRoom.id });
-      } catch (err) {
-        console.warn('[accents] could not build the room crop:', err);
-        if (alive) setAccentShot(null);
-      }
-    })();
-    return () => { alive = false; };
-  }, [source, img, accentRoom, wallLayerSet]);
-
-  /**
-   * ACCENTS FOR ONE ROOM, without touching state.
-   *
-   * Pulled out of the button handler because the pipeline needs the same work
-   * for a room the panel is not looking at. A handler that reads `accentRoom`
-   * and writes `accentResults` cannot be reused for the fourth room of six
-   * while the panel is showing the first, and the alternative — driving the
-   * panel's state from the pipeline to make the handler fire — is a loop
-   * waiting to happen.
-   */
-  const computeAccents = useCallback(async (r, { reuseShot = null, beds = null } = {}) => {
-    const shot = reuseShot ?? await roomSnapshot({
-      source, img, polygonPx: r.plan.polygonPx,
-      lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
-    });
-    const payload = await requestAccents({
-      plan: shot,
-      room: {
-        name: r.outline.name || null,
-        widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
-      },
-      ceilingFt,
-    });
-    // OUT OF THE CROP AND BACK ONTO THE PLAN. The model answered in fractions
-    // of an image that was a cut-out of one room; every other rectangle in this
-    // app is in plan pixels, and furniture left in the crop's space would sit in
-    // the top-left corner of the sheet.
-    const res = payload.result;
-    const furniture = res.furniture.map((f, i) => {
-      const t = FURNITURE_BY_ID[f.type];
-      return {
-        ...f,
-        id: `furn-${r.id}-${i}`,
-        rect: toPlanRect(f.rect, shot.crop, res.image),
-        label: t?.label || f.type,
-        colour: t?.colour || '#666',
-      };
-    });
-    /* THE BED THE SCONCES HANG OFF IS THE BED-FILTER BOX, NEVER THIS PASS'S.
-     *
-     * The accent pass is asked what furniture is in the room. It answers about
-     * beds too, and that box only ever had to be roughly right, because all it
-     * was used for was deciding which wall to put a sconce on. A bedside sconce
-     * is now placed a measured foot from the mattress edge, which makes the box
-     * a DIMENSION rather than a hint — and the measured box already exists, from
-     * bed-filter or (where bed-filter found nothing in a declared bedroom) from
-     * the GPT bed pass.
-     *
-     * So this pass's own bed boxes are dropped and the authoritative ones
-     * substituted, one furniture item per real bed. Two twins therefore produce
-     * two symmetric pairs rather than one pair straddling both, which is what
-     * happened when a single loose box covered the pair.
-     *
-     * NO AUTHORITATIVE BED MEANS NO SCONCES. If neither pass put a bed in this
-     * room, the accent pass's belief that there is one is not promoted to a
-     * position — a sconce derived from a rectangle nobody measured is a fitting
-     * on a wall for a bed that may not be there. The room still gets its
-     * wardrobe strips and everything else; the bed is simply not a bed until the
-     * bed detector says so.
-     */
-    const mine = beds ? bedsIn(beds, r.plan.polygonPx) : [];
-    const others = furniture.filter((f) => f.type !== 'bed');
-    const dropped = furniture.length - others.length;
-    const bedItems = mine.map((b, i) => ({
-      type: 'bed', id: `furn-${r.id}-bed-${i}`, rect: b.rect,
-      confidence: b.conf ?? 0.9,
-      label: FURNITURE_BY_ID.bed?.label || 'Bed',
-      colour: FURNITURE_BY_ID.bed?.colour || '#666',
-      from: b.refound ? 'gpt-bedroom-crop' : 'bed-filter',
-    }));
-    if (dropped || bedItems.length) {
-      console.log(`[beds] ${r.outline.name || r.id}: accents — dropped ${dropped} bed box(es)`
-        + ` from the accent pass, using ${bedItems.length} from`
-        + ` ${bedItems[0]?.from || 'no bed detector'}`);
-    }
-    const forRules = [...bedItems, ...others];
-
-    // AND THEN THE RULES, IN CODE. The model was asked what furniture is in the
-    // room and nothing else; this is where a bed becomes a pair of sconces one
-    // foot clear of either end and a wardrobe becomes a strip along its own
-    // length. Deterministic, so the house style is the same every run — see
-    // accentPrompt.js's header for what happened when it was not.
-    //
-    // `pxPerFt` is passed because the bedside offset is a real distance now: one
-    // foot from the mattress, not a fraction of it. Without a scale the rule
-    // falls back to the old fraction rather than placing nothing.
-    const { zones: placed, handled } = zonesFromFurniture(forRules, r.plan.polygonPx, { pxPerFt });
-    const zones = placed.map((z, i) => ({
-      ...z,
-      id: `acc-${r.id}-${i}`,
-      // Carried on the fitting so a drag handler knows which room's result list
-      // to write back into. The zones live per-room in accentResults, and the
-      // canvas draws them all in one flat pass.
-      roomId: r.id,
-      colour: TYPE_BY_ID[z.type]?.colour || '#666',
-      label: TYPE_BY_ID[z.type]?.label || z.type,
-      short: TYPE_BY_ID[z.type]?.short || z.type,
-      // NO `runFt` HERE, deliberately. It used to be stamped on at placement
-      // time and it was the one cached derivation on an accent zone — so the
-      // moment a strip's end became draggable it started lying, because a drag
-      // works in plan pixels and cannot know the scale. Feet are derived where
-      // they are shown, from `runLength` and the live px/ft. See runMetres.
-    }));
-    return { shot, meta: payload.meta, result: {
-      ...res,
-      // WHAT THE RULES ACTUALLY SAW, so the "show what was identified" overlay
-      // draws the bed the sconces were derived from rather than a box that was
-      // discarded before any of this ran.
-      furniture: forRules,
-      // ...and what was discarded, kept separately so the audit panel can say
-      // how many accent-pass beds were excluded instead of silently showing a
-      // zero nobody can interpret.
-      bedsFromAccentPass: furniture.filter((f) => f.type === 'bed'),
-      handled, zones,
-    } };
-  }, [source, img, wallLayerSet, pxPerFt, ceilingFt]);
-
-  /** Task surfaces for one room, likewise. */
-  const computeSurfaces = useCallback(async (r, { reuseShot = null } = {}) => {
-    const shot = reuseShot ?? await roomSnapshot({
-      source, img, polygonPx: r.plan.polygonPx,
-      lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
-    });
-    const payload = await requestAccents({
-      plan: shot, task: 'surfaces',
-      room: {
-        name: r.outline.name || null,
-        widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
-      },
-    });
-    const res = payload.result;
-    const surfaces = res.surfaces.map((sf, i) => {
-      const rect = toPlanRect(sf.rect, shot.crop, res.image);
-      const t = SURFACE_BY_ID[sf.type];
-      return {
-        ...sf,
-        id: `surf-${r.id}-${i}`, roomId: r.id, rect,
-        colour: t?.colour || '#666', label: t?.label || sf.type,
-        widthFt: pxPerFt ? (rect.x1 - rect.x0) / pxPerFt : null,
-        heightFt: pxPerFt ? (rect.y1 - rect.y0) / pxPerFt : null,
-      };
-    });
-    return { shot, meta: payload.meta, result: { ...res, surfaces } };
-  }, [source, img, wallLayerSet, pxPerFt]);
-
-  // --- the render pass, room by room ----------------------------------------
-  //
-  // TWO CALLS AND THE JOIN BETWEEN THEM. See wallPrompt.js's header for why they
-  // are two: recognition off a photograph and localisation on a plan are
-  // different jobs, they fail differently, and asked together a failure in
-  // either is one indistinguishable silence.
-
-  /** The 1ft grid for the space the panel is looking at. Null with no scale. */
-  const wallGrid = useMemo(
-    () => (focus?.plan?.ok ? gridFor(focus.plan.polygonPx, pxPerFt) : null),
-    [focus, pxPerFt]);
-
-  /**
-   * The ANCHORS block for PROMPT 02, built from what this app already knows.
-   *
-   * The prompt as written carries four anchors with their answers filled in by
-   * hand — bed wall, window wall, door, TV unit. Filling those in per room per
-   * plan is not a feature, so they are DERIVED: the accent pass has already told
-   * us where the bed and the TV unit are in plan pixels, and the door detector
-   * has already found the doors. Nothing that was not actually detected is
-   * asserted; see anchorLines() for what the block says when nothing was.
-   */
-  const wallAnchors = useCallback((r, grid) => anchorLines({
-    furniture: accentResults[r.id]?.furniture ?? [],
-    // `doors` carry their rect in the SOURCE's pixels, which is the same space
-    // the room polygons and the grid are in — see scaleFromDoor, which divides
-    // one by the other to get px/ft. No conversion, and none wanted: a second
-    // coordinate space here is a second thing to get the wrong way round.
-    doors,
-    grid,
-  }), [accentResults, doors]);
-
-  /**
-   * The gridded crop, made ahead of the call so the panel can show it.
-   *
-   * Same argument as accentShot and one step stronger. The grid encodes a
-   * coordinate system — [1,1] bottom-left, y counting UP — and a grid drawn the
-   * wrong way up produces confident answers that are all mirrored. That is
-   * invisible in a list of cell references and instantly obvious in a thumbnail
-   * with the numbers running the wrong way.
-   */
-  useEffect(() => {
-    if (!source || !focus?.plan?.ok || !wallGrid) { setWallShot(null); return; }
-    let alive = true;
-    (async () => {
-      try {
-        const shot = await roomSnapshot({
-          source, img,
-          polygonPx: focus.plan.polygonPx,
-          lightsPx: focus.plan.lightsPx,
-          wallLayers: wallLayerSet,
-          grid: wallGrid,
-        });
-        if (alive) setWallShot({ ...shot, roomId: focus.id });
-      } catch (err) {
-        console.warn('[render pass] could not build the gridded crop:', err);
-        if (alive) setWallShot(null);
-      }
-    })();
-    return () => { alive = false; };
-  }, [source, img, focus, wallLayerSet, wallGrid]);
-
-  /**
-   * THE PASS ITSELF, for one room. No state written in here — same rule as
-   * computeAccents, and for the same reason.
-   *
-   * `onPhase` exists because this is the longest-running thing in the app by
-   * some margin: two reasoning calls on high effort, one of them looking at
-   * several photographs. A single "working…" for ninety seconds is
-   * indistinguishable from a hang, and the two phases genuinely mean different
-   * things to somebody waiting.
-   */
-  const computeWallItems = useCallback(async (r, views,
-                                              { onPhase = () => {}, onCall = () => {} } = {}) => {
-    const grid = gridFor(r.plan.polygonPx, pxPerFt);
-    if (!grid) throw new Error('No 1ft grid could be laid in this space — is the scale set?');
-    if (!views?.length) throw new Error('No renders to look at.');
-
-    const roomInfo = {
-      name: r.outline.name || null,
-      widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
-    };
-
-    // --- PROMPT 01. The renders in, English out. No plan, no coordinates.
-    onPhase('reading');
-    const first = await requestAccents({
-      plans: views, task: 'wallitems', room: roomInfo,
-    });
-    // REPORTED AS SOON AS IT LANDS, not returned at the end. If the SECOND call
-    // then throws, this is the transcript that says whether the first one was
-    // fine — which is the first question anybody asks about a failed run, and it
-    // would be lost with the exception if both were handed back together.
-    onCall('first', first.meta);
-    const elements = (first.result?.elements ?? []).map((e, i) => ({
-      ...e,
-      id: `wall-${r.id}-${i}`,
-      roomId: r.id,
-      label: WALL_BY_ID[e.type]?.label || e.type,
-      colour: WALL_BY_ID[e.type]?.colour || '#666',
-    }));
-
-    // NOTHING SEEN IS AN ANSWER, AND IT SHORT-CIRCUITS. Sending an empty array
-    // into PROMPT 02 would spend a second reasoning call to be told there is
-    // nothing to place, and buildGridRequest refuses it for exactly that reason.
-    if (!elements.length) {
-      return { grid, shot: null, meta: { first: first.meta, second: null },
-               result: { elements: [], skipped: first.result?.skipped ?? [], placedNone: false } };
-    }
-
-    // --- PROMPT 02. The plan with a grid on it, plus that English, cells out.
-    onPhase('gridding');
-    const shot = await roomSnapshot({
-      source, img, polygonPx: r.plan.polygonPx,
-      lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet, grid,
-    });
-
-    onPhase('placing');
-    const second = await requestAccents({
-      plan: shot, task: 'wallgrid', room: roomInfo,
-      elements, anchorLines: wallAnchors(r, grid), grid,
-    });
-    onCall('second', second.meta);
-
-    // THE JOIN, AND IT IS DELIBERATELY FORGIVING. Step 5 asks for the original
-    // array back unchanged, so index order is the first thing tried; a model
-    // that reordered or dropped one is matched on type-and-wall instead. What
-    // is NOT done is inventing cells for an element that came back without
-    // them — see the panel: "seen but not placed" is a real, legible state.
-    const joined = joinPlacements(elements, second.result?.placed ?? []);
-
-    return {
-      grid, shot,
-      meta: { first: first.meta, second: second.meta },
-      result: {
-        elements: joined,
-        skipped: [...(first.result?.skipped ?? []), ...(second.result?.skipped ?? [])],
-        // The one distinction the panel cannot draw for itself: the second call
-        // came back with an array that placed NOTHING, versus the second call
-        // came back with no array at all. Both leave every element unplaced.
-        placedNone: !second.result?.matched,
-      },
-    };
-  }, [source, img, wallLayerSet, pxPerFt, wallAnchors]);
-
-  /** The button. Shrinks whatever was dropped in, runs the pass, writes state. */
-  const runWallPass = useCallback(async () => {
-    const r = focus;
-    const views = renders[r?.id] ?? [];
-    if (!r?.plan?.ok || !views.length) return;
-
-    // CHARGED BEFORE THE CALLS, AND GIVEN BACK IF THEY FAIL.
-    //
-    // Before, because this is the moment the money is committed — two vision
-    // calls go out and a user who closes the tab has still spent them, so
-    // charging on success would make an abandoned pass free.
-    //
-    // Given back, because a pass that comes back as a 500 has cost nobody
-    // anything, and quietly keeping one of five is the sort of small theft that
-    // produces a support email. The reversal is a second ledger row rather than
-    // a deletion — see releaseAction in api/billing.js.
-    //
-    // A FRESH runId PER CLICK, so a retry after a failure is a new charge and
-    // not a silently deduplicated no-op. The idempotency this key buys is only
-    // against the same click arriving twice.
-    let claim = null;
-    if (onClaimPass && !readOnly) {
-      const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      claim = await onClaimPass({ roomId: r.id, runId });
-      if (!claim?.ok) return;
-    }
-
-    setWallState({ status: 'running', roomId: r.id, phase: 'reading' });
-    // A FRESH TRANSCRIPT FOR THIS RUN, cleared up front rather than merged into.
-    // Leaving the last run's second call sitting there while this run's first
-    // call is still in flight is a dialog showing two halves of two different
-    // runs, which is worse than showing nothing.
-    setWallTranscripts((m) => ({ ...m, [r.id]: {} }));
-    const record = (which, meta) => setWallTranscripts((m) => ({
-      ...m,
-      [r.id]: {
-        ...(m[r.id] ?? {}),
-        [which]: {
-          model: meta?.model ?? null, ms: meta?.ms ?? null,
-          usage: meta?.usage ?? null, bytes: meta?.bytes ?? null,
-          sentImages: meta?.sentImages ?? meta?.images ?? 0,
-          prompt: meta?.prompt ?? '',
-          // `fullReply` where the route sent one — the render-pass tasks do —
-          // and the 900-character head slice as the fallback, so a route that
-          // has not been redeployed yet degrades to something rather than blank.
-          reply: meta?.fullReply ?? meta?.reply ?? '',
-        },
-      },
-    }));
-    const t0 = Date.now();
-    try {
-      const out = await computeWallItems(r, views, {
-        onPhase: (phase) => setWallState((st) =>
-          (st.roomId === r.id ? { ...st, phase } : st)),
-        onCall: record,
-      });
-      docActions.setWallResult(r.id, out.result);
-      if (out.shot) setWallShot({ ...out.shot, roomId: r.id });
-      setWallState({ status: 'done', roomId: r.id, ms: Date.now() - t0 });
-      console.log(`[render pass] ${r.outline.name || r.id}:`,
-        `${out.result.elements.length} element(s),`,
-        `${out.result.elements.filter((e) => e.cells?.length).length} placed`,
-        out.meta);
-    } catch (err) {
-      console.warn('[render pass] failed', err);
-      // The pass is the thing that was bought and it did not happen. Fire and
-      // forget: a failed release must not turn one error into two, and the
-      // ledger is auditable either way.
-      if (claim?.fingerprint) onReleasePass?.(claim.fingerprint);
-      setWallState({ status: 'error', roomId: r.id, error: String(err.message || err),
-                     ms: Date.now() - t0 });
-    }
-  }, [focus, renders, computeWallItems, onClaimPass, onReleasePass, readOnly, docActions]);
-
-  /** Files in -> downscaled renders on the selected space. See renderImage.js
-   *  for why nothing that arrives here is ever sent at the size it arrived. */
-  const addRenders = useCallback(async (files) => {
-    const r = focus;
-    if (!r) return;
-    setWallState({ status: 'running', roomId: r.id, phase: 'shrinking' });
-    try {
-      const have = renders[r.id] ?? [];
-      const { renders: shrunk, notes } = await fitAll(files);
-      // THE CAP IS RENDERIMAGE'S NUMBER, NOT A SECOND ONE HERE. fitAll() already
-      // refuses more than this in a single drop; this is the same limit applied
-      // to a drop that ARRIVES IN TWO GOES, and two constants that must agree
-      // is one constant with a bug waiting in it.
-      const kept = [...have, ...shrunk].slice(0, RENDER_DEFAULTS.maxRenders);
-      setRenders((m) => ({ ...m, [r.id]: kept }));
-      setWallState({ status: 'idle', roomId: r.id, notes });
-
-      // --- and then, in the background, to the bucket ----------------------
-      //
-      // AFTER THE STATE, NOT BEFORE IT. The thumbnails and the Analyse button
-      // are ready the moment the canvas has finished; making either of them
-      // wait on an upload would put a spinner in front of a picture that is
-      // already decoded and in memory for no benefit to the person looking at
-      // it. And it must not be able to fail the drop: a bucket that refuses is
-      // a render that is not KEPT, which is a smaller problem than a render
-      // that cannot be USED.
-      if (!renderStore?.put) return;
-      const base = (renderRefs[r.id] ?? []).length;
-      shrunk.forEach((v, i) => {
-        // Only the ones that survived the cap above are worth storing.
-        if (!kept.includes(v)) return;
-        renderStore.put(renderBlob(v), { roomId: r.id, index: base + i })
-          .then((path) => {
-            if (!path) return;
-            docActions.addRenderRef(r.id, renderRef(v, path));
-          })
-          .catch((err) => console.warn('[render pass] a view was not stored', err));
-      });
-    } catch (err) {
-      setWallState({ status: 'error', roomId: r.id, error: String(err.message || err) });
-    }
-  }, [focus, renders, renderRefs, renderStore, docActions]);
-
-  /**
-   * THE VIEWS, BACK OUT OF THE BUCKET — for the space that is open, and no other.
-   *
-   * WHY LAZY. A flat of nine rooms with four views each is thirty-six JPEGs and
-   * several megabytes; fetching all of them to open a plan would put that on the
-   * critical path of every reload to populate drop targets nobody has looked at.
-   * The refs are already restored, so the panel knows how many views a space has
-   * before a single byte is fetched — this only pays for the one on screen.
-   *
-   * WHY IT NEVER OVERWRITES. `renders[id]` being present means either these
-   * bytes are already here or somebody has just dropped new files in, and the
-   * second one must win. So an id that already has a working copy is skipped
-   * outright rather than merged.
-   */
-  const fetchingRenders = useRef(new Set());
-  useEffect(() => {
-    const id = focus?.id;
-    const refs = id ? (renderRefs[id] ?? []) : [];
-    if (!id || !refs.length || !renderStore?.url) return;
-    if (renders[id]?.length || fetchingRenders.current.has(id)) return;
-    fetchingRenders.current.add(id);
-    let alive = true;
-    (async () => {
-      try {
-        const back = [];
-        for (const ref of refs) {
-          const href = renderStore.url(ref.path);
-          if (!href) continue;
-          try { back.push(await fetchRender(href, ref)); }
-          catch (err) { console.warn('[render pass] a stored view is missing', ref.path, err); }
-        }
-        if (alive && back.length) setRenders((m) => (m[id]?.length ? m : { ...m, [id]: back }));
-      } finally {
-        fetchingRenders.current.delete(id);
-      }
-    })();
-    return () => { alive = false; };
-  }, [focus?.id, renderRefs, renders, renderStore]);
+     THE OUTLINE'S INK FOLLOWS THE GROUND TOO — see `regionInk` in PlanCanvas,
+     the same rule the no-light zones take — so neither mode is left drawing a
+     line in the colour of the thing behind it. */
+  const canvasLayers = useMemo(() => {
+    const base = layers.invert
+      ? { ...layers, dim: false, cells: false, region: false, labels: false }
+      : layers;
+    const aiming = stepTool?.id === 'cove' ? { ...base, region: true } : base;
+    const doors = doorEdit ? { ...aiming, electrical: false } : aiming;
+    /* --- AND THE WALL STEP TAKES EVERYTHING OFF BUT THE PLAN ---------------
+       ONE SPACE'S EDGES ARE THE SUBJECT, so they have to be the only thing on
+       the sheet that reads. Every layer here is a mark our own drawing makes —
+       a fitting, a tag, a plate, a wire, a cell — and every one of them sits
+       within a few pixels of the wall being clicked. The scan itself stays, at
+       half strength (see `wash`), because you still have to know which room you
+       are in.
+       DERIVED AND NOT SET, exactly as the cove step's `region` is: `layers` is
+       untouched, so the View switches and the saved plan come back precisely as
+       they were the moment Done is pressed. */
+    return wallEdit ? { ...doors,
+      cells: false, region: false, lights: false, labels: false, fan: false,
+      zones: false, accents: false, spots: false, switchboards: false,
+      electrical: false } : doors;
+  }, [layers, doorEdit, stepTool, wallEdit]);
 
   /* --- THE ELECTRICAL PASS WAS HERE, AND IT HAS BEEN RETIRED ---------------
      `computeElectrical` and `planElectrical` — the bolt in the list of spaces.
@@ -2501,22 +1894,6 @@ export default function App({
      tvDetect.js AND /api/accents' `tv` TASK ARE STILL THERE, unwired. They are
      the prompt and the endpoint, not the decision to spend a call, and leaving
      them costs nothing while the new rule is being lived with. */
-
-  /** What kind of space is it? One small call, one word back. */
-  const computeRoomType = useCallback(async (r, { reuseShot = null } = {}) => {
-    const shot = reuseShot ?? await roomSnapshot({
-      source, img, polygonPx: r.plan.polygonPx,
-      lightsPx: r.plan.lightsPx, wallLayers: wallLayerSet,
-    });
-    const payload = await requestAccents({
-      plan: shot, task: 'roomtype', projectId,
-      room: {
-        name: r.outline.name || null,
-        widthFt: r.stats.widthFt, heightFt: r.stats.heightFt, areaSqft: r.stats.areaSqft,
-      },
-    });
-    return { shot, ...payload.result };
-  }, [source, img, wallLayerSet, projectId]);
 
   const { projections: { surfacesPx, taskSpotsPx, accentZonesPx, wallCellsPx } } = useScenePlanProjections({
     rooms, surfaceResults, surfaceDismissed, manualSurfaces, wallResults, pxPerFt, artDismissed,
@@ -4545,28 +3922,11 @@ export default function App({
       if (cancelPrep.current) { setPrep(null); return; }
 
       const rows = perRoom.filter((r) => r && !r.error);
-      const verdicts = {};
-      const won = [];
-      const claimed = new Set();
-      for (const r of rows) {
-        verdicts[r.id] = {
-          kind: r.rec.kind, pick: r.rec.pick, asked: r.rec.asked,
-          confidence: r.rec.confidence ?? 0, why: r.rec.why || '',
-          fellBack: !!r.rec.fellBack, failed: !!r.rec.failed,
-          counts: { roboflow: r.a.length, openai: r.b.length },
-        };
-        for (const d of [...r.a, ...r.b]) claimed.add(d.id);
-        for (const d of (r.rec.winner || [])) won.push({ ...d, roomId: r.id, contest: r.rec.kind });
-      }
-
-      // BEDS IN NO TRACED ROOM. Nothing judged these — there was no room to
-      // isolate and no ceiling for them to affect — so they keep the behaviour
-      // they have always had: both readings merged, overlaps de-duplicated.
-      // Dropping them instead would silently remove boxes the user can see on
-      // the canvas today, on a plan where they simply have not drawn that room
-      // yet.
-      const loose = [...A, ...B].filter((d) => !claimed.has(d.id));
-      for (const d of dedupe(loose)) won.push({ ...d, roomId: null, contest: 'unjudged' });
+      /* THE FOLD IS features/room-intelligence/bedContest.js — one verdict per
+         space, one merged list of beds attributed to whoever won them, and the
+         boxes in no traced room kept as they always were. No call in it, which
+         is why it is not in here. */
+      const { verdicts, won } = absorbContest(rows, { a: A, b: B });
 
       bedsNow = won;
       docActions.setBedVerdicts(verdicts);
@@ -5907,34 +5267,21 @@ export default function App({
   }, []);
 
   /* --- SAYING WHAT EACH WALL IS FINISHED IN ---------------------------------
-     THE FOURTH STEP ON THIS SCREEN, AND THE SAME SHAPE AS THE OTHER THREE. Like
-     the door, zone and switchboard editors it empties the panel, owns the
-     pointer and stays open until it is closed — because what is being asked for
-     is a gesture on the DRAWING, and a room's walls cannot be named in a panel:
-     "wall 3" means nothing, and the wall you can see does.
-     IT PUTS EVERY OTHER GESTURE AWAY on the way in, exactly as `openZoneEdit`
-     does. One pointer pipeline, one owner. */
+     THE STEP IS features/room-intelligence/useWallMaterials.js. WHAT IS LEFT
+     HERE IS THE HALF THAT IS APP'S: standing every other step and tool down on
+     the way in, exactly as `openZoneEdit` does. One pointer pipeline, one owner
+     — and App is the only place that knows every owner, which is why this is
+     not in the feature. The order is the order it always was: the step opens
+     and the space is focused, and then everything else goes away. */
   const openWallEdit = useCallback((roomId) => {
-    setWallEdit(roomId); setWallPick(null);
+    enterWallEdit(roomId);
     docActions.setFocusId(roomId); setSel(clear());
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
     setBoardPlace(false); closeShapeTool();
     setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
     setArmed(null); setGhost(null); setGuides([]);
     disarmAdd();
-  }, [disarmAdd, closeShapeTool, docActions]);
-
-  const closeWallEdit = useCallback(() => {
-    setWallEdit(null); setWallPick(null);
-  }, []);
-
-  /* A STEP CANNOT OUTLIVE ITS SUBJECT. Deleting the space, re-tracing it or
-     clearing the plan all take the room out from under this, and a panel asking
-     about the walls of a room that is not there has no way out that makes
-     sense. */
-  useEffect(() => {
-    if (wallEdit && !rooms.some((r) => r.id === wallEdit)) closeWallEdit();
-  }, [wallEdit, rooms, closeWallEdit]);
+  }, [disarmAdd, closeShapeTool, docActions, enterWallEdit]);
 
   /* --- PUTTING SWITCHBOARDS ON WALLS BY HAND --------------------------------
      THE THIRD STEP ON THIS SCREEN, AND THE SAME SHAPE AS THE OTHER TWO. Like
@@ -7642,245 +6989,28 @@ export default function App({
 
   const objPointerUp = obj.up;
 
-  /**
-   * Editing an accent fitting.
-   *
-   * Everything here is in PLAN PIXELS, unlike the ceiling objects, and it is
-   * worth knowing why the two differ. A ceiling object is a real thing of a
-   * real size that someone placed, so it is held in feet and survives a scale
-   * correction. An accent fitting is DERIVED — from a box the model drew on a
-   * crop, projected onto a wall that is itself in plan pixels — so pixels are
-   * the space it already lives in, and converting to feet and back would only
-   * add two roundings to every drag.
-   */
-  /**
-   * APPLY AN EDIT TO ONE ACCENT FITTING, WHEREVER IT LIVES.
-   *
-   * ONE ACTION, BECAUSE IT IS ONE ACT. An accent fitting lives in two stores —
-   * `accentResults[roomId].zones` for the ones the pass produced, `manualAccents`
-   * for the ones placed with the palette — and the write has to FOLLOW THE ZONE
-   * rather than assume the store, which is the fix for a real bug: a hand-placed
-   * strip could not be moved at all. See ACCENT_ZONE_UPDATED in
-   * hooks/usePlanDoc.js for the whole argument and for why `fn` may be a
-   * function in an action.
-   *
-   * `fn` must be pure: it can be invoked more than once for one edit.
-   */
-  const updateAccentZone = useCallback(
-    (roomId, id, fn) => docActions.updateAccentZone(roomId, id, fn),
-    [docActions]);
-
-  /**
-   * The tolerances, converted once per drag.
-   *
-   * accentPlace quotes them in feet — a snap should be the same size on a site
-   * plan at 6 px/ft as on a flat at 40 — and everything here is in plan pixels,
-   * so this is the one place the two meet.
-   */
-  const runOpts = (roomId, e) => {
-    const r = rooms.find((q) => q.id === roomId);
-    return {
-      polygon: r?.plan?.polygonPx ?? null,
-      snap: RUN_EDIT.snapFt * (pxPerFt || 1),
-      minLen: RUN_EDIT.minLenFt * (pxPerFt || 1),
-      // Shift pins the end to the run's existing axis: the old wall-slide
-      // behaviour, on demand rather than as the only option.
-      constrain: !!e?.shiftKey,
-    };
-  };
-
-  /* --- AN ACCENT RUN'S WHOLE GESTURE ----------------------------------------
-
-     THE ONE THAT WRITES A RELATIVE DELTA ON PURPOSE, and it is the exception
-     rule 2 in lib/dragMove.js is about — so it is worth saying why it is not a
-     violation. `moveRun` is handed the pointer and the PREVIOUS pointer, and
-     `last` advances every frame. That is because a run is not moved to a point:
-     it is projected onto whichever wall of its room can hold it, and the answer
-     is a fresh projection each frame rather than an offset from a snapshot. A
-     press-anchored delta would have nothing to add itself to.
-
-     WHICH IS ALSO WHY NO STORE IS HANDED TO THE HOOK. An accent zone lives in
-     one of two stores and the write has to follow the zone — see
-     `updateAccentZone`, which is the fix for a real bug — so `onMove` is the
-     write and there is no `at`/`to` to give.
-
-     ITS THRESHOLD IS ITS OWN, in two ways. It has a FLOOR of two plan pixels,
-     so a strip on a site plan at 6 px/ft does not need a five-foot drag to
-     start; and it applies to the BODY drag only. The ends and the sconce slide
-     have grips of their own under the pointer, so there is no click meaning for
-     a threshold to protect — where a press on a strip's body both selects it and
-     arms the move, and every plain click on one would otherwise translate the
-     run by whatever fraction of a pixel the hand wobbled, and mark it `edited`
-     for it: a fitting claiming to have been moved by hand when nobody moved it.
-
-     EVERYTHING IN PLAN PIXELS, unlike the ceiling objects. A ceiling object is a
-     real thing of a real size that someone placed, so it is held in feet and
-     survives a scale correction. An accent fitting is DERIVED — from a box the
-     model drew on a crop, projected onto a wall that is itself in plan pixels —
-     so pixels are the space it already lives in, and converting to feet and back
-     would only add two roundings to every drag. */
-  const acc = useDrag({
-    state: [accDrag, setAccDrag],
-    point: svgPoint,
-    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
-    moved: (from, p, d) => d.mode !== 'move'
-      || Math.hypot(p.x - from.x, p.y - from.y) >= Math.max(2, DRAG_SLOP_PX / (zoom || 1)),
-    onMove: (p, { drag: d, event: e }) => {
-      // --- a derived run: the ends write a TRIM, and nothing else moves.
-      if (d.derived) {
-        const { trimId, horizontal, base } = d.derived;
-        if (!base || !(pxPerFt > 0)) return;
-        // Only the along-wall component of the pointer counts. A cove is on its
-        // wall and stays there, so the across component is not a degree of
-        // freedom — dragging away from the wall shortens nothing.
-        const v = horizontal ? p.x : p.y;
-        // Shift is the FINE drag here — the opposite hand of the same key on an
-        // ordinary strip, where it locks the axis. There is no axis to lock on a
-        // run that only moves along one, so the modifier is spent on the thing
-        // there is a use for: the exact position, off the setting-out increment.
-        const step = e?.shiftKey ? 0 : RUN_TRIM.snapFt;
-        const round = (ft) => (step > 0 ? Math.round(ft / step) * step : ft);
-        /* THE CONVERSION IS HERE AND THE SPARSE RULE IS NOT. Getting from a
-           pointer position to a length needs `pxPerFt`, which is derived and
-           cannot live in the document; what a stored trim MEANS — and that a run
-           dragged back to where the rule put it stores nothing — is the
-           reducer's. See RUN_TRIM_SET. */
-        if (d.mode === 'end0') docActions.setRunTrim(trimId, 'a', round((v - base.lo) / pxPerFt));
-        else docActions.setRunTrim(trimId, 'b', round((base.hi - v) / pxPerFt));
-        return;
-      }
-
-      const o = runOpts(d.roomId, e);
-      updateAccentZone(d.roomId, d.id, (z) => {
-        if (d.mode === 'slide') return slideSconceTo(z, p);
-        if (d.mode === 'end0') return setRunEnd(z, 0, p, o);
-        if (d.mode === 'end1') return setRunEnd(z, 1, p, o);
-        if (d.mode === 'move') return moveRun(z, p, d.last, o);
-        return z;
-      });
-      // The body drag is relative, so the cursor it measures from advances.
-      if (d.mode === 'move') acc.set((cur) => (cur ? { ...cur, last: p } : cur));
-    },
-    onRelease: (d) => {
-      // A derived run keeps no per-gesture state on itself — the trim is the
-      // whole of it — so there is nothing to tidy up.
-      if (d.derived) return;
-      // The snap indicator is a property of the GESTURE, not of the fitting, so
-      // it goes when the gesture does. Left on the zone it would draw a guide
-      // line through a strip nobody is touching.
-      updateAccentZone(d.roomId, d.id, (z) => (z.snap ? { ...z, snap: null } : z));
-    },
+  /* --- EDITING WHAT THE MODEL PROPOSED -------------------------------------
+     The accent gesture, the three ways of deleting a run, and the task spots —
+     features/room-intelligence/useRoomEditing.js.
+     A SECOND CALL INTO THE SAME FEATURE, and it is this far down because of
+     what it needs: `svgPoint`, `pressState`, the projections and `deleteShape`
+     are all defined above this line and below the passes, and a hook's
+     arguments are evaluated during render. The scene feature is split across
+     three calls for the same reason. Nothing is shared between the two halves
+     but the document. */
+  const roomEditing = useRoomEditing({
+    rooms, pxPerFt, zoom, svgPoint, svgRef, pressState,
+    accentZonesPx, taskSpotsPx, manualAccents, manualCoves, manualSurfaces,
+    addTool, zoneMode, setSel, setArmed, deleteShape, docActions,
   });
-
-  const accPointerDown = (e, roomId, id, mode) => {
-    if (e.button != null && e.button !== 0) return;   // middle button is the pan
-    /* AND EVERYTHING ELSE GOES THROUGH THE ROUTER. This handler had no guard of
-       its own at all: the caller withheld it while a tool was armed, which left
-       a no-light zone being boxed across a strip, the switchboard step and the
-       door editor all having their presses swallowed here. See
-       lib/pressOwner.js — this is the one rule, and it answers `grab` in exactly
-       the states where a fitting is meant to be pickable. */
-    if (!canGrab(pressState)) return;
-    // A DERIVED RUN HAS NO BODY DRAG. A reverse cove is a slot at a wall and a
-    // shelf strip is inside joinery: neither can be picked up and moved
-    // somewhere else, because neither is a thing somebody placed. Only the ends
-    // move, and they only move along the run's own axis. The canvas does not
-    // offer the body handle for these, and this is the second half of that —
-    // belt and braces on the one gesture that would silently do nothing.
-    const derived = accentZonesPx.find((z) => z.id === id && z.derived);
-    if (derived && mode !== 'end0' && mode !== 'end1') {
-      // ...but it is still SELECTABLE, and it has to be: without a body handle
-      // there would be nothing on it to click, and a fitting you cannot select
-      // is one you cannot find the grips of.
-      e.stopPropagation();
-      e.preventDefault();
-      setSel(select('acc', id)); setArmed(null);
-      return;
-    }
-    e.stopPropagation();
-    e.preventDefault();
-    setSel(select('acc', id));
-    setArmed(null);
-    acc.down(e, {
-      id, roomId, mode,
-      // WHERE THE POINTER WAS LAST. It advances with the pointer, because a run
-      // must move by the DELTA and not jump to centre itself under the cursor —
-      // grab a strip near one end and it stays grabbed near that end. The
-      // gesture's own `from` does not advance, because that is what the
-      // threshold is measured from.
-      last: svgPoint(e),
-      // Carried on the GESTURE, not looked up per frame. The item is rebuilt by
-      // a memo on every trim, so a fresh lookup mid-drag would read the base off
-      // the run the last frame produced and the end would run away from the
-      // pointer.
-      derived: derived
-        ? { trimId: derived.trimId, horizontal: derived.horizontal,
-            base: derived.base }
-        : null,
-    });
-  };
-
-  const accPointerMove = acc.move;
-  const accPointerUp = acc.up;
-
-  // --- picking a spot, and deleting one ---------------------------------------
-
-  /**
-   * A CLICK ON A DIRECTIONAL SPOT PICKS IT.
-   *
-   * Same gesture, same shape and the same three lines as `accPointerDown` — one
-   * selection at a time, and arming a tool is cancelled — because a person
-   * should not have to know which kind of fitting they are pointing at to know
-   * what clicking it does.
-   *
-   * NO DRAG. A spot is not dragged and this is not a stub for one: where it goes
-   * is a consequence of what it lights and of the grid it stands on, and a spot
-   * moved by hand would be a fitting the placer no longer explains — the arrow,
-   * the segment, the track absorption and the panel's account of it would all
-   * still describe the position it was dragged away from. Moving the SURFACE is
-   * how you move the spot.
-   *
-   * AND IT SELECTS THE SPACE. Clicking a fitting in a room the panel is not
-   * describing and having the panel stay on the last room is the disagreement
-   * the canvas selection exists to prevent — the same argument as
-   * `pickChunkOptions`.
-   */
-  const spotPointerDown = (e, id) => {
-    if (e.button != null && e.button !== 0) return;   // middle button is the pan
-    /* A TOOL IN HAND WINS, AND SO DOES A ZONE BEING DRAWN. While something is
-       armed for placement the next click belongs to the ceiling underneath —
-       somebody dropping a strip beside a spot, or boxing a no-light zone across
-       it, is aiming at the drawing and not at the fitting in the way. So this
-       does not intercept, and the click falls through to the canvas exactly as
-       if the fitting were not there.
-
-       EXCEPT THE SPOT TOOL ITSELF, and that exception is what makes a spot
-       deletable. Arming the spot opens a STEP that stays open until Done is
-       pressed (see `stepTool`), so for the whole of the time somebody is placing
-       spots, every spot on the drawing was unselectable — place one, notice it
-       is wrong, and there was no way to pick it up. Worse than nothing
-       happening: Delete then fell past every branch below to the SPACE, and took
-       the room out of the layout.
-
-       IT IS SAFE FOR THIS TOOL AND NOT FOR THE OTHERS BECAUSE OF THE GESTURE. A
-       spot is placed by DRAGGING a box over open ceiling; the pens place a point
-       on press, and a press stolen from a pen is a corner that never lands. A
-       press that starts on an existing spot is a press on a fitting a few pixels
-       across, and selecting it is what somebody meant. Dragging a box that
-       happens to cover one still works — start it anywhere but on the fitting. */
-    /* THE EXEMPTION HAS A NAME, so it cannot be read as a guard that forgot a
-       term. `pressOwner` says the TOOL owns this press — see lib/pressOwner.js
-       — and this handler departs from that answer deliberately, for the reason
-       above. The departure is one flag wide and everything else still obeys. */
-    const spotStepExempt = addTool === 'spot';
-    if ((!spotStepExempt && addTool) || zoneMode) return;
-    e.stopPropagation();
-    e.preventDefault();
-    setSel(select('spot', id));
-    setArmed(null);
-    const sp = taskSpotsPx.find((q) => q.id === id);
-    if (sp?.roomId) docActions.setFocusId(sp.roomId);
-  };
+  /* BOTH RESET GROUPS, MERGED INTO THE ONE REF `resetForNewPlan` READS. It is
+     assigned here rather than at the first call site because this is the first
+     line at which both exist. */
+  roomIntelReset.current = { ...roomIntel.reset, ...roomEditing.reset };
+  const { accentDrag: accDrag, onAccPointerDown: accPointerDown,
+          accPointerMove, accPointerUp,
+          onSpotPointerDown: spotPointerDown } = roomEditing.canvas;
+  const { deleteAccent, deleteSpot } = roomEditing.commands;
 
   /* --- A LAMP'S WHOLE GESTURE ------------------------------------------------
 
@@ -8179,56 +7309,6 @@ export default function App({
     setModuleDrag((d) => (d?.id === id ? null : d));
   }, [docActions]);
 
-  /**
-   * DELETE A SPOT — WHICH MEANS DELETING THE THING IT WAS PLACED FOR.
-   *
-   * A spot is not a fitting somebody positioned; it is what the placer does
-   * about a surface or a piece of art. So there is no "the spot" to remove
-   * independently of its reason: suppress the fitting and leave the reason, and
-   * the plan holds a surface that is invisible on the sheet (the boxes came off
-   * the drawing long ago), silently holding a segment of the secondary grid
-   * against a fitting that no longer exists, and re-appearing as a refusal in
-   * the panel. The reason is what a person is actually deleting.
-   *
-   * THREE SOURCES, THREE VERBS, and they are the verbs this app already uses —
-   * see the note in the accent branch of the keydown handler for the argument:
-   *
-   *   · A HAND-PLACED SURFACE is removed. It has no generator to come back
-   *     from, so dismissing it would leave an id suppressing something that no
-   *     longer exists for the life of the plan.
-   *   · A DETECTED SURFACE is dismissed. The pass can run again and must not
-   *     put it back — "the model proposed this and I said no" is a decision, and
-   *     it persists.
-   *   · A PIECE OF ART is dismissed by element id, which takes the WHOLE ROW
-   *     with it. Deliberately: artSpots.js places a row as one formation, all of
-   *     it or none, because two spots lighting one picture are one decision.
-   *     Deleting one of a pair would leave a lopsided half of a design nobody
-   *     drew. The wall element itself stays — the render pass saw a painting and
-   *     it is still there; what changed is that it is not being lit.
-   *
-   * EITHER WAY THE SEGMENT GOES BACK TO THE CEILING, which is why this deletes
-   * the source rather than filtering the output: the room re-places, and another
-   * surface that lost that segment can now have it. A fitting elsewhere may move
-   * as a result. That is not a side effect to be suppressed — it is the layout
-   * being correct about a ceiling that now has one less thing to light.
-   */
-  const deleteSpot = useCallback((id) => {
-    const sp = taskSpotsPx.find((q) => q.id === id);
-    setSel(clear());
-    if (!sp) return;
-    if (sp.surfaceId) {
-      if (manualSurfaces.some((sf) => sf.id === sp.surfaceId)) {
-        docActions.removeSurface(sp.surfaceId);
-      } else {
-        docActions.dismissSurface(sp.surfaceId);
-      }
-      return;
-    }
-    if (sp.wallId) {
-      docActions.dismissArt(sp.wallId);
-    }
-  }, [taskSpotsPx, manualSurfaces, docActions]);
-
   /** Escape backs out, Delete removes. The two keys every editor answers to. */
   useEffect(() => {
     // NO GUARD ANY MORE, AND THAT IS BECAUSE OF CTRL+Z. This bound the listener
@@ -8502,59 +7582,13 @@ export default function App({
         setSel(clear());
         return;
       }
-      /* --- A SELECTED RUN, AND THERE ARE THREE KINDS OF IT ------------------
-         EVERY LINEAR THING ON THIS DRAWING IS AN ACCENT ZONE — that is what lets
-         the canvas, the schedule and the DXF take a cove, a reverse cove, a
-         shelf run and a hand-drawn strip without any of them knowing what a cove
-         is. It is also why deleting one is three different acts, and why doing
-         the wrong one is SILENT: every store here is applied somewhere else, so
-         filing a deletion in the wrong list leaves the run on the sheet and
-         nothing to say why.
-
-           A HAND-PLACED FITTING IS REMOVED. It has no generator to come back
-           from, so dismissing it would leave an id suppressing something that no
-           longer exists for the life of the plan.
-
-           A DERIVED RUN — a reverse cove, a shelf strip — IS SWITCHED OFF in
-           `runsOff`, which is read where the RUN is built and not where its tape
-           is. This is the case that was broken: both were falling through to
-           `accentDismissed`, which is only ever applied to the accent pass's own
-           zones, so Delete on a reverse cove wrote an id nothing reads and left
-           the slot on the drawing. A hand-placed one is in `manualCoves` and is
-           removed from there instead, by the first rule.
-
-           AND AN ACCENT THE PASS PROPOSED IS DISMISSED, which has to persist:
-           the pass can run again and must not put the same fitting back.
-
-         A DRAWN COVE'S TAPE IS A FOURTH CASE and deletes the SHAPE — see the
-         branch. A cove the ceiling design derived is the one thing here with
-         nothing to delete: it is not a fitting somebody placed, it is what a
-         coved ceiling IS, and the way to remove it is to stop that chunk being
-         a cove. */
+      /* A SELECTED RUN, AND THERE ARE THREE KINDS OF IT — see `deleteAccent`
+         in features/room-intelligence/useAccentEditing.js, which carries the
+         whole argument for why deleting one is three different acts and why
+         filing it in the wrong list is silent. */
       if ((e.key === 'Delete' || e.key === 'Backspace') && selAccId && !accDrag) {
         e.preventDefault();
-        const zone = accentZonesPx.find((z) => z.id === selAccId);
-        if (manualAccents.some((z) => z.id === selAccId)) {
-          docActions.removeAccent(selAccId);
-        } else if (zone?.derived && zone.trimId) {
-          const gone = zone.trimId;
-          if (manualCoves.some((c) => c.id === gone)) {
-            docActions.removeCove(gone);
-          } else {
-            docActions.dropRun(gone);
-          }
-        } else if (zone?.source === 'cove' && zone.shapeId) {
-          /* A DRAWN COVE'S TAPE IS A HANDLE ON THE SHAPE. The run is not an
-             object in its own right — it is what the shape produces — so Delete
-             on it removes the shape, which is the only thing there is to remove
-             and what somebody pressing the key over a cove they drew means. The
-             shape's own selection reaches the same function; two handles, one
-             act. */
-          deleteShape(zone.shapeId);
-        } else {
-          docActions.dismissAccent(selAccId);
-        }
-        setSel(clear());
+        deleteAccent(selAccId);
         return;
       }
       /* A SELECTED SWITCHBOARD. Above the ceiling objects and the space for the
@@ -8635,7 +7669,7 @@ export default function App({
   }, [objMode, armed, selObjId, selObjIds, objDrag, selAccId, accDrag, addTool, disarmAdd,
       finishTrack, trackPen, trackEditId, selTrackPt, trackGrip,
       deleteTrackPoint, deleteTrack, closeTrackEdit,
-      manualAccents, accentZonesPx, manualCoves, focusId, readOnly, selSpotId, deleteSpot,
+      deleteAccent, focusId, readOnly, selSpotId, deleteSpot,
       docActions,
       selBoardId, deleteBoard, selFlowId, flowDrag, boardPlace, closeBoardPlace,
       doorEdit, selDoorId, doorDrag, deleteDoor, closeDoorEdit,
@@ -8813,8 +7847,13 @@ export default function App({
     if (!off && !shapeMenuOn && !boardPlace && !zoneEdit) {
       openShapeTool('guide', { arm: false });
     }
+    /* `setMaterialsEdit` IS IN THE ARRAY AND WAS NOT, and nothing about when
+       this callback is rebuilt has changed: it is a `useState` setter, handed
+       through the room-intelligence panel group now that the finishes flag
+       lives in that feature, and a setter's identity is stable for the life of
+       the component. */
   }, [docActions, focusId, optionPickFor, hideCoach, shapeMenuOn, boardPlace, zoneEdit,
-      openShapeTool]);
+      openShapeTool, setMaterialsEdit]);
 
   /**
    * FLIP ONE CHUNK THROUGH ITS OPTIONS.
