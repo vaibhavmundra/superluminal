@@ -387,6 +387,95 @@ route end to end.
 a synthetic 2BHK with door swings, dimension lines and a sofa on their own
 layers. Drop it in to see the vector route work without hunting for a drawing.
 
+## How the source is laid out
+
+**`App.jsx` is the orchestration layer and nothing else lives there by choice.**
+It was one component of over fifteen thousand lines — every store, every gesture,
+every model call and every panel — and it is now under eight thousand and still
+falling. What is left in it is the four things only it can do: hold the props and
+callbacks the route hands in, compose the feature controllers in the order React
+forces, wire one domain's output to another's input, and render the markup. When
+you add something, the question is not "where in App does this go" — it is
+**which bucket owns it**, and App only learns its name.
+
+**One domain per directory under `src/features/`, each with its own README.**
+
+| Directory | What it owns |
+|---|---|
+| `features/recognition/` | what the detectors say is on the drawing — rooms, doors, furniture, beds |
+| `features/scene/` | every pure and memoised derivation from the drawing: polygons, grids, projections |
+| `features/room-intelligence/` | everything a model is asked **about one room**, and every hand edit to that answer |
+| `features/ceiling-geometry/` | what is set out on a ceiling before a fitting goes on it — coves, guides, track runs |
+| `features/fixtures/` | what is **put on** a ceiling — placed lamps, arrays, track modules, fans and cassettes |
+| `features/electrical/` | the plates, the bays, the feeds, the flows and the switchboard sheet |
+| `features/lighting-planner/` | the high-level act: claiming, the pipeline, the analysis and the schedule |
+
+Beside them: `src/lib/` is the libraries the features are built out of — the
+geometry, the planner, the catalogues, the exporters, all callable from Node
+(the two React providers in there, `auth.jsx` and `billing.jsx`, are named as
+such and predate the split); `src/hooks/` is the genuinely **generic** reusable
+hooks — `useDrag`, `useScale`, `usePlanDoc` — as against a hook that is one
+domain's, which belongs in that domain's directory; `src/components/` is
+presentation; and `src/routes/` is the screens, of which `routes/Planner.jsx` is
+the only one the editor talks to about a plan having a row.
+
+### The rules a bucket has to keep
+
+These are not style preferences. Every one of them is here because breaking it
+had already cost something.
+
+**`usePlanDoc` is the single persistent-document boundary.** One reducer holds
+the saved plan. A feature does not split its public state, does not change the
+saved schema, and does not keep its own copy of anything in it — it reads the
+stores App hands in and writes through the supplied `docActions`. Two owners of
+one field is how a plan comes back missing a decision somebody made.
+
+**Three kinds of state, and each has one home.** Anything that is part of the
+saved plan goes in `usePlanDoc`. Anything transient — which drawer is open, which
+gesture is armed, the drag in flight, the progress dialog — belongs to the
+feature controller and is deliberately not saved. Anything that can be computed
+stays **derived**: a BOQ, a room's layout, a lumen count and px/ft are all memos,
+which is what makes "the schedule matches the drawing" a property of the code
+rather than something to remember.
+
+**A feature never imports `App.jsx` and never reaches into another feature's
+private files.** Cross-domain dependencies are explicit inputs, coordinated by
+App: `features/fixtures/` takes `arrayOutline` off `features/ceiling-geometry/`'s
+documented interface and knows nothing else about how a cove is drawn;
+`features/lighting-planner/` drives four other domains entirely through their
+`commands` groups. Import a neighbour's internals once and the two stop being
+separable.
+
+**Controllers return grouped semantic interfaces, not thirty loose values** —
+`canvas`, `panel`, `commands`, `status`, `reset`. App then takes off only the
+names it actually uses, and usually takes them off rather than reaching through
+the group, because a controller returns a fresh object every render and naming
+*it* in a dependency array re-binds the listener on every frame.
+
+**Several call sites per feature is normal, and the reason is always the same.**
+A hook's arguments are evaluated **during render**, so nothing can be composed
+above a value it names — a dependency array mentioning a `const` declared below
+it is a temporal-dead-zone `ReferenceError` on the first paint, which in React
+means the tree unmounts and the app is a white page. So a domain's transient
+state is asked for early (`useFixtureState`, `useGeometryState`, `useBoardStep`,
+`useLightingRun`), its derivations in the middle, and its commands and gestures
+where the things they need exist. Every call site carries a comment saying what
+pins it there.
+
+**Pure rules go in their own file and get a test.** `geometryRules.js`,
+`fixtureRules.js`, `boardRules.js`, `lightingRules.js` — no React, no document,
+no pointer, no network. That is the only part of a feature there is a test for,
+and it is the line the rest of the feature is drawn around: the hooks hold state
+and dependency arrays, the arithmetic and the refusals sit next door in
+`tools/test-<domain>.mjs`.
+
+**An extraction moves behaviour and does not redesign it.** No algorithm, UI,
+identifier, storage format, network payload, timing, CSS or copy changes while
+code is being moved, and the comments move with the behaviour they describe —
+which is why the notes in these files read as though they were written where they
+now sit. Improvements come afterwards, as their own change, where a diff can
+show them.
+
 ## The dials live in code
 
 `src/lib/settings.js` is the file to edit. The right-hand panel used to carry
@@ -1388,7 +1477,8 @@ open-vocabulary detector, asked only for `bed`. Three things about the path it
 takes:
 
 - **No bucket, no public URL.** The API takes `{"type": "base64", ...}`
-  directly, and `App.jsx` already keeps the base64 on the `img` object because
+  directly, and `hooks/usePlanSource.js` already keeps the base64 on the `img`
+  object because
   the Claude scale estimate needs it too. Nothing is uploaded anywhere and no
   copy of a client's drawing is left in cloud storage.
 - **The key is never in the browser.** `api/detect.js` holds it and forwards.
@@ -2876,9 +2966,9 @@ What this required was separating two things the app had been treating as one:
 - **`kind` is geometry.** `small` means one light centred in a cell, `large`
   means one serving a pair. The planner deals only in this and never in products.
 - **`fixture` is what you buy.** Resolved from the room's type by `fixtureFor`
-  in `roomTypes.js`, stamped onto each light in `App.jsx` — the one place that
-  knows both the layout and the type — and read by the canvas, the BOQ and every
-  exporter.
+  in `roomTypes.js`, stamped onto each light by `fixtureForCell` inside
+  `lib/layout.js` — the one place that knows both the layout and the type — and
+  read by the canvas, the BOQ and every exporter.
 
 For every other room the two are the same string, which is why they had never
 needed separating. A light with no `fixture` at all — a plan saved before this
@@ -3160,7 +3250,8 @@ place to hang a sconce, and nothing on screen would say so.
 
 **The accent pass does not decide where a bed is.** It is asked what furniture is
 in the room, and it answers about beds too, but that box is discarded before the
-rules run. `App.jsx` substitutes the **`bed-filter` bounding box** for that room —
+rules run. `features/room-intelligence/passResults.js` substitutes the
+**`bed-filter` bounding box** for that room —
 or, where bed-filter found nothing in a space the classifier called a bedroom,
 the box from the GPT bedroom crop. One furniture item per real bed.
 
@@ -4264,7 +4355,7 @@ nothing at all and the strip vanishes.
 
 ### The space outline is off on the layout screen
 
-`LAYER_DEFAULTS` in `App.jsx` starts `region: false`. It is the one layer on that
+`LAYER_DEFAULTS` in `lib/planState.js` starts `region: false`. It is the one layer on that
 screen that is **scaffolding rather than deliverable**: it says where the boundary
 somebody traced is, which is the question of the *tracer* screen and a settled
 fact by the time fittings are being placed. On a plan with eight spaces it is
@@ -4863,10 +4954,10 @@ node tools/test-rooms.mjs             # room extraction from wall segments
 node tools/test-dxf.mjs               # DXF text -> rooms, units, blocks, bulges
 node tools/test-snap.mjs              # the snap engine, incl. the wall-overrun case
 node tools/test-outline.mjs           # traced outlines: rectifying, validation
-node tools/test-vector-flow.mjs       # the whole vector route as App.jsx runs it
+node tools/test-vector-flow.mjs       # the whole vector route as the editor runs it
 node tools/test-furniture.mjs         # detection -> zones: centres, rescaling, refusals
 node tools/test-detect-api.mjs        # the proxy, network stubbed: refusals, key never leaks
-node tools/test-detect-flow.mjs       # response -> zone -> NO LIGHT OVER THE BED, as App.jsx wires it
+node tools/test-detect-flow.mjs       # response -> zone -> NO LIGHT OVER THE BED, as the editor wires it
 node tools/test-wall-pass.mjs         # the render pass: both prompts, the y flip, the worksheet, the join
 node tools/test-art-spots.mjs         # one spot per 2 ft of art: the count, the slicing, the 24° line
 node tools/test-reverse-cove.mjs      # 8 in wide, the 70% threshold, doors cutting the wall, the merge
@@ -4898,10 +4989,11 @@ a gap punched through both lines at every doorway — so the tests meet the same
 mess the parser will. `tools/dxfwrite.mjs` writes real ASCII DXF, so the tests
 feed the real parser a real file rather than a hand-made object.
 
-`test-vector-flow.mjs` is the one that matters most: it runs App.jsx's exact
-sequence with React taken out, because the unit tests prove each stage and the
-handoffs are where a Y-flip, a scale factor or a winding order goes wrong in a
-way that still looks plausible three stages later. It asserts, among other
+`test-vector-flow.mjs` is the one that matters most: it runs the editor's exact
+sequence — the one `App.jsx` orchestrates across `usePlanSource`,
+`features/scene/` and the libraries — with React taken out, because the unit
+tests prove each stage and the handoffs are where a Y-flip, a scale factor or a
+winding order goes wrong in a way that still looks plausible three stages later. It asserts, among other
 things, that the same plan in five different units gives identical rooms, that
 a room survives the round trip into pixel space and back to within a quarter
 inch, and that an exported DXF reads back through our own parser as the same
@@ -4929,8 +5021,10 @@ worth storing and what is derived**.
 /plans/:id           the editor — what used to be the whole app
 ```
 
-**The editor does not know Supabase exists.** `App.jsx` is three thousand lines
-of geometry and it stays a pure editor over a `File`: props in, callbacks out.
+**The editor does not know Supabase exists.** `App.jsx` and the feature
+controllers under it are thousands of lines of geometry and they stay a pure
+editor over a `File`: props in, callbacks out. See [How the source is laid
+out](#how-the-source-is-laid-out).
 `routes/Planner.jsx` is the only module that knows a plan has a row. That line is
 worth defending — the moment a `supabase.from(...)` appears inside a
 `useMemo` over the ceiling, the geometry stops being testable in Node, and
@@ -5564,7 +5658,8 @@ There are two levels of chunking now, and they answer different questions.
 on the floor and it has no opinion about where a band of plasterboard is set out;
 chunk a bedroom with the bed in it and the pieces on offer are whatever L-shaped
 remainders the mattress left. This is the same distinction `coveZonesFt` has
-always drawn in `App.jsx` — the room as *built* versus the room as *occupied* —
+always drawn in `lib/layout.js` — the room as *built* versus the room as
+*occupied* —
 promoted from a detail of the cove to the shape of the feature.
 
 The bed still cuts the grid. A chunk left as Standard is chunked again inside
@@ -6067,8 +6162,9 @@ each open the app twice a month.
 | **Starter** — $10/mo | 10,000 sq ft | 5 | monthly |
 | **Pro** — $30/mo | 50,000 sq ft | 20 | monthly |
 
-And the number was already there. `planAreaSqft` in App.jsx has been summing
-the outlines since the tracer existed — the sum of the *spaces*, not the sheet,
+And the number was already there. `planAreaSqft` — now in
+`features/scene/usePlanScene.js` — has been summing the outlines since the
+tracer existed — the sum of the *spaces*, not the sheet,
 so a title block and a site plan parked off to one side cost nothing and the
 same building drawn on A1 and A0 meters identically.
 
@@ -6095,7 +6191,8 @@ sub-pixel values and an outline brushed by a pointermove is not a new space.
 It is also the only version that is safe to call from four places, and there
 are four — the tracer's Light button, the panel's *Light all N outlines*, a
 single room confirmed by double-click, and `runPipeline` itself. They all go
-through one `claimSpaces` in App.jsx and the repeats are free by construction: a
+through one `claimSpaces`, in `features/lighting-planner/useLightingClaims.js`,
+and the repeats are free by construction: a
 double click, a re-run of the accent pass, a reload mid-pipeline all re-present
 fingerprints already in the ledger, and the unique index on
 `(owner, kind, fingerprint)` turns each into a no-op.

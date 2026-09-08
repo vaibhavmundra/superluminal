@@ -52,29 +52,17 @@ export function useGeometryGestures({
   const { draft: shapeDraft } = geometry.status;
   const { canFinishOpen } = geometry.panel;
 
-  /* --- THE PRESS THAT PICKED A SHAPE UP, REMEMBERED FOR ONE CLICK -----------
-     A REF AND NOT STATE, because nothing renders from it and it has to be
-     readable by the click that arrives after this render, not the one after the
-     next.
-     IT EXISTS BECAUSE POINTER CAPTURE MOVES THE CLICK. `shapePointerDown` stops
-     the press and captures the pointer to the <svg> so the drag survives leaving
-     the shape — and a captured pointer RETARGETS everything that follows,
-     including the click the browser synthesises on release, to the capture
-     element. So the click was landing on the canvas itself, where it reads as "a
-     press on empty plan" and clears the selection: the contextual bar appeared
-     on the press and vanished on the release, every time.
-     Stopping the click on the shape's own path cannot fix that — by then the
-     click is not being dispatched to that path at all. This is the record that
-     survives the retarget, and `onCanvasClick` consumes it.
-     RESET AT THE TOP OF `onZoneDown`, which is the invariant that keeps it from
-     going stale: any press that reaches the canvas directly is a press that did
-     NOT come off a shape, so a latch left over from a gesture that produced no
-     click cannot swallow somebody's next deselect. */
-  const shapeTook = useRef(false);
+  /* THE CLICK A CAPTURED POINTER RETARGETS IS NOT THIS FILE'S PROBLEM ANY MORE.
+     Every press below stops the event, and that is the whole of what any of
+     them has to do: the canvas answers "was this press on bare plan?" for
+     itself, in its own capture phase, and a press stopped here never reaches
+     the handler that would say yes. See `barePress` in App.jsx — it used to be
+     a flag each of these handlers raised by hand, and the ones that forgot were
+     the selections that flickered. */
 
   /* THE LAST PRESS ON A SHAPE, for telling a second one from a first.
      A REF AND A TIMESTAMP RATHER THAN `onDoubleClick`, and the reason is the
-     same one `shapeTook` exists for: the press captures the pointer to the
+     same one `barePress` exists for: the press captures the pointer to the
      <svg>, and a captured pointer retargets the compatibility mouse events that
      follow — so a `dblclick` handler on the shape's own path is a handler that
      may never be called. Two presses on the same shape inside the platform's
@@ -172,10 +160,10 @@ export function useGeometryGestures({
    * two handlers, which is how they come to disagree about whether the role is
    * stripped.
    *
-   * IT ALWAYS TAKES THE EVENT. `shapeTook` is what stops the click the browser
-   * synthesises on release being read as a press on bare plan, which would clear
+   * IT ALWAYS TAKES THE EVENT, which is also what stops the click the browser
+   * synthesises on release being read as a press on bare plan — that would clear
    * the selection and swap this bar for the space's own, forty milliseconds after
-   * the draft appeared.
+   * the draft appeared. See `barePress` in App.jsx.
    */
   const takeGeometry = (e, took) => {
     const { id: _id, role: _role, ...draft } = took;
@@ -191,7 +179,6 @@ export function useGeometryGestures({
     setHeldSrc(draft);
     setHeldOff({ side: 'on', ft: 1 });
     setShapeHeld(draft);
-    shapeTook.current = true;
     return true;
   };
 
@@ -212,7 +199,7 @@ export function useGeometryGestures({
        withholds the handler for exactly the same set (so the grab area is not
        even drawn); this is the local reading of it. */
     if (!canGrab(pressState)) return;
-    /* --- THE BAR IS OPEN, AND THIS SHAPE IS THE OTHER ROLE ------------------
+    /* --- THE BAR IS OPEN, AND THIS SHAPE IS ONE THE ROLE WOULD TAKE ---------
        THEN THE PRESS TAKES IT RATHER THAN SELECTING IT. This is the same act
        `shapeToolDown` performs; which handler gets it depends only on whether a
        primitive is armed, because an armed primitive is what makes the caller
@@ -222,7 +209,15 @@ export function useGeometryGestures({
        THE CUE HAS ALREADY SAID SO. `geomHover` lit this line and turned the
        cursor into a hand the moment the pointer reached it, so a press that
        borrows an outline instead of selecting it is signposted rather than
-       surprising. */
+       surprising.
+       AND `canTakeGeometry` IS THE WHOLE TEST, WHICH IT HAD TO BECOME. It read
+       as "any shape of another role", and the GUIDE bar is the one a plain click
+       on a space raises — so after any click on any room, every press on a cove
+       and every press on a track borrowed its outline instead of selecting it.
+       Selecting a drawn cove, double-pressing one for its grips and picking up a
+       magnetic track were all unreachable, while the modules clipped to that
+       track went on selecting normally. See that function: a guide takes
+       nothing. */
     if (!shapeTool) {
       const sh = ceilingShapes.find((q) => q.id === id);
       if (canTakeGeometry({ shape: sh, role: shapeRole, menuOpen: shapeMenuOn,
@@ -232,7 +227,6 @@ export function useGeometryGestures({
     }
     e.preventDefault();
     e.stopPropagation();
-    shapeTook.current = true;
     /* A SECOND PRESS ON THE SAME SHAPE ASKS FOR ITS DIMENSIONS. The first
        selected it; this one goes a level in. Any other shape's press cancels
        the grips — they belong to one shape and showing them on two would be
@@ -339,9 +333,10 @@ export function useGeometryGestures({
    */
   /* --- A DRAWN TRACK'S POINTS, PICKED UP AND MOVED --------------------------
      THE SAME SHAPE AS `shapeHandleDown` DIRECTLY BELOW, and deliberately: a
-     grip is a grip. The press selects the point, takes the pointer, and marks
-     `shapeTook` so the click it synthesises on release is not read as a press
-     on bare plan — which would close the path being edited on every drag.
+     grip is a grip. The press selects the point and takes the pointer; stopping
+     the event is also what keeps the click it synthesises on release from being
+     read as a press on bare plan, which would close the path being edited on
+     every drag. See `barePress` in App.jsx.
 
      THE POINT MOVES WITH ITS TWO LEGS. See `penMovePoint`: the corner goes
      where the pointer is and the two neighbours follow it onto their own axes,
@@ -350,7 +345,6 @@ export function useGeometryGestures({
   const trackPointDown = (e, id, i) => {
     if (e.button != null && e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
-    shapeTook.current = true;
     setTrackEditId(id); setSelTrackPt(i);
     svgRef.current?.setPointerCapture?.(e.pointerId);
     setTrackGrip({ id, i });
@@ -368,10 +362,10 @@ export function useGeometryGestures({
   const shapeHandleDown = (e, id, handle) => {
     if (e.button != null && e.button !== 0) return;
     e.preventDefault();
-    e.stopPropagation();
     // The click this press will synthesise lands on the <svg> once the pointer
-    // is captured — see `shapeTook` — and must not read as a press on bare plan.
-    shapeTook.current = true;
+    // is captured, and must not read as a press on bare plan — which the
+    // `stopPropagation` above is already the whole of. See `barePress`.
+    e.stopPropagation();
     setSel(select('shape', id)); setShapeEditId(id);
     svgRef.current?.setPointerCapture?.(e.pointerId);
     setShapeResize({ id, handle });
@@ -683,7 +677,6 @@ export function useGeometryGestures({
   };
 
   return {
-    shapeTook,
     shapePointerDown, shapeHandleDown, trackPointDown,
     shapeToolDown, trackPenPress, trackPenMove,
     spanMove, hoverMove, penMove, dragMove, spanUp, gestureUp,

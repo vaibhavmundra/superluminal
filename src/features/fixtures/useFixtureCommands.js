@@ -19,12 +19,14 @@
 import { useCallback, useEffect } from 'react';
 import { clear, idOf } from '../../lib/selection.js';
 import { clampWatts, nearestBeam, arrayQuanta, quantiseCount } from '../../lib/cob.js';
-import { pointInPolygon } from '../../lib/geometry.js';
 import { outlineFt as shapeOutlineFt, isOpen as shapeIsOpen,
          isTrack as shapeIsTrack } from '../../lib/ceilingShapes.js';
 import { MODULE_BY_ID, placeModule, planDiffusers } from '../../lib/magTrack.js';
 import { netPerUnit, FAMILY_BY_ID } from '../../lib/lumens.js';
-import { autoplaceCobs, draftCount, reconcileCobSpecs } from './fixtureRules.js';
+import { absorbAutoplaceSpots, autoplaceCobs, draftCount,
+         gridSpotsOnTrack, gridSpotsOwnedByTrack,
+         lightKey, roomForTrackPath,
+         reconcileCobSpecs } from './fixtureRules.js';
 
 export default function useFixtureCommands({
   state, fixtures, docActions, rooms, pxPerFt, readOnly,
@@ -36,14 +38,39 @@ export default function useFixtureCommands({
     setArrayDrag, setModuleDrag, setFanSweepMm,
   } = state;
   const cobBasisFor = fixtures.cob.basisFor;
+  const magTracksPx = fixtures.tracks.runsPx;
+  const trackModulesPx = fixtures.tracks.modulesPx;
 
   /** FILL A SPACE'S GRID CELLS WITH LAMPS — see `autoplaceCobs`, which carries
    *  the whole rule including the two pieces of ceiling that get no lamp. */
   const autoplaceIn = useCallback((room) => {
     if (!room || !(pxPerFt > 0)) return;
-    docActions.replaceCobs(autoplaceCobs({
-      room, list: manualCobs, pxPerFt, basis: cobBasisFor(room) }));
-  }, [pxPerFt, cobBasisFor, manualCobs, docActions]);
+    const ownedCells = new Set(trackFixtures.flatMap((f) => f.gridCells ?? []));
+    /* A HAND-PLACED TRACK SPOT MAY PREDATE CELL OWNERSHIP. Its physical cell is
+       still occupied, so the checkbox must not generate another fitting there. */
+    for (const mod of trackModulesPx) {
+      if (mod.kind !== 'spot' || mod.roomId !== room.id) continue;
+      const cell = (room.plan.gridCellsPx ?? []).find((q) =>
+        mod.x >= q.x0 && mod.x <= q.x1 && mod.y >= q.y0 && mod.y <= q.y1);
+      if (cell) ownedCells.add(lightKey(room.id, cell.id));
+    }
+    const filled = autoplaceCobs({
+      room, list: manualCobs, pxPerFt, basis: cobBasisFor(room),
+      ownedCells,
+    });
+    const added = filled.slice(manualCobs.length);
+    const absorbed = absorbAutoplaceSpots({
+      spots: added, tracks: magTracksPx, fixtures: trackFixtures,
+      pxPerFt, roomId: room.id,
+    });
+    docActions.replaceCobs([...manualCobs, ...absorbed.spots]);
+    if (absorbed.modules.length) {
+      docActions.addTrackFixtures(absorbed.modules.map((mod, i) => placeModule({
+        ...mod, kind: 'spot', seq: `g${trackFixtures.length + i}`,
+      })));
+    }
+  }, [pxPerFt, cobBasisFor, manualCobs, trackFixtures, magTracksPx,
+      trackModulesPx, docActions]);
 
   /**
    * KEEP THE ARRAY — the tick on the bar, and the only way one gets onto the
@@ -138,7 +165,7 @@ export default function useFixtureCommands({
    * THE ROW'S KEY IS THE FITTING. It was `<trackId>|<kind>` and then
    * `<trackId>|<kind>|<watts>`, and both were groups — so a chip moved four
    * corners together and there was no way to reach one of them. A module is a
-   * thing you point at and specify on its own. See `roomFixtureGroups`.
+   * thing you point at and specify on its own. See `fixtureGroups`.
    *
    * WHY THIS HAD TO EXIST. The row reads its wattage off the fittings — `row.watts
    * = own[0].watts` — and `analyseSpace` believes a group that states its own
@@ -267,16 +294,12 @@ export default function useFixtureCommands({
   }, [docActions]);
 
   /**
-   * SPANNING A TRACK ALSO FILLS IT — the diffuser allocator.
+   * SPANNING A TRACK ALSO FILLS IT — the automatic module allocator.
    *
-   * WHY IT RUNS ON THE COMMIT AND NOT ON A BUTTON. Every other module on a run
-   * is placed by hand because every other module is AIMED: a spot goes over the
-   * console because that is where the console is. A diffuser is not aimed at
-   * anything — it is ambient light — and the only question worth asking about
-   * how many a run carries is the one the Analysis panel is already asking about
-   * the room. So the moment a run exists, that question has an answer, and making
-   * somebody press a second button to get it would be making them ask for the
-   * obvious.
+   * WHY IT RUNS ON THE COMMIT AND NOT ON A BUTTON. A diffuser answers the
+   * room's ambient shortfall. If there is no such shortfall, the hidden grid
+   * still supplies the intended spot positions and those are projected onto the
+   * rail. The moment a run exists both questions have an answer.
    *
    * THE COUNT IS THE PANEL'S OWN ARITHMETIC RUN BACKWARDS. `spaceAnalysis` says
    * what the space is owed and what it is getting; `netPerUnit` says what one
@@ -292,10 +315,11 @@ export default function useFixtureCommands({
    * seven-foot gap — are in feet, and a shape is held in the plan's own feet
    * anyway, so there is no conversion to get wrong.
    *
-   * A ROOM IS REQUIRED AND A BRIGHT ONE GETS NOTHING. A run drawn over no lit
+   * A ROOM IS REQUIRED. A run drawn over no lit
    * space has no shortfall to answer and no reflectances to answer it against;
-   * a run in a room already over its criterion gets a bare profile, which is a
-   * perfectly ordinary thing to want. Either way the spots still go on by hand.
+   * it remains a bare profile. When ambient light is still owed, diffusers
+   * answer that shortfall. When it is not, the room's normal grid is projected
+   * onto the profile as magnetic track spots instead of leaving the rail empty.
    *
    * IT IS HANDED TO THE GEOMETRY FEATURE AND CALLED BY ITS COMMIT. What a run is
    * filled WITH is this domain's question, not the geometry's — see the head of
@@ -305,10 +329,9 @@ export default function useFixtureCommands({
     if (!shapeIsTrack(shape) || !(pxPerFt > 0)) return;
     const pts = shapeOutlineFt(shape);
     if (pts.length < 2) return;
-    const home = rooms.find((r) => pointInPolygon(
-      { x: shape.x * pxPerFt, y: shape.y * pxPerFt }, r.geo.polygonPx));
-    if (!home?.plan?.ok) return;
     const closed = !shapeIsOpen(shape);
+    const home = roomForTrackPath(rooms, pts, { closed, pxPerFt });
+    if (!home?.plan?.ok) return;
     const a = spaceAnalysis(home);
     /* THE COUNT AND THE WATTAGE ARE SOLVED TOGETHER, and `netFor` is the panel's
        own arithmetic handed to the solver as a function of wattage — see
@@ -324,38 +347,78 @@ export default function useFixtureCommands({
        products with two ranges — see lumens.js. */
     const fam = MODULE_BY_ID.diffuser.family;
     const perW = netPerUnit(fam, 1, { ref: a.ref, lumensPerWatt: a.lumensPerWatt });
-    const plan = perW > 0 ? planDiffusers(pts, {
-      closed, needW: a.shortfall / perW,
-      /* --- THE CATALOGUE, OFF THE FAMILY, AND THE SAME ARRAY THE CHIPS USE ---
-         WHAT A DIFFUSER IS SOLD AT COMES FROM UPSTREAM AND NOT FROM THE
-         ALLOCATOR. `FAMILY_BY_ID.track_diffuser.watts` is the one store — see
-         `TRACK_DIFFUSER_WATTS` in lumens.js — and it is also exactly what
-         `analyseSpace` copies onto the row as `wattOptions` for SpaceAnalysis to
-         draw a chip per entry. Read here through the FAMILY rather than by
-         importing the constant, so the allocator and the panel look at the same
-         array object: the allocator cannot pick a wattage the chips cannot show,
-         and a brand's catalogue swapped into the family is followed by both
-         without either being touched.
-         IT IS PASSED AND NOT DEFAULTED. `planDiffusers` has no built-in list —
-         see its note — so a caller that forgets this places nothing rather than
-         quietly solving against a range nobody in this project sells. */
-      watts: FAMILY_BY_ID[fam]?.watts,
-    }) : [];
+    const watts = FAMILY_BY_ID[fam]?.watts;
+    const needsAmbient = a.shortfall > 0;
+    let plan = [];
+    if (needsAmbient && perW > 0) {
+      plan = planDiffusers(pts, {
+        closed, needW: a.shortfall / perW,
+        /* --- THE CATALOGUE, OFF THE FAMILY, AND THE SAME ARRAY THE CHIPS USE ---
+           WHAT A DIFFUSER IS SOLD AT COMES FROM UPSTREAM AND NOT FROM THE
+           ALLOCATOR. `FAMILY_BY_ID.track_diffuser.watts` is the one store — see
+           `TRACK_DIFFUSER_WATTS` in lumens.js — and it is also exactly what
+           `analyseSpace` copies onto the row as `wattOptions` for SpaceAnalysis to
+           draw a chip per entry. Read here through the FAMILY rather than by
+           importing the constant, so the allocator and the panel look at the same
+           array object: the allocator cannot pick a wattage the chips cannot show,
+           and a brand's catalogue swapped into the family is followed by both
+           without either being touched.
+           IT IS PASSED AND NOT DEFAULTED. `planDiffusers` has no built-in list —
+           see its note — so a caller that forgets this places nothing rather than
+           quietly solving against a range nobody in this project sells. */
+        watts,
+      });
+    } else if (!needsAmbient) {
+      /* USE THE PLANNER'S FITTINGS, NOT ITS CELLS. A large grid fitting may
+         cover two cells; treating every cell as a spot is how a four-light
+         answer became seven heads on the rail. */
+      const cells = new Map((home.plan.gridCellsPx ?? []).map((cell) => [cell.id, cell]));
+      const grid = (home.plan.gridLightsPx ?? []).map((light) => {
+        const ids = light.cells ?? (light.cell?.id != null ? [light.cell.id] : []);
+        return {
+          xFt: light.x / pxPerFt, yFt: light.y / pxPerFt,
+          gridCells: ids.map((id) => lightKey(home.id, id)),
+          cellsFt: ids.map((id) => cells.get(id)).filter(Boolean).map((cell) => ({
+            x0: cell.x0 / pxPerFt, y0: cell.y0 / pxPerFt,
+            x1: cell.x1 / pxPerFt, y1: cell.y1 / pxPerFt,
+          })),
+        };
+      });
+      const owned = gridSpotsOwnedByTrack(pts, grid, { closed });
+      plan = gridSpotsOnTrack(pts, owned, {
+        closed, watts: FAMILY_BY_ID[MODULE_BY_ID.spot.family]?.watts,
+      });
+    }
     if (!plan.length) return;
+    /* IF AUTOPLACE WAS ALREADY ON, TAKE BACK ONLY ITS LAMPS IN CELLS THE NEW
+       TRACK NOW OWNS. A dragged or re-specified lamp has `auto: false` and is
+       somebody's decision, so it is never removed here. */
+    const claimed = new Set(plan.flatMap((mod) => mod.gridCells ?? []));
+    if (claimed.size) {
+      const nextCobs = manualCobs.filter((cob) => {
+        if (!cob.auto || cob.roomId !== home.id) return true;
+        const x = cob.xFt * pxPerFt, y = cob.yFt * pxPerFt;
+        const cell = (home.plan.gridCellsPx ?? []).find((q) =>
+          x >= q.x0 && x <= q.x1 && y >= q.y0 && y <= q.y1);
+        return !cell || !claimed.has(lightKey(home.id, cell.id));
+      });
+      if (nextCobs.length !== manualCobs.length) docActions.replaceCobs(nextCobs);
+    }
     /* EACH MODULE CARRIES THE WATTAGE ITS OWN SLOT WAS GIVEN, which is the whole
        point of the corner-first rule: a run comes out as four 5 W at the corners
        and a 10 W in the middle of a rail, and those are two figures on one
        profile. The Analysis panel groups by wattage for the same reason — see
-       `roomFixtureGroups`. */
+       `fixtureGroups`. */
     docActions.addTrackFixtures(plan.map((mod, i) => placeModule({
-      trackId: shape.id, kind: 'diffuser', u: mod.u, watts: mod.watts,
+      trackId: shape.id, kind: needsAmbient ? 'diffuser' : 'spot',
+      u: mod.u, watts: mod.watts, gridCells: mod.gridCells,
       seq: `a${i}` })));
     /* AND THE PANEL GOES TO THE SPACE, because the two figures at the top of it
        have just moved by the whole of what the run adds. A tool that changed a
        room's verdict silently would be the one act on this drawing worth
        watching, performed off screen. */
     docActions.setFocusId(home.id); setOptionPick(null); docActions.setView('spaces');
-  }, [docActions, pxPerFt, rooms, spaceAnalysis, setOptionPick]);
+  }, [docActions, manualCobs, pxPerFt, rooms, spaceAnalysis, setOptionPick]);
 
   return {
     autoplace: { fill: autoplaceIn, set: setAutoplace },

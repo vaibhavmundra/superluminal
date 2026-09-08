@@ -256,7 +256,8 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
                     is a STATE of the space rather than an act: switching it off
                     takes back the lamps that are still the rule's answer, and
                     leaves alone every one that has since been moved or
-                    re-specified. See `autoplaceIn` in App.jsx. */
+                    re-specified. See `autoplaceIn` in
+                    features/fixtures/useFixtureCommands.js. */
                 <label className="flex items-center gap-1.5 text-[10.5px] text-muted
                   cursor-pointer select-none shrink-0">
                   <input className="lp-check" type="checkbox" disabled={disabled}

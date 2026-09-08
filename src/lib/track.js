@@ -62,7 +62,8 @@
 // is the claim this file makes to anybody flipping a chunk to Track. A
 // directional spot has no such row to keep step with; it is aimed at one object
 // and its position along the profile is nobody else's business, so the spot
-// pass turns the dodge on. See App.jsx's second absorption pass.
+// pass turns the dodge on. See the second absorption pass in lib/layout.js,
+// which features/scene/usePlanScene.js runs.
 //
 // HOW CLOSE IS TOO CLOSE IS THE TWO BODIES' BUSINESS, and the answer is that
 // they may touch but not overlap. It is worth stating up here because getting it
@@ -1346,7 +1347,8 @@ export function planDrawnTrack(ptsFt, lights = [], opt = {}, site = null, meta =
  * A DRAWN TRACK'S RUNS, CUT DOWN TO ONE ROOM.
  *
  * A path is clicked out over the whole drawing and every space it crosses is
- * offered it — see the drawn-track pass in App.jsx — so each space has to be
+ * offered it — see the drawn-track pass in lib/layout.js, which
+ * features/scene/usePlanScene.js runs — so each space has to be
  * told which stretch of profile is actually over its ceiling. Without this a
  * run drawn through three rooms would be billed at full length three times, and
  * the drawing would carry three copies of the same line.

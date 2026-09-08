@@ -574,7 +574,7 @@ export default function App({
     cobOpen, setCobOpen, cobMode, setCobMode,
     cobDraft, setCobDraft, cobOnce, setCobOnce, cobStanding, setCobStanding,
     cobRun, cobLock,
-    arrayDrag, trackMode, setTrackMode, moduleDrag, lightDrag, lightMoved,
+    arrayDrag, trackMode, setTrackMode, moduleDrag, lightDrag,
     fanSweepMm, setObjType,
     /* THE FOUR RESETS. `resetForNewPlan` calls three of them and `disarmAdd`
        the other two, each where the statements they replace stood, so the
@@ -1210,6 +1210,37 @@ export default function App({
   // refactors and then gets wired to the wrong render.
   const svgRef = useRef(null);
   const stageRef = useRef(null);
+
+  /* --- WAS THIS CLICK'S PRESS A PRESS ON BARE PLAN? -------------------------
+     ONE LATCH, SET BY THE CANVAS ITSELF, AND IT REPLACES A RULE EVERY HANDLER
+     HAD TO REMEMBER. `onCanvasClick` selects a space or drops the selection,
+     and the browser synthesises a click after EVERY press on this sheet — so
+     without an answer to this question, picking anything up also let go of it
+     forty milliseconds later. The bar appeared on the press and vanished on the
+     release, which is what "the selection comes for a sec and goes away" is.
+
+     WHY THE CLICK CANNOT SIMPLY BE STOPPED ON THE THING THAT WAS PRESSED. Nine
+     of the ten drags capture the pointer on the <svg> — they have to, or a
+     gesture that leaves the fitting it started on never ends — and a captured
+     pointer RETARGETS everything that follows, the synthesised click included,
+     to the capture element. By the time that click exists it is not being
+     dispatched to the fitting at all, so no handler on the fitting can stop it.
+
+     IT IS OPT-OUT AND IT USED TO BE OPT-IN, AND THAT IS THE WHOLE FIX. Every
+     press handler was expected to raise a flag saying "this press is spoken
+     for"; three of the eleven did, and the eight that did not were the eight
+     selections that flickered. Same class of bug as the hand-copied press
+     guards lib/pressOwner.js exists to end, and the same answer: state the rule
+     once, where it cannot be forgotten. The capture-phase handler clears the
+     latch for EVERY press on this canvas, and only a press that reaches the
+     <svg>'s own bubble handler — which means no control on the drawing stopped
+     it, which means it landed on bare plan — sets it. A twelfth selectable
+     thing needs to do nothing at all to be safe.
+
+     CLEARED IN THE CAPTURE PHASE RATHER THAN CONSUMED ON THE WAY OUT, so a
+     press that produces no click at all (a drag cancelled, a release off the
+     window) cannot leave the latch standing for somebody's next press. */
+  const barePress = useRef(false);
 
   // Source loading calls the recognition reset, while recognition consumes the
   // resolved source. A ref bridges that callback cycle without copying state or
@@ -2704,7 +2735,6 @@ export default function App({
     rooms, pxPerFt, ceilingShapes, roomAt, svgPoint, svgRef, pressState, addTool,
     docActions, setSel, setGuides, snapTargets, snapTol,
   });
-  const { shapeTook } = geometryPointer;
 
   /**
    * THE SAME SNAP ENGINE THE TRACER USES, pointed at this screen's geometry.
@@ -2802,7 +2832,7 @@ export default function App({
 
   /* --- THE FIVE DRAGS AND THE PRESSES THAT PLACE ---------------------------
      THE FITTING FEATURE'S FIFTH AND LAST CALL SITE, AND IT IS THE LOWEST
-     BECAUSE OF WHAT IT NEEDS: `svgPoint`, `svgRef`, `pressState`, `shapeTook`,
+     BECAUSE OF WHAT IT NEEDS: `svgPoint`, `svgRef`, `pressState`,
      the geometry's two hit tests, `snapTargets` and `arrayStandDown` are all
      defined above this line and below the passes, and a hook's arguments are
      evaluated during render. The room editor above it is a second call into its
@@ -2824,7 +2854,7 @@ export default function App({
     state: fixtureState, fixtures, cobTool,
     rooms, pxPerFt, zoom, opt, source, addTool, selAccId, overRoom,
     manualCobs, cobArrays, trackFixtures, ceilingObjs,
-    svgPoint, svgRef, pressState, shapeTook,
+    svgPoint, svgRef, pressState,
     roomAt, insideAnyRoom, snapTargets, snapTol,
     arrayOutline, shapeAtPointer, geomUnder, geomHover, setGeomHover,
     clearShapeEdit, standDown: arrayStandDown,
@@ -3407,31 +3437,33 @@ export default function App({
     // the ONLY way to clear a selected object never ran. You could select a fan
     // and then not let go of it.
     //
-    // IT WAS ALSO ALREADY REDUNDANT, which is the tell. The note below says it:
-    // everything interactive on the plan calls `stopPropagation` on pointerdown,
-    // `objPointerDown` included, so a click on an object cannot arrive here in
-    // the first place. `armed` and `addTool` stay — those really are gestures
-    // waiting to happen, and they own the next click.
+    // IT WAS ALSO ALREADY REDUNDANT, which is the tell. Everything interactive
+    // on the plan calls `stopPropagation` on pointerdown, `objPointerDown`
+    // included, so a press on an object never reaches the canvas — which is
+    // exactly what `barePress` below reads, and it is the whole of why a click
+    // on an object cannot arrive here. `armed` and `addTool` stay: those really
+    // are gestures waiting to happen, and they own the next click.
+    /* THE PRESS THIS CLICK CAME OFF WAS SPOKEN FOR, so the click is not one on
+       the plan however much it looks like one by the time it gets here — see
+       `barePress`, which is the one place that question is answered. Consumed
+       outright rather than merely skipping the deselect: picking a cove up must
+       not also yank the panel to whichever space it is drawn over, and letting
+       go of a light must not re-select the room under it.
+       FIRST, AHEAD OF EVERY OTHER GUARD, because it is the only one that is
+       about the GESTURE rather than about the state the canvas is in. */
+    if (!barePress.current) return;
+    barePress.current = false;
     if (zoneMode || !source || armed || addTool) return;
-    /* AND NOTHING WHILE A SHAPE IS BEING DRAWN. `shapeToolDown` already
-       stopped the press, but the browser synthesises a click afterwards and it
-       arrives here — so without this, dropping the first point of a pen path
-       would also select the space under it and yank the panel to another room.
+    /* AND NOTHING WHILE A SHAPE IS BEING DRAWN. That press DID reach the canvas
+       — a primitive draws on bare plan — so `barePress` above is true and the
+       click the browser synthesises afterwards arrives here. Without this,
+       dropping the first point of a pen path would also select the space under
+       it and yank the panel to another room.
        LETTING GO OF A SELECTED SHAPE IS THE OTHER HALF, and it happens here
        rather than in a branch of its own: a click on empty plan is how every
        other selection on this canvas is cleared, and a shape you cannot let go
        of is a shape whose ring reads as part of the drawing. */
     if (geometry.status.menuOn && geometry.status.tool) return;
-    /* THE CLICK THAT CAME OFF A SHAPE IS NOT A CLICK ON THE PLAN, however much
-       it looks like one by the time it gets here — see `shapeTook`. It is
-       consumed outright rather than merely skipping the deselect: picking a
-       cove up must not also yank the panel to whichever space it is drawn over.
-       LETTING GO IS THE OTHER HALF, and it happens on any press that really was
-       on bare plan, which is how every other selection on this canvas is
-       cleared. */
-    if (shapeTook.current) { shapeTook.current = false; return; }
-    // ...and the click at the end of a light's drag is not one either.
-    if (lightMoved.current) { lightMoved.current = false; return; }
     /* AND EVERYTHING LETS GO. A press that really was on bare plan is how every
        selection on this canvas is cleared — the shape, the array whose dashed
        setting-out line would otherwise stay on the sheet as a drawn line (see
@@ -3441,8 +3473,8 @@ export default function App({
     if (geometry.shapes.editId) setShapeEditId(null);
     // AND THE TRACK'S POINTS, which are a selection like any other: a path left
     // open with its grips on the drawing reads as part of the drawing. A press
-    // that came off a grip never reaches here — see `shapeTook` above, which
-    // the grip sets for exactly this.
+    // that came off a grip never reaches here — the grip stopped it, so
+    // `barePress` above is false and this function has already returned.
     if (geometry.tracks.editId) closeTrackEdit();
     // THE SCALE IS SETTLED BY THE TIME WE ARE HERE. Measuring belongs to the
     // tracer screen, where the scale is actually being decided; leaving the
@@ -3727,11 +3759,17 @@ export default function App({
   }, [panning]);
 
 
+  /* THE CAPTURE PHASE, AND IT IS THE HALF THAT CANNOT BE FORGOTTEN. It runs
+     for EVERY press on this sheet before any control on the drawing has seen
+     it, so it is the one place that can honestly say "we do not know yet". See
+     `barePress`. */
+  const onZoneDownCapture = () => { barePress.current = false; };
+
   const onZoneDown = (e) => {
-    // A PRESS THAT REACHES THE CANVAS CAME OFF NEITHER A SHAPE NOR A LIGHT.
-    // See `shapeTook` and `lightMoved`.
-    shapeTook.current = false;
-    lightMoved.current = false;
+    /* ...AND THE BUBBLE PHASE IS THE ANSWER. A press that got this far is a
+       press no control on the drawing stopped, which is what "on bare plan"
+       means — see `barePress`. */
+    barePress.current = true;
     // NOT THE MIDDLE BUTTON. It is the pan, and every gesture on this canvas
     // has to say so — a middle press that reaches a drag handler starts a drag
     // that no mouseup will ever finish, because the pan swallows the release.
@@ -5339,6 +5377,11 @@ export default function App({
               zones={drawnZones} draftZone={readOnly ? null : draftZone}
               zoneMode={!readOnly && zoneMode}
               onZoneDown={readOnly ? null : onZoneDown}
+              /* AND ITS CAPTURE-PHASE HALF, WHICH IS NOT WITHHELD FOR A VIEWER.
+                 It clears a latch and nothing else — see `barePress` — and a
+                 sheet whose presses never clear it is a sheet whose first click
+                 is read against whatever the last one left behind. */
+              onZoneDownCapture={onZoneDownCapture}
               onZoneMove={readOnly ? null : onZoneMove}
               onZoneUp={readOnly ? null : onZoneUp}
               accents={accentZonesPx} switchboards={switchboardsPx} onFixture={setTip}
@@ -6745,7 +6788,7 @@ export default function App({
               /* THE AMBIENT GRID, FILLED OR NOT. Per space, because it is a
                  decision about one ceiling: a flat can have its bedrooms laid
                  out automatically and its living room by hand. */
-              autoplace={lighting.status.autoplaceIn(openRoom.id)}
+              autoplace={lighting.status.autoplaceOn(openRoom.id)}
               onAutoplace={readOnly ? null
                 : (on) => lighting.commands.setAutoplace(openRoom.id, on)} />
           ) : (

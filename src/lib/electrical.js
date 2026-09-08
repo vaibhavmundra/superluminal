@@ -1120,7 +1120,8 @@ export function boardUnder(p, boards = [], { pxPerFt = 0, slopFt = 0.5 } = {}) {
  *     rather than silently presenting a dragged position as a derivation; and
  *   · the pass that decides which bay adopts which plate reads the RULE
  *     position, so dragging a board does not re-cut the switching of the room
- *     underneath it. See `asDrawn` and the note on `ruleBoardsFor` in App.jsx.
+ *     underneath it. See `asDrawn` and the note on `ruleBoardsFor` in
+ *     features/electrical/boardRules.js.
  *
  * A REFUSED BOARD IS NOT MOVABLE. It has no position to override — the same
  * argument accentPlace's `slideSconceTo` makes — and letting a drag give it one
@@ -1944,7 +1945,8 @@ export function planChunkBoards({
      plate that then refuses to move is worse than no drag at all.
      THE MOVES ARE APPLIED TO WHAT THIS PASS MAKES AND NOT TO WHAT IT IS GIVEN.
      `boards` arrives already at its rule positions on purpose — see
-     `ruleBoardsFor` in App.jsx — because this pass decides which bay adopts
+     `ruleBoardsFor` in features/electrical/boardRules.js — because this pass
+     decides which bay adopts
      which plate by which plate stands on the bay's own walls, and that decision
      must not follow a drag. */
   moves = {}, opts = {},

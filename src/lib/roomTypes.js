@@ -58,7 +58,8 @@ const FULL = { accent: true, spots: true };
 // failed detection, not an unusual bedroom, and that is exactly what makes this
 // flag useful: it is the only place in the app that knows the difference between
 // "we found nothing" and "we found nothing and that is impossible". The bed
-// fallback in App.jsx reads it and asks again, room by room, on a crop.
+// fallback in features/lighting-planner/usePlanPipeline.js reads it and asks
+// again, room by room, on a crop.
 //
 // Held here rather than as a list of ids in the pipeline for the reason in this
 // file's header: the vocabulary and the rules that act on it cannot be allowed

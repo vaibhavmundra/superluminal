@@ -89,7 +89,8 @@ import { FAMILY_BY_ID } from './lumens.js';
  * is bought as (see boq.js), and a hand-clipped one is the same product. It
  * takes `cob`'s distribution because that is what a recessed lamp and a track
  * spot have in common: a cone pointing down. Same argument the three COB layers
- * make about being one family — see `roomFixtureGroups` in App.jsx.
+ * make about being one family — see `fixtureGroups` in
+ * features/lighting-planner/lightingRules.js.
  *
  * --- THE WALL WASHER IS DECLARED AND NOT BUILT -----------------------------
  *
@@ -706,11 +707,13 @@ export function planDiffusers(pts, { closed = false, needW = 0, watts,
  * what makes them survive the catalogue being retuned under a finished plan —
  * the same rule `placeCob` follows. The default comes from the module.
  */
-export function placeModule({ trackId, kind, u, watts = null, beam = null, seq = 0 }) {
+export function placeModule({ trackId, kind, u, watts = null, beam = null,
+                              gridCells = null, seq = 0 }) {
   const m = MODULE_BY_ID[kind] ?? MODULE_BY_ID.spot;
   return {
     id: newModuleId(seq),
     trackId, kind: m.id, u: clampU(u),
     watts: watts ?? moduleWatts(m.id), beam: beam ?? m.beam,
+    ...(gridCells?.length ? { gridCells: [...gridCells] } : {}),
   };
 }

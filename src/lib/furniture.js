@@ -595,7 +595,8 @@ export function rasterizeForDetection(source, opts = {}) {
 
 /**
  * One call for either kind of plan. This is the seam that lets the detection
- * effect in App.jsx stop caring whether it is looking at a photo or a DXF.
+ * effect in features/recognition/useFurnitureRecognition.js stop caring whether
+ * it is looking at a photo or a DXF.
  */
 export function snapshotForDetection(source, img, opts = {}) {
   if (source?.kind === 'vector') return rasterizeForDetection(source, opts);

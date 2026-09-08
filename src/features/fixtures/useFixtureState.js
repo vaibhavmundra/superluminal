@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { idOf, idsOf, selectMany } from '../../lib/selection.js';
 
 /**
@@ -205,17 +205,17 @@ export default function useFixtureState({ sel, setSel }) {
      store is keyed on, flattened, because a selection is one value. */
   const selLightId = idOf(sel, 'light');
   const [lightDrag, setLightDrag] = useState(null);
-  /* THE DRAG THAT ACTUALLY MOVED SOMETHING, remembered for one click.
-     A press on a light does NOT capture the pointer (see `lightPointerDown`),
-     so a release that lands back on the fitting produces a click on the fitting
-     — which opens the pill, exactly as it always did. A release that lands
-     anywhere ELSE produces a click on the canvas, and the canvas reads that as
-     "a press on empty plan" and drops the selection: you would move a light and
-     watch its band vanish at the moment you let go.
-     So the drop records that it happened, and `onCanvasClick` consumes it.
-     Cleared by the next press either way, so a gesture that produced no click
-     cannot swallow somebody's next deselect. */
-  const lightMoved = useRef(false);
+  /* NOTHING HERE REMEMBERS WHETHER THE DRAG MOVED, AND A REF USED TO. A press
+     on a light does NOT capture the pointer (see `lightPointerDown`), so a
+     release that lands back on the fitting produces a click on the fitting —
+     which opens the pill, exactly as it always did — and a release that lands
+     anywhere ELSE produces a click on the canvas. That second click was being
+     read as "a press on empty plan" and dropping the selection, so the drop
+     recorded that it had happened and `onCanvasClick` consumed the flag.
+     THE CANVAS ANSWERS IT NOW, FOR EVERY GESTURE AT ONCE. `lightPointerDown`
+     stops the press, so the press never reaches the <svg>'s own handler, so
+     `barePress` in App.jsx is false and the click is not one on the plan —
+     however far the pointer travelled before it was let go. */
 
   /* --- THE FOUR RESETS, AND WHY THEY ARE FOUR ------------------------------
      `resetForNewPlan` and `disarmAdd` do NOT run these statements together:
@@ -271,7 +271,7 @@ export default function useFixtureState({ sel, setSel }) {
     cobDraftArray, setCobDraftArray,
     selArrayId, arrayDrag, setArrayDrag,
     trackMode, setTrackMode, selModuleId, moduleDrag, setModuleDrag,
-    selLightId, lightDrag, setLightDrag, lightMoved,
+    selLightId, lightDrag, setLightDrag,
     reset,
   };
 }

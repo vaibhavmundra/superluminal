@@ -135,8 +135,13 @@ export default function useLightingPlanner({
       running: !!run.prep,
       /* WHICH CEILINGS ARE FILLING THEIR OWN GRID. Per space, because it is a
          decision about one ceiling: a flat can have its bedrooms laid out
-         automatically and its living room by hand. */
-      autoplaceIn: (roomId) => autoSpots.includes(roomId),
+         automatically and its living room by hand.
+         `autoplaceOn` AND NOT `autoplaceIn`, WHICH IS A DIFFERENT FUNCTION AND
+         STILL EXISTS. features/fixtures/'s `autoplace.fill` is `autoplaceIn` —
+         it FILLS a ceiling's empty cells — and this one only ASKS whether a
+         ceiling is switched on. Two names one letter apart for a placer and a
+         predicate is how the wrong one gets called. */
+      autoplaceOn: (roomId) => autoSpots.includes(roomId),
     },
     /* A FRESH SHEET TAKES THE RUN'S SCREEN DOWN — the two statements
        `resetForNewPlan` used to make, in the same order. Everything else this

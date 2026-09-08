@@ -44,10 +44,10 @@ across four.
 | # | Call | Where it stands, and why |
 | --- | --- | --- |
 | 1 | `useFixtureState({ sel, setSel })` | Beside the state it replaces, ~540 lines in. `pressState` — the canvas's one arbitration table, `lib/pressOwner.js` — carries `armed`, and `resetForNewPlan` calls three of its resets while `disarmAdd` calls the other two. Both are built above anything that could give this feature its rooms. |
-| 2 | `useFixtures(…)` | Exactly where the track and array projection block stood, above `roomFixtureGroups` and the BOQ. Both name `tracks.modulesPx` and `arrays.lampsPx`, and a `useMemo` evaluates its dependency array on every render, so a reader above its own `const` is a temporal dead zone and a blank screen. |
+| 2 | `useFixtures(…)` | Exactly where the track and array projection block stood, above the lighting analysis and the BOQ it builds. Both name `tracks.modulesPx` and `arrays.lampsPx`, and a `useMemo` evaluates its dependency array on every render, so a reader above its own `const` is a temporal dead zone and a blank screen. |
 | 3 | `useFixtureCommands(…)` | Where `autoplaceIn` stood — the highest point at which everything exists. The basis pair comes from call 2; `spaceAnalysis`, which the diffuser allocator runs backwards, is two hundred lines above. It has to be ABOVE `useGeometryCommands`, four hundred lines down, because `allocateOnTrack` is handed to it. |
 | 4 | `useCobTool(…)` | Where `manualCobsPx` stood, directly below `roomAt`. Which space the pointer is over decides the recommendation, the wall band and the bed warning, and that hit test is App's — the doors, the accents, the strip and the ceiling objects all ask it. |
-| 5 | `useFixtureGestures(…)` | Below `snapTargets`, `snapTol`, `svgPoint`, `pressState`, `shapeTook` and `arrayStandDown`. Every one of the five drags is a `useDrag` and every press is a plain function, so nothing between the earlier call sites and this one calls any of them. |
+| 5 | `useFixtureGestures(…)` | Below `snapTargets`, `snapTol`, `svgPoint`, `pressState` and `arrayStandDown`. Every one of the five drags is a `useDrag` and every press is a plain function, so nothing between the earlier call sites and this one calls any of them. |
 
 ## Public interface
 
@@ -65,7 +65,7 @@ Everything else it returns is the session's own working state, listed member by
 member rather than spread so a reader can see exactly what the session is:
 `objType`, `fanSweepMm`, `objDrag`, `objMode`, `armed`, `ghost`, the six COB
 drawer slots, `cobRun`, `cobLock`, `cobAt`, `cobDraftArray`, `arrayDrag`,
-`trackMode`, `moduleDrag`, `lightDrag` and `lightMoved`, each with its setter.
+`trackMode`, `moduleDrag` and `lightDrag`, each with its setter.
 
 `reset` has five members and not one because `resetForNewPlan` and `disarmAdd`
 did not run those statements together: the objects went in one block with
@@ -128,7 +128,7 @@ Inputs: `state`, `manualCobs`, `pxPerFt`, `ceilingMmFor`, `zoom`, `roomAt`,
 
 Inputs: `state`, `fixtures`, `cobTool`, `rooms`, `pxPerFt`, `zoom`, `opt`,
 `source`, `addTool`, `selAccId`, `overRoom`, the four stores, `svgPoint`,
-`svgRef`, `pressState`, `shapeTook`, `roomAt`, `insideAnyRoom`, `snapTargets`,
+`svgRef`, `pressState`, `roomAt`, `insideAnyRoom`, `snapTargets`,
 `snapTol`, `arrayOutline`, `shapeAtPointer`, `geomUnder`, `geomHover`,
 `setGeomHover`, `clearShapeEdit`, `standDown`, `docActions`, `setSel`, `guides`,
 `setGuides`, `setOverRoom`, `setAddAt`, `setOptionPick`.
@@ -187,9 +187,9 @@ libraries are used rather than reimplemented: `cob`, `magTrack`, `ceilingObjects
   doors and the COB snap against the same targets, and it reads the geometry's
   `canvas.coveShapes`.
 - **`sel` / `setSel`.** One register on this canvas.
-- **`roomAt`, `insideAnyRoom`, `svgPoint`, `svgRef`, `pressState`,
-  `shapeTook`.** All shared by five domains.
-- **`spaceAnalysis`, `cobBasisFor`'s readers, `roomFixtureGroups`, the BOQ,
+- **`roomAt`, `insideAnyRoom`, `svgPoint`, `svgRef`, `pressState`.** All
+  shared by five domains.
+- **`spaceAnalysis`, `cobBasisFor`'s readers, the per-ceiling grouping, the BOQ,
   `analysisHighlight` and the reveal effect.** These are the counting and the
   panel, which read this domain's projections through the interface above and
   are not about a fitting's own behaviour.
@@ -332,7 +332,7 @@ canvas itself.
 The one armed tool (`addTool` and its five gesture states), `guides` and
 `overRoom`, `arrayStandDown`, `snapTargets`/`snapTol`, the selection register,
 the six shared pointer and hit-test helpers, the counting and panel readers
-(`roomFixtureGroups`, `spaceAnalysis`, the BOQ, `analysisHighlight` and its
+(the per-ceiling grouping, `spaceAnalysis`, the BOQ, `analysisHighlight` and its
 reveal effect), the keydown handler's precedence, the canvas and panel bindings,
 `resetForNewPlan`'s ordering, and `optionPick`. No fitting derivation, no
 placement or specification rule, no gesture state and no placing-session state

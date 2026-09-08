@@ -153,7 +153,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
   { src, srcAsScanned = null, vector = null, wallLayers = null,
     width, height, plans = [], focusId = null, selectedId = null,
     fansPx = [], pxPerFt, layers, zoom, measure, onCanvasClick, toPx,
-    zones = [], draftZone = null, zoneMode = false, onZoneDown, onZoneMove, onZoneUp,
+    zones = [], draftZone = null, zoneMode = false,
+    onZoneDown, onZoneDownCapture, onZoneMove, onZoneUp,
     accents = [], objMode = false, onObjPointerDown,
     /* EVERY SELECTED CEILING OBJECT, because Shift-click builds a set of them.
        This was `selObjId`, one id. The frame is drawn on all of them; the resize
@@ -340,7 +341,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        `selLightId` is `${roomId}|${cellKey}` — a light is named by the cell it
        serves, because its own id is an index into an array rebuilt on every
        layout. `movingLight` is the one in flight, carried rather than committed:
-       the store is written on release (see `lightPointerMove` in App.jsx for why
+       the store is written on release (see `lightPointerMove` in features/fixtures/useFixtureGestures.js for why
        a solver must not run in a mousemove), so for the length of the gesture
        this prop is the only thing that knows where the fitting is. */
     selLightId = null, onLightPointerDown = null, movingLight = null,
@@ -708,6 +709,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           which is the very space the step is about — so the step would empty
           itself out from under the person using it. */
       onClick={doorEdit || wallEdit ? undefined : onCanvasClick}
+      /* THE CAPTURE PHASE RUNS BEFORE ANYTHING ON THE DRAWING HAS SEEN THE
+          PRESS, which is what makes it the only honest place to say "we do not
+          yet know whether this landed on bare plan". Its partner is
+          `onPointerDown` on this same element: a press that reaches THAT is a
+          press no control stopped. See `barePress` in App.jsx, and the note at
+          the top of this file about the click a captured pointer retargets. */
+      onPointerDownCapture={onZoneDownCapture}
       onPointerDown={onZoneDown} onPointerMove={onZoneMove}
       onPointerUp={onZoneUp} onPointerCancel={onZoneUp}
     >
@@ -3987,12 +3995,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           nobody builds it. What it has that the draft's has not is a grab band —
           the transparent stroke eight line-weights wide that every other
           grabbable line on this canvas uses, so it can be caught without aiming.
-          THE PRESS AND THE CLICK ARE BOTH STOPPED, which is not one act. See the
-          shape's own band: `stopPropagation` on `pointerdown` does nothing to
-          the `click` the browser synthesises after the release, and that click
-          reaches the canvas handler, which reads "a press on empty plan" and
-          clears the selection — the array would open and close forty
-          milliseconds apart. */}
+          THE CLICK IS STOPPED AS WELL AS THE PRESS, and it is belt to the
+          canvas's braces rather than the mechanism. `stopPropagation` on
+          `pointerdown` does nothing to the `click` the browser synthesises after
+          the release — and once the pointer is captured that click is not even
+          dispatched here, so this handler could not stop it if it had to. What
+          actually keeps the array from opening and closing forty milliseconds
+          apart is that the press never reached the <svg>'s own handler: see
+          `barePress` in App.jsx. */}
       {!placingGeometry && selArrayPath?.pts?.length > 1 && (() => {
         const d = selArrayPath.pts
           .map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
@@ -4198,16 +4208,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     style={{ pointerEvents: 'stroke', cursor: 'move' }}
                     onPointerDown={(e) => onShapePointerDown(e, sh.id)}
                     /* AND THE CLICK IS STOPPED TOO, WHICH IS NOT THE SAME ACT
-                       AS STOPPING THE PRESS AND WAS THE BUG. A click is its own
-                       event: `stopPropagation` on `pointerdown` does nothing to
-                       the `click` the browser synthesises after the release, so
-                       it bubbled to the canvas's own handler, which reads "a
-                       click on empty plan" and clears the selection. The shape
-                       was being selected and deselected by one press, forty
-                       milliseconds apart, which looks exactly like a shape that
-                       cannot be selected at all.
-                       The cove line above stops its click for the same reason;
-                       every control on this canvas has to stop both. */
+                       AS STOPPING THE PRESS. A click is its own event:
+                       `stopPropagation` on `pointerdown` does nothing to the
+                       `click` the browser synthesises after the release — and
+                       once this press has captured the pointer to the <svg>,
+                       that click is retargeted there and is not dispatched to
+                       this path at all, so stopping it here cannot be what
+                       protects the selection. The canvas answers it instead, in
+                       its own capture phase and for every control at once: see
+                       `barePress` in App.jsx. This stays because it costs
+                       nothing and is right for the presses that take no
+                       capture. */
                     onClick={(e) => e.stopPropagation()} />
                 ))}
                 {/* THE GRIPS ARE PAINTED LAST, WHICH IS LOAD-BEARING RATHER
@@ -4424,21 +4435,16 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         );
       })}
 
-      {/* THE MODULES, SEATED IN THE PROFILE.
-          A REAL-WIDTH BODY AND NOT A GLOWING PILL, which is the other half of
-          the same correction. A module is a 600 x 38 mm extrusion clipped into a
-          38 mm carrier: drawn at its own size it seats INSIDE the rail as a white
-          body in a dark slot, which is what a track looks like from the floor and
-          what no soft disc could say. The absorbing track's heads are drawn from
-          the same two figures in TRACK_DIMS_IN.
+      {/* THE MODULES ON THE PROFILE. Diffusers are their real long rectangular
+          bodies. Track spots are round, centred on the rail and exactly twice
+          the profile width in diameter: unlike task/accent spots they carry no
+          aim arrow, because this symbol is a downward-looking magnetic head.
 
           ROTATED BY THE RUN'S OWN DIRECTION, from `ux`/`uy` and not from an axis
           name: a drawn track is not rectilinear and 'h' or 'v' cannot describe a
           diagonal.
 
-          THE GLOW IS STRETCHED THE WAY THE BODY IS. A round glow under a linear
-          source is the one thing that would give the game away — a two-foot lens
-          throws a two-foot pool.
+          THE GLOW FOLLOWS THE BODY: stretched for a diffuser, round for a spot.
 
           A SEPARATE PASS, AFTER EVERY PROFILE, for the reason the COB pools are:
           a module's glow drawn inside its own run's group would paint over the
@@ -4453,31 +4459,51 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const along = inch(m.lenIn);
         const across = inch(m.wideIn);
         const deg = (Math.atan2(m.uy ?? 0, m.ux ?? 1) * 180) / Math.PI;
-        const grabW = Math.max(along, HIT_BAND);
-        const grabH = Math.max(across * 3, HIT_BAND);
+        const spot = m.kind === 'spot';
+        /* Radius equals the profile width, so diameter is exactly twice it. */
+        const spotR = inch(TRACK_DIMS_IN.profile);
+        const grabW = spot ? Math.max(spotR * 2, HIT_BAND) : Math.max(along, HIT_BAND);
+        const grabH = spot ? Math.max(spotR * 2, HIT_BAND) : Math.max(across * 3, HIT_BAND);
         const picked = selModuleId === m.id;
+        const glowRx = m.kind === 'diffuser' ? along / 2 + inch(3) : spotR + inch(3);
+        const glowRy = m.kind === 'diffuser' ? across / 2 + inch(3) : spotR + inch(3);
         return (
           <g key={m.id} transform={`translate(${m.x} ${m.y}) rotate(${deg})`}>
-            <ellipse cx="0" cy="0" rx={along / 2 + inch(3)} ry={across / 2 + inch(3)}
+            <ellipse cx="0" cy="0" rx={glowRx} ry={glowRy}
               fill="url(#lp-glow)" className="lp-pulse" pointerEvents="none"
               style={{ animationDelay:
                 `${((m.id.charCodeAt(m.id.length - 1) * 137) % 1000) / 1000 * -2.8}s` }} />
-            {picked && (
+            {picked && m.kind === 'diffuser' && (
               <rect x={-along / 2 - across} y={-across * 1.5} width={along + across * 2}
                 height={across * 3} rx={across} fill="none" stroke={C.sel}
                 strokeWidth={lw * 1.6} pointerEvents="none" />
             )}
-            <rect x={-along / 2} y={-across / 2} width={along} height={across}
-              rx={Math.min(across / 3, lw * 1.2)}
-              fill="url(#lp-core)" stroke={rim} strokeWidth={lw * 1.5}
-              pointerEvents="none" />
-            {onModulePointerDown && !placing && (
+            {picked && spot && (
+              <circle cx="0" cy="0" r={spotR * 1.75}
+                fill="none" stroke={C.sel} strokeWidth={lw * 1.6}
+                pointerEvents="none" />
+            )}
+            {m.kind === 'diffuser' ? (
+              <rect x={-along / 2} y={-across / 2} width={along} height={across}
+                rx={Math.min(across / 3, lw * 1.2)}
+                fill="url(#lp-core)" stroke={rim} strokeWidth={lw * 1.5}
+                pointerEvents="none" />
+            ) : (
+              <circle cx="0" cy="0" r={spotR} fill="url(#lp-core)"
+                stroke={rim} strokeWidth={lw * 1.5} pointerEvents="none" />
+            )}
+            {onModulePointerDown && !placing && (spot ? (
+              <circle className="hit" cx="0" cy="0" r={grabW / 2}
+                fill="transparent" style={{ cursor: 'move' }}
+                onPointerDown={(e) => onModulePointerDown(e, m.id)}
+                onClick={(e) => e.stopPropagation()} />
+            ) : (
               <rect className="hit" x={-grabW / 2} y={-grabH / 2}
                 width={grabW} height={grabH} fill="transparent"
                 style={{ cursor: 'move' }}
                 onPointerDown={(e) => onModulePointerDown(e, m.id)}
                 onClick={(e) => e.stopPropagation()} />
-            )}
+            ))}
           </g>
         );
       })}

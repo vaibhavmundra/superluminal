@@ -20,7 +20,8 @@ export default function useOutlines({ doc, docActions, source }) {
      free to invoke a reducer twice, so a rule that read one field to gate a
      write to another would be a rule running an unknown number of times. The
      ref keeps the DECISION at the call site and leaves the reducer with a plain
-     `markDirty(id)`. Same pattern as `roomsRef` in App. */
+     `markDirty(id)`. Same pattern as `roomsRef` in
+     features/lighting-planner/usePlanPipeline.js. */
   const litRef = useRef(litIds);
   litRef.current = litIds;
 

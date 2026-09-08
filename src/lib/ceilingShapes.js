@@ -1034,10 +1034,40 @@ export const sealShape = (draft, role = 'cove') => ({
  *   no PEN PATH may be in flight, because a click mid-path is a corner;
  *   and the shape must be of ANOTHER ROLE, or a press on bare ceiling inside an
  *   existing cove could not span a second one across it.
+ *
+ * --- ...AND A GUIDE BORROWS NOTHING -----------------------------------------
+ *
+ * THE FOURTH CONDITION, AND IT IS THE ONE THE THREE-ROLE WORLD NEEDED. "Another
+ * role" was written when there were two of them and it read symmetrically on
+ * purpose: a cove spans from a guide, and a guide could be traced off a cove.
+ * With `track` added, and with the GUIDE bar being the one a plain click on a
+ * space raises — unarmed, see `openShapeTool` and `onCanvasClick` — that
+ * symmetry stopped being a nicety and became a canvas nobody could touch.
+ *
+ * WHAT IT COST. Click any room and the guide bar is up. From that moment every
+ * press on a drawn cove and every press on a magnetic track was a press that
+ * BORROWED its outline as a guide draft instead of selecting it: no cove could
+ * be picked, none could be double-pressed for its grips, and no track could be
+ * picked up — while the modules clipped along that track, which have a press
+ * handler of their own, went on selecting perfectly. That is exactly how it was
+ * reported, and it is one condition wide.
+ *
+ * AND IT IS THE HONEST RULE RATHER THAN A PATCH ON THE SYMPTOM. A guide is the
+ * line something is set out FROM — the whole of what the role means. Borrowing a
+ * cove's outline to make a guide out of it produces a setting-out line for
+ * something that has already been set out, which is `duplicateShape` said
+ * confusingly. Nothing is lost: a cove still spans from a guide, a track still
+ * spans from one, and BOTH of those are the direction the flow was designed in.
+ *
+ * `takeableGeometry` IN features/ceiling-geometry/geometryRules.js CARRIES THE
+ * SAME LINE, because it is the same sentence said to the cursor: the hover cue
+ * and the press have to agree frame by frame or the drawing lights up a shape
+ * the press will not take.
  */
 export function canTakeGeometry({ shape, role = 'cove', menuOpen = false,
                                   addTool = null, penEmpty = true } = {}) {
   if (!shape || !menuOpen || addTool || !penEmpty) return false;
+  if ((role || 'cove') === 'guide') return false;
   return roleOf(shape) !== (role || 'cove');
 }
 

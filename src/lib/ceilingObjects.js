@@ -57,7 +57,8 @@ export const CEILING_TYPES = [
      split unit sits at 2100mm on a wall and a geyser above a toilet door, and a
      downlight in the middle of the ceiling is not obstructed by either. Feeding
      them in as obstacles would punch holes in a layout for objects that are not
-     in its way — see `ceilingObstaclesPx` in App.jsx, which is the one place
+     in its way — see `ceilingObstaclesPx` in
+     features/scene/usePlanScene.js, which is the one place
      this flag is read.
 
      THEY ARE STILL DRAWN AND STILL SCHEDULED. What they are for is the

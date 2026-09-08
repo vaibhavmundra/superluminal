@@ -327,7 +327,8 @@ export function planFlows({
      party wall. An ASSIGNMENT is the opposite case — somebody dragged this
      wire's end onto that plate and said so — and refusing it because the plate
      is in the next room would refuse the one thing the gesture is for. A
-     balcony is already switched from indoors; see `outdoorFeeds` in App. */
+     balcony is already switched from indoors; see `outdoorFeeds` in
+     features/electrical/useBoardRules.js. */
   boardPool = null,
   owner = new Map(),
   /* WHERE A WIRE'S BOARD END WAS DRAGGED TO: flow id -> board id.

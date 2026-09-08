@@ -18,8 +18,10 @@
 import assert from 'node:assert/strict';
 import {
   lightKey, clampContext, cobAlignTargets, cobWallGuide, chunkSpecInForce,
+  absorbAutoplaceSpots,
   autoplaceCobs, reconcileCobSpecs, rollbackCobs, arrayLanded,
   arrayBarFor, arrayDraftBar, nextArrayDraft, draftCount, moduleU,
+  gridSpotsOnTrack, gridSpotsOwnedByTrack, roomForTrackPath,
 } from '../src/features/fixtures/fixtureRules.js';
 import { chunkSpec, WALL_CLEARANCE_FT } from '../src/lib/cob.js';
 
@@ -29,7 +31,8 @@ const polyPx = (x0, y0, x1, y1) => [
 
 /** A cell of the chunker's grid, in plan pixels, with its own feet beside it. */
 const cell = (chunk, x0, y0, wFt, hFt) => ({
-  chunk, x0, y0, x1: x0 + wFt * PPF, y1: y0 + hFt * PPF, w: wFt, h: hFt,
+  id: `${chunk}:${x0}:${y0}`, chunk, x0, y0,
+  x1: x0 + wFt * PPF, y1: y0 + hFt * PPF, w: wFt, h: hFt,
   cx: wFt / 2, cy: hFt / 2,
 });
 
@@ -49,6 +52,67 @@ const room = ({ cells = [], zonesPx = [], chunks = [] } = {}) => ({
 
 let n = 0;
 const ok = (what) => { n += 1; console.log(`  ok  ${what}`); };
+
+// --------------------------------------------------------------------------
+console.log('a new track resolves its room and the grid fallback');
+{
+  const rooms = [room()];
+  rooms[0].geo.polygonPlanFt = polyPx(0, 0, 20, 12);
+  assert.equal(roomForTrackPath(rooms,
+    [{ x: 4, y: 6 }, { x: 16, y: 6 }], { pxPerFt: PPF })?.id, 'r1');
+  ok('the middle of a converted line resolves to its room');
+  assert.equal(roomForTrackPath(rooms,
+    [{ x: 20, y: 2 }, { x: 20, y: 10 }], { pxPerFt: PPF })?.id, 'r1');
+  ok('a converted line on the polygon edge still resolves to that room');
+
+  const placed = gridSpotsOnTrack(
+    [{ x: 0, y: 6 }, { x: 20, y: 6 }],
+    [{ xFt: 4, yFt: 3, watts: 5 }, { xFt: 10, yFt: 9, watts: 7 },
+     { xFt: 16, yFt: 3, watts: 10 }], { watts: [3, 5, 7, 9, 12] });
+  assert.equal(placed.length, 3);
+  assert.deepEqual(placed.map((p) => p.kind), ['spot', 'spot', 'spot']);
+  assert.deepEqual(placed.map((p) => p.watts), [5, 7, 9]);
+  assert.ok(placed[0].u < placed[1].u && placed[1].u < placed[2].u);
+  ok('a room with no ambient shortfall gets its grid spots projected onto the rail');
+
+  const candidates = [
+    { xFt: 3, yFt: 3, gridCells: ['r1|in'],
+      cellsFt: [{ x0: 2, y0: 2, x1: 4, y1: 4 }] },
+    { xFt: 12, yFt: 3, gridCells: ['r1|near'],
+      cellsFt: [{ x0: 11, y0: 2, x1: 13, y1: 4 }] },
+  ];
+  const loop = polyPx(0, 0, 10, 10);
+  assert.deepEqual(gridSpotsOwnedByTrack(loop, candidates, { closed: true }),
+    [candidates[0]]);
+  ok('a closed manual track owns enclosed grid cells, not nearby cells');
+  assert.deepEqual(gridSpotsOwnedByTrack(
+    [{ x: 0, y: 3 }, { x: 5, y: 3 }], candidates), [candidates[0]]);
+  ok('an open manual track owns only grid cells its centreline crosses');
+
+  const absorbed = absorbAutoplaceSpots({
+    spots: [
+      { xFt: 5, yFt: 2, watts: 5, beam: 30, gridCell: 'r1|c1' },
+      { xFt: 5, yFt: 6, watts: 5, beam: 30, gridCell: 'r1|c2' },
+    ],
+    tracks: [{ id: 'track-1', roomId: 'r1', closed: false,
+      pts: [{ x: 0, y: 0 }, { x: 300, y: 0 }] }],
+    fixtures: [{ id: 'd1', trackId: 'track-1', kind: 'diffuser', u: 0.2, watts: 10 }],
+    pxPerFt: PPF, roomId: 'r1', absorbFt: 3,
+  });
+  assert.equal(absorbed.modules.length, 1);
+  assert.equal(absorbed.modules[0].gridCells[0], 'r1|c1');
+  assert.deepEqual(absorbed.spots.map((s) => s.gridCell), ['r1|c2']);
+  ok('later autoplace seats only nearby unowned grid spots on a diffuser track');
+
+  const bare = absorbAutoplaceSpots({
+    spots: [{ xFt: 5, yFt: 2, gridCell: 'r1|c1' }],
+    tracks: [{ id: 'track-1', roomId: 'r1', closed: false,
+      pts: [{ x: 0, y: 0 }, { x: 300, y: 0 }] }],
+    fixtures: [], pxPerFt: PPF, roomId: 'r1', absorbFt: 3,
+  });
+  assert.equal(bare.modules.length, 0);
+  ok('a bare magnetic rail does not absorb an Analysis-panel grid spot');
+}
 
 // --------------------------------------------------------------------------
 console.log('a light is keyed by its room and its cell');
@@ -153,6 +217,12 @@ const BASIS = { lumensPerWatt: 75, dropFt: 9, inForce: () => null };
   const out = autoplaceCobs({ room: r, list: [], pxPerFt: PPF, basis: BASIS });
   assert.equal(out.length, 2);
   ok('one lamp per cell');
+
+  const withTrack = autoplaceCobs({ room: r, list: [], pxPerFt: PPF, basis: BASIS,
+    ownedCells: [lightKey('r1', cells[0].id)] });
+  assert.equal(withTrack.length, 1);
+  assert.equal(withTrack[0].xFt, 7.5);
+  ok('a grid cell already owned by a magnetic-track spot is not auto-filled');
 
   // AT THE CENTRE OF THE CELL, taken from the bounds and not from cx/cy.
   assert.equal(out[0].xFt, 2.5);

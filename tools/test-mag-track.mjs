@@ -31,6 +31,7 @@ import { TRACK_MODULES, MODULE_BY_ID, MODULE_SOON, moduleLenFt, moduleCapacity,
 import { netPerUnit, analyseSpace, FAMILY_BY_ID, PANEL_WATTS, COB_WATTS,
          TRACK_DIFFUSER_WATTS, TRACK_SPOT_WATTS } from '../src/lib/lumens.js';
 import { pathLength } from '../src/lib/geometry.js';
+import { takeableGeometry } from '../src/features/ceiling-geometry/geometryRules.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
@@ -341,6 +342,39 @@ say('-- 7. a press on a track actually places a module --');
                        addTool: null }) === false,
     'a closed bar takes nothing at all');
 
+  /* --- AND THE GUIDE BAR TAKES NOTHING EITHER -----------------------------
+     THE BAR A PLAIN CLICK ON A SPACE RAISES. `onCanvasClick` opens it in the
+     'guide' role with no primitive armed, so it is up for nearly the whole of
+     ordinary use — and while "another role" was the whole test, that made every
+     drawn cove and every magnetic track on the sheet unselectable: the press
+     borrowed the outline instead. The modules clipped to that track kept their
+     own handler and kept working, which is exactly how it was reported. */
+  const COVE = sealShape({ kind: 'rect', x: 6, y: 4, wFt: 9, hFt: 6, rot: 0 }, 'cove');
+  const guideBar = { role: 'guide', menuOpen: true, penEmpty: true, addTool: null };
+  ok(canTakeGeometry({ ...guideBar, shape: COVE }) === false,
+    'the guide bar does not borrow a cove — the press selects it');
+  ok(canTakeGeometry({ ...guideBar, shape: TRACK }) === false,
+    '...nor a track, which is how a run is picked up at all');
+  ok(canTakeGeometry({ ...guideBar, shape: GUIDE }) === false,
+    '...nor another guide, which was already true and stays true');
+  /* THE TWO DIRECTIONS THE FLOW WAS DESIGNED IN ARE UNTOUCHED. */
+  ok(canTakeGeometry({ shape: GUIDE, role: 'cove', menuOpen: true,
+                       penEmpty: true, addTool: null }) === true,
+    'a cove still spans from a guide');
+  ok(canTakeGeometry({ shape: GUIDE, role: 'track', menuOpen: true,
+                       penEmpty: true, addTool: null }) === true,
+    'and a track still spans from one');
+
+  /* THE CURSOR SAYS THE SAME SENTENCE. `takeableGeometry` drives the hover cue,
+     and a line that lights up under a press that will not take it is a drawing
+     that lies. */
+  ok(takeableGeometry(COVE, { addTool: null, cobMode: null,
+                              shapeMenuOn: true, shapeRole: 'guide' }) === null,
+    'and the guide bar does not LIGHT a cove either — the cue and the press agree');
+  ok(takeableGeometry(GUIDE, { addTool: null, cobMode: null,
+                               shapeMenuOn: true, shapeRole: 'track' }) === GUIDE,
+    '...while the track bar still lights the guide it would span from');
+
   /* STEP 2: IS A TRACK UNDER THE POINTER. `hitShape` is what the press runs, at
      the same converted tolerance. */
   const onRail = { x: 6, y: 1.5 };            // the middle of the top rail
@@ -434,6 +468,10 @@ say('-- and the catalogue --');
   ok(m.watts === FAMILY_BY_ID.track_diffuser.defaultWatts
     && moduleWatts('diffuser') === FAMILY_BY_ID.track_diffuser.defaultWatts,
     `a hand-placed diffuser opens at its family's default (${moduleWatts('diffuser')} W)`);
+  const owned = placeModule({ trackId: 't1', kind: 'spot', u: 0.5,
+                              gridCells: ['room|cell-1', 'room|cell-2'] });
+  ok(owned.gridCells.join() === 'room|cell-1,room|cell-2',
+    'a grid-derived track spot remembers every grid cell it replaces');
   /* AND THE SPOT KEEPS ITS OWN, because 5 W is a different PRODUCT from the 7 W
      ambient downlight its family defaults to. */
   ok(moduleWatts('spot') === 5 && FAMILY_BY_ID.cob.defaultWatts === 7,

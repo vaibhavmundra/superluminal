@@ -26,7 +26,7 @@
 //   `allocateOnTrack` is handed in and called on the same line it was called
 //   on before.
 // ---------------------------------------------------------------------------
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { select, clear, idOf } from '../../lib/selection.js';
 import { penSegments, penLengthFt, penRelock, penMovePoint, MIN_SEG_FT } from '../../lib/pen.js';
 import { newModuleId } from '../../lib/magTrack.js';
@@ -167,6 +167,24 @@ export function useGeometryCommands({
     covePen.reset(); setShapeAt(null);
   }, [canFinishOpen, covePen, setShapeHeld, setShapeAt]);
 
+  /* A NEW TRACK HAS TO BE ALLOCATED FROM THE COMMITTED PLAN, NOT FROM THE
+     render in which the tick was pressed. Adding the shape is a reducer
+     dispatch; `spaceAnalysis` in that same event still describes the previous
+     ceiling. In particular, converting a guide line could therefore ask the
+     old room for its shortfall and decide that the new rail needed no
+     diffusers. Keep the id until the shape is visible in `ceilingShapes`, then
+     run the allocator once from the following render. Clearing before the call
+     also makes this safe under React's development-mode effect replay. */
+  const pendingTrackAllocation = useRef(null);
+  useEffect(() => {
+    const id = pendingTrackAllocation.current;
+    if (!id) return;
+    const shape = ceilingShapes.find((q) => q.id === id);
+    if (!shape) return;
+    pendingTrackAllocation.current = null;
+    allocateOnTrack(shape);
+  }, [ceilingShapes, allocateOnTrack]);
+
   /**
    * KEEP IT. The tick, and the only way a shape gets onto the drawing.
    *
@@ -197,13 +215,14 @@ export function useGeometryCommands({
   const commitShape = useCallback(() => {
     if (!shapeToCommit || !bigEnough(shapeToCommit)) return;
     const shape = sealShape(shapeToCommit, shapeRole);
+    if (shapeRoleOf(shape) === 'track') pendingTrackAllocation.current = shape.id;
     docActions.addShape(shape);
     closeShapeTool();
     // ONE SELECTION ON THIS CANVAS, exactly as picking one off the sheet does.
     setSel(select('shape', shape.id));
-    // ...AND IF IT IS A TRACK, IT ARRIVES FILLED. See `allocateOnTrack`.
-    allocateOnTrack(shape);
-  }, [docActions, shapeToCommit, shapeRole, closeShapeTool, allocateOnTrack, setSel]);
+    // A track is filled after this reducer write is visible; see the pending
+    // allocation effect above.
+  }, [docActions, shapeToCommit, shapeRole, closeShapeTool, setSel]);
 
   /** Pick a primitive off the bar. The polygon is the one that asks a question
    *  first, because "how many sides" has no sensible default to assume. */

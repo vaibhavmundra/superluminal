@@ -126,7 +126,8 @@ export const DOC_FIELDS = {
   // long as this list does.
   accentDismissed: () => ([]),
   /* THE STRIPS AND SCONCES PLACED FROM THE PALETTE. A flat list, in PLAN px and
-     not feet — see the note on `updateAccentZone` in App: an accent lives on a
+     not feet — see the note on `updateAccentZone` in
+     features/room-intelligence/useAccentEditing.js: an accent lives on a
      wall in the space it was placed in, and converting to feet and back would
      add two roundings to every drag. No pass proposes one, so the list IS the
      fact the way `manualCoves` is. */
@@ -152,7 +153,8 @@ export const DOC_FIELDS = {
   wallResults: () => ({}),
   /* THE LENGTHS SOMEBODY CHANGED BY HAND: run id -> { a, b } in FEET.
      Reverse coves and shelf strips are DERIVED, not placed, so what is stored
-     is the EDIT and not the result — see `trimWallRun` in App. Two numbers per
+     is the EDIT and not the result — see `trimWallRun` in
+     features/scene/wallGeometry.js. Two numbers per
      run: how far each end moved from where the rule put it. Everything else
      stays derived, so a trimmed cove still follows its wall when the outline
      moves and still redraws at the right size when the scale changes.
@@ -273,7 +275,8 @@ export const DOC_FIELDS = {
      is all it can be, so what is stored is the plates somebody actually set.
      THE PRIMARY HEIGHT ONLY. The wall facing a bed is two plates at two heights
      — that is what makes it two — so an override replaces the first of that
-     list and leaves the second alone. See `withMode` in App.jsx. */
+     list and leaves the second alone. See `withMode` in
+     features/electrical/useBoardRules.js. */
   boardHeights: () => ({}),
   /* AND THE ORDER THE MODULES SIT IN: board id -> `[unitKey, ...]`, left to
      right. WHICH SWITCH IS LEFTMOST IS NOT DERIVABLE — it is which one your
@@ -811,7 +814,8 @@ export function docReducer(state, action) {
 
     /* THE TOGGLE GOING OFF TAKES BACK ONLY WHAT IS STILL THE TOGGLE'S. A lamp
        somebody has re-specified or dragged is theirs and stops being autoplace's
-       to remove — see `autoplaceIn` in App and the `auto` flag on the fitting.
+       to remove — see `autoplaceIn` in features/fixtures/useFixtureCommands.js
+       and the `auto` flag on the fitting.
        This is the whole safety of the control and it is why the predicate is two
        terms rather than one. */
     case 'AUTO_COBS_DROPPED':
@@ -1648,7 +1652,8 @@ export function usePlanDoc(seed) {
     clearRoomTypes: () => dispatch({ type: 'MAP_CLEARED', field: 'roomTypes' }),
     /* A ROOMFUL AT A TIME AND MERGED, NOT REPLACED. `setRoomTypes(found)` used
        to REPLACE, which meant re-reading two spaces threw away the answers for
-       the other six — see the note at the classify pass in App.jsx. */
+       the other six — see the note at the classify pass in
+       features/lighting-planner/usePlanPipeline.js. */
     mergeRoomTypes: (entries) =>
       dispatch({ type: 'MAP_MERGED', field: 'roomTypes', entries }),
 
@@ -1685,7 +1690,8 @@ export function usePlanDoc(seed) {
     unlightRoom: (id) => dispatch({ type: 'ID_REMOVED', field: 'litIds', id }),
 
     /* A LIT SPACE WHOSE ANSWERS HAVE GONE STALE. The "only if it is lit" rule
-       stays in App's `markChanged`, which reads `litIds` through a ref for a
+       stays in `markChanged` in hooks/useOutlines.js, which reads `litIds`
+       through a ref for a
        reason worth keeping — see the note there. */
     markDirty: (id) => dispatch({ type: 'ID_ADDED', field: 'dirtyIds', id }),
     clearDirty: (ids) => dispatch({ type: 'DIRTY_CLEARED', ids: ids ?? null }),

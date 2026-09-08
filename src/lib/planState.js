@@ -493,7 +493,8 @@ export function serialiseEditor(doc, { pxPerFt } = {}) {
 
        THE PRIMARY HEIGHT ONLY. The wall facing a bed is two plates at two
        heights, which is what makes it two; an override replaces the first of
-       that list and leaves the second alone. See `withMode` in App.jsx. */
+       that list and leaves the second alone. See `withMode` in
+       features/electrical/useBoardRules.js. */
     boardHeights: s.boardHeights ?? {},
     /* ...AND THE ORDER ITS MODULES SIT IN: board id -> an array of unit keys,
        left to right.
@@ -537,8 +538,9 @@ export function serialiseEditor(doc, { pxPerFt } = {}) {
        THE KEY IS THE ROW AND NOT THE FAMILY, because what a row is depends on
        what the fitting is: anything sold by the metre is one row per RUN and is
        keyed by that run's own id, and anything sold by the piece is one row for
-       the lot and is keyed by its family. See `roomFixtureGroups` in App for who
-       decides, and FIXTURE_FAMILIES in lib/lumens.js for the defaults.
+       the lot and is keyed by its family. See `fixtureGroups` in
+       features/lighting-planner/lightingRules.js for who decides, and
+       FIXTURE_FAMILIES in lib/lumens.js for the defaults.
        A RUN'S ID IS SAFE TO STORE FOR THE REASON `runTrims` AND `accentDismissed`
        ARE — it is the same handle. A run that stops existing simply takes its
        entry out of use; the entry lapses rather than landing on some other

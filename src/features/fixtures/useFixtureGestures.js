@@ -7,7 +7,7 @@
 // domain, and the one command (`openArray`) that is a gesture's.
 //
 // THE FEATURE'S FOURTH AND LAST CALL SITE, AND IT IS THE LOWEST BECAUSE OF WHAT
-// IT NEEDS: `svgPoint`, `svgRef`, `pressState`, `shapeTook`, the geometry
+// IT NEEDS: `svgPoint`, `svgRef`, `pressState`, the geometry
 // feature's hit tests and App's `snapTargets` are all defined above it and
 // below the scene, and a hook's arguments are evaluated during render. Every
 // one of the five is a `useDrag` and every press is a plain function, so
@@ -44,14 +44,14 @@ export default function useFixtureGestures({
   state, fixtures, cobTool,
   rooms, pxPerFt, zoom, opt, source, addTool, selAccId, overRoom,
   manualCobs, cobArrays, trackFixtures, ceilingObjs,
-  svgPoint, svgRef, pressState, shapeTook,
+  svgPoint, svgRef, pressState,
   roomAt, insideAnyRoom, snapTargets, snapTol,
   arrayOutline, shapeAtPointer, geomUnder, geomHover, setGeomHover,
   clearShapeEdit, standDown,
   docActions, setSel, guides, setGuides, setOverRoom, setAddAt, setOptionPick,
 }) {
   const {
-    lightDrag, setLightDrag, lightMoved,
+    lightDrag, setLightDrag,
     objDrag, setObjDrag, objMode, setObjMode, selObjIds, toggleSelObj,
     armed, setArmed, ghost, setGhost, fanSweepMm,
     cobOnce, setCobOnce, cobStanding, setCobRun, cobLock, setCobLock,
@@ -133,7 +133,6 @@ export default function useFixtureGestures({
      */
     onCommit: (ids, d) => {
       if (!pxPerFt) return;
-      lightMoved.current = true;
       const r = rooms.find((z) => z.id === d.roomId);
       const l = r?.plan?.lightsPx?.find((z) => z.cellKey === d.cellKey);
       if (!l?.cell) return;
@@ -159,7 +158,6 @@ export default function useFixtureGestures({
     // ONE SELECTION ON THIS CANVAS.
     setSel(select('light', lightKey(roomId, l.cellKey)));
     clearShapeEdit();
-    lightMoved.current = false;
     /* THE MEMBER IS SYNTHETIC, and that is the honest shape of this one. A light
        is not a row in a list the drag can write to — it is one cell's share of
        the ambient level, identified by its cell — so what the hook is given is
@@ -197,7 +195,7 @@ export default function useFixtureGestures({
    *
    * IT ALSO PUTS THE PANEL ON THE SPACE THE RUN IS IN, which is what every other
    * fitting's press does through `analysisHighlight` — an array is one row in
-   * that panel (see `roomFixtureGroups`) and the row is where its wattage can
+   * that panel (see `fixtureGroups`) and the row is where its wattage can
    * also be changed, so the two have to be looking at the same room.
    */
   const openArray = useCallback((id) => {
@@ -556,13 +554,14 @@ export default function useFixtureGestures({
   const arrayGrab = (e, arrayId) => {
     const a = cobArrays.find((q) => q.id === arrayId);
     if (!a || !pxPerFt) return;
+    /* AND STOPPING THE PRESS IS ALSO WHAT KEEPS THE CLICK THE BROWSER
+       SYNTHESISES ON RELEASE from being read as a press on bare plan — which
+       would clear the selection and swap the array's bar for the space's
+       geometry tools, forty milliseconds after opening it. See `barePress` in
+       App.jsx: the canvas answers that question for itself, and a press stopped
+       here never reaches the handler that would say yes. */
     e.stopPropagation();
     e.preventDefault();
-    /* THE PRESS IS SPOKEN FOR, so the click the browser synthesises on release
-       is not read as a press on bare plan — which would clear the selection and
-       swap the array's bar for the space's geometry tools, forty milliseconds
-       after opening it. Same flag every grip on this canvas sets. */
-    shapeTook.current = true;
     openArray(arrayId);
     array.down(e, { id: arrayId, members: [a] });
   };
@@ -626,10 +625,6 @@ export default function useFixtureGestures({
     if (!f) return;
     e.stopPropagation();
     e.preventDefault();
-    /* THE PRESS IS SPOKEN FOR, so the click the browser synthesises on release is
-       not read as one on bare plan — which would clear the selection and swap
-       whatever bar is up for the space's own. */
-    shapeTook.current = true;
     setSel(select('module', id));
     mod.down(e, { id });
   };

@@ -561,7 +561,9 @@ export function layoutRooms(input) {
          schedule, the exporters, the troubles list — is counting a layout that is
          not on the drawing, and handing any of them cells again would have the
          troubles list reporting four dark cells in a room with no lights in it.
-         One reader, one field, and nothing else can see it. */
+         These private grid fields are not the visible/billable `lights` and
+         `cells`; the overlay and track allocator can inspect them without
+         making the old automatic fittings reappear. */
       const gridChunks = res?.ok ? (res.chunks ?? []) : [];
       /* AND THE CELLS WITH THEM, for a second reader that arrived later: the
          autoplace rule needs one lamp per CELL, and the recommendation under the
@@ -569,6 +571,12 @@ export function layoutRooms(input) {
          how the ceiling divides rather than about what was placed on it, so they
          belong on this side of the blanking with the chunks. */
       const gridCells = res?.ok ? (res.cells ?? []) : [];
+      /* THE FITTINGS THE GRID ACTUALLY CHOSE, kept separately from its cells.
+         A large fitting can serve more than one cell, so one-per-cell is not
+         the planner's answer. AUTO_GRID still removes these from the drawing;
+         this private copy exists so a magnetic rail can inherit the same count
+         and positions when it is being used for spots instead of ambient light. */
+      const gridLights = res?.ok ? (res.lights ?? []) : [];
 
       if (!AUTO_GRID && res?.ok) {
         res = { ...res,
@@ -791,6 +799,7 @@ export function layoutRooms(input) {
            the autoplace rule read an area and a short side straight off one of
            these without a division. */
         gridCellsPx: gridCells.map(rectToPx),
+        gridLightsPx: gridLights.map((l) => ({ ...l, ...toPx(l) })),
         cellsPx: res.cells.map(rectToPx),
         // WHAT EACH LIGHT IS BOUGHT AS, stamped here because this is the one
         // place that knows both the layout and the room's type. The planner

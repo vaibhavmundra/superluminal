@@ -108,7 +108,14 @@ export function takeableGeometry(shapeAt, { addTool, cobMode, shapeMenuOn, shape
      that does the same), then press the guide you want to be a track. Requiring
      a primitive first would mean arming a rectangle you are not going to draw
      in order to borrow an outline that already exists. */
-  if (shapeMenuOn) {
+  /* ...AND A GUIDE BORROWS NOTHING, which is `canTakeGeometry`'s fourth
+     condition said to the cursor. The two have to agree frame by frame: a line
+     that lights up and turns the pointer into a hand is a promise about what the
+     press will do, and the press refuses this one. See that function for what
+     the missing condition cost — the guide bar is what a click on a space
+     raises, so without this every cove and every track on the drawing lit up as
+     borrowable and none of them could be selected. */
+  if (shapeMenuOn && shapeRole !== 'guide') {
     return shapeAt && shapeRoleOf(shapeAt) !== shapeRole ? shapeAt : null;
   }
   return null;

@@ -130,7 +130,7 @@ export function makeDrag({
 
   /**
    * WHERE THE THING WANTS TO BE THIS FRAME. Three steps and the order is
-   * load-bearing — see `orthoLock` and `cobSnapAt` in App.jsx: the lock is applied
+   * load-bearing — see `orthoLock` and `cobSnapAt` in features/fixtures/useCobTool.js: the lock is applied
    * FIRST and the snap SECOND, because snapping first would let something four
    * feet away pull the point off the line the modifier had just held it to.
    *

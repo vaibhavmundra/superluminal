@@ -150,6 +150,10 @@ say('2. WHAT IS PLACED IS PLACED IN THE ROOM');
     const outside = cells.filter((c) => !pointInPolygon(
       { x: (c.x0 + c.x1) / 2, y: (c.y0 + c.y1) / 2 }, r.plan.polygonPx));
     ok(outside.length === 0, `${r.id}: ...and every one of them is inside the room`);
+    ok(r.plan.gridLightsPx.length > 0,
+      `${r.id}: the grid's actual light count survives separately from its cells`);
+    ok(r.plan.gridLightsPx.every((l) => pointInPolygon(l, r.plan.polygonPx)),
+      `${r.id}: ...and every saved grid light is inside the room`);
   }
 
   // THE FITTINGS, which is the assertion the claim is really about. It is a
@@ -228,7 +232,8 @@ say('3. THE HOLES AND THE OBSTACLES REACH THE PASSES THAT CARE');
   // Said out loud rather than left as a silent zero, because a suite that
   // reports "0 lights, all of them fine" and calls it a pass is the kind of
   // green nobody should trust. See AUTO_GRID in layout.js.
-  ok(rect.plan.lights.length === 0 && rect.plan.gridCellsPx.length > 0,
+  ok(rect.plan.lights.length === 0 && rect.plan.gridCellsPx.length > 0
+      && rect.plan.gridLightsPx.length > 0,
     'AUTO_GRID is OFF, so the grid is computed and its FITTINGS are blanked — '
     + 'the two loops above are real and currently vacuous, and become the test '
     + 'the day that switch is flipped');

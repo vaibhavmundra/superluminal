@@ -127,13 +127,27 @@ const rect = (id, x, y, wFt, hFt, extra = {}) =>
   // THE SHAPE TOOL TAKES A GEOMETRY OF THE OTHER ROLE, AND ONLY THAT. Armed to
   // draw a cove it will span one from a guide; it must not swallow the cove
   // already there, because a press inside one is how a second is drawn across
-  // it. The rule reads symmetrically.
+  // it.
   const barCove = { shapeMenuOn: true, shapeRole: 'cove' };
   assert.equal(takeableGeometry(guide, barCove), guide);
   assert.equal(takeableGeometry(track, barCove), track);
   assert.equal(takeableGeometry(cove, barCove), null);
+
+  // ...AND THE RULE NO LONGER READS SYMMETRICALLY, WHICH IS THE CORRECTION. A
+  // GUIDE BORROWS NOTHING. It used to take a cove — "another role" was the whole
+  // test — and the guide bar is the one a plain click on a space raises, unarmed
+  // (see `onCanvasClick`). So from the first click on any room, every press on a
+  // drawn cove and every press on a magnetic track borrowed its outline instead
+  // of selecting it: no cove could be picked or double-pressed for its grips,
+  // and no track could be picked up at all, while the modules clipped along that
+  // track kept their own handler and kept working.
+  // A guide is the line something is set out FROM, so there is nothing lost
+  // either: both directions the flow was designed in are asserted above and
+  // below. See `canTakeGeometry`, which carries the same condition for the
+  // press, and tools/test-mag-track.mjs for the truth table.
   const barGuide = { shapeMenuOn: true, shapeRole: 'guide' };
-  assert.equal(takeableGeometry(cove, barGuide), cove);
+  assert.equal(takeableGeometry(cove, barGuide), null);
+  assert.equal(takeableGeometry(track, barGuide), null);
   assert.equal(takeableGeometry(guide, barGuide), null);
 
   // THE BAR BEING OPEN IS ENOUGH — it does not have to be armed. That is the

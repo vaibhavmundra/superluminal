@@ -40,7 +40,7 @@ same reason; the scene feature across several.
 | # | Call | Where it stands, and why |
 | --- | --- | --- |
 | 1 | `useGeometryState()` | Beside the state it replaces, ~800 lines in. `pressState` — the canvas's one arbitration table, `lib/pressOwner.js` — carries `shapeMenuOn` and `shapeTool`, and `resetForNewPlan` calls three of its resets. Both are built above anything that could give this feature its rooms. |
-| 2 | `useCeilingGeometry(…)` | Above `roomFixtureGroups` and `placeArray`, exactly where the block it replaces stood, and for the reason that block gave: both read `arrayOutline`, and a `useCallback` evaluates its dependency array on every render, so a hook naming it below its own `const` is a temporal dead zone and a blank screen. |
+| 2 | `useCeilingGeometry(…)` | Above the lighting analysis and `placeArray`, exactly where the block it replaces stood, and for the reason that block gave: both read `arrayOutline`, and a `useCallback` evaluates its dependency array on every render, so a hook naming it below its own `const` is a temporal dead zone and a blank screen. |
 | 3 | `useGeometryCommands(…)` | Below `disarmAdd`. Arming this tool puts six other machines away and that list is App's — see **What stayed in App**. `allocateOnTrack` is declared directly above it. |
 | 4 | `useGeometryGestures(…)` | Below `snapTargets`. That function is App's — the ceiling objects, the lights and the COB snap against the same targets — and it reads this domain's `coveShapesPx`, so the projections have to be built above it and the two geometry snaps below it. `penSnap` and `shapeSnapFt` already stood exactly here. |
 
@@ -120,7 +120,6 @@ Inputs: `state`, `commands`, `geometry`, `rooms`, `pxPerFt`, `ceilingShapes`,
 
 | Member | What it is |
 | --- | --- |
-| `shapeTook` | The ref that stops a captured pointer's synthesised click reading as a press on bare plan. App's `onCanvasClick` consumes it and `onZoneDown` resets it. |
 | `shapePointerDown`, `shapeHandleDown`, `trackPointDown` | The three grab handlers `PlanCanvas` is given |
 | `shapeToolDown` | The press that draws. Returns `true` when it has taken the event |
 | `trackPenPress`, `trackPenMove` | The drawn track's pen, for App's two `addTool === 'track'` branches |
@@ -216,9 +215,16 @@ are used rather than reimplemented: `ceilingShapes`, `pen`, `cove`, `track`,
 - Alt still leaves a copy behind, a duplicate still lands half a foot down and
   across, and duplicating a run still brings its modules with it as fractions.
   Deleting a shape still takes its modules with it.
-- The hit test is still first-match-in-list at a screen-pixel tolerance, the
-  take rule still reads symmetrically across the two roles, and the module tool
-  still takes a track and nothing else.
+- The hit test is still first-match-in-list at a screen-pixel tolerance, and the
+  module tool still takes a track and nothing else. **The take rule no longer
+  reads symmetrically across the roles: a guide borrows nothing.** It used to
+  take a cove, and because the guide bar is the one a plain click on a space
+  raises — unarmed — that made every drawn cove and every magnetic track on the
+  sheet unselectable: the press borrowed the outline instead of picking it up.
+  A cove still spans from a guide and a track still spans from one, which are the
+  two directions the flow was designed in. `canTakeGeometry` (the press) and
+  `takeableGeometry` (the cursor) carry the condition together, because the cue
+  and the press have to agree frame by frame.
 - Drawn-track refusals are still asked per room, answered once, ranked
   most-specific-first, and grouped one line per reason with a count.
 - No stored key, schema, timing constant, UI, copy, CSS or network payload

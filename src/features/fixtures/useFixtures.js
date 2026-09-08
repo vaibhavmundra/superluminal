@@ -9,7 +9,7 @@ import { arrayBarFor, arrayDraftBar, chunkSpecInForce } from './fixtureRules.js'
  * WHAT IS ON THE CEILING, PROJECTED — the feature's SECOND call site, and the
  * one every other domain reads through.
  *
- * IT STANDS WHERE THE BLOCK IT REPLACES STOOD, above `roomFixtureGroups`, and
+ * IT STANDS WHERE THE BLOCK IT REPLACES STOOD, above the lighting analysis, and
  * the position is load-bearing for the reason the geometry feature's second
  * call site is where it is: the BOQ, the lumen counting and the analysis
  * highlight all name `tracks.modulesPx` and `arrays.lampsPx`, and a `useMemo`

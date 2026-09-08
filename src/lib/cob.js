@@ -162,7 +162,8 @@ export const CELL_LM_PER_SQFT = 20;
  * HOW CLOSE A SPACE HAS TO BE BEFORE THE GRID IS OFFERED TO FINISH IT.
  *
  * AUTOPLACE IS A FINISHING MOVE AND NOT A STARTING ONE, and the fraction is what
- * says so. It fills every EMPTY cell in one press — see `autoplaceIn` in App.jsx
+ * says so. It fills every EMPTY cell in one press — see `autoplaceIn` in
+ * features/fixtures/useFixtureCommands.js
  * — which is the right act at the end of a layout and the wrong one at the
  * beginning: a ceiling gets its coves, its spots and the lamps somebody wanted
  * exactly where they wanted them, and only then is "put one in every cell that
@@ -341,7 +342,7 @@ export function chunkSpec(cells, chunk, { dropFt = DEFAULT_DROP_FT,
  *
  * --- A WARNING ABOUT UNITS, BECAUSE THE CELLS CARRY TWO ----------------------
  * `gridCellsPx` is built by spreading the planner's cell and overwriting ONLY
- * `x0/x1/y0/y1` with pixels (see `rectToPx` in App.jsx). So `w`, `h`, `cx` and
+ * `x0/x1/y0/y1` with pixels (see `rectToPx` in lib/layout.js). So `w`, `h`, `cx` and
  * `cy` on the same object are still in the room's own FEET. That is what makes
  * the area and the short side below correct without a division — and it is
  * exactly the sort of thing that reads as a bug six months from now, so: the

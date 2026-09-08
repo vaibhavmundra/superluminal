@@ -159,6 +159,6 @@ pipeline: { prep, loaderRooms, run, stop }
 boq:      { table, file }
 commands: { claim, lightWholePlan, lightOneRoom, run, stop,
             setRowWatts, cycleChunkOption, setAutoplace }
-status:   { running, autoplaceIn }
+status:   { running, autoplaceOn }
 reset:    () => void
 ```

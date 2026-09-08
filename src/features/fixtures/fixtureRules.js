@@ -15,11 +15,178 @@
 import { placeCob, chunkSpec, wallClearance, bedUnder,
          clampWatts, nearestBeam,
          arrayAsks, arrayQuanta, quantiseCount } from '../../lib/cob.js';
-import { uAt, placeableU } from '../../lib/magTrack.js';
+import { moduleAt, uAt, placeableU } from '../../lib/magTrack.js';
+import { ABSORB_FT, DODGE_FT } from '../../lib/track.js';
+import { nearestOnSegment, pathLength, pointAt, pointInPolygon }
+  from '../../lib/geometry.js';
 
 /* WHICH LIGHT IS PICKED, as `${outlineId}|${cellKey}` — the same pairing the
    store is keyed on, flattened, because a selection is one value. */
 export const lightKey = (roomId, ck) => `${roomId}|${ck}`;
+
+/** The room containing a track's path, including a path drawn on its wall. */
+export function roomForTrackPath(rooms, pts, { closed = false, pxPerFt = 0,
+                                               toleranceFt = 0.5 } = {}) {
+  const total = pathLength(pts ?? [], { closed });
+  if (!(total > 0)) return null;
+  const at = pointAt(pts, total / 2, { closed });
+  if (!at) return null;
+  const polygon = (room) => room?.geo?.polygonPlanFt
+    ?? (pxPerFt > 0 ? room?.geo?.polygonPx?.map(
+      (p) => ({ x: p.x / pxPerFt, y: p.y / pxPerFt })) : null);
+  const inside = rooms.find((room) => {
+    const poly = polygon(room);
+    return poly?.length >= 3 && pointInPolygon(at, poly);
+  });
+  if (inside) return inside;
+
+  /* Ray casting has no single answer on a polygon edge. A line intentionally
+     set out on a wall must still belong to that room, so fall back to the
+     nearest outline within a small plan-space tolerance. */
+  let best = null;
+  for (const room of rooms) {
+    const poly = polygon(room);
+    if (!poly?.length) continue;
+    for (let i = 0; i < poly.length; i++) {
+      const q = nearestOnSegment(at, poly[i], poly[(i + 1) % poly.length]);
+      const dist = Math.hypot(at.x - q.x, at.y - q.y);
+      if (!best || dist < best.dist) best = { room, dist };
+    }
+  }
+  return best && best.dist <= toleranceFt ? best.room : null;
+}
+
+/**
+ * PROJECT THE GRID'S SPOTS ONTO A MAGNETIC TRACK.
+ *
+ * Used when the room has no ambient shortfall: its normal grid still says how
+ * many track spots it would place and where. Each of those points is projected
+ * to the nearest free position on the profile, with the same physical overlap
+ * rule as a hand-placed track module. A short rail may therefore accept fewer
+ * spots than the grid proposed, but it can never stack them.
+ */
+export function gridSpotsOnTrack(pts, gridSpots, { closed = false, watts = [] } = {}) {
+  if (!Array.isArray(pts) || pts.length < 2 || !Array.isArray(gridSpots)) return [];
+  const catalogue = (Array.isArray(watts) ? watts : [])
+    .map(Number).filter((w) => w > 0).sort((a, b) => a - b);
+  const out = [];
+  for (const spot of gridSpots) {
+    const p = { x: Number(spot?.xFt), y: Number(spot?.yFt) };
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    const asked = Number(spot?.watts) || 0;
+    const moduleW = catalogue.length && asked > 0
+      ? catalogue.reduce((best, w) => (
+        Math.abs(w - asked) < Math.abs(best - asked) ? w : best), catalogue[0])
+      : null;
+    const u = placeableU(pts, uAt(pts, p, { closed }), out, 'spot',
+      { closed, watts: moduleW });
+    if (u != null) out.push({ u, kind: 'spot', watts: moduleW,
+                              gridCells: [...(spot.gridCells ?? [])] });
+  }
+  return out;
+}
+
+/** Does one path segment physically enter a grid-cell rectangle? */
+function segmentCrossesRect(a, b, r) {
+  let lo = 0, hi = 1;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  for (const [p, q] of [
+    [-dx, a.x - r.x0], [dx, r.x1 - a.x],
+    [-dy, a.y - r.y0], [dy, r.y1 - a.y],
+  ]) {
+    if (Math.abs(p) < 1e-9) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) lo = Math.max(lo, t); else hi = Math.min(hi, t);
+    if (lo > hi) return false;
+  }
+  return true;
+}
+
+/**
+ * WHICH GRID FITTINGS A MANUAL MAGNETIC TRACK OWNS.
+ *
+ * There is deliberately no capture distance here. A closed track owns cells
+ * enclosed by its outline; an open track owns only cells its centreline
+ * physically crosses. The planner may have combined several cells into one
+ * fitting, so candidates remain fitting-shaped and carry every cell key they
+ * replace.
+ */
+export function gridSpotsOwnedByTrack(pts, gridSpots, { closed = false } = {}) {
+  if (!Array.isArray(pts) || pts.length < 2 || !Array.isArray(gridSpots)) return [];
+  const ownsCell = closed
+    ? (cell) => pointInPolygon({ x: (cell.x0 + cell.x1) / 2,
+                                y: (cell.y0 + cell.y1) / 2 }, pts)
+    : (cell) => {
+      for (let i = 0; i < pts.length - 1; i++) {
+        if (segmentCrossesRect(pts[i], pts[i + 1], cell)) return true;
+      }
+      return false;
+    };
+  return gridSpots.filter((spot) => {
+    const cells = spot?.cellsFt ?? [];
+    if (cells.some(ownsCell)) return true;
+    if (cells.length) return false;
+    const p = { x: Number(spot?.xFt), y: Number(spot?.yFt) };
+    return closed && Number.isFinite(p.x) && Number.isFinite(p.y)
+      ? pointInPolygon(p, pts) : false;
+  });
+}
+
+/**
+ * OFFER NEW AUTOPLACE SPOTS TO EXISTING MAGNETIC TRACKS.
+ *
+ * Only a rail already carrying a diffuser participates. Ownership was checked
+ * before these spots were generated; this function answers the later physical
+ * question—whether an otherwise recessed spot falls inside the ordinary track
+ * capture distance and whether a clear module-length exists near that landing.
+ */
+export function absorbAutoplaceSpots({ spots, tracks, fixtures, pxPerFt,
+                                       roomId = null, absorbFt = ABSORB_FT,
+                                       dodgeFt = DODGE_FT }) {
+  if (!Array.isArray(spots) || !spots.length || !(pxPerFt > 0)) {
+    return { spots: spots ?? [], modules: [] };
+  }
+  const eligible = (tracks ?? []).filter((track) =>
+    (!roomId || track.roomId === roomId)
+    && (fixtures ?? []).some((f) => f.trackId === track.id && f.kind === 'diffuser'))
+    .map((track) => ({
+      ...track,
+      ptsFt: (track.pts ?? []).map((p) => ({ x: p.x / pxPerFt, y: p.y / pxPerFt })),
+    })).filter((track) => track.ptsFt.length >= 2);
+  if (!eligible.length) return { spots, modules: [] };
+
+  const taken = new Map(eligible.map((track) => [track.id,
+    (fixtures ?? []).filter((f) => f.trackId === track.id)
+      .map((f) => ({ u: f.u, kind: f.kind, watts: f.watts }))]));
+  const modules = [], keep = [];
+  for (const spot of spots) {
+    const p = { x: Number(spot?.xFt), y: Number(spot?.yFt) };
+    const bids = eligible.map((track) => {
+      const want = uAt(track.ptsFt, p, { closed: track.closed });
+      const at = moduleAt(track.ptsFt, want, { closed: track.closed });
+      return { track, want, dist: at ? Math.hypot(p.x - at.x, p.y - at.y) : Infinity };
+    }).filter((bid) => bid.dist <= absorbFt + 1e-9)
+      .sort((a, b) => a.dist - b.dist);
+
+    let seated = null;
+    for (const bid of bids) {
+      const { track, want } = bid;
+      const u = placeableU(track.ptsFt, want, taken.get(track.id), 'spot',
+        { closed: track.closed, watts: spot.watts });
+      if (u == null) continue;
+      const total = pathLength(track.ptsFt, { closed: track.closed });
+      const rawMove = Math.abs(u - want) * total;
+      const move = track.closed ? Math.min(rawMove, Math.max(0, total - rawMove)) : rawMove;
+      if (move > dodgeFt + 1e-9) continue;
+      seated = { trackId: track.id, u, watts: spot.watts, beam: spot.beam,
+        gridCells: spot.gridCell ? [spot.gridCell] : [] };
+      taken.get(track.id).push({ u, kind: 'spot', watts: spot.watts });
+      break;
+    }
+    if (seated) modules.push(seated); else keep.push(spot);
+  }
+  return { spots: keep, modules };
+}
 
 /** Everything the clamp has to know about the room a light is in. Assembled
  *  once per gesture rather than per frame: none of it changes while a pointer
@@ -153,7 +320,7 @@ export function chunkSpecInForce({ cobs, room, pxPerFt }) {
  *
  * RETURNS THE LIST, unchanged BY REFERENCE when there is nothing to add.
  */
-export function autoplaceCobs({ room, list, pxPerFt, basis }) {
+export function autoplaceCobs({ room, list, pxPerFt, basis, ownedCells = [] }) {
   if (!room || !(pxPerFt > 0)) return list;
   const cells = room.plan?.gridCellsPx ?? [];
   if (!cells.length) return list;
@@ -176,6 +343,7 @@ export function autoplaceCobs({ room, list, pxPerFt, basis }) {
   const zones = room.plan?.zonesPx ?? [];
   const chunksPx = room.plan?.gridChunksPx ?? [];
   const mine = list.filter((c) => c.roomId === room.id);
+  const owned = ownedCells instanceof Set ? ownedCells : new Set(ownedCells);
   const taken = (cell) => mine.some((c) => {
     const x = c.xFt * pxPerFt, y = c.yFt * pxPerFt;
     return x >= cell.x0 && x <= cell.x1 && y >= cell.y0 && y <= cell.y1;
@@ -196,6 +364,7 @@ export function autoplaceCobs({ room, list, pxPerFt, basis }) {
   };
   for (const cell of cells) {
     if (!(cell.w > 0 && cell.h > 0) || taken(cell)) continue;
+    if (owned.has(lightKey(room.id, cell.id))) continue;
     if (chunksPx[cell.chunk]?.dark) continue;
     const mid = { x: (cell.x0 + cell.x1) / 2, y: (cell.y0 + cell.y1) / 2 };
     if (zones.some((z) => mid.x >= z.x0 && mid.x <= z.x1
@@ -220,6 +389,7 @@ export function autoplaceCobs({ room, list, pxPerFt, basis }) {
         seq: `a${add.length}`,
       }),
       auto: true,
+      gridCell: lightKey(room.id, cell.id),
     });
   }
   return add.length ? [...list, ...add] : list;

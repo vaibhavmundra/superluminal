@@ -200,7 +200,7 @@ export const HALO = {
  * it gives up the part it cannot have. Two SHAPES drawn within six inches cannot
  * be resolved that way: their boxes are where the pockets go and no reach rule
  * moves them. The second is refused as a cove and stays on the drawing as the
- * line it is. See the filter in App.
+ * line it is. See the filter in lib/layout.js.
  */
 export const COVE_GAP_FT = 0.5;
 
@@ -272,7 +272,8 @@ function rectInPolygon(r, poly) {
  * the same test.
  *
  * A COVE THAT FAILS THIS IS NOT MOVED. It is refused as a cove and stays on the
- * drawing as the setting-out line it is — see the filter in App, and the note
+ * drawing as the setting-out line it is — see the filter in lib/layout.js, and
+ * the note
  * there on why refusing visibly beats clamping something somebody drew.
  */
 export function coveClearOfOutline(box, polygon = [], gap = COVE_GAP_FT) {
