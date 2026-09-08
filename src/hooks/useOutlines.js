@@ -1,7 +1,5 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { makeOutline, nextOutlineName } from '../lib/outline.js';
-import { bbox } from '../lib/geometry.js';
-import { projectOutlinesPx } from '../lib/planProjection.js';
 
 // ---------------------------------------------------------------------------
 // useOutlines — traced spaces and the edits made to their geometry.
@@ -13,32 +11,6 @@ import { projectOutlinesPx } from '../lib/planProjection.js';
 // ---------------------------------------------------------------------------
 export default function useOutlines({ doc, docActions, source }) {
   const { outlines, selectedOutlineId, litIds, dirtyIds, focusId } = doc;
-
-  const outlinesPx = useMemo(() => projectOutlinesPx(source, outlines), [source, outlines]);
-
-  /**
-   * A room that sits wholly inside another becomes a NO-LIGHT ZONE in the outer
-   * one.
-   *
-   * Subtracting it would be better and is what happens whenever the geometry
-   * allows (see roomBooleans.js) — but an annulus is not a polygon the planner
-   * can lay a grid inside, and the alternative to this is a ceiling laid over a
-   * room that is not the room being lit. The zone is keyed to the OUTER room
-   * only: put it in the global list and the inner room would find a no-light
-   * zone covering the whole of itself and come back with no lights at all.
-   */
-  const enclosedZones = useCallback((outline) => {
-    if (!outline?.enclosingPx?.length) return [];
-    return outline.enclosingPx.map((poly, i) => {
-      const b = bbox(poly);
-      return { id: `encl-${outline.id}-${i}`, source: 'enclosed', cls: 'room',
-               x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY };
-    });
-  }, []);
-
-  const litOutlines = useMemo(
-    () => outlinesPx.filter((o) => litIds.includes(o.id)),
-    [outlinesPx, litIds]);
 
   /* WHICH SPACES ARE LIT, READABLE FROM A CALLBACK — AND STILL A REF NOW THAT
      BOTH LISTS ARE IN THE REDUCER. `markChanged` runs inside the edit handlers
@@ -131,7 +103,6 @@ export default function useOutlines({ doc, docActions, source }) {
 
   return {
     outlines, selectedOutlineId, litIds, dirtyIds, focusId,
-    outlinesPx, litOutlines, enclosedZones,
     commitOutline, updateOutline, deleteOutline, editPoints,
     movePoint, insertPoint, removePoint,
   };

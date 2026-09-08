@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import PlanCanvas from './components/PlanCanvas.jsx';
 import ChunkPicker from './components/ChunkPicker.jsx';
 import OutlineTracer from './components/OutlineTracer.jsx';
-import { UNITS, classifyLayers } from './lib/dxf.js';
+import { UNITS } from './lib/dxf.js';
 import { regionFromOutline, outlineStats } from './lib/outline.js';
 import { PLAN_OPTIONS, FITTING_LUMENS,
          SIMPLIFY_ROOM_TO_RECTANGLE,
@@ -25,6 +25,12 @@ import useViewPrefs from './hooks/useViewPrefs.js';
 import useScale from './hooks/useScale.js';
 import usePlanSource from './hooks/usePlanSource.js';
 import useOutlines from './hooks/useOutlines.js';
+import usePlanScene from './features/scene/usePlanScene.js';
+import { useSceneArchitecture, useSceneOutlines } from './features/scene/useSceneSource.js';
+import { useScenePlanProjections } from './features/scene/useScenePlanProjections.js';
+import { useSceneElectricalProjections } from './features/scene/useSceneElectricalProjections.js';
+import { useSceneTrackProjections, useSceneArrayProjections, useSceneManualProjections,
+         useSceneShapeProjections } from './features/scene/useSceneFixtureProjections.js';
 import usePlanRecognition from './features/recognition/usePlanRecognition.js';
 import { mapLimit } from './lib/mapLimit.js';
 import { penSegments, penLengthFt, penRelock, penMovePoint, penAim, axisLock,
@@ -34,7 +40,7 @@ import { newHistory, record, stepBack, stepForward, historyDepth,
 import { NONE, select, selectMany, clear, idOf, idsOf } from './lib/selection.js';
 import { bbox, pointInPolygon, maxInset } from './lib/geometry.js';
 import { openingPx, DOOR_WIDTHS } from './lib/doors.js';
-import { zonesFromDetections, dedupe, plausibleBed } from './lib/furniture.js';
+import { dedupe } from './lib/furniture.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import { LIGHT_TOOLS, GESTURE } from './components/LightPalette.jsx';
@@ -90,9 +96,7 @@ import { WALL_BY_ID, joinPlacements } from './lib/wallPrompt.js';
 import { gridFor, anchorLines } from './lib/wallGrid.js';
 import { fitAll, RENDER_DEFAULTS, renderBlob, renderRef, fetchRender }
   from './lib/renderImage.js';
-import { reverseCovesFor, mergeReverseCoves, trimWallRun,
-         manualReverseCove, RUN_TRIM } from './lib/reverseCove.js';
-import { shelfStripsFor } from './lib/shelfStrip.js';
+import { manualReverseCove, RUN_TRIM } from './lib/reverseCove.js';
 /* RenderPassPanel IS NO LONGER MOUNTED — see the note in the Spaces list where
    it used to be. The import goes with it rather than sitting here unused; the
    component, its state and every handler that fed it are intact. */
@@ -137,7 +141,6 @@ import WallTonePopup from './components/WallTonePopup.jsx';
 import { DEFAULT_CEILING_MM, CEILING_MM_MIN, CEILING_MM_MAX,
          materialsOf, wallMix, wallMixLabel, materialsSummary } from './lib/materials.js';
 import { analyseSpace, netPerUnit, FIXTURE_FAMILIES, FAMILY_BY_ID, lumensPerWattFor } from './lib/lumens.js';
-import { layoutRooms } from './lib/layout.js';
 import {
   BTN, BTN_FULL, BTN_PRIMARY, BTN_EXIT, BTN_SECOND, BTN_MID, BTN_TINY,
   BTN_NUDGE, BTN_EXPORT, BTN_BOQ, N, NW, NE, NOTE, NOTE_WARN, CODE, PILL,
@@ -147,20 +150,6 @@ import {
   RTYPE, PTAB, PTAB_ON,
 } from './ui/tokens.js';
 import { introSpace, coachOff, silenceCoach } from './lib/intro.js';
-import {
-  projectObstaclesPx, projectCeilingObstaclesPx,
-  projectWardrobesPx, projectSurfacesPx, projectArtPiecesPx,
-  projectTaskSpotsPx, projectAccentZonesPx, projectWallCellsPx,
-} from './lib/planProjection.js';
-import {
-  projectAllBoardsPx, projectFlowsPx, projectSwitchboardsPx,
-} from './lib/electricalProjection.js';
-import {
-  projectMagTracksPx, projectTrackModulesPx, projectArrayCobsPx,
-  projectDraftArrayPx, projectSelectedArrayPathPx, projectManualCobsPx,
-  projectCoveShapesPx, projectDraftShapePx, projectTrackDraftPx,
-  projectTrackEditPx, projectPenDraftPx,
-} from './lib/fixtureProjection.js';
 
 
 /* --- THE COB GESTURES THIS BUILD DOES NOT ANSWER FOR YET --------------------
@@ -1566,15 +1555,9 @@ export default function App({
   const {
     ceilingFt, scaleMode, refId, customFt, measure, pxPerFt,
   } = useScale({ doc, isVector, source, doors, doorPick });
-  // Which layers are walls, for the detector's render. classifyLayers already
-  // works this out for room extraction; the same answer decides which lines get
-  // drawn heavy. On APT_01 it picks "KMBD Walls" out of a drawing whose other
-  // 1656 entities all sit on layer 0.
-  const wallLayerSet = useMemo(() => {
-    if (!isVector || !source?.drawing?.layers) return null;
-    const { wallLayers } = classifyLayers(source.drawing.layers);
-    return wallLayers.length ? new Set(wallLayers) : null;
-  }, [isVector, source]);
+
+
+  const { architecture: { wallLayerSet } } = useSceneArchitecture({ isVector, source });
 
   const {
     rooms: { state: roomState },
@@ -1815,66 +1798,23 @@ export default function App({
 
   const {
     outlines, selectedOutlineId, litIds, dirtyIds, focusId,
-    outlinesPx, litOutlines, enclosedZones,
     commitOutline, updateOutline, deleteOutline,
     movePoint, insertPoint, removePoint,
   } = useOutlines({ doc, docActions, source });
-
-  // THE RED-CIRCLE FAN DETECTOR IS GONE.
-  //
-  // It scanned the raster for round red blobs, called each one a ceiling fan,
-  // and — for a while — used their blade circles as the drawing's RULER. Both
-  // halves of that have been retired. The scale comes from a door, which is a
-  // thing that is actually standard; and a fan is now placed by hand from the
-  // ceiling palette, in feet, like every other object on the ceiling.
-  //
-  // The reason to delete it rather than leave it switched off: it was guessing
-  // from COLOUR, which is the least reliable signal on a drawing — a red
-  // dimension leader, a north arrow, a revision cloud, a hatched WC are all
-  // round-ish and red-ish on some office's sheet. A detector nobody trusts
-  // still fills a state array that eight other things read from, and it
-  // silently placed obstacles the user never asked for.
-  //
-  // What stays is everything downstream: `fanClearance`, the chunker's
-  // preference for holding an obstacle clear, `cellIsAwkward`. Those never cared
-  // where an obstacle came from — planner.js calls them "fans" because that was
-  // the first kind it met.
-
-  const obstaclesPx = useMemo(() => projectObstaclesPx(ceilingObjs, pxPerFt), [ceilingObjs, pxPerFt]);
-
-  const ceilingObstaclesPx = useMemo(() => projectCeilingObstaclesPx(obstaclesPx), [obstaclesPx]);
-
-  /**
-   * THE BUILT AREA, in square feet — the sum of the spaces, not the sheet.
-   *
-   * The sheet is the wrong measure and it would be the easy one: it includes the
-   * title block, the margins and whatever site plan is sitting off to the side,
-   * so the same building drawn on A1 and A0 would be two different sizes. The
-   * spaces are what the models are being asked about.
-   *
-   * Null until there is a scale, which on a raster means until a door has been
-   * measured. Everything that reads this treats null as "not known yet" rather
-   * than as small — see the note on the bed pass.
-   */
-  const planAreaSqft = useMemo(() => {
-    // `outlinesPx`, NOT `outlines`, AND THE DIFFERENCE BLANKED THE SCREEN.
-    //
-    // An outline is STORED in drawing units — `pointsDu` — and resolved into
-    // pixels by the outlinesPx memo above. Everything that measures one goes
-    // through that resolved list; the raw one is the storage format. A
-    // detector-proposed outline in particular has no `pointsPx` at all (see
-    // where `made.push` builds them), so handing a raw outline to outlineStats
-    // reaches `ensureCCW(undefined)` and throws — during render, which in React
-    // means the whole tree unmounts and the app is a white page.
-    //
-    // It surfaced at the strangest possible moment: this memo returns null until
-    // there is a scale, so the crash landed the instant somebody set a door's
-    // width. Two features away from its cause.
-    if (!pxPerFt || !outlinesPx.length) return null;
-    let a = 0;
-    for (const o of outlinesPx) a += outlineStats(o, pxPerFt)?.areaSqft ?? 0;
-    return a || null;
-  }, [outlinesPx, pxPerFt]);
+  const { rooms: { outlinesPx, litOutlines, enclosedZones } } = useSceneOutlines({
+    source, outlines, litIds,
+  });
+  const {
+    rooms: { items: rooms, focus, openRoom, planAreaSqft },
+    architecture: { obstaclesPx },
+    furnishings: { bedsPerRoom, detectedZones, wardrobesPx, shelfStrips },
+    lightingGeometry: { reverseCoves, drawnZones },
+  } = usePlanScene({
+    source, pxPerFt, outlines, outlinesPx, litOutlines, enclosedZones, focusId, ceilingObjs,
+    accentResults, detections, dismissed, wallResults, useBoundingRect, doors, runTrims,
+    manualCoves, runsOff, zones, opt, chunkPicks, roomTypes, projectId, designPicks, ceilingKinds,
+    ceilingShapes, lightMoves, manualTracks, isAdmin
+  });
 
   // ---------------------------------------------------------------------------
   // LIGHTING A SPACE COSTS SOMETHING, AND THESE THREE ARE WHERE IT IS ASKED FOR.
@@ -1969,196 +1909,6 @@ export default function App({
      contradiction is the trigger; the size of the drawing is not.
      `planAreaSqft` is still computed — the Result panel prints it. */
 
-  // Every no-light zone on the plan, whoever drew it.
-  //
-  // A DETECTION IS A PROPERTY OF THE IMAGE, not of a room. The bed detector runs
-  // on upload, before any boundary exists, and finds every bed on the sheet;
-  // which of them is an obstacle depends on which ceiling is being laid out, and
-  // that question is answered per room, below. So this list is unfiltered — it
-  // is what the canvas draws — and the planner sees only the subset that falls
-  // inside the room it is working on.
-  /**
-   * THE BEDS THE ACCENT PASS THOUGHT IT SAW — FOR THE AUDIT PANEL ONLY.
-   *
-   * NOTHING DOWNSTREAM OF THIS PLACES A LIGHT. These boxes are deliberately not
-   * in `detectedZones`, so they do not reach the chunking, the no-light zones,
-   * or the sconce rule. Read the header of `detectedZones` for why; the short
-   * version is that the accent pass is a question about furniture in general,
-   * where a bed arrives as a side effect and its box only ever had to be roughly
-   * right. A bed's rectangle decides where the ceiling lights are NOT, and a
-   * second looser opinion about the same mattress competing with a measured one
-   * is how one bed became several stacked zones.
-   *
-   * It is still counted, and that is the whole point of keeping it: an exclusion
-   * you can see is a decision, an exclusion you cannot is a bug. If this number
-   * is high on a plan where bed-filter found nothing, that is worth knowing.
-   *
-   * FROM THE OUTLINES, NOT FROM `rooms`, AND THAT IS NOT A STYLE CHOICE. The
-   * first version read `rooms`, which crashed the app on load with "Cannot
-   * access 'rooms' before initialization" — and the temporal dead zone was only
-   * the symptom. `rooms` is the LAID-OUT plan, computed from `zoneList`, which
-   * is computed from these very zones: a bed moves the fittings around it, so
-   * the layout cannot be an input to the beds without the beds being an input to
-   * themselves. Reordering the declarations would have swapped the crash for an
-   * infinite loop or a stale render.
-   */
-  const bedsPerRoom = useMemo(() => {
-    const out = [];
-    for (const o of outlines) {
-      const found = accentResults[o.id]?.bedsFromAccentPass;
-      if (!found?.length) continue;
-      found.forEach((f, i) => {
-        if (!f.rect) return;
-        out.push({
-          id: `bed-room-${o.id}-${i}`, cls: 'bed', conf: f.confidence ?? 0.8,
-          rect: f.rect, roomId: o.id, closeUp: true,
-        });
-      });
-    }
-    return out;
-  }, [outlines, accentResults]);
-
-  const detectedZones = useMemo(() => {
-    if (!source) return [];
-    /* THREE SOURCES, ONE WINNER PER SPACE, IN A STATED ORDER.
-     *
-     * TWO SOURCES, AND THE ACCENT PASS IS NOT ONE OF THEM.
-     *
-     *   1. `bed-filter`, THE WHOLE PLAN — one trained segmenter, one call. The
-     *      primary path, and the answer for very nearly every bed.
-     *   2. GPT ON ONE BEDROOM CROP — and ONLY where the classifier called a
-     *      space a bedroom and bed-filter put nothing in it. Where it exists it
-     *      is the answer to a question the primary pass got wrong, so it wins
-     *      for its own space.
-     *
-     * THE ACCENT PASS IS DELIBERATELY EXCLUDED, and this is the rule, not a
-     * tuning choice: a bed's rectangle decides where the ceiling lights are NOT,
-     * which moves real fittings. The accent pass is a question about furniture in
-     * general — a wardrobe, a TV unit, a sofa — where a bed comes back as a side
-     * effect and its box only ever had to be roughly right, because all it was
-     * used for was hanging sconces off. Letting a box drawn to that standard
-     * into the chunking meant a second, looser opinion about the same mattress
-     * silently competing with a measured one. `bedsPerRoom` still exists and is
-     * still shown in the audit panel; it does not reach this list.
-     *
-     * Matched by `roomId`, which every per-room bed carries, so this is set
-     * membership and not a point-in-polygon guess.
-     */
-    const judged = detections.filter((d) => d.refound && d.roomId);
-    const judgedRooms = new Set(judged.map((d) => d.roomId));
-    const sheet = detections.filter((d) => {
-      if (d.refound) return false;                       // counted in `judged`
-      return !(d.roomId && judgedRooms.has(d.roomId));
-    });
-    const live = [...sheet, ...judged].filter((d) => !dismissed.includes(d.id));
-    if (judged.length) {
-      console.log(`[beds] ${live.length} zones = ${sheet.length} from bed-filter`
-        + ` + ${judged.length} from a GPT bedroom crop`
-        + ` (${bedsPerRoom.length} accent-pass beds deliberately excluded)`);
-    }
-    if (!live.length) return [];
-
-    /**
-     * THE PHYSICAL GATE, AND THIS IS THE RIGHT PLACE FOR IT.
-     *
-     * Every bed — from the whole-sheet pass, from a per-room re-ask, from a
-     * reopened plan — becomes a no-light zone here and nowhere else, and by this
-     * point the scale is known. So this is the one checkpoint that cannot be
-     * bypassed by adding another detector later, and it re-runs if the scale is
-     * corrected, which means a plan measured wrongly and then fixed does not
-     * keep a set of beds sized for the wrong ruler.
-     *
-     * A LIGHT IS PLACED AROUND THESE RECTANGLES, so a wrong one is not a
-     * cosmetic error: a box covering a whole bedroom moves every fitting in it.
-     * The detector returning 121 beds on an 11-space plan is what this exists to
-     * stop, and it stops it by knowing how big a bed is — see BED_FT.
-     */
-    const kept = [], tossed = [];
-    for (const d of live) {
-      const fit = plausibleBed(d.rect, pxPerFt);
-      (fit.ok ? kept : tossed).push({ d, fit });
-    }
-    if (tossed.length) {
-      console.warn(`[beds] rejected ${tossed.length} of ${live.length} as impossible`,
-        tossed.slice(0, 12).map(({ d, fit }) => `${d.id}: ${fit.why}`));
-    }
-    const ok = kept.map(({ d }) => d);
-    return zonesFromDetections(ok, { image: { w: source.w, h: source.h }, pxPerFt })
-      .map((z, i) => ({ ...z, id: ok[i].id,
-                        closeUp: !!ok[i].closeUp || !!ok[i].refound,
-                        judged: !!ok[i].refound }));
-  }, [detections, dismissed, source, pxPerFt, bedsPerRoom]);
-
-  /**
-   * THE REVERSE COVES, from the render pass's panelling and wallpaper.
-   *
-   * COMPUTED FROM THE OUTLINES AND NOT FROM `rooms`, and that is load-bearing
-   * rather than tidy. A reverse cove is a no-light zone, no-light zones go into
-   * the planner, and the planner is what builds `rooms` — so a memo over `rooms`
-   * would be a cycle. It does not need one: the grid a cove is measured against
-   * comes from the room's OUTLINE and the scale, both of which exist long before
-   * anything is lit, and `regionFromOutline` is the same call the layout makes.
-   *
-   * See reverseCove.js for the rule. Merged, because a wall that came back both
-   * panelled and papered is one wall and would otherwise get two bands in the
-   * same eight inches of ceiling — drawn as one, billed as two.
-   */
-  const reverseCoves = useMemo(() => {
-    if (!source || !pxPerFt) return [];
-    const out = [];
-    for (const o of litOutlines) {
-      const res = wallResults[o.id];
-      if (!res?.elements?.length) continue;
-      const region = regionFromOutline(o, pxPerFt);
-      if (!region?.ok) continue;
-      const polygonPx = useBoundingRect ? region.boundingRect : region.polygon;
-      const grid = gridFor(polygonPx, pxPerFt);
-      if (!grid) continue;
-      const mine = [];
-      for (const e of res.elements) {
-        // A LIST PER ELEMENT, because a wall with a door in it is two walls.
-        // `doors` is the whole sheet's detections — the ones already found to
-        // set the scale — and reverseCovesFor picks out the ones in this wall.
-        const got = reverseCovesFor(e, grid, { pxPerFt, doors });
-        got.forEach((rc, i) => mine.push({
-          ...rc, roomId: o.id, elementId: e.id,
-          id: `rcove-${e.id}-${i}`,
-        }));
-      }
-      // MERGE FIRST, THEN TRIM. The merge decides which coves exist and what
-      // their ids are; a trim is keyed to an id, so trimming before it would
-      // apply somebody's drag to a run that is about to be absorbed into
-      // another one.
-      for (const c of mergeReverseCoves(mine, { pxPerFt })) {
-        // ...AND NOT THE ONES SOMEBODY DELETED. Filtered here rather than where
-        // the tape is shaped, because the tape is not the thing: a reverse cove
-        // is 200mm of ceiling detail with a strip at its lip, and dropping only
-        // the strip would leave the slot drawn on the plan with nothing in it.
-        // See `runsOff`.
-        if (runsOff.includes(c.id)) continue;
-        out.push(trimWallRun(c, runTrims[c.id], { pxPerFt }));
-      }
-    }
-    /* THE HAND-PLACED ONES JOIN HERE, AFTER THE MERGE AND THROUGH THE SAME TRIM.
-       After the merge on purpose: `mergeReverseCoves` decides which detected
-       coves exist and what they are called, and feeding a manual slot into it
-       would let a detection absorb something a person set out by hand — the id
-       would vanish and with it their edit. Through `trimWallRun` because that is
-       what gives a run its draggable ends, and a hand-placed cove wanting the
-       same grips as a detected one is the whole reason its shape matches.
-
-       ONLY IN ROOMS THAT STILL EXIST. A cove is placed against a room's own
-       wall; delete or re-trace the room and the slot has nothing to be on. It is
-       filtered rather than deleted, so re-lighting the space brings it back. */
-    const live = new Set(litOutlines.map((o) => o.id));
-    for (const c of manualCoves) {
-      if (!live.has(c.roomId)) continue;
-      out.push(trimWallRun(c, runTrims[c.id], { pxPerFt }));
-    }
-    return out;
-  }, [source, pxPerFt, litOutlines, wallResults, useBoundingRect, doors, runTrims,
-      manualCoves, runsOff]);
-
   /**
    * THE SLOT AS IT WOULD BE IF THE SECOND CLICK LANDED NOW.
    *
@@ -2185,182 +1935,6 @@ export default function App({
       roomId: coveFrom.roomId, inward: coveFrom.inward, pxPerFt, id: 'mcove-draft',
     });
   }, [addTool, coveFrom, addAt, pxPerFt]);
-
-  const wardrobesPx = useMemo(() => projectWardrobesPx(litOutlines, accentResults), [litOutlines, accentResults]);
-
-  /**
-   * A WARDROBE IS A NO-LIGHT ZONE, on the same terms as a bed.
-   *
-   * A DOWNLIGHT OVER A WARDROBE LIGHTS THE TOP OF THE WARDROBE. It is a foot and
-   * a half of dust-catcher at head height and the light lands on it, so the
-   * fitting is spent on the one square metre of the room nobody looks at, and
-   * the wall the wardrobe is on gets its light from the strip inside the unit —
-   * which is why the strip is there. This is the same argument the bed makes
-   * (nobody wants a downlight over a pillow) reaching the same list.
-   *
-   * DERIVED, NOT DRAWN, exactly like the beds. `drawnZones` is hand-drawn zones
-   * and enclosed spaces only — see the note there about a hatched box over
-   * somebody's bed on a sheet handed to a client. The zone moves the fittings
-   * and does not argue about it on the drawing.
-   *
-   * IT ARRIVES AFTER THE FIRST LAYOUT, and that is fine and worth stating. The
-   * accent pass runs on a space that is already lit, so the lights move once
-   * when its answer lands — the same way they move when somebody boxes a zone
-   * by hand. Nothing loops: `accentResults` is a stored answer, not a
-   * derivation of the layout, so a re-layout does not re-run the pass.
-   */
-  const wardrobeZones = useMemo(
-    () => wardrobesPx.map((w) => ({ id: w.id, roomId: w.roomId, ...w.rect,
-                                    kind: 'wardrobe' })),
-    [wardrobesPx]);
-
-  /**
-   * ...and as no-light zones, which is how "a reverse cove is a no-draw area"
-   * is actually enforced.
-   *
-   * Not by a new rule in every placer — there are four of them and they would
-   * drift — but by the band joining the list of rectangles that every placer in
-   * this app already keeps out of. Eight inches of ceiling with tape in it is
-   * exactly the same kind of fact as a hole for a beam.
-   */
-  const reverseCoveZones = useMemo(
-    () => reverseCoves.map((c) => ({ id: c.id, roomId: c.roomId, ...c.rect,
-                                     kind: 'reverse-cove' })),
-    [reverseCoves]);
-
-  /**
-   * THE SHELF STRIPS, from the render pass's shelving.
-   *
-   * NOT A NO-DRAW AREA, unlike the reverse cove beside it, and the difference is
-   * the difference between the two fittings. A reverse cove is a slot cut in the
-   * CEILING: eight inches of it are gone and nothing else can go there. A shelf
-   * strip is tape inside a piece of joinery standing against the wall — the
-   * ceiling above it is ordinary ceiling, and a downlight in front of the unit is
-   * a perfectly good thing to have. So this list is drawn and billed and changes
-   * nothing about the layout.
-   *
-   * Same reason as the reverse coves for computing it off the OUTLINES: it does
-   * not need `rooms`, and not depending on it keeps the two memos independent.
-   */
-  const shelfStrips = useMemo(() => {
-    if (!source || !pxPerFt) return [];
-    const out = [];
-    for (const o of litOutlines) {
-      const res = wallResults[o.id];
-      if (!res?.elements?.length) continue;
-      const region = regionFromOutline(o, pxPerFt);
-      if (!region?.ok) continue;
-      const polygonPx = useBoundingRect ? region.boundingRect : region.polygon;
-      const grid = gridFor(polygonPx, pxPerFt);
-      if (!grid) continue;
-      for (const e of res.elements) {
-        shelfStripsFor(e, grid, { pxPerFt, doors }).forEach((st, i) => {
-          const id = `shelf-${e.id}-${i}`;
-          // The same deletion the reverse coves answer to, and for the same
-          // reason: nothing stores a shelf strip, so a deleted one has to be
-          // recorded or it comes back on the next render. See `runsOff`.
-          if (runsOff.includes(id)) return;
-          out.push(trimWallRun({ ...st, roomId: o.id, elementId: e.id, id },
-                               runTrims[id], { pxPerFt }));
-        });
-      }
-    }
-    return out;
-  }, [source, pxPerFt, litOutlines, wallResults, useBoundingRect, doors, runTrims,
-      runsOff]);
-
-  // Hand-drawn zones and detected ones behave identically from here on — that
-  // was the point of making a detection produce a rectangle rather than a new
-  // kind of obstacle. So do the reverse coves.
-  const zoneList = useMemo(
-    () => [...zones, ...detectedZones, ...wardrobeZones, ...reverseCoveZones],
-    [zones, detectedZones, wardrobeZones, reverseCoveZones]);
-
-  // Only the three settings that genuinely shape a decomposition are in this
-  // dependency list, so moving an unrelated slider does not re-enumerate and
-  // cannot invalidate a choice that is still perfectly valid.
-  const chunkOpt = useMemo(
-    () => ({ targetArea: opt.targetArea, minChunk: opt.minChunk,
-             minChunkArea: opt.minChunkArea, fanClearance: opt.fanClearance }),
-    [opt.targetArea, opt.minChunk, opt.minChunkArea, opt.fanClearance]);
-
-  /**
-   * THE WHOLE PLAN, ROOM BY ROOM.
-   *
-   * This used to be six hooks in a column — region, geo, chunking, the chosen
-   * chunking, the layout — each holding the one room being lit. They are one
-   * loop now, and the reason is not tidiness: a floor plan's rooms arrive
-   * together from the detector, so they are laid out together, and a per-room
-   * value cannot live in a hook when the number of rooms is not known until the
-   * detector answers.
-   *
-   * The pipeline inside the loop is UNCHANGED, deliberately. Each room is still
-   * an outline resolved to a polygon, a polygon converted into its own local
-   * feet space with its own origin, a decomposition enumerated on that space and
-   * a layout computed inside the chosen one. Feeding the planner a room-local
-   * space rather than a plan-wide one is what keeps eight rooms eight
-   * independent problems: nothing about room 3's layout can perturb room 4's,
-   * and the numbers the planner sees are the same numbers it saw when there was
-   * only ever one room. The plan-wide coordinates the exporters need are
-   * recovered from the pixel space instead — see exporters.js.
-   *
-   * WHAT DID CHANGE is the chunking choice. With one room, an ambiguous
-   * decomposition was worth stopping the world for; with eight, stopping eight
-   * times is not a choice, it is an interrogation. So an unanswered room takes
-   * the recommendation and says so, and the picker is somewhere to go rather
-   * than a gate to get through.
-   */
-  const rooms = useMemo(() => layoutRooms({
-    source, pxPerFt, litOutlines, useBoundingRect, ceilingObstaclesPx, zoneList,
-    zones, reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes,
-    projectId, designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks,
-    isAdmin,
-  }), [source, pxPerFt, litOutlines, useBoundingRect, ceilingObstaclesPx, zoneList, zones,
-      reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes, projectId,
-      designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks, isAdmin]);
-
-  // What the canvas draws: every zone, whoever it belongs to. The planner sees
-  // the per-room subsets above; this is only for the eye.
-  /**
-   * The zones that are DRAWN, which is not the same set as the zones that are
-   * OBEYED.
-   *
-   * `zoneList` is what the planner gets: hand-drawn zones plus whatever the bed
-   * detector found, because a light over a bed is wrong whether or not anybody
-   * was shown a rectangle about it. What goes on screen is the hand-drawn ones
-   * and the enclosed spaces — the first because the user put them there and has
-   * to be able to see and remove them, the second because it is a fact about
-   * the plan's own geometry.
-   *
-   * The bed zones are neither. They are the visible half of a pipeline that
-   * runs two detectors and a judge over the plan before anyone sees it, and
-   * they were being drawn as if they were part of the design — a hatched box
-   * across the bed, on a sheet handed to a client, explaining a decision nobody
-   * asked about. The zone still moves the fittings. It just stops arguing.
-   */
-  const drawnZones = useMemo(
-    () => [...zones, ...rooms.flatMap((r) => enclosedZones(r.outline))],
-    [zones, rooms, enclosedZones]);
-
-
-  // THE PLAN-WIDE `coved` LIST IS GONE WITH THE SECTION IT FED. A cove is now
-  // described inside its own space's row in the Spaces list, which reads
-  // `r.cove` directly — so a list of every coved space on the plan is a
-  // derivation with nothing left to derive it for.
-
-  /** The room the right-hand panel and the chunk picker are talking about. */
-  const focus = useMemo(
-    () => rooms.find((r) => r.id === focusId) || rooms[0] || null,
-    [rooms, focusId]);
-
-  /* --- THE SPACE THE PANEL IS OPENED ON, WHICH IS NOT `focus` ---------------
-     `focus` falls back to the first room so that the drawing always has
-     something to talk about; the detail view must not. Opening a space is a
-     deliberate act and closing it puts the list back, so a fallback here would
-     make "Back to Spaces" a button that goes nowhere. */
-  const openRoom = useMemo(
-    () => (focusId ? rooms.find((r) => r.id === focusId) ?? null : null),
-    [rooms, focusId]);
 
   const ceilingMmFor = useCallback(
     (id) => ceilingMm[id] ?? DEFAULT_CEILING_MM, [ceilingMm]);
@@ -2944,16 +2518,10 @@ export default function App({
     return { shot, ...payload.result };
   }, [source, img, wallLayerSet, projectId]);
 
-  const surfacesPx = useMemo(() => projectSurfacesPx(rooms, surfaceResults, surfaceDismissed, manualSurfaces), [rooms, surfaceResults, surfaceDismissed, manualSurfaces]);
-
-  const artPiecesPx = useMemo(() => projectArtPiecesPx(rooms, wallResults, pxPerFt, artDismissed), [rooms, wallResults, pxPerFt, artDismissed]);
-
-  const taskSpotsPx = useMemo(() => projectTaskSpotsPx(rooms, surfacesPx, artPiecesPx, opt), [rooms, surfacesPx, artPiecesPx, opt]);
-
-  const accentZonesPx = useMemo(() => projectAccentZonesPx(rooms, accentResults, accentDismissed, manualAccents, reverseCoves, shelfStrips, ceilingShapes, pxPerFt), [rooms, accentResults, accentDismissed, manualAccents, reverseCoves, shelfStrips,
-      ceilingShapes, pxPerFt]);
-
-  const wallCellsPx = useMemo(() => projectWallCellsPx(rooms, wallResults, pxPerFt), [rooms, wallResults, pxPerFt]);
+  const { projections: { surfacesPx, taskSpotsPx, accentZonesPx, wallCellsPx } } = useScenePlanProjections({
+    rooms, surfaceResults, surfaceDismissed, manualSurfaces, wallResults, pxPerFt, artDismissed,
+    opt, accentResults, accentDismissed, manualAccents, reverseCoves, shelfStrips, ceilingShapes
+  });
 
   /**
    * THE BOARDS THAT COST NOTHING, WITHOUT ASKING FOR THEM.
@@ -3348,60 +2916,6 @@ export default function App({
   }, [rooms, roomTypes, projectId, pxPerFt, boardsFor, bayBoardsFor]);
 
 
-  /**
-   * EVERY FLOW ON THE SHEET. See flows.js for what a flow is and why the row is
-   * the unit; this only gathers what one space's worth of it needs.
-   *
-   * NOT GATED ON THE LAYER. It is cheap, it feeds the schedule's switch count as
-   * well as the drawing, and a memo that only runs while something is visible is
-   * a memo that recomputes the moment somebody looks at it.
-   */
-  /**
-   * EVERY PLATE ON THE SHEET, whatever room it stands in and whatever the
-   * layers say.
-   *
-   * NOT `switchboardsPx`, WHICH IS THE DRAWING'S LIST. That one drops the bay
-   * boards while the electrical layer is off, correctly — a plate that exists
-   * because a bay needed one is part of the flow reading and has no business on
-   * a sheet with the wiring switched off. This list is not for drawing: it is
-   * the pool a HAND ASSIGNMENT may name (see `boardPool` in flows.js), and a
-   * wire dropped onto a plate last week must not come unstuck because somebody
-   * turned a layer off today.
-   */
-  /**
-   * SB1, SB2, SB3 — every plate on the job, numbered.
-   *
-   * ONE SEQUENCE OVER THE WHOLE PLAN AND NOT ONE PER ROOM, because that is what
-   * a switchboard number IS on a drawing: SB7 is a plate you can point at across
-   * a sheet, and "the third one in the kitchen" is not a name.
-   *
-   * DERIVED, LIKE THE PLATES THEMSELVES, and therefore ORDER IS EVERYTHING. The
-   * numbering has to be stable under things that do not add or remove a plate,
-   * or the names would shuffle while somebody worked:
-   *
-   *   · rooms in the order the layout holds them, which is the order everything
-   *     else on this sheet is in;
-   *   · within a room, the rules' boards, then the bay boards, then the ones
-   *     placed by hand — the order the three passes run in;
-   *   · UNGATED BY LAYERS, which is the trap this avoids. `switchboardsPx` drops
-   *     the bay boards while the electrical layer is off; numbering off that
-   *     list would renumber half the plan when somebody flicked a switch.
-   *
-   * WHAT DOES RENUMBER IS ADDING OR DELETING A PLATE, and that is unavoidable in
-   * any sequential scheme — it is also how SB numbers behave on a real job, where
-   * the schedule is renumbered when the drawing changes.
-   */
-  const boardNames = useMemo(() => {
-    const m = new Map();
-    let n = 0;
-    for (const r of rooms) {
-      for (const b of [...boardsFor(r), ...bayBoardsFor(r), ...placedBoardsFor(r)]) {
-        if (!m.has(b.id)) m.set(b.id, `SB${++n}`);
-      }
-    }
-    return m;
-  }, [rooms, boardsFor, bayBoardsFor, placedBoardsFor]);
-
   /** The height a plate is actually set at, override or rule. */
   const heightOf = useCallback(
     (b) => b?.heightsMm?.[0] ?? heightsFor(b?.role)[0] ?? 1200, []);
@@ -3409,14 +2923,10 @@ export default function App({
   const setBoardHeight = useCallback(
     (id, mm) => docActions.setBoardHeight(id, mm), [docActions]);
 
-  const allBoardsPx = useMemo(() => projectAllBoardsPx(rooms, boardsFor, bayBoardsFor, placedBoardsFor), [rooms, boardsFor, bayBoardsFor, placedBoardsFor]);
-
-  const flowsPx = useMemo(() => projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx, outdoorFeeds, pxPerFt, baysOf, allBoardsPx, placedBoardsFor, flowBoards, flowBends), [rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx,
-      outdoorFeeds, pxPerFt, baysOf, allBoardsPx, placedBoardsFor, flowBoards, flowBends]);
-
-
-  const switchboardsPx = useMemo(() => projectSwitchboardsPx(rooms, boardsFor, bayBoardsFor, placedBoardsFor, boardNames, layers.electrical, doorEdit, pxPerFt), [rooms, boardsFor, bayBoardsFor, placedBoardsFor, boardNames,
-      layers.electrical, doorEdit, pxPerFt]);
+  const { projections: { allBoardsPx, flowsPx, switchboardsPx, boardNames } } = useSceneElectricalProjections({
+    rooms, boardsFor, bayBoardsFor, placedBoardsFor, bayResults, obstaclesPx, accentZonesPx,
+    taskSpotsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends, layers, doorEdit
+  });
 
   /* --- WHAT IS ON THE PLATE -------------------------------------------------
 
@@ -3865,10 +3375,9 @@ export default function App({
     return null;
   }, [shapeAtPointer, addTool, cobMode, shapeMenuOn, shapeRole]);
 
-  const magTracksPx = useMemo(() => projectMagTracksPx(ceilingShapes, rooms, pxPerFt), [ceilingShapes, rooms, pxPerFt]);
-
-  const magTrackById = useMemo(
-    () => Object.fromEntries(magTracksPx.map((t) => [t.id, t])), [magTracksPx]);
+  const { projections: { magTracksPx, magTrackById, trackModulesPx } } = useSceneTrackProjections({
+    ceilingShapes, rooms, pxPerFt, trackFixtures
+  });
 
   /**
    * THE RUN THAT IS SELECTED, if the selected shape is one.
@@ -3882,13 +3391,9 @@ export default function App({
     () => (selShapeId && magTrackById[selShapeId] ? selShapeId : null),
     [selShapeId, magTrackById]);
 
-  const trackModulesPx = useMemo(() => projectTrackModulesPx(trackFixtures, magTrackById, pxPerFt), [trackFixtures, magTrackById, pxPerFt]);
-
-  const arrayCobsPx = useMemo(() => projectArrayCobsPx(cobArrays, arrayOutline, pxPerFt, ceilingMmFor), [cobArrays, arrayOutline, pxPerFt, ceilingMmFor]);
-
-  const draftArrayPx = useMemo(() => projectDraftArrayPx(cobDraftArray, arrayOutline, pxPerFt), [cobDraftArray, arrayOutline, pxPerFt]);
-
-  const selArrayPathPx = useMemo(() => projectSelectedArrayPathPx(cobArrays, selArrayId, arrayOutline, pxPerFt), [cobArrays, selArrayId, arrayOutline, pxPerFt]);
+  const { projections: { arrayCobsPx, draftArrayPx, selArrayPathPx } } = useSceneArrayProjections({
+    cobArrays, arrayOutline, pxPerFt, ceilingMmFor, cobDraftArray, selArrayId
+  });
 
   /**
    * WHAT THE BAR ASKS ABOUT THE ARRAY THAT IS OPEN.
@@ -5656,7 +5161,9 @@ export default function App({
     return poly && pointInPolygon(p, poly);
   }) || null, [rooms]);
 
-  const manualCobsPx = useMemo(() => projectManualCobsPx(manualCobs, pxPerFt, ceilingMmFor), [manualCobs, pxPerFt, ceilingMmFor]);
+  const { projections: { manualCobsPx } } = useSceneManualProjections({
+    manualCobs, pxPerFt, ceilingMmFor
+  });
 
   /* --- LINING ONE LAMP UP WITH ANOTHER ---------------------------------------
      THE LAMPS SOMEBODY HAS ALREADY PLACED, AS ALIGNMENT TARGETS, and nothing
@@ -7672,24 +7179,10 @@ export default function App({
     return true;
   };
 
-  const litShapeIds = useMemo(() => new Set(
-    rooms.flatMap((r) => (r.coves ?? []).map((c) => c.shapeId).filter(Boolean))),
-    [rooms]);
-
-  const shapePts = useCallback((sh, grow = 0) => (pxPerFt
-    ? shapeOutlineFt(sh, grow).map((q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt }))
-    : []), [pxPerFt]);
-
-  const coveShapesPx = useMemo(() => projectCoveShapesPx(ceilingShapes, litShapeIds, shapePts, pxPerFt), [ceilingShapes, litShapeIds, shapePts, pxPerFt]);
-
-  const draftShapePx = useMemo(() => projectDraftShapePx(shapeDraft, shapePts, pxPerFt), [shapeDraft, shapePts, pxPerFt]);
-
-  const trackDraftPx = useMemo(() => projectTrackDraftPx(pxPerFt, addTool, trackPen.pts, trackPen.at, trackPen.isEmpty), [pxPerFt, addTool, trackPen.pts, trackPen.at, trackPen.isEmpty]);
-
-  const trackEditPx = useMemo(() => projectTrackEditPx(pxPerFt, trackEditId, manualTracks), [pxPerFt, trackEditId, manualTracks]);
-
-  const penDraftPx = useMemo(() => projectPenDraftPx(pxPerFt, shapeMenuOn, shapeTool, covePen.pts, covePen.at, covePen.isEmpty), [pxPerFt, shapeMenuOn, shapeTool, covePen.pts, covePen.at, covePen.isEmpty]);
-
+  const { projections: { coveShapesPx, draftShapePx, trackDraftPx, trackEditPx, penDraftPx } } = useSceneShapeProjections({
+    ceilingShapes, rooms, pxPerFt, shapeDraft, addTool, trackPen, trackEditId, manualTracks,
+    shapeMenuOn, shapeTool, covePen
+  });
 
   /**
    * ONE CLICK SEATS A PLATE ON THE NEAREST WALL THAT CAN HOLD ONE.
