@@ -3,8 +3,8 @@ import PlanCanvas from './components/PlanCanvas.jsx';
 import ChunkPicker from './components/ChunkPicker.jsx';
 import OutlineTracer from './components/OutlineTracer.jsx';
 import { UNITS, classifyLayers } from './lib/dxf.js';
-import { makeOutline, nextOutlineName, regionFromOutline, outlineStats } from './lib/outline.js';
-import { PLAN_OPTIONS, FITTING_LUMENS, WALL_WEIGHT_IN, OTHER_STROKE_PX,
+import { regionFromOutline, outlineStats } from './lib/outline.js';
+import { PLAN_OPTIONS, FITTING_LUMENS,
          SIMPLIFY_ROOM_TO_RECTANGLE,
          /* `THROW_STYLE` WAS IMPORTED HERE — the accent ramp, handed to the
             chunking icon in the spaces list. The icon went with the accordion
@@ -25,15 +25,16 @@ import useViewPrefs from './hooks/useViewPrefs.js';
 import useScale from './hooks/useScale.js';
 import usePlanSource from './hooks/usePlanSource.js';
 import useOutlines from './hooks/useOutlines.js';
+import usePlanRecognition from './features/recognition/usePlanRecognition.js';
+import { mapLimit } from './lib/mapLimit.js';
 import { penSegments, penLengthFt, penRelock, penMovePoint, penAim, axisLock,
          MIN_SEG_FT } from './lib/pen.js';
 import { newHistory, record, stepBack, stepForward, historyDepth,
          QUIET_MS } from './lib/undo.js';
 import { NONE, select, selectMany, clear, idOf, idsOf } from './lib/selection.js';
 import { bbox, pointInPolygon, maxInset } from './lib/geometry.js';
-import { detectDoors, doorsFromPayload, openingPx, DOOR_WIDTHS } from './lib/doors.js';
-import { proposeOutlines } from './lib/outlineSources.js';
-import { detectFurniture, detectBeds, detectionsToZones, zonesFromDetections, snapshotForDetection, rectCentre, iou, dedupe, downscaleForDetection, plausibleBed, ZONE_CLASSES, PROVIDERS, wireProvider } from './lib/furniture.js';
+import { openingPx, DOOR_WIDTHS } from './lib/doors.js';
+import { zonesFromDetections, dedupe, plausibleBed } from './lib/furniture.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import { LIGHT_TOOLS, GESTURE } from './components/LightPalette.jsx';
@@ -82,7 +83,7 @@ import { HowToVideo } from './components/HowToLink.jsx';
 import { SURFACE_BY_ID } from './lib/taskSurfaces.js';
 import { chunkFor } from './lib/taskSpots.js';
 import { roomSnapshot, requestAccents, toPlanRect } from './lib/accentMask.js';
-import { BED_SOURCES, splitByProvider, label as labelBeds, bedsIn, contestFor, judgeNote,
+import { bedsIn, contestFor, judgeNote,
          applyVerdict } from './lib/bedFit.js';
 import { TYPE_BY_ID, FURNITURE_BY_ID } from './lib/accentPrompt.js';
 import { WALL_BY_ID, joinPlacements } from './lib/wallPrompt.js';
@@ -178,8 +179,6 @@ import { serialiseEditor, applyEditor, statsFrom, statusFrom, NOT_UNDOABLE, sett
          LAYER_DEFAULTS }
   from './lib/planState.js';
 import { usePlanDoc } from './hooks/usePlanDoc.js';
-
-const LS = 'lightPlanner.v1';
 
 
 // WHAT THE SAVE PILL SAYS. Four words, and 'idle' says nothing at all — a bar
@@ -479,8 +478,8 @@ export default function App({
           boardsOff, boardMoves, boardPoints, flowBoards, flowBends,
           manualBoards, boardKinds, boardHeights, boardOrders,
           doorPick,
-          roomTypes, roomState,
-          detections, dismissed, bedVerdicts, provider,
+          roomTypes,
+          detections, dismissed, bedVerdicts,
           ceilingObjs, lightMoves, renderRefs } = doc;
   /* THE ALIAS IS DELIBERATE AND IT IS THE ONE IN THIS FILE WORTH KEEPING.
      `projectId` is what a hundred reads below call the kind of BUILDING, and it
@@ -1011,21 +1010,6 @@ export default function App({
   const [overRoom, setOverRoom] = useState(false); // is the pointer on a ceiling
   const [ghost, setGhost] = useState(null);       // where an armed object would land
 
-  // The no-light rectangles are in the document reducer — see `zones` in
-  // hooks/usePlanDoc.js for why they are not the same thing as a detection.
-  // Furniture found on the plan. Deliberately NOT the same thing as a zone:
-  // a detection is a property of the IMAGE and is found once, whereas whether
-  // it is a no-light zone depends on which room is being lit. Keeping them
-  // apart is what lets the detection run before a boundary exists.
-  const [detectState, setDetectState] = useState({ status: 'idle' });
-  // THE TWO ANSWERS, KEPT APART. The ordinary path walks the whole `both`
-  // response at once so that dedupe() collapses two boxes over one bed into one
-  // zone; the judge needs the opposite — the two claims side by side, because
-  // they are what is being compared. Empty on any single-provider run.
-  const [bedSets, setBedSets] = useState(null);   // {roboflow:[...], openai:[...]}
-  // What the judge decided, per room, so the panel can say why a bed is where
-  // it is. Keyed by outline id.
-  const [detectNonce, setDetectNonce] = useState(0);         // bumping this re-runs detection
   const [zoneMode, setZoneMode] = useState(false);
   const [draftZone, setDraftZone] = useState(null);
 
@@ -1112,10 +1096,6 @@ export default function App({
     return () => clearTimeout(t);
   }, [coach?.ticked]);
   const [pickingId, setPickingId] = useState(null);   // the room whose chunking is being chosen
-
-  // The room detector. Runs on upload, like the bed one, and for the same
-  // reason: by the time there is anything to light the answer is already in.
-  const [roomNonce, setRoomNonce] = useState(0);
 
   // --- accent lighting ------------------------------------------------------
   // A SECOND QUESTION ABOUT A ROOM THAT ALREADY HAS A CEILING. Everything above
@@ -1429,11 +1409,6 @@ export default function App({
   // ...and all four of the scale's own fields are in the document reducer —
   // see the `scaleMode` block in usePlanDoc.js, which carries this note's list.
 
-  // The doors found on upload are in the document reducer — see usePlanDoc.js —
-  // and the one the user picked as the ruler is `doorPick` below.
-  const [doorState, setDoorState] = useState({ status: 'idle' });
-  const [doorNonce, setDoorNonce] = useState(0);    // bumping this looks again
-
   // --- THE DOORS, CONFIRMED BEFORE THE WIRING IS DRAWN ----------------------
   //
   // A SWITCHBOARD IS PLACED BESIDE A DOOR. That is the whole of the first rule
@@ -1501,15 +1476,10 @@ export default function App({
   const svgRef = useRef(null);
   const stageRef = useRef(null);
 
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(LS) || '{}');
-      if (saved.provider) docActions.setProvider(saved.provider);
-    } catch { /* first run */ }
-  }, [docActions]);
-  useEffect(() => {
-    try { localStorage.setItem(LS, JSON.stringify({ provider })); } catch { /* private mode */ }
-  }, [provider]);
+  // Source loading calls the recognition reset, while recognition consumes the
+  // resolved source. A ref bridges that callback cycle without copying state or
+  // changing the source loader's callback identity on every recognition update.
+  const recognitionReset = useRef(null);
 
   // --- load -----------------------------------------------------------------
   const resetForNewPlan = useCallback(() => {
@@ -1520,9 +1490,9 @@ export default function App({
     docActions.clearZones(); setZoneMode(false); setDraftZone(null); setZoneEdit(false);
     docActions.clearChunkPicks(); setPickingId(null);
     docActions.clearCeilingKinds(); docActions.clearDesignPicks(); setOptionPick(null);
-    docActions.clearDetections(); setDetectState({ status: 'idle' });
+    recognitionReset.current.furniture();
     docActions.clearDismissed();
-    docActions.setRoomState({ status: 'idle' });
+    recognitionReset.current.rooms();
     setAccentRoomId(null); docActions.clearAccentResults();
     // The plates somebody threw away go with the plan they were on: a board id
     // names a room and a rule, and neither means anything on a fresh sheet.
@@ -1551,8 +1521,7 @@ export default function App({
     // answered the question.
     docActions.setProjectType(initialProjectType ?? null);
     docActions.clearRoomTypes(); setPrep(null); cancelPrep.current = false;
-    docActions.clearDoors(); docActions.setDoorPick(null);
-    setDoorState({ status: 'idle' });
+    recognitionReset.current.doors();
     // ...AND THE CONFIRMATION GOES WITH THEM. It is an answer about ONE set of
     // door boxes; carrying it onto a fresh sheet would draw wiring off a
     // detection nobody has looked at.
@@ -1597,6 +1566,29 @@ export default function App({
   const {
     ceilingFt, scaleMode, refId, customFt, measure, pxPerFt,
   } = useScale({ doc, isVector, source, doors, doorPick });
+  // Which layers are walls, for the detector's render. classifyLayers already
+  // works this out for room extraction; the same answer decides which lines get
+  // drawn heavy. On APT_01 it picks "KMBD Walls" out of a drawing whose other
+  // 1656 entities all sit on layer 0.
+  const wallLayerSet = useMemo(() => {
+    if (!isVector || !source?.drawing?.layers) return null;
+    const { wallLayers } = classifyLayers(source.drawing.layers);
+    return wallLayers.length ? new Set(wallLayers) : null;
+  }, [isVector, source]);
+
+  const {
+    rooms: { state: roomState },
+    doors: { state: doorState },
+    furniture: { state: detectState, bedSets, bedLook },
+    commands: recognitionCommands,
+    reset: resetRecognition,
+  } = usePlanRecognition({
+    doc, docActions, source, img, isVector, pxPerFt, wallLayerSet, readOnly,
+    restoredPlan: !!restore, useBoundingRect,
+  });
+  recognitionReset.current = resetRecognition;
+  const { refindBeds, absorbBedRows, computeBedFit } = recognitionCommands;
+
   const {
     layers, zoom, view,
     over, setOver,
@@ -1752,13 +1744,6 @@ export default function App({
     loadFile(initialFile);
   }, [initialFile, loadFile]);
 
-  // TRUE FOR THE WHOLE LIFE OF A RESTORED PLAN, not just until the restore
-  // lands. It is what stops the four detectors below from firing on a drawing
-  // whose answers are already saved — four model calls, real money, and the
-  // results would overwrite the corrections the user made last time. Their
-  // explicit re-run buttons bump a nonce, and a non-zero nonce means the user
-  // asked, so it goes through.
-  const restoring = useRef(!!restore);
   // A STATE FLAG AND NOT A REF, and the difference is a data-loss bug.
   //
   // Effects run in declaration order within one commit. This effect sits near
@@ -1793,7 +1778,8 @@ export default function App({
        so nothing offers to spend a model call finding doors that are already on
        the drawing. Neither is saved; both are computed off `p.doors` and
        `p.detections` in applyEditor. */
-    setDoorState, setDetectState,
+    setDoorState: resetRecognition.restoreDoorStatus,
+    setDetectState: resetRecognition.restoreFurnitureStatus,
     /* AND EVERY OTHER FIELD COMES BACK THROUGH THE REDUCER, GENERATED. The bag
        is one flat object of `setX` functions so neither `applyEditor` nor
        `applyStep` has to know where a field lives — built from the reducer's own
@@ -1813,7 +1799,7 @@ export default function App({
        would win and the merge would silently stop happening. See LAYER_DEFAULTS
        in planState.js. */
     setLayers: (saved) => docSetters.setLayers({ ...LAYER_DEFAULTS, ...(saved || {}) }),
-  }), [docSetters]);
+  }), [docSetters, resetRecognition]);
 
   useEffect(() => {
     if (!restore || restored.current || !source) return;
@@ -2289,16 +2275,6 @@ export default function App({
   const zoneList = useMemo(
     () => [...zones, ...detectedZones, ...wardrobeZones, ...reverseCoveZones],
     [zones, detectedZones, wardrobeZones, reverseCoveZones]);
-
-  // Which layers are walls, for the detector's render. classifyLayers already
-  // works this out for room extraction; the same answer decides which lines get
-  // drawn heavy. On APT_01 it picks "KMBD Walls" out of a drawing whose other
-  // 1656 entities all sit on layer 0.
-  const wallLayerSet = useMemo(() => {
-    if (!isVector || !source?.drawing?.layers) return null;
-    const { wallLayers } = classifyLayers(source.drawing.layers);
-    return wallLayers.length ? new Set(wallLayers) : null;
-  }, [isVector, source]);
 
   // Only the three settings that genuinely shape a decomposition are in this
   // dependency list, so moving an unrelated slider does not re-enumerate and
@@ -2967,240 +2943,6 @@ export default function App({
     });
     return { shot, ...payload.result };
   }, [source, img, wallLayerSet, projectId]);
-
-  /**
-   * WHICH DETECTOR GOT THE BED RIGHT, for one room.
-   *
-   * Two crops of the same room, made by the same roomSnapshot() that feeds the
-   * accent and task passes, differing in NOTHING but the rectangles drawn on
-   * them. Same crop rectangle, same wash, same colour, same line weight — the
-   * only thing the model can prefer is the geometry, which is the only thing it
-   * is being asked about.
-   *
-   * NO LIGHTS ON THESE CROPS. Everywhere else the ambient layout is drawn onto
-   * the picture so the model does not recommend a fitting where one already
-   * hangs. Here it would be noise at best and misleading at worst: this runs
-   * BEFORE the layout, precisely because the answer moves the layout.
-   *
-   * Takes the outline rather than a laid-out room for the same reason — there
-   * is no `plan` yet when this runs.
-   */
-  const computeBedFit = useCallback(async (o, a, b, { signal = null } = {}) => {
-    const region = regionFromOutline(o, pxPerFt);
-    if (!region?.ok) throw new Error('That outline has no region.');
-    const polygonPx = useBoundingRect ? region.boundingRect : region.polygon;
-    const stats = outlineStats(o, pxPerFt);
-
-    const shots = await Promise.all([a, b].map((boxes, i) => roomSnapshot({
-      source, img, polygonPx, lightsPx: [], wallLayers: wallLayerSet,
-      boxes: boxes.map((d) => d.rect),
-      badge: BED_SOURCES[i].letter,
-    })));
-
-    const payload = await requestAccents({
-      plans: shots, task: 'bedfit', signal,
-      counts: { a: a.length, b: b.length },
-      room: {
-        name: o.name || null,
-        widthFt: stats?.widthFt ?? null, heightFt: stats?.heightFt ?? null,
-        areaSqft: stats?.areaSqft ?? null,
-      },
-    });
-    return { shots, verdict: payload.result, meta: payload.meta };
-  }, [source, img, wallLayerSet, pxPerFt, useBoundingRect]);
-
-  /**
-   * ASK CHATGPT ABOUT ONE ROOM — the fallback, and the ONLY thing GPT does
-   * with beds now.
-   *
-   * WHEN IT RUNS, AND IT IS THE WHOLE RULE: the classifier called a space a
-   * bedroom and the whole-plan `bed-filter` pass put no bed in it. That is a
-   * contradiction between two answers already in hand, and it is the only
-   * trigger. A bedroom that has its bed does not come here. A space that is not
-   * a bedroom does not come here whatever the pass found.
-   *
-   * WHY IT IS WORTH A CALL. A bedroom with no bed is not an unusual bedroom, it
-   * is a failed detection — see expectsBed in roomTypes.js — and it matters more
-   * than any other miss because a bed is the one piece of furniture that CHANGES
-   * THE CEILING: nothing goes over it, because whoever is lying there looks
-   * straight up into the fitting. A missed bed is a downlight in somebody's eyes.
-   *
-   * WHY THE CROP HELPS. The whole plan is one image at roughly 17 pixels to the
-   * foot on a large sheet, where a mattress is 45px across. This sends ONE room
-   * at 700x700 — nearer 54 pixels to the foot for a 13ft room — reusing the crop
-   * the classifier already built, so it costs no extra render. Same model, same
-   * question, four times the resolution.
-   *
-   * ONE CALL. NO CONTEST. NO JUDGE.
-   *
-   * What was here before, in order: two vendors contested and arbitrated; then
-   * two SAMPLES of GPT contested and arbitrated. Both were ways of buying
-   * confidence in a bed outline nobody trusted. With `bed-filter` handling the
-   * primary path, this is a narrow fallback on a room the primary pass already
-   * missed — and a second opinion about a single fallback answer is a call spent
-   * to choose between two guesses rather than to improve either. `contestFor`,
-   * `applyVerdict` and `computeBedFit` all still exist, unused by this path.
-   */
-  const refindBeds = useCallback(async (r, { reuseShot = null, signal = null } = {}) => {
-    const shot = reuseShot ?? await roomSnapshot({
-      source, img, polygonPx: r.plan.polygonPx, lightsPx: [], wallLayers: wallLayerSet,
-    });
-    const who = r.outline.name || r.id;
-
-    const payload = await detectFurniture({
-      base64: shot.base64, mime: shot.mime,
-      // ONLY BEDS. The whole-plan pass asks a bed-specific model; here the
-      // question is precisely "is there a bed in this room", and a narrower
-      // prompt is a better answer.
-      classes: ['bed'],
-      provider: 'openai',
-      w: shot.w, h: shot.h, signal,
-    });
-
-    // The crop's own space first, then back onto the plan. detectionsToZones
-    // resolves fractions and rescales against the image it was given; every
-    // threshold in it (confidence, area fraction) is therefore relative to THE
-    // ROOM, which is the right frame — a bed is a large share of a bedroom crop
-    // and a tiny share of a floor plan.
-    const image = { w: shot.w, h: shot.h };
-    const read = detectionsToZones(payload, { image, polygon: null, classes: ['bed'] });
-
-    // OUT OF THE CROP'S SPACE FIRST, THEN MEASURED. The crop is upscaled or
-    // downscaled by roomSnapshot, so the plan's px-per-foot means nothing inside
-    // it — a size gate applied to a crop-space rectangle would be measuring in
-    // the wrong units. `toPlanRect` is the line where real feet become knowable
-    // again, so the gate goes immediately after it.
-    let rejected = 0;
-    const beds = labelBeds(read.kept, 'openai')
-      .map((d, i) => ({
-        ...d,
-        id: `det-refound-oa-${r.id}-${i}`,
-        rect: toPlanRect(d.rect, shot.crop, image),
-        refound: true,
-      }))
-      .filter((d) => {
-        const fit = plausibleBed(d.rect, pxPerFt);
-        if (!fit.ok) {
-          rejected++;
-          console.warn(`[beds] ${who}: GPT returned a box that is not a bed — ${fit.why}`);
-        }
-        return fit.ok;
-      });
-
-    // The record the panel and planState keep per space. `asked: false` because
-    // nothing was arbitrated; `kind` describes what the one call came back with,
-    // so the panel's per-space line still says something true.
-    const rec = {
-      kind: beds.length ? 'gpt' : 'none',
-      pick: 'openai', asked: false, confidence: 0,
-      why: beds.length
-        ? `GPT found ${beds.length} bed(s) in the crop`
-        : 'GPT found no bed in the crop either',
-      winner: beds,
-      counts: { openai: beds.length, roboflow: 0 },
-      rejected,
-    };
-    console.log(`[beds] ${who}: ${judgeNote(rec)}`);
-
-    // `a`/`b` are still in the returned shape because absorbBedRows reads
-    // row.a.length and row.b.length for its own record. One call, so b is empty.
-    return { a: beds, b: [], rec, shot };
-  }, [source, img, wallLayerSet, pxPerFt]);
-
-  /**
-   * TAKE A BATCH OF PER-ROOM BED ANSWERS AND MAKE THEM THE PLAN'S BEDS.
-   *
-   * Extracted because two callers need identical behaviour and a second copy of
-   * this would drift within a week: the pipeline's bedroom pass, and the admin
-   * "Look again" button. Both have to apply the same three rules, and each one
-   * exists because of a specific way this went wrong:
-   *
-   *   CONTAINMENT — a crop carries a margin, so a room's picture routinely
-   *   includes its neighbour's bed. One call came back with four beds labelled
-   *   ROOM 8 and ROOM 9. Unattributed, they double-count and let a room test as
-   *   "has a bed" on somebody else's mattress.
-   *
-   *   DEDUPE — a room can be asked again when it already holds a bed, so the
-   *   same mattress arrives twice. iou 0.45, the same limit the whole-sheet
-   *   merge uses.
-   *
-   *   `existing` IS PASSED IN rather than read from state, because the pipeline
-   *   calls this mid-run when its own setDetections has not rendered yet. A
-   *   React update is not visible until the next render and neither caller gets
-   *   one in the middle of its loop.
-   *
-   * The physical gate is NOT here: it lives in refindBeds (right after the crop
-   * is mapped back to plan pixels) and again in detectedZones. This is about
-   * whose bed it is, not whether it is one.
-   */
-  const absorbBedRows = useCallback((rows, existing) => {
-    const found = [];
-    const verdicts = {};
-    for (const row of rows) {
-      if (!row || row.error) continue;
-      const winner = row.rec.winner || [];
-      const poly = row.poly;
-      const mine = poly ? bedsIn(winner, poly) : winner;
-      const already = poly ? bedsIn(existing, poly) : [];
-      const fresh = mine.filter((d) => !already.some((e) => iou(d.rect, e.rect) > 0.45));
-      for (const d of fresh) found.push({ ...d, roomId: row.id, contest: row.rec.kind });
-      verdicts[row.id] = {
-        kind: row.rec.kind, pick: row.rec.pick, asked: row.rec.asked,
-        confidence: row.rec.confidence ?? 0, why: row.rec.why || '',
-        fellBack: !!row.rec.fellBack, failed: !!row.rec.failed,
-        refound: true,
-        counts: { roboflow: row.a.length, openai: row.b.length },
-        kept: mine.length, fresh: fresh.length,
-      };
-    }
-    if (found.length) docActions.addDetections(found);
-    docActions.mergeBedVerdicts(verdicts);
-    return { found, verdicts };
-  }, [docActions]);
-
-  /**
-   * LOOK AGAIN — the admin's manual version of the bedroom pass.
-   *
-   * The pipeline asks about a bedroom once, and on a plan where the first answer
-   * was wrong there is otherwise no way to ask twice without re-running the whole
-   * thing. This is that button: same crop, same two samples, same judge, same
-   * gates.
-   *
-   * SCOPED TO THE ROOM IN FOCUS when there is one, because that is the room whose
-   * beds the person is looking at and two calls is a cheap question. With no
-   * focus it sweeps every space that ought to contain a bed.
-   */
-  const [bedLook, setBedLook] = useState(null);   // null | 'busy' | a result line
-
-  const lookAgainAtBeds = useCallback(async () => {
-    if (!source || !pxPerFt || !rooms.length) return;
-    const targets = focus
-      ? [focus]
-      : rooms.filter((r) => expectsBed(projectId, roomTypes[r.id]?.type));
-    if (!targets.length) { setBedLook('no bedrooms to look in'); return; }
-
-    setBedLook('busy');
-    try {
-      const rows = await mapLimit(targets, 2, async (r) => {
-        try {
-          const out = await refindBeds(r);
-          return { id: r.id, name: r.outline.name,
-                   poly: r.plan?.polygonPx ?? r.geo?.polygonPx ?? null, ...out };
-        } catch (err) {
-          console.warn('[beds] look again failed for', r.outline.name, err);
-          return null;
-        }
-      });
-      const { found } = absorbBedRows(rows, detections);
-      const asked = rows.filter(Boolean).length;
-      setBedLook(`${found.length} bed${found.length === 1 ? '' : 's'} added`
-        + ` from ${asked} space${asked === 1 ? '' : 's'}`);
-      console.log('[beds] look again', { targets: targets.map((r) => r.outline.name), found });
-    } catch (err) {
-      console.error('[beds] look again failed', err);
-      setBedLook('that did not work — see the console');
-    }
-  }, [source, pxPerFt, rooms, focus, projectId, roomTypes, refindBeds, absorbBedRows, detections]);
 
   const surfacesPx = useMemo(() => projectSurfacesPx(rooms, surfaceResults, surfaceDismissed, manualSurfaces), [rooms, surfaceResults, surfaceDismissed, manualSurfaces]);
 
@@ -5088,21 +4830,6 @@ export default function App({
     { key: 'accents', label: 'Adding accent lighting' },
     { key: 'spots', label: 'Aiming task lights' },
   ], []);
-
-  /** Run `fn` over `items`, at most `limit` at a time. */
-  const mapLimit = async (items, limit, fn) => {
-    const out = new Array(items.length);
-    let next = 0;
-    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-      for (;;) {
-        const i = next++;
-        if (i >= items.length) return;
-        try { out[i] = await fn(items[i], i); }
-        catch (err) { out[i] = { error: err }; }
-      }
-    }));
-    return out;
-  };
 
   /**
    * ONE FUNCTION FOR THE WHOLE RUN AND FOR EVERY RE-RUN.
@@ -10763,477 +10490,6 @@ export default function App({
     }
   };
 
-  // --- find the rooms -------------------------------------------------------
-  //
-  // The step that used to be the whole of the user's job. A segmentation model
-  // reads the plan and proposes one polygon per room; the user drags the corners
-  // that are wrong and lights the lot. Tracing by hand is still there, unchanged
-  // and still exact, and it is what happens when this comes back empty — which
-  // is why the failure path here is a message and not an error.
-  //
-  // IT RUNS ON UPLOAD, before the scale is known on an image. That is fine and
-  // deliberate: a polygon is pixels, and pixels do not need a scale. The scale
-  // only decides whether a polygon is a WC or a cupboard, and roomsFromPayload
-  // falls back to a fraction of the sheet for that when there is no scale yet.
-  // Waiting for the scale would mean the proposals appear after the user has
-  // already started tracing over them.
-  //
-  // Not in the same effect as the bed detector, and not in the same request: two
-  // workflows, two models, two answers, and one of them failing must not take
-  // the other down with it.
-  useEffect(() => {
-    if (!source) return;
-    // A REOPENED PLAN ALREADY HAS THIS ANSWER, and it has the user's corrections
-    // on top of it. Re-running would cost a model call and throw those away.
-    // The nonce is the user asking again, explicitly.
-    if (restoring.current && roomNonce === 0) return;
-    // READ-ONLY: never. This is a stored plan belonging to somebody else, and
-    // re-running the rooms detector on it would spend a model call to recompute
-    // an answer that is already in the row — and then hold a different one in
-    // memory from the one the user is looking at on their own screen.
-    if (readOnly) return;
-    let alive = true;
-    const ctl = new AbortController();
-
-    (async () => {
-      docActions.setRoomState({ status: 'running' });
-      const t0 = Date.now();
-      let meta = null;
-      const res = await proposeOutlines('roboflow-rooms', {
-        source, img,
-        // A DXF states its scale, so the area floor can be in feet from the
-        // start. An image cannot, and passing the not-yet-measured scale would
-        // be worse than passing none — it would apply a floor computed from a
-        // number the user has not agreed to.
-        pxPerFt: isVector ? source.pxPerFt : null,
-        signal: ctl.signal,
-        snapshotOpts: {
-          stroke: OTHER_STROKE_PX,
-          wallStroke: Math.max(1, (WALL_WEIGHT_IN / 12) * (source.pxPerFt || 20)),
-          wallLayers: wallLayerSet,
-        },
-        onMeta: (m) => { meta = m; },
-      });
-      if (!alive) return;
-
-      if (!res.ok) {
-        console.warn('[rooms] failed:', res.reason);
-        docActions.setRoomState({ status: 'error', error: res.reason, ms: Date.now() - t0 });
-        return;
-      }
-      console.log(`[rooms] ${res.outlines.length} proposed`, { meta, outlines: res.outlines });
-
-      // Merge, never replace. Anything traced by hand is the user's work and
-      // outranks a proposal; re-running the detector must not delete it. The
-      // previous run's proposals DO go, because they are the same answer to the
-      // same question and keeping both would double every room.
-      /* ONE ACTION FOR BOTH FIELDS, AND THE COUNT COMES BACK RATHER THAN OUT.
-         This was a `let added` assigned from inside a `setState` updater and
-         read by the `setRoomState` below it — which a reducer may not do,
-         because React is free to invoke it twice. So the merge returns the pair
-         and there is no side effect left to be invoked at all.
-         IT RUNS AGAINST THE LATEST OUTLINES, which is the whole reason it is a
-         function rather than a finished list: this lands when a network call
-         returns, and this effect's dependencies are `[source, roomNonce]`, so a
-         room traced by hand while the detector was thinking is not one frame
-         stale in that closure — it is not in it. See ROOMS_PROPOSED. */
-      const ms = Date.now() - t0;
-      docActions.proposeOutlines((os) => {
-        // MERGE, NEVER REPLACE, and the rule is about work rather than about
-        // provenance: anything the user has TOUCHED survives, whether they drew
-        // it or dragged a corner of it. Only untouched proposals go, because they
-        // are the same answer to the same question and keeping both would double
-        // every room.
-        //
-        // This matters more than it looks. The effect re-runs whenever the plan
-        // source changes, and correcting a DXF's unit interpretation on the
-        // tracer screen changes it — so without this, choosing the right units
-        // after nudging four rooms would silently throw the nudges away.
-        const kept = os.filter((o) => !o.detected || o.reviewed);
-
-        // ...which means a re-run can propose a room the user has already
-        // corrected. Drop a proposal that lands on top of an outline that is
-        // already there rather than stacking two outlines on one room.
-        const existing = kept.map((o) => {
-          const b = bbox(o.pointsDu.map(source.fromDu));
-          return { x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY };
-        });
-
-        // Names are handed out against a list that grows as we go, so two rooms
-        // cannot both come out "Room 1". A label from the drawing or the model
-        // wins when it is not already taken — "Kitchen" is worth more than
-        // "Room 2" — and the counter fills in the rest.
-        const seen = kept.map((o) => ({ name: o.name }));
-        const made = [];
-        for (const prop of res.outlines) {
-          const b = bbox(prop.pointsPx);
-          const rect = { x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY };
-          if (existing.some((e) => iou(e, rect) > 0.5)) continue;
-          const taken = new Set(seen.map((u) => u.name).filter(Boolean));
-          const name = prop.label && !taken.has(prop.label)
-            ? prop.label : nextOutlineName(seen);
-          seen.push({ name });
-          existing.push(rect);
-          made.push({
-            id: makeOutline(prop.pointsPx, { name }).id,
-            name,
-            // ALREADY SQUARE. roomsFromPayload rectified it, so the stored
-            // points ARE the polygon and a grip moves what you can see. Leaving
-            // this on would square the correction away under the user's hand.
-            // The per-room switch stays available to re-apply it.
-            rectify: false,
-            detected: true, reviewed: false,
-            confidence: prop.confidence ?? null,
-            why: prop.why || '',
-            note: prop.note || '',
-            pointsDu: prop.pointsPx.map(source.toDu),
-            // Rooms that sit wholly inside this one and could not be subtracted
-            // from it. Held in the plan's own units like everything else, so a
-            // unit correction moves them with the walls.
-            enclosingDu: prop.enclosingPx
-              ? prop.enclosingPx.map((poly) => poly.map(source.toDu)) : null,
-          });
-        }
-        return {
-          outlines: [...kept, ...made],
-          roomState: {
-            status: 'done', ms,
-            // What is on screen, not what came back: a proposal that landed on
-            // a room the user had already corrected was not added, and
-            // reporting it as found would have them looking for an outline that
-            // is not there.
-            proposed: made.length,
-            returned: res.outlines.length,
-            dropped: meta?.rejected?.length ?? 0,
-            meta,
-          },
-        };
-      });
-    })();
-
-    return () => { alive = false; ctl.abort(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, roomNonce]);
-
-  // --- find the doors -------------------------------------------------------
-  //
-  // THE SCALE COMES FIRST AND FROM A DOOR. Everything downstream is stated in
-  // feet, so px/ft is the first number this app needs, and a door is the only
-  // object on a floor plan whose real width is standard enough to read it off:
-  // 750 to a bathroom, 900 to a room, 1200 to a hall. See src/lib/doors.js.
-  //
-  // GATED ON THE PROJECT TYPE, which is not an arbitrary place to hang it. The
-  // dialog is a moment the user is already spending, the search takes a couple
-  // of seconds, and its answer has to be on screen before the tracer is useful
-  // — landing them on an empty tracer and popping doors in underneath them a
-  // beat later is the worse version of the same wait, because by then they have
-  // started clicking.
-  //
-  // NOT ON A DXF. A drawing states its own scale in its own units; there is
-  // nothing to measure and nothing to guess, and asking a detector would be
-  // asking a worse source than the one already in the file.
-  useEffect(() => {
-    if (!source || isVector || !projectId) return;
-    if (!img?.el) return;
-    // A REOPENED PLAN ALREADY HAS THIS ANSWER, and it has the user's corrections
-    // on top of it. Re-running would cost a model call and throw those away.
-    // The nonce is the user asking again, explicitly.
-    if (restoring.current && doorNonce === 0) return;
-    // READ-ONLY: never. This is a stored plan belonging to somebody else, and
-    // re-running the doors detector on it would spend a model call to recompute
-    // an answer that is already in the row — and then hold a different one in
-    // memory from the one the user is looking at on their own screen.
-    if (readOnly) return;
-    let alive = true;
-    const ctl = new AbortController();
-
-    (async () => {
-      setDoorState({ status: 'running' });
-      const t0 = Date.now();
-      try {
-        const shot = downscaleForDetection(img.el);
-        const payload = await detectDoors({
-          base64: shot.base64, mime: shot.mime, signal: ctl.signal });
-        if (!alive) return;
-        // Against the ORIGINAL image, not the downscaled one that was sent. The
-        // response declares the space it answered in and doorsFromPayload maps
-        // back — get this wrong and every door is out by the downscale ratio,
-        // which is not a wonky box, it is the whole drawing at the wrong scale,
-        // silently, because a wrong scale still looks like a plan.
-        const { doors: found, rejected, medianPx } = doorsFromPayload(payload,
-          { image: { w: source.w, h: source.h } });
-        console.log(`[doors] ${found.length} found, ${rejected.length} rejected`
-          + `, median opening ${medianPx ? medianPx.toFixed(0) : '—'}px`, { found, rejected });
-        docActions.replaceDoors(found);
-        setDoorState({ status: 'done', count: found.length, rejected,
-                       ms: Date.now() - t0, meta: payload?.meta ?? null });
-      } catch (err) {
-        if (!alive || err.name === 'AbortError') return;
-        // SURVIVABLE, and that is the whole reason the fallback still exists.
-        // No doors means the user measures something by hand, which is what
-        // they did before this feature.
-        console.warn('[doors] failed:', err);
-        docActions.clearDoors();
-        setDoorState({ status: 'error', error: String(err.message || err), ms: Date.now() - t0 });
-      }
-    })();
-
-    return () => { alive = false; ctl.abort(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, img, isVector, projectId, doorNonce]);
-
-  // --- find the bed ---------------------------------------------------------
-  // A bed is the one piece of furniture whose position CHANGES THE CEILING: you
-  // do not put a downlight over it, because whoever is lying there looks
-  // straight up into the fitting.
-  //
-  // BOTH ROUTES IN COME THROUGH HERE. A photo is downscaled; a DXF is rendered
-  // to a plain black-on-white raster first. After that neither this effect nor
-  // anything downstream knows which it was looking at — same detector, same
-  // rectangles, same zones. A DXF *could* be read directly when it names its
-  // blocks, but across drawings from different offices it usually does not, so
-  // one path that always works beats two that each work sometimes.
-  //
-  // Fires on load, before any boundary exists: detection needs only the plan,
-  // so by the time there is a region to light the answer is already in. It is
-  // fire-and-forget — a detector being down must not stop anyone planning a
-  // room by hand.
-  useEffect(() => {
-    if (!source) return;
-    // A REOPENED PLAN ALREADY HAS THIS ANSWER, and it has the user's corrections
-    // on top of it. Re-running would cost a model call and throw those away.
-    // The nonce is the user asking again, explicitly.
-    if (restoring.current && detectNonce === 0) return;
-    // READ-ONLY: never. This is a stored plan belonging to somebody else, and
-    // re-running the beds detector on it would spend a model call to recompute
-    // an answer that is already in the row — and then hold a different one in
-    // memory from the one the user is looking at on their own screen.
-    if (readOnly) return;
-    // A BIG PLAN DOES NOT GET ASKED ALL AT ONCE. Over LARGE_PLAN_SQFT the answer
-    // to this question is reliably "no beds" — fifteen mattresses at forty pixels
-    // each — and every bedroom is asked about on its own crop in the pipeline
-    // instead. Spending 25 seconds and a call to be told nothing is worse than
-    // not asking.
-    //
-    // ON THE FIRST UPLOAD THIS IS STILL FALSE, and deliberately: the area is not
-    // knowable until there is a scale, which on a raster means until a door has
-    // been measured — after this effect has run. So the first pass happens, the
-    // pipeline supersedes it per room, and any re-run (the nonce, or a reopened
-    // plan) is correctly skipped. Better one wasted call than a bed pass that
-    // waits for the tracer on every plan, large or small.
-    /* ================= THE WHOLE-PLAN BED PASS ==========================
-     *
-     * ONE CALL TO ONE TRAINED SEGMENTER — the `bed-filter` workflow — and this
-     * is the primary path for every bed on every plan.
-     *
-     * It replaces three arrangements in a row, each of which was a way of
-     * compensating for a detector that could not resolve a bed on a whole sheet:
-     * the general-segmentation workflow asked for `bed` (whose boxes enclosed
-     * whole twin PAIRS at 17 pixels to the foot), then GPT contested against it,
-     * then two SAMPLES of GPT contested against each other with an arbiter to
-     * settle them. A model that draws the mattress correctly the first time
-     * makes all of that an expensive way to agree with itself. On the
-     * FLOOR_PLAN_03 sample it returns one tight box with the nightstands
-     * outside it.
-     *
-     * NO SECOND OPINION AND NO JUDGE. `bedSets` stays null, which is what keeps
-     * the contest machinery dormant rather than deleted.
-     *
-     * THE SIZE GATE STILL RUNS, here and again in detectedZones. A better
-     * detector is not a reason to stop measuring what came back; that gate is
-     * what caught the twin-pair boxes and it costs nothing when the boxes are
-     * right.
-     *
-     * The superseded implementation is below this block's `return`, intact.
-     */
-    let alive = true;
-    const ctl = new AbortController();
-
-    (async () => {
-      setDetectState({ status: 'running' });
-      const t0 = Date.now();
-      try {
-        const shot = await snapshotForDetection(source, img, {
-          stroke: OTHER_STROKE_PX,
-          // Two inches, always. See WALL_WEIGHT_IN in settings.js.
-          wallStroke: Math.max(1, (WALL_WEIGHT_IN / 12) * (source.pxPerFt || 20)),
-          wallLayers: wallLayerSet,
-        });
-        if (!alive) return;
-        console.log(`[beds] whole plan -> bed-filter: sending ${shot.w}x${shot.h}`
-          + ` of ${source.w}x${source.h}${shot.layers ? ` (${shot.layers} layers)` : ''}`);
-
-        // No polygon: find every bed on the sheet now, and let the room filter
-        // attribute them later. pxPerFt is null on a raster until a door has
-        // been measured, in which case the gate simply does not run here —
-        // detectedZones applies it once the scale exists.
-        const image = { w: source.w, h: source.h };
-        const { kept, rejected, payload } = await detectBeds({
-          base64: shot.base64, mime: shot.mime, signal: ctl.signal,
-          w: shot.w, h: shot.h, image, polygon: null, pxPerFt,
-        });
-        if (!alive) return;
-        if (payload?.meta) console.log('[beds] server:', payload.meta);
-        console.log(`[beds] bed-filter found ${kept.length} bed(s) on the whole plan`
-          + `${rejected.length ? `, rejected ${rejected.length}` : ''}`,
-          { kept, rejected });
-
-        // NULL, DELIBERATELY. There is no second answer to contest, so the
-        // judge has nothing to arbitrate. Setting this to null is what leaves
-        // the contest path dormant instead of removed.
-        setBedSets(null);
-        docActions.clearBedVerdicts();
-        docActions.replaceDetections(kept.map((k, i) => ({
-          ...k, id: `bed-sheet-${i}-${Math.round(k.rect.x0)}-${Math.round(k.rect.y0)}`,
-        })));
-
-        // THE REASONS, NOT JUST THE COUNT. A size gate that quietly drops every
-        // box on a plan is indistinguishable from a detector that found nothing,
-        // and the two want completely different fixes.
-        //
-        // NOT FILTERED TO cls === 'bed' any more: this workflow answers one
-        // question, so its class name is whatever its author called the project
-        // and everything it returns is a bed. Filtering on the name here is how
-        // the panel would report zero rejections on a run that rejected
-        // everything.
-        const whyRejected = (() => {
-          if (!rejected.length) return null;
-          const tally = new Map();
-          for (const r of rejected) {
-            // The reason without its measurement, so "10.6ft across" and
-            // "8.8ft across" tally as one cause rather than as two.
-            const key = String(r.reason).replace(/^[\d.]+ *(ft|sqft)/, '…').replace(/^[\d.]+:1/, '…:1');
-            tally.set(key, (tally.get(key) || 0) + 1);
-          }
-          const [top, n] = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
-          return { n: rejected.length, top, topCount: n };
-        })();
-        setDetectState({
-          status: 'done', rejected, whyRejected, ms: Date.now() - t0,
-          meta: payload?.meta ?? null, count: kept.length, kind: source.kind,
-          provider: 'bed-filter', sets: null,
-        });
-      } catch (err) {
-        if (!alive || err.name === 'AbortError') return;
-        console.warn('[beds] bed-filter failed:', err);
-        setDetectState({ status: 'error', error: String(err.message || err), ms: Date.now() - t0 });
-      }
-    })();
-
-    return () => { alive = false; ctl.abort(); };
-
-    /* ============ THE SUPERSEDED WHOLE-PLAN PASS, COMMENTED OUT ==========
-     * Intact below the return so it can be switched back on in one edit. It
-     * asked BOTH detectors (general-segmentation + GPT) about the entire sheet
-     * and contested them. Kept because the `provider` switch, `bedSets` and the
-     * judge all still exist and this is the only caller that fed them.
-     */
-    /* eslint-disable no-unreachable */
-
-    {  /* SCOPED so its `alive`/`ctl` do not collide with the live pass above.
-       * The braces are the only edit to this block; everything inside is as it
-       * was. */
-    let alive = true;
-    const ctl = new AbortController();
-
-    (async () => {
-      setDetectState({ status: 'running' });
-      const t0 = Date.now();
-      try {
-        const shot = await snapshotForDetection(source, img, {
-          stroke: OTHER_STROKE_PX,
-          // Two inches, always. See WALL_WEIGHT_IN in settings.js.
-          wallStroke: Math.max(1, (WALL_WEIGHT_IN / 12) * (source.pxPerFt || 20)),
-          wallLayers: wallLayerSet,
-        });
-        if (!alive) return;
-        console.log(`[detect] ${source.kind}: sending ${shot.w}x${shot.h} of ${source.w}x${source.h}`
-          + `${shot.layers ? ` (${shot.layers} layers)` : ''}`
-          + `${shot.wallLayerNames?.length ? `, walls@${shot.wallStroke}px on [${shot.wallLayerNames.join(', ')}]` : ''}`
-          + `, classes=${ZONE_CLASSES.join(',')}`);
-
-        const payload = await detectFurniture({
-          base64: shot.base64, mime: shot.mime, classes: ZONE_CLASSES, signal: ctl.signal,
-          // The size SENT, not the size of the original. The GPT route answers
-          // in fractions of the image it was given and needs this to resolve
-          // them; rescaleRect maps the result back afterwards as ever.
-          // `judge` is two calls and a decision, and the decision is not made
-          // here — the wire only knows about `both`.
-          provider: wireProvider(provider), w: shot.w, h: shot.h,
-        });
-        if (!alive) return;
-        if (payload?.meta) console.log('[detect] server:', payload.meta);
-
-        // No polygon here on purpose: find everything on the plan now, and let
-        // the room filter it later.
-        const image = { w: source.w, h: source.h };
-        // pxPerFt is null on a raster until a door has been measured, in which
-        // case the gate simply does not judge — detectedZones applies it later.
-        const { kept, rejected } = detectionsToZones(payload, { image, polygon: null, pxPerFt });
-        console.log(`[detect] kept ${kept.length}, rejected ${rejected.length}`, { kept, rejected });
-
-        // THE SAME RESPONSE, READ TWICE AND DIFFERENTLY. Above: everything at
-        // once, de-duplicated, which is what goes on the canvas the moment
-        // detection lands and what every non-judged run has always used. Below:
-        // the two halves kept apart, because the judge's whole question is which
-        // of them is right and a merge has already answered it.
-        //
-        // Both, and not one or the other, so there is something on screen before
-        // the pipeline runs and the judged answer REPLACES it rather than being
-        // the only thing that ever appears. A detector that lands while the user
-        // is still tracing outlines should show its work.
-        let sets = null;
-        if (provider === 'judge') {
-          sets = {};
-          const split = splitByProvider(payload, (half) =>
-            detectionsToZones(half, { image, polygon: null, pxPerFt }));
-          for (const src of BED_SOURCES) sets[src.id] = labelBeds(split[src.id].kept, src.id);
-          console.log('[detect] judged sets:',
-            BED_SOURCES.map((x) => `${x.label} ${sets[x.id].length}`).join(', '));
-        }
-        setBedSets(sets);
-        docActions.clearBedVerdicts();
-
-        docActions.replaceDetections(kept.map((k, i) => ({ ...k, id: `det-${i}-${Math.round(k.rect.x0)}-${Math.round(k.rect.y0)}` })));
-        // THE REASONS, NOT JUST THE COUNT. A size gate that quietly drops every
-        // box on a plan is indistinguishable from a detector that found nothing,
-        // and the two want completely different fixes. This is the difference
-        // between reading server logs for twenty minutes and reading one line in
-        // the panel.
-        const whyRejected = (() => {
-          const bedish = rejected.filter((r) => r.cls === 'bed');
-          if (!bedish.length) return null;
-          const tally = new Map();
-          for (const r of bedish) {
-            // The reason without its measurement, so "10.6ft across" and
-            // "8.8ft across" tally as one cause rather than as two.
-            const key = String(r.reason).replace(/^[\d.]+ *(ft|sqft)/, '…').replace(/^[\d.]+:1/, '…:1');
-            tally.set(key, (tally.get(key) || 0) + 1);
-          }
-          const [top, n] = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
-          return { n: bedish.length, top, topCount: n };
-        })();
-        setDetectState({
-          status: 'done', rejected, whyRejected, ms: Date.now() - t0,
-          meta: payload?.meta ?? null, count: kept.length, kind: source.kind,
-          provider,
-          sets: sets ? Object.fromEntries(BED_SOURCES.map((x) => [x.id, sets[x.id].length])) : null,
-        });
-      } catch (err) {
-        if (!alive || err.name === 'AbortError') return;
-        console.warn('[detect] failed:', err);
-        setDetectState({ status: 'error', error: String(err.message || err), ms: Date.now() - t0 });
-      }
-    })();
-
-    return () => { alive = false; ctl.abort(); };
-    }  /* end of the superseded pass */
-    // `provider` is a dependency because switching provider is a deliberate act
-    // whose whole purpose is to see the other answer — waiting for a second
-    // click would just be a click. The nonce is the explicit re-run.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, img, detectNonce, provider]);
-
   const toggle = (k) => () => docActions.toggleLayer(k);
 
   const base = source ? source.name.replace(/\.[^.]+$/, '') : 'plan';
@@ -12103,7 +11359,7 @@ export default function App({
             onInsertPoint={insertPoint}
             onRemovePoint={removePoint}
             detectState={roomState}
-            onRedetect={() => setRoomNonce((n) => n + 1)}
+            onRedetect={recognitionCommands.rerunRooms}
             unitId={source.unitId}
             unitCandidates={UNITS}
             onUnitChange={(u) => { docActions.setUnitId(u); }}
@@ -12130,7 +11386,7 @@ export default function App({
                 ? { id, mm: null, rect: doors.find((d) => d.id === id)?.rect ?? null }
                 : null),
               onSetWidth: (mm) => docActions.setDoorWidth(mm),
-              onRetryDoors: () => setDoorNonce((n) => n + 1),
+              onRetryDoors: recognitionCommands.rerunDoors,
               widths: DOOR_WIDTHS,
             }} />
         ) : showPicker ? (
@@ -14413,7 +13669,7 @@ export default function App({
                   title={focus
                     ? `Ask both detectors about ${focus.outline?.name || 'this space'} again`
                     : 'Ask both detectors about every bedroom again'}
-                  onClick={lookAgainAtBeds}>
+                  onClick={() => recognitionCommands.lookAgainAtBeds({ rooms, focus })}>
                   {bedLook === 'busy' ? 'Looking…'
                     : focus ? `Look again in ${focus.outline?.name || 'this space'}`
                     : 'Look again at the beds'}
