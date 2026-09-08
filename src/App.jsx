@@ -17,9 +17,7 @@ import { clampLightMove } from './lib/planner.js';
    from the one the drawing used — see the note in the rooms memo. There is one
    enumeration now and `designChunking` owns it. */
 import { nextChunkOption } from './lib/ceilingDesign.js';
-import { COVE_GAP_FT, coveClearOfOutline } from './lib/cove.js';
-import { drawnTrackRefusal, TRACK_REFUSALS } from './lib/track.js';
-import usePen from './hooks/usePen.js';
+import { COVE_GAP_FT } from './lib/cove.js';
 import { useDrag } from './hooks/useDrag.js';
 import useViewPrefs from './hooks/useViewPrefs.js';
 import useScale from './hooks/useScale.js';
@@ -28,37 +26,34 @@ import useOutlines from './hooks/useOutlines.js';
 import usePlanScene from './features/scene/usePlanScene.js';
 import { useSceneArchitecture, useSceneOutlines } from './features/scene/useSceneSource.js';
 import { useScenePlanProjections } from './features/scene/useScenePlanProjections.js';
-import { useSceneTrackProjections, useSceneArrayProjections, useSceneManualProjections,
-         useSceneShapeProjections } from './features/scene/useSceneFixtureProjections.js';
+import { useSceneTrackProjections, useSceneArrayProjections,
+         useSceneManualProjections } from './features/scene/useSceneFixtureProjections.js';
 import usePlanRecognition from './features/recognition/usePlanRecognition.js';
 import useRoomIntelligence from './features/room-intelligence/useRoomIntelligence.js';
 import useRoomEditing from './features/room-intelligence/useRoomEditing.js';
 import { absorbContest } from './features/room-intelligence/bedContest.js';
 import { mapLimit } from './lib/mapLimit.js';
-import { penSegments, penLengthFt, penRelock, penMovePoint, penAim, axisLock,
-         MIN_SEG_FT } from './lib/pen.js';
 import { newHistory, record, stepBack, stepForward, historyDepth,
          QUIET_MS } from './lib/undo.js';
 import { NONE, select, selectMany, clear, idOf, idsOf } from './lib/selection.js';
-import { bbox, pointInPolygon, maxInset } from './lib/geometry.js';
+import { bbox, pointInPolygon } from './lib/geometry.js';
 import { openingPx, DOOR_WIDTHS } from './lib/doors.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import { LIGHT_TOOLS, GESTURE } from './components/LightPalette.jsx';
 import { owns, canGrab } from './lib/pressOwner.js';
 import { Logo } from './components/Wordmark.jsx';
-import ShapeMenu, { SHAPE_GESTURE } from './components/ShapeMenu.jsx';
-import { SHAPE_BY_ID, POLY_SIDES, shapeFromDrag, penShape, sealShape, clampCoveMove,
-         outlineFt as shapeOutlineFt, cornersFt as shapeCornersFt,
-         hitShape,
-         isOpen as shapeIsOpen, roleOf as shapeRoleOf,
-         isTrack as shapeIsTrack, isBuilt as shapeIsBuilt, insetShape,
-         canTakeGeometry,
-         spanOnOutline, penSpansOutline,
-         lineShape, projectOnOutline,
-         bigEnough, maxRadiusFt, roundable, newShapeId, bboxFt as shapeBboxFt,
-         MIN_SPAN_FT as SHAPE_MIN_SPAN_FT,
-         resizeShape, sizeLabel as shapeSizeLabel } from './lib/ceilingShapes.js';
+import ShapeMenu from './components/ShapeMenu.jsx';
+/* WHAT IS LEFT OF THE GEOMETRY LIBRARY IN THIS FILE. Everything that draws,
+   spans, seals, offsets, hits or resizes a shape went to
+   features/ceiling-geometry/ with the tool that calls it. These four are read
+   by the code that STAYED: the diffuser allocator wants a run's outline and
+   whether it is a loop, the module press wants to know a track when it sees
+   one, and the shape bar's two labels are rendered here. */
+import { outlineFt as shapeOutlineFt,
+         isOpen as shapeIsOpen, isTrack as shapeIsTrack,
+         maxRadiusFt, roundable,
+         sizeLabel as shapeSizeLabel } from './lib/ceilingShapes.js';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
 import ViewerPanel from './components/ViewerPanel.jsx';
@@ -74,14 +69,14 @@ import CobSpec from './components/CobSpec.jsx';
    lib/cob.js, and this file does the placing. See its header. */
 import { recommendCob, placeCob, newCobId, chunkSpec, wallClearance, bedUnder,
          clampWatts, nearestBeam, throwDiameterFt, DEFAULT_DROP_FT,
-         COB_WATT_RANGE, arrayAsks, ARRAY_SIDES,
+         COB_WATT_RANGE, arrayAsks,
          arrayQuanta, quantiseCount } from './lib/cob.js';
 /* THE MAGNETIC TRACK. Its RUN is a ceiling shape with `role: 'track'` — which
    is why there is no store of paths here and why it resizes, duplicates and
    snaps like everything else in the geometry library — and this file holds the
    modules that clip into one. See its header for why it is not track.js. */
 import { MODULE_BY_ID, MODULE_SOON, uAt, moduleWatts,
-         placeableU, placeModule, newModuleId,
+         placeableU, placeModule,
          planDiffusers } from './lib/magTrack.js';
 import OptionCoach from './components/OptionCoach.jsx';
 /* The walkthrough, playing in the panel rather than linked out of it. Named
@@ -107,6 +102,13 @@ import { SB_COLOUR } from './lib/electrical.js';
 import { addablePoints } from './lib/switchboards.js';
 import useBoardStep from './features/electrical/useBoardStep.js';
 import useElectrical from './features/electrical/useElectrical.js';
+/* THE COVES, THE GUIDES, THE TRACK RUNS AND THE DRAWN TRACKS — one tool, one
+   store of shapes and one pen apiece. Four call sites, and the feature's
+   README says why each of them is where it is. */
+import useGeometryState from './features/ceiling-geometry/useGeometryState.js';
+import useCeilingGeometry from './features/ceiling-geometry/useCeilingGeometry.js';
+import useGeometryCommands from './features/ceiling-geometry/useGeometryCommands.js';
+import useGeometryGestures from './features/ceiling-geometry/useGeometryGestures.js';
 import SwitchboardCard from './components/SwitchboardCard.jsx';
 import { HeightField } from './components/SwitchboardCard.jsx';
 import SwitchboardSheet from './components/SwitchboardSheet.jsx';
@@ -608,19 +610,9 @@ export default function App({
      meant deciding which room owned a path at the moment it was drawn, and a
      path that runs from a bedroom into its dressing has no answer to give. */
   // IN THE DOCUMENT REDUCER, with the coves.
-  /* --- EDITING A DRAWN TRACK'S POINTS ----------------------------------------
-     WHICH PATH IS OPEN, WHICH OF ITS POINTS IS PICKED, AND THE DRAG IN FLIGHT.
-     Three pieces rather than one for the reason the shape editor keeps three:
-     they have three different lifetimes. The path stays open while somebody
-     moves four corners in a row; the selection survives a drag and is what
-     Delete acts on; the drag lives for one press.
-
-     THE PATH IS OPENED BY A DOUBLE CLICK ON THE RAIL and closed by Escape or by
-     a press on empty plan, which is the same two-stage back-out every other
-     selection on this canvas has. */
-  const [trackEditId, setTrackEditId] = useState(null);
-  const [selTrackPt, setSelTrackPt] = useState(null);
-  const [trackGrip, setTrackGrip] = useState(null);
+  /* EDITING A DRAWN TRACK'S POINTS — which path is open, which of its points
+     is picked and the grip in flight are the geometry session's, three states
+     with three lifetimes. See features/ceiling-geometry/useGeometryState.js. */
   /* THE ACCENTS AND TASK SURFACES PLACED BY HAND. In the document reducer with
      the two passes they sit beside — see hooks/usePlanDoc.js. Written through
      `addAccent` / `addSurface` and their removals. */
@@ -777,24 +769,10 @@ export default function App({
      hook. See the note on `state` there. */
   const [arrayDrag, setArrayDrag] = useState(null);
 
-  /* --- THE GEOMETRY UNDER THE POINTER, WHILE SOMETHING CAN TAKE IT ----------
-     A SHAPE ID, AND IT IS ONLY EVER SET WHILE A TOOL CAN ACTUALLY USE ONE. Two
-     tools take a geometry rather than a point — the shape tool, which spans a
-     cove from a guide already drawn, and the COB array, which sets a run out on
-     one — and until this existed neither said so before the press. Both showed a
-     crosshair over a line they were about to swallow, and the array drew a ghost
-     lamp at the pointer that was never going to be placed there.
-
-     ONE PIECE OF STATE FOR THREE CUES, which is why it is a state and not three
-     tests at three call sites: the cursor turns into a pointer, the ghost lamp
-     goes, and the geometry's own stroke comes up to full weight. All three are
-     saying the same sentence — "press here and you get THIS line" — and they
-     have to agree frame by frame.
-
-     TRANSIENT, and cleared with whatever tool set it. A highlight left on a
-     shape after the tool was put down is a shape claiming to be selectable by a
-     press that would do something else. */
-  const [geomHover, setGeomHover] = useState(null);
+  /* THE GEOMETRY UNDER THE POINTER, WHILE SOMETHING CAN TAKE IT — one piece of
+     state for three cues, and it is the geometry session's. The COB array and
+     the module tool drive it from their own move branches below; see
+     features/ceiling-geometry/useGeometryState.js for what it is. */
 
   /* --- THE MODULES CLIPPED INTO A MAGNETIC TRACK ----------------------------
      THE RUN IS NOT IN HERE, AND THAT IS THE WHOLE DESIGN. A magnetic track is a
@@ -845,16 +823,10 @@ export default function App({
   const [cobAt, setCobAt] = useState(null);
 
   /* --- COVES SOMEBODY DREW ---------------------------------------------------
-     A LIST OF SHAPES IN PLAN FEET, and the same kind of state `ceilingObjs` is:
-     real objects of a real size, held in feet so that correcting the scale
-     underneath them does not resize them. See ceilingShapes.js for what one is
-     and why its bounding box is what the grid gets cut on.
-
-     THE REST OF THIS BLOCK IS THE GESTURE, and it is all transient. `shapeTool`
-     is which primitive is armed, `shapeSpan` is where the drag started,
-     `penPts` is the path so far, and `shapeAt` is the pointer — none of it is
-     saved, because a half-drawn shape is not a thing a plan can be reopened
-     holding. */
+     A LIST OF SHAPES IN PLAN FEET, in the document reducer. The gesture that
+     draws one — the armed primitive, the span, both pens, the held draft and
+     the borrowed outline being offset — is the geometry session's, and so are
+     the grips and the drag. See features/ceiling-geometry/. */
   /* --- LIGHTS SOMEBODY MOVED BY HAND ----------------------------------------
      outline id -> cell key -> { dx, dy }, in FEET from that cell's own centre.
      An OVERRIDE STORE, and it is the same kind of state `boardMoves`,
@@ -880,88 +852,35 @@ export default function App({
   const [lightDrag, setLightDrag] = useState(null);
 
   // IN THE DOCUMENT REDUCER.
-  /* IS THE FLOATING BAR OPEN? Separate from `shapeTool` because the bar opens
-     BEFORE a shape has been chosen — pressing the cove button in the panel puts
-     the menu on the drawing, and choosing a primitive from it is the next act.
-     A single piece of state would make "open with nothing picked" impossible to
-     say. */
-  const [shapeMenuOn, setShapeMenuOn] = useState(false);
-  const [shapeTool, setShapeTool] = useState(null);        // a SHAPE_TOOLS id
-  /* WHAT THE BAR IS DRAWING FOR — 'cove' or 'guide'. THE BAR ITSELF IS THE SAME
-     BAR, which is the whole of this: the six primitives, the gestures, the
-     grips, the tick and the cross were all built for the cove tool and none of
-     them was ever ABOUT coves. What differs is only what the drawing becomes
-     once it is committed, and that is one field on the shape. See `roleOf` in
-     ceilingShapes.js. Transient — a shape carries its own role once sealed. */
-  const [shapeRole, setShapeRole] = useState('cove');
-  const [shapeSides, setShapeSides] = useState(POLY_SIDES.initial);
-  const [shapeAskSides, setShapeAskSides] = useState(false);
-  const [shapeSpan, setShapeSpan] = useState(null);        // { aFt, uniform }
-  /* --- THE TWO PENS, WHICH ARE ONE PEN TWICE ---------------------------------
-     `penPts` AND ITS RUBBER BAND USED TO LIVE LOOSE HERE, beside the shape
-     drag's state, and adding a second pen for the track would have meant a
-     second point list, a second live segment and a second undo kept in step by
-     hand. They are one hook now — see hooks/usePen.js — and the two tools
-     differ in the two options they pass and in nothing else.
+  /* --- THE GEOMETRY AUTHORING SESSION ---------------------------------------
+     THE FEATURE'S FIRST CALL SITE, AND IT IS HERE BECAUSE `pressState` IS.
+     Two of its members — `shapeMenuOn` and `shapeTool` — are in the
+     arbitration table built three hundred lines below, and three of its resets
+     are called by `resetForNewPlan` below that; a hook's arguments are
+     evaluated during render, so the session is asked for on its own, early,
+     and the rest of the domain is composed three times more further down. Same
+     split `useBoardStep` makes for the switchboard step. See its README.
 
-     THE COVE PEN CLOSES AND IS FREE-ANGLED, because a cove is an OUTLINE: the
-     path has to come back to where it started or it encloses nothing, and a
-     ceiling is not obliged to be rectilinear. Shift locks a segment square for
-     the walls that are.
-
-     THE TRACK PEN IS OPEN AND ALWAYS LOCKED, because a track is a RUN: it goes
-     from somewhere to somewhere and stops, and a profile is set out along the
-     building. There is no shift to hold — every segment is square, which is
-     what makes an L or a C the natural thing to draw and a diagonal impossible
-     to draw by accident. */
-  const covePen = usePen({ lock: 'shift', closes: true });
-  /* IT CLOSES TOO, WHICH THE FIRST VERSION OF THIS GOT WRONG. The argument for
-     an open-only pen was that a track is a RUN — it goes from somewhere to
-     somewhere and stops — and that is true of most of them and not of the one
-     everybody draws first, which is a rectangle round a room. Clicking the
-     first point again placed a second point on top of it and left the loop
-     open. A track is closed when somebody closes it. */
-  const trackPen = usePen({ lock: 'always', closes: true });
-  const [shapeAt, setShapeAt] = useState(null);            // feet, plan space
-  /* THE SHAPE THE DRAG LEFT BEHIND, waiting for the tick. A released drag does
-     NOT commit — see the note on `commitShape` — so this is where it sits in
-     between, and it is the one piece of the gesture that survives the pointer
-     coming up. */
-  const [shapeHeld, setShapeHeld] = useState(null);
-  /* --- A DRAFT TAKEN FROM A GEOMETRY, AND HOW FAR OFF IT IS BEING SET -------
-     TWO PIECES BECAUSE THE ANSWER IS RECOMPUTED AND NOT ACCUMULATED. `heldSrc`
-     is the borrowed outline exactly as it was found, untouched for the life of
-     the gesture; `heldOff` is the side and the distance the bar is showing. The
-     draft is `insetShape(heldSrc, ...)` of the pair, worked out afresh on every
-     change — so sweeping the distance from 1 ft to 2 ft and back lands on the
-     original rather than on a shape that has been offset three times.
-
-     IT IS ONLY EVER SET FOR A BORROWED DRAFT. A shape dragged out with a
-     primitive has no source geometry to be offset FROM: the drag IS the
-     position, and offering "a foot inside" of it would be asking about the wrong
-     thing. `heldSrc` null is what withholds the control — see the shape bar.
-
-     WHY THE CONTROL EXISTS AT ALL: a magnetic track set out a foot inside a
-     guide is the ordinary case, and the whole reason to draw the guide first.
-     It applies to a cove borrowed from a guide identically, because it is the
-     same act — see `insetShape`. */
-  const [heldSrc, setHeldSrc] = useState(null);
-  const [heldOff, setHeldOff] = useState({ side: 'on', ft: 1 });
+     EVERY PIECE OF IT IS TRANSIENT. The shapes and the drawn tracks are the
+     document's and stay there; what is here is which primitive is armed, where
+     a drag started, what the pens have clicked out, the borrowed outline being
+     offset, which shape is showing its grips and which track point is picked
+     up. A plan reopened holding any of it would be a plan reopened mid-gesture. */
+  const geomState = useGeometryState();
+  const { press: geomPress, covePen, trackPen, geomHover, setGeomHover } = geomState;
+  /* THE FOUR SETTERS THIS FILE STILL CALLS. Taken off the session rather than
+     reached through it, because two of them are named by the keydown effect's
+     dependency array — and `geomState` is a fresh object every render, so
+     naming IT there would re-bind the window listener on every frame. See the
+     note at the foot of usePen. A setter's identity is stable for the life of
+     the component. */
+  const { setShapeEditId, setSelTrackPt, setShapeTool,
+          setShapeSides, setShapeAskSides } = geomState;
+  /* WHICH SHAPE IS PICKED. With the other nine reads of the register and not in
+     the feature, because the magnetic-track domain asks for it four hundred
+     lines above the geometry is composed. See lib/selection.js. */
   const selShapeId = idOf(sel, 'shape');
-  const [shapeDrag, setShapeDrag] = useState(null);        // moving one already there
-  /* WHICH SHAPE IS SHOWING ITS HANDLES, and it is NOT the same thing as which
-     one is selected. Selection is one press and gets the contextual bar — the
-     corner radius, the copy, the bin. Dimensions are a second press on the same
-     shape, and they get grips.
 
-     TWO STATES BECAUSE THEY ARE TWO DEPTHS, and putting the grips on plain
-     selection would mean eight handles appearing round a twenty-foot cove every
-     time somebody clicked it to check its radius — grips over the drawing, over
-     the fittings inside it, for a gesture nobody asked to make. It is the same
-     depth a double-click buys everywhere else: select the thing, then get at
-     what it is made of. */
-  const [shapeEditId, setShapeEditId] = useState(null);
-  const [shapeResize, setShapeResize] = useState(null);    // { id, handle }
   const [objMode, setObjMode] = useState(false);
   const [armed, setArmed] = useState(null);       // a type id, or null
   const [guides, setGuides] = useState([]);       // momentary alignment lines
@@ -1331,8 +1250,10 @@ export default function App({
      all", which is a different question with a different answer when it fails.
      All three stay as their own checks beside this one at the call sites. */
   const pressState = useMemo(() => ({
-    doorEdit, boardPlace, zoneMode, armed, addTool, shapeMenuOn, shapeTool,
-  }), [doorEdit, boardPlace, zoneMode, armed, addTool, shapeMenuOn, shapeTool]);
+    doorEdit, boardPlace, zoneMode, armed, addTool,
+    shapeMenuOn: geomPress.shapeMenuOn, shapeTool: geomPress.shapeTool,
+  }), [doorEdit, boardPlace, zoneMode, armed, addTool,
+       geomPress.shapeMenuOn, geomPress.shapeTool]);
   /* `zoneEdit` IS THE DOOR EDITOR'S TWIN, and it is a screen rather than a
      decision, so like `doorEdit` it is not saved. `zoneMode` is the older flag
      and it stays: that one says the canvas's pointer is boxing out a zone, and
@@ -1419,17 +1340,14 @@ export default function App({
     // AND THE DRAWN COVES, for the reason the hand-placed slots above go: a
     // shape is set out in ONE plan's feet, and carrying it onto a fresh sheet
     // would put a cove at whatever coordinates it happened to be drawn at.
-    docActions.clearShapes(); setShapeDrag(null);
-    setShapeEditId(null); setShapeResize(null);
+    docActions.clearShapes(); geomState.reset.shapes();
     // The hand positions go with the grid they were chosen on: a cell key names
     // a rectangle in ONE plan's feet and means nothing in another's.
     docActions.clearLightMoves(); setLightDrag(null);
-    setShapeMenuOn(false); setShapeTool(null);
-    setShapeSpan(null); covePen.reset(); setShapeAt(null); setShapeHeld(null);
-    setShapeAskSides(false);
+    geomState.reset.shapeTool();
     // AND THE DRAWN TRACKS, which go for the same reason the shapes do: a path
     // is clicked out in ONE plan's feet.
-    docActions.clearTracks(); trackPen.reset();
+    docActions.clearTracks(); geomState.reset.tracks();
     /* AND THE MODULES. The RUNS go with `ceilingShapes` a few lines up — a
        magnetic track is a shape — but a module is keyed by a shape id, so
        leaving these would carry a new plan's first track a set of diffusers
@@ -1440,7 +1358,7 @@ export default function App({
     docActions.clearLit(); docActions.setFocusId(null);
     setOutlinesOpen(false); docActions.clearDirty();
     docActions.setUnitId(null);
-  }, [docActions, initialProjectType, covePen, trackPen]);
+  }, [docActions, initialProjectType, geomState.reset]);
 
   // --- the plan source ------------------------------------------------------
   const {
@@ -1969,128 +1887,29 @@ export default function App({
     () => taskSpotsPx.filter((sp) => !sp.rejected && sp.x != null).length,
     [taskSpotsPx]);
 
-  /* --- THESE THREE SIT ABOVE `roomFixtureGroups` AND `placeArray` BECAUSE
-         BOTH READ THEM ------------------------------------------------------
-     A `useCallback` evaluates its dependency ARRAY on every render, so a hook
-     naming one of these below its own `const` would touch the binding before it
-     existed — "Cannot access 'arrayOutline' before initialization", which is a
-     blank screen and not a warning. They were declared with the rest of the COB
-     machinery and that is exactly what happened; the scanner over the hook deps
-     is what caught it. Anything a callback names, in its body or its deps, is
-     declared above it. */
+  /* --- THE CEILING-GEOMETRY DOMAIN ------------------------------------------
+     THE FEATURE'S SECOND CALL SITE, AND IT SITS ABOVE `roomFixtureGroups` AND
+     `placeArray` FOR THE REASON THE BLOCK IT REPLACES GAVE: both read
+     `arrayOutline`, and a `useCallback` evaluates its dependency ARRAY on every
+     render, so a hook naming it below its own `const` would touch the binding
+     before it existed — "Cannot access 'arrayOutline' before initialization",
+     which is a blank screen and not a warning. Anything a callback names, in
+     its body or its deps, is declared above it.
 
-  /**
-   * THE PATH AN ARRAY IS SET OUT ON, in plan pixels — geometry or room outline.
-   *
-   * ONE FUNCTION FOR BOTH SOURCES, because every reader wants the same thing
-   * from either: a closed or open run of points to space lamps along. Which list
-   * to look in is the `room:` prefix on the id, and nothing downstream has to
-   * know there were two lists.
-   */
-  const arrayOutline = useCallback((geomId) => {
-    if (!geomId || !(pxPerFt > 0)) return null;
-    if (String(geomId).startsWith('room:')) {
-      const r = rooms.find((q) => q.id === String(geomId).slice(5));
-      const poly = r?.plan?.polygonPx || r?.geo?.polygonPx;
-      /* EVERY VERTEX OF A ROOM IS A CORNER, which is why this hands the same
-         list twice rather than deriving one from the other. A room's outline is
-         traced on the plaster and has no fillets and no sampled curve in it —
-         each point IS a corner of the room — so a ring of downlights set out on
-         one lands on the corners at four lamps and adds the middle of each wall
-         at eight. See `arraySpots`. */
-      return poly?.length ? { pts: poly, corners: poly,
-                              closed: true, isRoom: true, roomId: r.id,
-                              label: r.outline?.name || 'Space' } : null;
-    }
-    const sh = ceilingShapes.find((q) => q.id === geomId);
-    if (!sh) return null;
-    const toPx = (q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt });
-    const pts = shapeOutlineFt(sh).map(toPx);
-    if (pts.length < 2) return null;
-    const home = rooms.find((r) => pointInPolygon(
-      { x: sh.x * pxPerFt, y: sh.y * pxPerFt }, r.geo.polygonPx));
-    /* AND THE SHAPE'S CORNERS SEPARATELY, WHICH IS NOT `pts` FILTERED. The
-       outline is a POLYLINE — 72 points for a circle, ten per rounded corner —
-       so there is no reading of it that recovers "this shape has four corners".
-       `cornersFt` is the shape's own answer, and it comes back EMPTY for a
-       circle, which is what makes a run on one freely spaced. */
-    return { pts, corners: shapeCornersFt(sh).map(toPx),
-             closed: !shapeIsOpen(sh), isRoom: false, roomId: home?.id ?? null,
-             label: SHAPE_BY_ID[sh.kind]?.label ?? 'Geometry' };
-  }, [ceilingShapes, rooms, pxPerFt]);
+     THE COMMANDS AND THE GESTURES ARE COMPOSED FURTHER DOWN, where the things
+     they need exist: arming this tool puts six other machines away and that
+     list is App's, and the two geometry snaps read `snapTargets`, which is
+     App's and reads this call's `coveShapesPx`. See the feature's README.
 
-  /**
-   * THE SHAPE UNDER A POINT ON THE PLAN, if any — the hit test both geometry-
-   * taking tools run.
-   *
-   * ONE TEST AND NOT TWO, which is the whole reason it is a function. The COB
-   * array had this inline in its branch of the canvas press; the cursor, the
-   * ghost and the shape's own highlight all need the same answer on every MOVE,
-   * and a second copy of the tolerance would be a hover that lit a line the
-   * press then missed.
-   *
-   * THE TOLERANCE IS IN SCREEN PIXELS AND CONVERTED, the rule every hit test on
-   * this canvas follows: it is about how accurately somebody can hit a line on
-   * screen, which does not change when the drawing is scaled. `hitShape` grows
-   * a closed outline by it and bands an open one either side — see its note.
-   *
-   * FIRST MATCH IN THE LIST, which is the order shapes were drawn in. Two
-   * overlapping guides are a rare thing to have drawn on purpose and the press
-   * has to pick one; the alternative — smallest first, as the door editor does —
-   * would be a rule about area on objects that are very often the same size.
-   */
-  const shapeAtPointer = useCallback((pPx) => {
-    if (!pPx || !(pxPerFt > 0)) return null;
-    const pFt = { x: pPx.x / pxPerFt, y: pPx.y / pxPerFt };
-    const tolFt = Math.max(8, pxPerFt * 0.4) / pxPerFt;
-    return ceilingShapes.find((sh) => hitShape(sh, pFt, tolFt)) ?? null;
-  }, [ceilingShapes, pxPerFt]);
-
-  /**
-   * ...AND WHETHER THE TOOL IN HAND WOULD ACTUALLY TAKE IT.
-   *
-   * THE ANSWER IS DIFFERENT FOR THE TWO TOOLS AND THAT DIFFERENCE IS THE POINT.
-   *
-   *   THE COB ARRAY takes ANY geometry. A run of spots can be set out on a
-   *   cove's own rectangle as readily as on a guide — it references the line and
-   *   builds nothing from it, so there is nothing for the line's role to clash
-   *   with. See `cobArrays`.
-   *
-   *   THE SHAPE TOOL takes a geometry OF THE OTHER ROLE, and only that. Armed to
-   *   draw a cove it will span one from a guide, which is exactly what a guide is
-   *   for; armed to draw a cove it must NOT swallow the cove already there,
-   *   because a press on bare ceiling inside an existing cove is how a second
-   *   one is drawn across it — and that is the ordinary case, not the exception.
-   *   The rule reads symmetrically (a guide can be taken from a cove) because it
-   *   is one condition rather than a cove-only exemption.
-   *
-   * `null` WITH NOTHING ARMED, so a press on a shape with no tool in hand still
-   * means what it has always meant: pick it up. See `shapePointerDown`.
-   */
-  const geomUnder = useCallback((pPx) => {
-    if (addTool === 'cob' && cobMode === 'array') return shapeAtPointer(pPx);
-    /* --- A MODULE WANTS A TRACK, AND NOTHING ELSE WILL DO ------------------
-       THE THIRD TOOL THAT TAKES A GEOMETRY, and the narrowest of the three: a
-       diffuser clips into a magnetic track and cannot be clipped into a cove, a
-       guide or the ceiling. So the cue is offered for a track and withheld for
-       everything else — which is what makes the pointer honest over a guide
-       drawn an inch away from the run. */
-    if (addTool === 'module') {
-      const sh = shapeAtPointer(pPx);
-      return sh && shapeIsTrack(sh) ? sh : null;
-    }
-    /* THE BAR BEING OPEN IS ENOUGH — IT DOES NOT HAVE TO BE ARMED, and that is
-       the whole flow for a magnetic track: press the rail cell and the bar
-       arrives with no primitive live (see `openShapeTool`, and the space click
-       that does the same), then press the guide you want to be a track. Requiring
-       a primitive first would mean arming a rectangle you are not going to draw
-       in order to borrow an outline that already exists. */
-    if (shapeMenuOn) {
-      const sh = shapeAtPointer(pPx);
-      return sh && shapeRoleOf(sh) !== shapeRole ? sh : null;
-    }
-    return null;
-  }, [shapeAtPointer, addTool, cobMode, shapeMenuOn, shapeRole]);
+     NOTHING HERE HOLDS DOCUMENT STATE. The shapes and the drawn tracks are read
+     out of `doc` and written through `docActions` at the third call site. */
+  const geometry = useCeilingGeometry({
+    state: geomState, rooms, pxPerFt, opt, selShapeId,
+    addTool, cobMode, boardPlace, zoneMode, readOnly, doc,
+  });
+  const arrayOutline = geometry.arrayOutline;
+  const shapeAtPointer = geometry.lookup.at;
+  const geomUnder = geometry.lookup.forTool;
 
   const { projections: { magTracksPx, magTrackById, trackModulesPx } } = useSceneTrackProjections({
     ceilingShapes, rooms, pxPerFt, trackFixtures
@@ -3595,61 +3414,9 @@ export default function App({
   // is no layout.
   const showTrace = step === 'trace' && !readOnly;
 
-  /* --- WHY A DRAWN RUN IS NOT ON THE PLAN -----------------------------------
-     A RUN THAT WAS REFUSED USED TO VANISH IN SILENCE, and that is the whole of
-     what this fixes. Somebody clicks out a path in a bedroom, presses the
-     button, and nothing appears — no track, no line, no message — which reads
-     as the tool being broken rather than as the answer it actually is (the run
-     reaches no fitting, or it crosses the fan). The path is still there, in
-     `manualTracks`; what was missing was anybody saying so.
-
-     ASKED PER ROOM AND ANSWERED ONCE. A run is offered to every space it
-     crosses — see the drawn-track pass — so "it was refused" means every one of
-     them refused it, and the reason to report is the most specific of theirs.
-     A run over no lit space at all is refused by nobody, which is why `outside`
-     is the answer when no room had an opinion.
-
-     THE SAME FUNCTION THE LAYOUT USED. `drawnTrackRefusal` is what
-     `planDrawnTrack` itself asks before building anything, so the sentence
-     under the button cannot describe a refusal that did not happen. */
-  const trackNotes = useMemo(() => {
-    if (!pxPerFt || !manualTracks.length) return [];
-    const placed = new Set(rooms.flatMap((r) => (r.tracks ?? []).map((t) => t.key)));
-    // MOST SPECIFIC WINS. "It crosses the fan" is something to act on; "it is
-    // not over a lit space" is the answer of a room that never saw it.
-    const RANK = { fan: 3, reach: 2, short: 1, outside: 0 };
-    const out = [];
-    for (const mt of manualTracks) {
-      if (placed.has(mt.id)) continue;
-      let why = 'outside';
-      for (const r of rooms) {
-        if (!r.geo || !r.plan?.ok) continue;
-        const pts = mt.ptsFt.map((q) => r.geo.toFt({ x: q.x * pxPerFt, y: q.y * pxPerFt }));
-        // ONLY A ROOM THE RUN ACTUALLY REACHES HAS AN OPINION WORTH HAVING.
-        // Every other room would say `reach` about a path nowhere near it,
-        // which is true and useless.
-        if (!pts.some((q) => pointInPolygon(q, r.geo.polygonFt))) continue;
-        const got = drawnTrackRefusal(pts, r.plan.lights ?? [], opt,
-                                      { polygon: r.geo.polygonFt,
-                                        keepOff: r.geo.zonesFt,
-                                        obstacles: r.geo.fixturesFt },
-                                      { closed: !!mt.closed });
-        if (got && RANK[got] > RANK[why]) why = got;
-      }
-      out.push({ id: mt.id, why });
-    }
-    return out;
-  }, [pxPerFt, manualTracks, rooms, opt]);
-
-  /* THE REFUSALS, ONE LINE PER REASON. Three runs refused for the same reason
-     is one sentence and a count, not three identical sentences — and two runs
-     refused for two different reasons are two lines, because the thing to do
-     about each is different. */
-  const trackNoteLines = useMemo(() => {
-    const by = {};
-    for (const n of trackNotes) by[n.why] = (by[n.why] ?? 0) + 1;
-    return Object.entries(by).map(([why, n]) => ({ why, n, text: TRACK_REFUSALS[why] }));
-  }, [trackNotes]);
+  /* WHY A DRAWN RUN IS NOT ON THE PLAN, one line per reason —
+     `geometry.tracks.noteLines`. See features/ceiling-geometry/geometryRules.js
+     for the per-room ask and the most-specific-wins ranking. */
 
   /* WHAT THIS STEP HAS PUT ON THE PLAN, AND HOW TO TAKE IT BACK. Two tools, two
      lists, one readout — kept as a table rather than as a pair of ternaries in
@@ -4159,134 +3926,134 @@ export default function App({
     // away with it, exactly as `abandonShape` does for the cove pen: the
     // alternative is a set of points with no tool armed to finish them.
     trackPen.reset(); setGuides([]);
-  }, [trackPen]);
+  }, [trackPen, setGeomHover]);
 
-  /* --- FINISHING A DRAWN TRACK ------------------------------------------------
-     A RUN ENDS WHEN SOMEBODY SAYS IT DOES, and that is the one way the track pen
-     differs from the cove pen as a GESTURE rather than as a setting. A cove
-     path closes on its own first point, so the last click both places a point
-     and says "done"; an open run has no such click to borrow — the point you
-     want last looks exactly like a point in the middle — so there has to be a
-     separate act. There are three of them, all saying the same thing: Enter, a
-     double-click, and the button on the step. Three ways in because a pen is
-     held with one hand and the mouse is the other, and which one is free
-     depends on where in the path you are.
 
-     THE TOOL STAYS ARMED. Finishing a run is not finishing with the tool, for
-     the reason the step gives generally: this panel is the screen while it is
-     open, and a tool that put itself away after one run would empty and refill
-     the screen under somebody who was drawing three.
+  /* --- ARMING THE GEOMETRY TOOL: THE HALF THAT IS APP'S ---------------------
+     ONE POINTER PIPELINE, ONE OWNER — the same clearing `openZoneEdit` and
+     `openBoardPlace` do. A press with two tools armed is a press with two
+     meanings, and the geometry tool draws across the whole ceiling rather than
+     at a point, so it is the least forgiving of the three about sharing.
 
-     TWO POINTS IS THE MINIMUM AND IT IS NOT ARBITRARY. One point is a click, not
-     a run — and `penSegments` drops anything shorter than a few inches, so a
-     path of two points a hair apart finishes as nothing at all rather than as a
-     profile of no length. */
-  const finishTrack = useCallback((closed = false) => {
-    // THE GUIDES GO WITH THE GESTURE. They are momentary by definition — see
-    // the note over them in PlanCanvas — and a dotted line left on the sheet
-    // after the run is finished is a drawn line, which is the one thing they
-    // must never become.
-    setGuides([]);
-    const segs = penSegments(trackPen.pts, { minFt: MIN_SEG_FT, closed });
-    if (!segs.length) { trackPen.reset(); return; }
-    /* THE MERGED PATH AND NOT THE CLICKS. `penSegments` has already thrown away
-       the doubled points and joined the two halves of a leg drawn in two goes,
-       so this is the run as it will be BUILT rather than as it was drawn.
-       A CLOSED PATH KEEPS ITS POINTS AND NOT ITS LAST SEGMENT. `penSegments`
-       was given the closing leg so it could merge across the join — a rectangle
-       whose first and last legs are collinear is one leg — and the stored path
-       is the corners alone, with `closed` saying the leg back exists. Storing
-       the repeat of the first point would make it a corner in its own right. */
-    const pts = closed ? segs.map((sg) => sg.a) : [segs[0].a, ...segs.map((sg) => sg.b)];
-    /* THE ID IS MINTED IN THE REDUCER, from the list's own length, and the
-       timestamp is passed in so the reducer stays a pure function of its
-       arguments — see LIST_ADDED_MINTED. Same format as before. */
-    docActions.addTrack({ ptsFt: pts, closed, lengthFt: penLengthFt(pts, { closed }) },
-      Date.now().toString(36));
-    trackPen.reset();
-  }, [docActions, trackPen]);
-
-  /* --- DRAWING A COVE ---------------------------------------------------------
-     THE SAME SHAPE AS THE OTHER STEPS ON THIS SCREEN — it owns the pointer, it
-     stays open across placements, and it puts every other gesture away on the
-     way in — with one difference that is worth naming rather than discovering:
-     its controls are on the DRAWING and not in the panel. See ShapeMenu for why.
-
-     `abandonShape` IS THE HALF-MADE GESTURE AND NOTHING ELSE. Closing the whole
-     tool has to forget the draft too, so `closeShapeTool` calls it; the cross in
-     the bar calls only this, because throwing a shape away is not the same act
-     as putting the pen down. */
-  const abandonShape = useCallback(() => {
-    setShapeSpan(null); covePen.reset(); setShapeAt(null); setShapeHeld(null);
-    // AND THE BORROWED SOURCE WITH IT. It exists for the length of one held
-    // draft; left behind, the offset control would appear over a shape dragged
-    // out from scratch and offer to set it in from a geometry it never came from.
-    setHeldSrc(null);
-    setShapeAskSides(false); setGuides([]);
-  }, [covePen]);
-
-  const closeShapeTool = useCallback(() => {
-    setShapeMenuOn(false); setShapeTool(null); setShapeDrag(null);
-    // ...AND THE GEOMETRY IT WAS OFFERING TO TAKE. See `geomHover`.
-    setGeomHover(null);
-    abandonShape();
-  }, [abandonShape]);
-
-  /** ...and the grips, which belong to a shape rather than to the tool. Taken
-   *  off wherever the drawing is about to be about something else. */
-  const clearShapeEdit = useCallback(() => {
-    setShapeEditId(null); setShapeResize(null);
-  }, []);
-
-  const openShapeTool = useCallback((role = 'cove', { arm = true } = {}) => {
-    /* THREE ROLES NOW, AND THE LIST IS NOT WRITTEN OUT HERE. It was
-       `role === 'guide' ? 'guide' : 'cove'`, which silently turned every role it
-       had not heard of into a cove — so opening the bar for a magnetic track
-       committed a pocket. `roleOf` is the one place that knows the roles; asking
-       it means a fourth one is a change to that file and not to this line. */
-    setShapeRole(shapeRoleOf({ role }));
-    /* ARMED ON THE RECTANGLE, NOT ON NOTHING. Opening with no primitive picked
-       was a bar that looked ready and answered no press — you had to notice
-       that one more click was owed before the drawing would respond, which is
-       the kind of step nobody sees until they have already tried. The rectangle
-       is the default for the reason it is first in the row: it is the one
-       everybody reaches for, and picking any other is one press either way.
-
-       ...UNLESS NOBODY ASKED TO DRAW, WHICH IS THE ONE EXEMPTION AND IT MATTERS.
-       The bar also arrives as a consequence of clicking a space — see
-       `onCanvasClick` — and that click was about the SPACE. Arming a placer on
-       it would give one press two meanings and the second one would bite
-       immediately: click a room to select it, click the room next door to select
-       THAT, and instead of a selection you would have dragged out a rectangle.
-       So the bar opens showing its primitives with none of them live, and the
-       press that arms one is a press somebody made for that purpose. */
-    setShapeMenuOn(true); setShapeTool(arm ? 'rect' : null);
-    abandonShape();
-    /* AND THE ARRAY'S BAR GOES, ARMED OR NOT. This one is above the `!arm`
-       return on purpose: the unarmed bar is what a click on a space raises, and
-       it lands in exactly the place the array's bar is standing — see
-       `openArray` for why one is the limit. Nothing else in the takeover below
-       has to happen for an unarmed bar, but this does. */
-    setSel(clear());
-    /* THE TAKEOVER BELOW BELONGS TO ARMING AND NOT TO OPENING, which is why it
-       stops here when nothing was armed. Everything under this line exists to
-       make this tool the sole owner of the next press; a bar showing six
-       primitives with none of them live owns no press at all, and putting away
-       somebody's zone editor or their half-placed switchboard because they
-       clicked a room would be a click with two meanings — the very thing the
-       note below is about. */
-    if (!arm) return;
-    clearShapeEdit();
-    /* ONE POINTER PIPELINE, ONE OWNER — the same clearing `openZoneEdit` and
-       `openBoardPlace` do. A press with two tools armed is a press with two
-       meanings, and this one draws across the whole ceiling rather than at a
-       point, so it is the least forgiving of the three about sharing. */
+     IT IS HERE AND NOT IN THE FEATURE because the list is the interesting part
+     and App is the only place that knows all seven owners. `openShapeTool` calls
+     it exactly where the block stood, below its `!arm` return — see that
+     command. Same split `openBoardPlace` already has. */
+  const geometryStandDown = useCallback(() => {
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
     setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
     closeBoardPlace();
     setArmed(null); setGhost(null); setGuides([]);
     disarmAdd();
-  }, [abandonShape, disarmAdd, clearShapeEdit, closeBoardPlace]);
+  }, [disarmAdd, closeBoardPlace]);
+
+  /**
+   * SPANNING A TRACK ALSO FILLS IT — the diffuser allocator.
+   *
+   * WHY IT RUNS HERE AND NOT ON A BUTTON. Every other module on a run is placed
+   * by hand because every other module is AIMED: a spot goes over the console
+   * because that is where the console is. A diffuser is not aimed at anything —
+   * it is ambient light — and the only question worth asking about how many a
+   * run carries is the one the Analysis panel is already asking about the room.
+   * So the moment a run exists, that question has an answer, and making somebody
+   * press a second button to get it would be making them ask for the obvious.
+   *
+   * THE COUNT IS THE PANEL'S OWN ARITHMETIC RUN BACKWARDS. `spaceAnalysis` says
+   * what the space is owed and what it is getting; `netPerUnit` says what one
+   * diffuser is worth against THIS room's surfaces, height and country. The
+   * quotient, rounded up, is the number. Nothing here re-derives a lumen —
+   * see the note on `netPerUnit` for why that matters.
+   *
+   * AND THE GEOMETRY DECIDES WHERE THEY LAND, which is the other half and a
+   * different question: corners on a closed run, ends-then-seven-feet on an
+   * open one. See `allocateDiffusers`.
+   *
+   * FEET AND NOT PIXELS. The allocator's own figures — a module's length, the
+   * seven-foot gap — are in feet, and a shape is held in the plan's own feet
+   * anyway, so there is no conversion to get wrong.
+   *
+   * A ROOM IS REQUIRED AND A BRIGHT ONE GETS NOTHING. A run drawn over no lit
+   * space has no shortfall to answer and no reflectances to answer it against;
+   * a run in a room already over its criterion gets a bare profile, which is a
+   * perfectly ordinary thing to want. Either way the spots still go on by hand.
+   */
+  const allocateOnTrack = useCallback((shape) => {
+    if (!shapeIsTrack(shape) || !(pxPerFt > 0)) return;
+    const pts = shapeOutlineFt(shape);
+    if (pts.length < 2) return;
+    const home = rooms.find((r) => pointInPolygon(
+      { x: shape.x * pxPerFt, y: shape.y * pxPerFt }, r.geo.polygonPx));
+    if (!home?.plan?.ok) return;
+    const closed = !shapeIsOpen(shape);
+    const a = spaceAnalysis(home);
+    /* THE COUNT AND THE WATTAGE ARE SOLVED TOGETHER, and `netFor` is the panel's
+       own arithmetic handed to the solver as a function of wattage — see
+       `chooseDiffusers`, and `netPerUnit` for why nothing here re-derives a
+       lumen. This replaced a fixed 18 W and a count rounded up to the geometry's
+       quantum, which put 3,834 lm of diffuser into a room that wanted 1,250. */
+    /* THE SHORTFALL, IN WATTS. The allocator's rule is written in watts —
+       "27 W over four corners is 6.75 W each" — so the conversion happens here,
+       once, against what ONE watt of this family is worth to THIS room. Linear,
+       because `unitOutput` is: no fixed lumens on the family, so a watt is a
+       watt and the division is exact rather than a fit.
+       `track_diffuser` AND NOT `panel`. They share a distribution and are two
+       products with two ranges — see lumens.js. */
+    const fam = MODULE_BY_ID.diffuser.family;
+    const perW = netPerUnit(fam, 1, { ref: a.ref, lumensPerWatt: a.lumensPerWatt });
+    const plan = perW > 0 ? planDiffusers(pts, {
+      closed, needW: a.shortfall / perW,
+      /* --- THE CATALOGUE, OFF THE FAMILY, AND THE SAME ARRAY THE CHIPS USE ---
+         WHAT A DIFFUSER IS SOLD AT COMES FROM UPSTREAM AND NOT FROM THE
+         ALLOCATOR. `FAMILY_BY_ID.track_diffuser.watts` is the one store — see
+         `TRACK_DIFFUSER_WATTS` in lumens.js — and it is also exactly what
+         `analyseSpace` copies onto the row as `wattOptions` for SpaceAnalysis to
+         draw a chip per entry. Read here through the FAMILY rather than by
+         importing the constant, so the allocator and the panel look at the same
+         array object: the allocator cannot pick a wattage the chips cannot show,
+         and a brand's catalogue swapped into the family is followed by both
+         without either being touched.
+         IT IS PASSED AND NOT DEFAULTED. `planDiffusers` has no built-in list —
+         see its note — so a caller that forgets this places nothing rather than
+         quietly solving against a range nobody in this project sells. */
+      watts: FAMILY_BY_ID[fam]?.watts,
+    }) : [];
+    if (!plan.length) return;
+    /* EACH MODULE CARRIES THE WATTAGE ITS OWN SLOT WAS GIVEN, which is the whole
+       point of the corner-first rule: a run comes out as four 5 W at the corners
+       and a 10 W in the middle of a rail, and those are two figures on one
+       profile. The Analysis panel groups by wattage for the same reason — see
+       `roomFixtureGroups`. */
+    docActions.addTrackFixtures(plan.map((mod, i) => placeModule({
+      trackId: shape.id, kind: 'diffuser', u: mod.u, watts: mod.watts,
+      seq: `a${i}` })));
+    /* AND THE PANEL GOES TO THE SPACE, because the two figures at the top of it
+       have just moved by the whole of what the run adds. A tool that changed a
+       room's verdict silently would be the one act on this drawing worth
+       watching, performed off screen. */
+    docActions.setFocusId(home.id); setOptionPick(null); docActions.setView('spaces');
+  }, [docActions, pxPerFt, rooms, spaceAnalysis]);
+
+  /* --- THE GEOMETRY TOOL'S COMMANDS -----------------------------------------
+     THE FEATURE'S THIRD CALL SITE, AND IT IS HERE BECAUSE OF THE TWO THINGS IT
+     TAKES FROM THIS FILE. `geometryStandDown` is the list of machines arming
+     the tool has to put away, which is arbitration between features and App's;
+     `allocateOnTrack` is what a committed magnetic track is FILLED with, which
+     is the module domain's question. Both are declared directly above.
+     `allocateOnTrack` stood four hundred lines below this and moved up with
+     nothing else changed — it is a `useCallback` with no effect in it and
+     nothing between the two points reads it. */
+  const geometryCommands = useGeometryCommands({
+    state: geomState, geometry, docActions,
+    ceilingShapes, manualTracks, trackFixtures,
+    setSel, setGuides,
+    allocateOnTrack, standDown: geometryStandDown,
+  });
+  const {
+    abandonShape, closeShapeTool, clearShapeEdit, openShapeTool,
+    commitShape, pickShapeTool, duplicateShape, deleteShape,
+    finishTrack, finishOpenCove, setHeldOffset,
+    deleteTrack, deleteTrackPoint, openTrackEdit, closeTrackEdit,
+  } = geometryCommands;
 
   /* --- WHY THIS BLOCK IS UP HERE ---------------------------------------------
      Beside `disarmAdd` rather than beside the pointer handlers that use it, and
@@ -4448,525 +4215,8 @@ export default function App({
     disarmAdd();
   }, [disarmAdd, closeShapeTool, enterBoardPlace]);
 
-  /* --- WHICH ROOM A SLOT IS BEING DRAWN IN ----------------------------------
-     THE ROOM UNDER THE PRESS, and failing that the nearest one its outline is
-     within reach of. The second half matters more than it looks: a slot starts
-     ON a wall, and a press aimed at a wall lands outside the polygon as often as
-     inside it — a containment test alone would refuse the most natural way to
-     begin the gesture.
-     PLAN FEET, because that is the space a shape lives in. `polygonPlanFt` is
-     the room's outline already converted; see the note on it in `geo`. */
-  const roomForSlot = useCallback((pFt) => {
-    if (!pxPerFt) return null;
-    const px = { x: pFt.x * pxPerFt, y: pFt.y * pxPerFt };
-    const inside = rooms.find((r) => pointInPolygon(px, r.geo.polygonPx));
-    if (inside) return inside;
-    let best = null;
-    for (const r of rooms) {
-      const q = projectOnOutline(pFt, r.geo.polygonPlanFt);
-      if (q && (!best || q.dist < best.dist)) best = { r, dist: q.dist };
-    }
-    // A press further than a couple of feet from any wall is not aimed at one.
-    return best && best.dist <= 2 ? best.r : null;
-  }, [rooms, pxPerFt]);
 
-  /* --- THE SLOT IN FLIGHT, AND WHY IT IS REFUSED WHEN IT IS ------------------
-     ONE MEMO ANSWERING BOTH, because the two are the same computation and a
-     refusal is not an error state — it is the ordinary condition of a drag that
-     has not reached a second wall yet. Splitting them would mean asking
-     `spanOnOutline` twice per frame and having two places that can disagree
-     about whether this drag is legal.
-     THE REASON IS A SENTENCE AND IT IS SHOWN, which is the half that was missing
-     from every other refusal in this tool: a cove that simply fails to appear
-     reads as a broken tool. See the shape step in the panel. */
-  const lineSpan = useMemo(() => {
-    if (shapeTool !== 'line' || !shapeSpan || !shapeAt) return { shape: null, why: '' };
-    /* --- A GUIDE LINE GOES WHERE IT IS DRAWN ------------------------------
-       A COVE LINE HAS TO LAND ON TWO WALLS. That is not a preference: a slot is
-       a channel cut across the slab, and a channel that stops in mid-air has no
-       end detail and cannot be built — see `spanOnOutline`, which is what
-       projects a rough drag onto the plaster at both ends.
-       A GUIDE LINE IS NOT BUILT. It is a line to set an array of fittings out
-       along, and the useful ones are exactly the ones the cove rule forbids: a
-       run over a worktop that starts and stops where the worktop does, a line
-       across the middle of a room touching nothing. Forcing its ends onto the
-       walls would make the tool refuse the one thing it is for.
-       SO THE PROJECTION IS SKIPPED AND THE DRAG IS THE LINE, ends included. The
-       square-up modifier still applies, because a run somebody wants level is a
-       run somebody wants level whatever it is for. */
-    /* ...AND A TRACK IS NOT BUILT EITHER, so it takes the same exemption. The
-       test is "is this a cove" rather than a list of the roles that escape: a
-       magnetic track profile has to be able to run across the middle of a room
-       and stop, exactly as a guide does, and the wall projection below exists
-       only because a COVE is a channel in plasterboard whose ends need something
-       to land on. */
-    if (shapeRole !== 'cove') {
-      const b = shapeSpan.uniform
-        ? axisLock(shapeSpan.aFt, shapeAt) : shapeAt;
-      return { shape: lineShape(shapeSpan.aFt, b), why: '' };
-    }
-    const room = shapeSpan.roomId
-      ? rooms.find((r) => r.id === shapeSpan.roomId) : null;
-    if (!room) return { shape: null, why: 'Start on a wall of a space.' };
-    /* SHIFT SQUARES IT UP, and it is the same Shift the pen has — see
-       `axisLock`. Read live off `shapeSpan.uniform`, which `onZoneMove` keeps in
-       step with the key, so holding it half way through a drag straightens the
-       run under your hand and letting go frees it again. */
-    const span = spanOnOutline(shapeSpan.aFt, shapeAt, room.geo.polygonPlanFt,
-                               { lock: shapeSpan.uniform });
-    if (!span) {
-      return { shape: null,
-               why: shapeSpan.uniform
-                 ? 'Square to that wall runs along it — aim across the room.'
-                 : 'A cove spans two walls — drag to a different one.' };
-    }
-    return { shape: lineShape(span.a, span.b), why: '' };
-  }, [shapeTool, shapeSpan, shapeAt, rooms, shapeRole]);
 
-  /* --- THE SHAPE THE GESTURE HAS MADE SO FAR --------------------------------
-     A MEMO AND NOT A PIECE OF STATE, so there is exactly one place the live
-     shape comes from and the preview on the drawing cannot drift from the thing
-     the tick commits. It is the same argument `draftCove` makes one screen
-     over: a preview built by separate code is a preview that eventually
-     disagrees with the placement.
-
-     `shapeHeld` WINS WHEN THERE IS ONE. The drag is over — the pointer came up
-     — and what is on the drawing is the shape waiting for a tick. Recomputing
-     it from `shapeSpan` and a pointer that has since moved elsewhere would make
-     the shape follow the mouse after the gesture ended. */
-  const shapeDraft = useMemo(() => {
-    if (shapeHeld) return shapeHeld;
-    if (!shapeMenuOn || !shapeTool) return null;
-    if (shapeTool === 'pen') {
-      // Closed the whole way through, including while it is being drawn: the
-      // shape auto-closes, so a preview with a gap in it would be promising
-      // something that cannot be committed.
-      // THE PEN'S OWN AIMED POINT AND NOT `shapeAt`. `at` is the pointer with
-      // the axis lock already applied, so the outline being drawn and the point
-      // a click would commit are one value. See usePen.
-      const pts = covePen.path;
-      return pts.length >= 3 ? penShape(pts) : null;
-    }
-    if (!shapeSpan || !shapeAt) return null;
-    /* --- A SLOT IS THE ONE DRAG WHOSE ENDS ARE NOT WHERE THE POINTER IS ------
-       Both go on the WALL, and they are re-projected on every move rather than
-       once at the press: the room's outline is what the run has to land on, so
-       what is drawn while you drag is what would be built. A span that cannot
-       be one — both ends on the same wall, or nothing left of the run — draws
-       NOTHING, and the panel beside it says why. See `lineSpan`. */
-    if (shapeTool === 'line') return lineSpan.shape;
-    return shapeFromDrag(shapeTool, shapeSpan.aFt, shapeAt,
-                         { sides: shapeSides, uniform: shapeSpan.uniform });
-  }, [shapeHeld, shapeMenuOn, shapeTool, covePen.path, shapeAt, shapeSpan, shapeSides,
-      lineSpan]);
-
-  /** The shape the contextual bar is talking about. */
-  const selShape = useMemo(
-    () => ceilingShapes.find((q) => q.id === selShapeId) ?? null,
-    [ceilingShapes, selShapeId]);
-
-  /* WHICH OF THE FOUR THINGS THE BAR IS. Derived, so the bar cannot be showing
-     a tick for a shape that is no longer being drawn.
-     THE TOOL BEING OPEN OUTRANKS A SELECTION, which is why `edit` is only
-     reachable with the menu closed — and why picking a shape on the sheet
-     closes it (see `shapePointerDown`). Two bars' worth of controls in one bar
-     would be a row where half the buttons act on the thing under the cursor and
-     half on the thing you drew last. */
-  /* `shapeSpan` COUNTS AS DRAWING EVEN WITH NO DRAFT TO SHOW FOR IT. A slot
-     whose second end has not reached another wall yet produces no shape — see
-     `lineSpan` — and without this the bar would drop back to the row of
-     primitives half way through the drag, which reads as the tool letting go. */
-  /* THE BAR HAS FOUR STATES AND `edit` IS REACHABLE TWO WAYS.
-     It used to be reachable only with the tool CLOSED, which was right while the
-     only way to open the bar was to ask to draw: if you were drawing, you were
-     not editing. The bar now also arrives on a space click, unarmed (see
-     `onCanvasClick`), and in that state selecting a shape has to offer what can
-     be done to it — otherwise the one gesture that puts the tools in front of
-     you would be the one that takes the corner radius, the duplicate and the
-     delete away. NOTHING ARMED AND SOMETHING SELECTED IS EDITING; a live
-     primitive means you are drawing, whatever is selected underneath. */
-  /* --- ...AND `edit` DOES NOT SURVIVE ANOTHER TOOL OWNING THE BAR ------------
-     `otherBar` IS A FIX FOR TWO CONTEXTUAL BARS STACKED IN ONE PLACE. The COB
-     array tool selects the geometry it is setting out on — `select('shape', …)` in
-     its branch of the canvas press, and rightly so: that ring is what says which
-     shape the run belongs to. But a selected shape with the shape tool CLOSED is
-     this bar's `edit` state, so arming the array put the shape's corner radius,
-     duplicate and delete up at the foot of the stage alongside the array's own
-     count and offset. Both are `position: fixed` at the same 26px — see BOTTOM
-     in ShapeMenu and in CobSpec — so they overlapped: two rows of controls, half
-     of them about an object nobody was working on, and a bin that deletes the
-     GEOMETRY sitting beside a bar asking about lamps.
-     A SELECTION IS NOT A REQUEST FOR A MENU WHILE SOMETHING ELSE IS IN HAND. So
-     the fallback state is withheld whenever another machine on this canvas owns
-     the next press — an add tool, the board step, the zone band. The ring on the
-     shape stays, because that is a true statement about what the array is set
-     out on; what goes is the second bar. Same one-bar-at-a-time rule `openArray`
-     enforces from the other side.
-     IT IS ONLY THE FALLBACK THAT IS GATED. `shapeMenuOn` means somebody
-     deliberately asked for this bar, and the tool that armed it has already put
-     every other machine away — so those states are untouched. */
-  const otherBar = !!addTool || boardPlace || zoneMode;
-  const shapeMode = shapeMenuOn
-    ? (shapeAskSides ? 'sides'
-      : ((shapeDraft || !covePen.isEmpty || shapeSpan) ? 'draw'
-        : (!shapeTool && selShape ? 'edit' : 'pick')))
-    : (selShape && !otherBar ? 'edit' : null);
-
-  /**
-   * KEEP IT. The tick, and the only way a shape gets onto the drawing.
-   *
-   * A RELEASED DRAG DOES NOT COMMIT, which is the one place this tool departs
-   * from every other marquee in the app, and it is what the brief asked for.
-   * The reason it is right: a cove is a piece of BUILDING, not a box round a
-   * bed — it changes what the ceiling is, it re-cuts the grid and it re-runs
-   * the layout — so it gets a confirmation, and the drag can be redone as many
-   * times as it takes before anybody says yes.
-   *
-   * AND THE TOOL PUTS ITSELF DOWN, WHICH IS THE OPPOSITE OF WHAT IT DID FIRST.
-   * It stayed armed, on the switchboard step's reasoning: plates come in
-   * threes, so a tool that disarms after the first one costs a press between
-   * each. That reasoning does not survive contact with this tool, for a reason
-   * specific to it — WHILE A PRIMITIVE IS ARMED, NOTHING ON THE SHEET CAN BE
-   * PICKED UP. The armed tool owns every press on the canvas, and it has to: a
-   * new cove may well be spanned across an existing one. So the shape that had
-   * just been committed could not be selected, could not be given a corner
-   * radius and could not be moved. The tick appeared to place something and
-   * then leave it inert.
-   *
-   * So the tick lands the shape, SELECTS it, and hands the bar over to it as
-   * that shape's contextual menu — which is also the order the brief describes:
-   * click the tick, then set the corner radius on the thing you just drew.
-   * Another cove is one press on the palette, which is a fair price for the
-   * thing that was actually in the way.
-   */
-  /* WHAT THE TICK WOULD ACTUALLY COMMIT, which is not always what is drawn.
-     The pen's preview carries the point under the CURSOR as a live vertex —
-     that is what makes the rubber band a preview — and committing it would put
-     a corner of the cove wherever the pointer happened to be resting. So the
-     tick takes the clicked points and nothing else, and the preview keeps its
-     extra vertex. Every other tool has no such distinction and this is the
-     draft. */
-  const shapeToCommit = useMemo(() => {
-    if (shapeHeld) return shapeHeld;
-    if (shapeMenuOn && shapeTool === 'pen') return penShape(covePen.pts);
-    return shapeDraft;
-  }, [shapeHeld, shapeMenuOn, shapeTool, covePen.pts, shapeDraft]);
-
-  const canCommitShape = !!shapeToCommit && bigEnough(shapeToCommit);
-
-  /**
-   * SET THE BORROWED DRAFT IN OR OUT — the one control a borrowed shape gets.
-   *
-   * RECOMPUTED FROM THE SOURCE EVERY TIME, never applied to the current draft.
-   * `insetShape` is not reversible in the accumulating sense — a rectangle set
-   * in a foot and then out a foot is the original, but a pen path offset twice
-   * has been through the bisector solver twice and has drifted — so the source
-   * is the only safe thing to measure from. See `heldSrc`.
-   *
-   * A REFUSAL LEAVES THE DRAFT WHERE IT WAS. `insetShape` returns null when the
-   * offset eats the shape, and the honest reading of that is "not that far":
-   * the control stops moving rather than the preview vanishing.
-   */
-  const setHeldOffset = useCallback((patch) => {
-    setHeldOff((cur) => {
-      const next = { ...cur, ...patch };
-      if (!heldSrc) return next;
-      const g = next.side === 'on' ? 0
-        : (next.side === 'out' ? 1 : -1) * Math.max(0, next.ft || 0);
-      const made = insetShape(heldSrc, g);
-      if (!made) return cur;
-      setShapeHeld(made);
-      return next;
-    });
-  }, [heldSrc]);
-
-  /**
-   * WHAT THE SHAPE BAR MAY ASK ABOUT A BORROWED DRAFT.
-   *
-   * `null` UNLESS ONE IS HELD, which is what keeps the control off a shape
-   * dragged out from scratch — that drag IS the position.
-   *
-   * AND NO SIDE ON AN OPEN PATH. A line has no inside: "a foot in from it" names
-   * two paths and nothing in the drawing says which. `insetShape` returns an
-   * open shape unchanged for exactly that reason, so offering the control would
-   * be offering one that does nothing. Same call `arrayAsks` makes.
-   */
-  const heldAsks = useMemo(() => {
-    if (!heldSrc || shapeIsOpen(heldSrc)) return null;
-    const pts = shapeOutlineFt(heldSrc);
-    return { sideId: heldOff.side, ft: heldOff.ft,
-             sides: ARRAY_SIDES,
-             // HOW FAR IN THE CONTROL MAY GO, from the geometry itself — see
-             // `maxInset`, which bisects on the real offset rather than guessing
-             // at an inradius, because an L-shaped outline has not got one.
-             maxFt: Math.max(0, maxInset(pts) - SHAPE_MIN_SPAN_FT / 2) };
-  }, [heldSrc, heldOff]);
-
-  /* --- FINISHING A PEN PATH OPEN, WHICH IS THE L-SHAPED COVE ----------------
-     THE PEN HAS TWO ENDINGS NOW AND THEY MEAN DIFFERENT DETAILS. Clicking the
-     first point closes the path, and a closed path is a pocket run round an
-     island. Pressing Enter leaves it OPEN, and an open path is a slot across the
-     ceiling — which is only buildable if it lands on plaster at both ends, so
-     this is offered exactly when it does and not otherwise.
-
-     THE MIDDLE POINTS ARE LEFT WHERE THEY WERE PUT. Only the two ENDS answer to
-     the walls, and they are tested rather than projected — unlike the line's,
-     which are dragged and can be snapped continuously. A click is a considered
-     act; moving somebody's corner after they placed it is the tool arguing with
-     them. See `penSpansOutline`.
-
-     THE TOLERANCE IS IN PIXELS AND CONVERTED, the same rule the closing click
-     follows: it is about how accurately a person can hit a wall on screen, which
-     does not change when the drawing is scaled. */
-  const openPenRoom = useMemo(() => {
-    if (!shapeMenuOn || shapeTool !== 'pen' || covePen.pts.length < 2) return null;
-    return roomForSlot(covePen.pts[0]);
-  }, [shapeMenuOn, shapeTool, covePen.pts, roomForSlot]);
-
-  const canFinishOpen = useMemo(() => {
-    /* A GUIDE PATH IS FINISHED WHEN IT HAS TWO POINTS. The wall test below is
-       the cove's — an open cove is a channel and both its ends have to reach the
-       plaster or there is no end detail to build. A guide reaches nothing on
-       purpose: a run of spots set out over a worktop stops where the worktop
-       does. Same exemption `lineSpan` makes, for the same reason. */
-    // A GUIDE OR A TRACK IS FINISHED WHEN IT HAS TWO POINTS. Same exemption
-    // `lineSpan` makes, for its reason: neither is built into the plaster.
-    if (shapeRole !== 'cove') return covePen.pts.length >= 2;
-    if (!openPenRoom || !pxPerFt) return false;
-    const tolFt = Math.max(8, pxPerFt * 0.5) / pxPerFt;
-    return penSpansOutline(covePen.pts, openPenRoom.geo.polygonPlanFt, tolFt);
-  }, [openPenRoom, covePen.pts, pxPerFt, shapeRole]);
-
-  /* --- WHAT THE PANEL SAYS WHILE A COVE IS BEING DRAWN ---------------------
-     ONE OBJECT DESCRIBING THE STEP, so the branch that renders it is a layout
-     and not a decision tree. Null whenever the tool is not open, which is what
-     switches the step off.
-
-     THE TWO OPEN COVES CARRY A PICTURE AND THE CLOSED ONES DO NOT — see
-     SHAPE_GESTURE for why. Dragging out a rectangle is a marquee; what nobody
-     can guess is that a line has to land on a wall at both ends. */
-  const coveDraw = useMemo(() => {
-    if (!shapeMenuOn || readOnly) return null;
-    /* --- A GUIDE HAS NO STEP, AND THAT IS LOAD-BEARING --------------------
-       WHAT A STEP DOES HERE IS EMPTY THE PANEL. Returning anything from this
-       memo replaces the whole right-hand column — the tab strip, the header and
-       the space detail with it — because a cove is a gesture the panel cannot
-       help with and the cards are what it says instead.
-
-       THE GEOMETRY BAR OPENS ON A SPACE CLICK, and that click's other half is to
-       open that space in the panel: its height, its finishes, its Analysis. A
-       step here would take all of it away again at the same instant — one
-       gesture doing a thing and undoing it, and the more useful half would be
-       the one that lost.
-
-       THERE IS ALSO NOTHING TO SAY. The three cards below explain a COVE: where
-       its ends have to land, what a pocket does to the grid, what gets built.
-       A guide has no consequence to warn anybody about — it is a line on the
-       ceiling and it goes where you draw it — and the bar on the drawing
-       already shows the six primitives. Which of the two roles is live is on
-       the rail, latched. */
-    /* NO STEP CARD FOR A GUIDE OR A TRACK. The card explains a cove's
-       CONSEQUENCES — where its ends have to land, what a pocket does to the
-       grid, what gets built — and neither of the other two has any: a line goes
-       where you draw it, and a profile is screwed to the ceiling you drew it on.
-       The bar on the drawing already shows the six primitives. */
-    if (shapeRole !== 'cove') return null;
-    if (!shapeTool) {
-      return { title: 'Pick a shape for the cove', art: null,
-               hint: 'The bar on the drawing has the primitives.', why: '' };
-    }
-    if (shapeTool === 'line') {
-      return {
-        title: 'Span the cove from wall to wall',
-        art: SHAPE_GESTURE.line,
-        hint: 'Press on one wall and drag to another. Both ends land on the plaster. Shift squares it up.',
-        why: lineSpan.why,
-      };
-    }
-    if (shapeTool === 'pen') {
-      return {
-        title: 'Click out the cove',
-        art: SHAPE_GESTURE.pen,
-        // BOTH ENDINGS IN ONE SENTENCE, because the difference between them is
-        // the difference between two details and the pen is the one tool that
-        // can draw either.
-        hint: covePen.isEmpty
-          ? 'Click each corner, Shift to square. Close it on the first point for a pocket, or land on a wall at both ends for a run.'
-          : canFinishOpen
-            ? 'Close it on the first point for a pocket, or double-click to finish the run.'
-            : 'Close it on the first point for a pocket. To finish it open, land on a wall.',
-        why: '',
-      };
-    }
-    return {
-      title: `Drag out the ${SHAPE_BY_ID[shapeTool]?.label?.toLowerCase() ?? 'shape'}`,
-      art: null,
-      hint: 'Press on the ceiling and drag. The pocket runs round what you draw.',
-      why: '',
-    };
-  }, [shapeMenuOn, shapeTool, readOnly, lineSpan.why, covePen.isEmpty, canFinishOpen,
-      shapeRole]);
-
-  const finishOpenCove = useCallback(() => {
-    if (!canFinishOpen) return;
-    const shape = penShape(covePen.pts, { open: true });
-    if (!shape) return;
-    // THE PATH GOES WITH IT, exactly as it does when the pen closes: the held
-    // shape and the pen's own dots are two drawings of one outline.
-    setShapeHeld(shape);
-    covePen.reset(); setShapeAt(null);
-  }, [canFinishOpen, covePen]);
-
-  /**
-   * SPANNING A TRACK ALSO FILLS IT — the diffuser allocator.
-   *
-   * WHY IT RUNS HERE AND NOT ON A BUTTON. Every other module on a run is placed
-   * by hand because every other module is AIMED: a spot goes over the console
-   * because that is where the console is. A diffuser is not aimed at anything —
-   * it is ambient light — and the only question worth asking about how many a
-   * run carries is the one the Analysis panel is already asking about the room.
-   * So the moment a run exists, that question has an answer, and making somebody
-   * press a second button to get it would be making them ask for the obvious.
-   *
-   * THE COUNT IS THE PANEL'S OWN ARITHMETIC RUN BACKWARDS. `spaceAnalysis` says
-   * what the space is owed and what it is getting; `netPerUnit` says what one
-   * diffuser is worth against THIS room's surfaces, height and country. The
-   * quotient, rounded up, is the number. Nothing here re-derives a lumen —
-   * see the note on `netPerUnit` for why that matters.
-   *
-   * AND THE GEOMETRY DECIDES WHERE THEY LAND, which is the other half and a
-   * different question: corners on a closed run, ends-then-seven-feet on an
-   * open one. See `allocateDiffusers`.
-   *
-   * FEET AND NOT PIXELS. The allocator's own figures — a module's length, the
-   * seven-foot gap — are in feet, and a shape is held in the plan's own feet
-   * anyway, so there is no conversion to get wrong.
-   *
-   * A ROOM IS REQUIRED AND A BRIGHT ONE GETS NOTHING. A run drawn over no lit
-   * space has no shortfall to answer and no reflectances to answer it against;
-   * a run in a room already over its criterion gets a bare profile, which is a
-   * perfectly ordinary thing to want. Either way the spots still go on by hand.
-   */
-  const allocateOnTrack = useCallback((shape) => {
-    if (!shapeIsTrack(shape) || !(pxPerFt > 0)) return;
-    const pts = shapeOutlineFt(shape);
-    if (pts.length < 2) return;
-    const home = rooms.find((r) => pointInPolygon(
-      { x: shape.x * pxPerFt, y: shape.y * pxPerFt }, r.geo.polygonPx));
-    if (!home?.plan?.ok) return;
-    const closed = !shapeIsOpen(shape);
-    const a = spaceAnalysis(home);
-    /* THE COUNT AND THE WATTAGE ARE SOLVED TOGETHER, and `netFor` is the panel's
-       own arithmetic handed to the solver as a function of wattage — see
-       `chooseDiffusers`, and `netPerUnit` for why nothing here re-derives a
-       lumen. This replaced a fixed 18 W and a count rounded up to the geometry's
-       quantum, which put 3,834 lm of diffuser into a room that wanted 1,250. */
-    /* THE SHORTFALL, IN WATTS. The allocator's rule is written in watts —
-       "27 W over four corners is 6.75 W each" — so the conversion happens here,
-       once, against what ONE watt of this family is worth to THIS room. Linear,
-       because `unitOutput` is: no fixed lumens on the family, so a watt is a
-       watt and the division is exact rather than a fit.
-       `track_diffuser` AND NOT `panel`. They share a distribution and are two
-       products with two ranges — see lumens.js. */
-    const fam = MODULE_BY_ID.diffuser.family;
-    const perW = netPerUnit(fam, 1, { ref: a.ref, lumensPerWatt: a.lumensPerWatt });
-    const plan = perW > 0 ? planDiffusers(pts, {
-      closed, needW: a.shortfall / perW,
-      /* --- THE CATALOGUE, OFF THE FAMILY, AND THE SAME ARRAY THE CHIPS USE ---
-         WHAT A DIFFUSER IS SOLD AT COMES FROM UPSTREAM AND NOT FROM THE
-         ALLOCATOR. `FAMILY_BY_ID.track_diffuser.watts` is the one store — see
-         `TRACK_DIFFUSER_WATTS` in lumens.js — and it is also exactly what
-         `analyseSpace` copies onto the row as `wattOptions` for SpaceAnalysis to
-         draw a chip per entry. Read here through the FAMILY rather than by
-         importing the constant, so the allocator and the panel look at the same
-         array object: the allocator cannot pick a wattage the chips cannot show,
-         and a brand's catalogue swapped into the family is followed by both
-         without either being touched.
-         IT IS PASSED AND NOT DEFAULTED. `planDiffusers` has no built-in list —
-         see its note — so a caller that forgets this places nothing rather than
-         quietly solving against a range nobody in this project sells. */
-      watts: FAMILY_BY_ID[fam]?.watts,
-    }) : [];
-    if (!plan.length) return;
-    /* EACH MODULE CARRIES THE WATTAGE ITS OWN SLOT WAS GIVEN, which is the whole
-       point of the corner-first rule: a run comes out as four 5 W at the corners
-       and a 10 W in the middle of a rail, and those are two figures on one
-       profile. The Analysis panel groups by wattage for the same reason — see
-       `roomFixtureGroups`. */
-    docActions.addTrackFixtures(plan.map((mod, i) => placeModule({
-      trackId: shape.id, kind: 'diffuser', u: mod.u, watts: mod.watts,
-      seq: `a${i}` })));
-    /* AND THE PANEL GOES TO THE SPACE, because the two figures at the top of it
-       have just moved by the whole of what the run adds. A tool that changed a
-       room's verdict silently would be the one act on this drawing worth
-       watching, performed off screen. */
-    docActions.setFocusId(home.id); setOptionPick(null); docActions.setView('spaces');
-  }, [docActions, pxPerFt, rooms, spaceAnalysis]);
-
-  const commitShape = useCallback(() => {
-    if (!shapeToCommit || !bigEnough(shapeToCommit)) return;
-    const shape = sealShape(shapeToCommit, shapeRole);
-    docActions.addShape(shape);
-    closeShapeTool();
-    // ONE SELECTION ON THIS CANVAS, exactly as picking one off the sheet does.
-    setSel(select('shape', shape.id));
-    // ...AND IF IT IS A TRACK, IT ARRIVES FILLED. See `allocateOnTrack`.
-    allocateOnTrack(shape);
-  }, [docActions, shapeToCommit, shapeRole, closeShapeTool, allocateOnTrack]);
-
-  /** Pick a primitive off the bar. The polygon is the one that asks a question
-   *  first, because "how many sides" has no sensible default to assume. */
-  const pickShapeTool = useCallback((id) => {
-    abandonShape();
-    setShapeTool((t) => (t === id ? null : id));
-    if (id !== shapeTool && SHAPE_BY_ID[id]?.asks === 'sides') setShapeAskSides(true);
-  }, [abandonShape, shapeTool]);
-
-  const duplicateShape = useCallback((id) => {
-    const src = ceilingShapes.find((q) => q.id === id);
-    if (!src) return;
-    // HALF A FOOT DOWN AND ACROSS, so the copy is visibly a second object rather
-    // than a shape that appears not to have been copied at all. The same offset
-    // a duplicate gets in every editor, for the same reason.
-    // THE ID IS MINTED OUT HERE and not inside the updater: an updater has to be
-    // pure, React is entitled to run it twice, and a `setSel` in the
-    // middle of one would be selecting whichever of the two copies it ran last.
-    const copy = { ...src, id: newShapeId(), x: src.x + 0.5, y: src.y + 0.5 };
-    docActions.addShape(copy);
-    setSel(select('shape', copy.id));
-    /* --- AND A TRACK BRINGS ITS MODULES WITH IT ---------------------------
-       COPYING A RUN AND LEAVING ITS FITTINGS BEHIND WOULD NOT BE A COPY. A
-       magnetic track is a profile with modules clipped into it, and "duplicate"
-       said of one means the second run is the same run — same length, same three
-       diffusers at the same places along it. That is the whole reason to
-       duplicate rather than draw a second one and clip six modules onto it by
-       hand.
-       THE FRACTIONS COPY UNCHANGED, WHICH IS WHY THEY ARE FRACTIONS. A module is
-       stored as a proportion of its run (see `clampU`), so the arrangement
-       survives onto a copy of any length — and it will be another length the
-       moment somebody drags a grip on it. Stored in feet the copy would be
-       right until it was resized and then quietly shed its far modules.
-       NOTHING HAPPENS FOR A COVE OR A GUIDE, because neither carries a module —
-       the filter is empty and the write is skipped. */
-    const mods = trackFixtures.filter((f) => f.trackId === id);
-    if (mods.length) {
-      docActions.addTrackFixtures(mods.map((f, i) => ({
-        ...f, id: newModuleId(`d${i}`), trackId: copy.id,
-      })));
-    }
-  }, [docActions, ceilingShapes, trackFixtures]);
-
-  const deleteShape = useCallback((id) => {
-    docActions.removeShape(id);
-    setSel((cur) => (idOf(cur, 'shape') === id ? clear() : cur));
-    setShapeEditId((cur) => (cur === id ? null : cur));
-    /* AND THE MODULES GO WITH THE RUN THEY WERE CLIPPED INTO. A module with no
-       profile is not a fitting anybody can install, and an orphan in the store
-       would be an entry nothing draws and nothing can reach to delete — it would
-       simply sit in every saved plan for ever. `trackModulesPx` also drops one
-       whose run has gone, which is the belt to this braces. */
-    docActions.dropTrackModules(id);
-  }, [docActions]);
 
   /**
    * PICKING ONE UP OFF THE SHEET.
@@ -5152,263 +4402,7 @@ export default function App({
     docActions.resetLightMove(roomId, ck);
   }, [docActions]);
 
-  /* --- THE PRESS THAT PICKED A SHAPE UP, REMEMBERED FOR ONE CLICK -----------
-     A REF AND NOT STATE, because nothing renders from it and it has to be
-     readable by the click that arrives after this render, not the one after the
-     next.
-     IT EXISTS BECAUSE POINTER CAPTURE MOVES THE CLICK. `shapePointerDown` stops
-     the press and captures the pointer to the <svg> so the drag survives leaving
-     the shape — and a captured pointer RETARGETS everything that follows,
-     including the click the browser synthesises on release, to the capture
-     element. So the click was landing on the canvas itself, where it reads as "a
-     press on empty plan" and clears the selection: the contextual bar appeared
-     on the press and vanished on the release, every time.
-     Stopping the click on the shape's own path cannot fix that — by then the
-     click is not being dispatched to that path at all. This is the record that
-     survives the retarget, and `onCanvasClick` consumes it.
-     RESET AT THE TOP OF `onZoneDown`, which is the invariant that keeps it from
-     going stale: any press that reaches the canvas directly is a press that did
-     NOT come off a shape, so a latch left over from a gesture that produced no
-     click cannot swallow somebody's next deselect. */
-  const shapeTook = useRef(false);
 
-  /* THE LAST PRESS ON A SHAPE, for telling a second one from a first.
-     A REF AND A TIMESTAMP RATHER THAN `onDoubleClick`, and the reason is the
-     same one `shapeTook` exists for: the press captures the pointer to the
-     <svg>, and a captured pointer retargets the compatibility mouse events that
-     follow — so a `dblclick` handler on the shape's own path is a handler that
-     may never be called. Two presses on the same shape inside the platform's
-     own double-click window is the thing being detected anyway; this measures it
-     directly instead of asking for it through an event that has been moved. */
-  const lastShapePress = useRef({ id: null, t: 0 });
-  /** How long two presses on one thing count as a double. */
-  const DOUBLE_MS = 400;
-
-  const shapePointerDown = (e, id) => {
-    if (e.button != null && e.button !== 0) return;
-    /* A TOOL IN HAND WINS, the same rule every selectable thing on this canvas
-       follows — and the SHAPE TOOL is in that list, which is the one that is
-       easy to miss. Somebody spanning a second cove across the first is aiming
-       at the ceiling, not at the shape in the way, and without this the press
-       would be swallowed here and the new shape would never start. The caller
-       withholds the handler for exactly the same set (so the grab area is not
-       even drawn); this is the local reading of it. */
-    if (!canGrab(pressState)) return;
-    /* --- THE BAR IS OPEN, AND THIS SHAPE IS THE OTHER ROLE ------------------
-       THEN THE PRESS TAKES IT RATHER THAN SELECTING IT. This is the same act
-       `shapeToolDown` performs; which handler gets it depends only on whether a
-       primitive is armed, because an armed primitive is what makes the caller
-       withhold this handler (and the grab band with it). With the bar open and
-       unarmed the band is live and answers first, so the take has to happen here
-       too — see `takeGeometry`, which is the one copy of it.
-       THE CUE HAS ALREADY SAID SO. `geomHover` lit this line and turned the
-       cursor into a hand the moment the pointer reached it, so a press that
-       borrows an outline instead of selecting it is signposted rather than
-       surprising. */
-    if (!shapeTool) {
-      const sh = ceilingShapes.find((q) => q.id === id);
-      if (canTakeGeometry({ shape: sh, role: shapeRole, menuOpen: shapeMenuOn,
-                            addTool, penEmpty: covePen.isEmpty })) {
-        takeGeometry(e, sh); return;
-      }
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    shapeTook.current = true;
-    /* A SECOND PRESS ON THE SAME SHAPE ASKS FOR ITS DIMENSIONS. The first
-       selected it; this one goes a level in. Any other shape's press cancels
-       the grips — they belong to one shape and showing them on two would be
-       eight handles that could each mean either. */
-    const now = Date.now(), prev = lastShapePress.current;
-    const again = prev.id === id && now - prev.t < DOUBLE_MS;
-    lastShapePress.current = { id, t: now };
-    setShapeEditId(again ? id : (cur) => (cur === id ? cur : null));
-    // A press on a shape is an act on THAT shape, so the bar becomes its
-    // contextual menu — see `shapeMode`.
-    setShapeMenuOn(false); setShapeTool(null); abandonShape();
-    setSel(select('shape', id));
-    const src = ceilingShapes.find((q) => q.id === id);
-    if (!src || !pxPerFt) return;
-    // AND THE HIGHLIGHT GOES WITH THE PRESS. The move handler stops tracking for
-    // the length of a drag, so a value left behind would keep the cursor a hand
-    // over a shape that is already moving.
-    setGeomHover(null);
-    shape.down(e, { id, members: [src] });
-  };
-
-  /* --- A COVE SHAPE'S WHOLE GESTURE -----------------------------------------
-
-     HELD IN FEET, like a ceiling object and for its reason: a shape somebody
-     drew is a real thing of a real size and must survive a scale correction.
-
-     THE ROOM STOPS IT, AND THAT CONSTRAINT LIVES IN `to`. A cove may not come
-     within six inches of the plaster — see coveClearOfOutline — and the honest
-     way to say that during a drag is to have the shape stop, not to let it go
-     anywhere and refuse it once the pointer is up. `clampCoveMove` slides it
-     along the wall it reached, and along a notch the bounding box knows nothing
-     about. THE ROOM IS THE ONE IT IS IN NOW, resolved from where the shape
-     currently sits rather than from where the pointer is: a cove being pushed at
-     a wall must not be handed the room on the other side of it half way through.
-
-     A GUIDE IS NOT KEPT OFF THE PLASTER, AND A COVE IS. `clampCoveMove` holds a
-     shape clear of the outline because a pocket four inches from the wall leaves
-     four inches of board between them and nobody can build that. A guide is not
-     built. It is a line to set out FROM — and the most useful place to put one
-     is very often exactly on the wall, or a foot inside it, which is the one
-     position the cove's rule exists to forbid. Applying it to a guide would make
-     the tool refuse the thing it is for. Hence `shapeIsBuilt`.
-
-     NO SHIFT LOCK AND NO SNAP, which is what this drag has always done: a cove
-     is positioned against the room's own geometry by the clamp, and there is
-     nothing else on the ceiling for it to line up with.
-
-     ITS THRESHOLD IS A FRACTION OF THE DRAWING — a floor of three screen pixels
-     or 12% of a foot, whichever is larger, converted into feet because that is
-     the unit this gesture speaks. Shared with the light drag, which is the other
-     one measured against the plan rather than the screen. */
-  const shape = useDrag({
-    state: [shapeDrag, setShapeDrag],
-    point: (e) => { const p = svgPoint(e); return { x: p.x / pxPerFt, y: p.y / pxPerFt }; },
-    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
-    at: (o) => ({ x: o.x, y: o.y }),
-    to: (o, q) => {
-      const room = roomAt({ x: o.x * pxPerFt, y: o.y * pxPerFt });
-      const at = (shapeIsBuilt(o) && room?.geo?.polygonPlanFt)
-        ? clampCoveMove(o, q, room.geo.polygonPlanFt, COVE_GAP_FT) : q;
-      return { ...o, x: at.x, y: at.y };
-    },
-    setList: docActions.updateShapes,
-    moved: (from, p) => Math.hypot(p.x - from.x, p.y - from.y)
-      >= Math.max(3, pxPerFt * 0.12) / pxPerFt,
-    /* ALT LEAVES A COPY BEHIND, AND THE MODIFIER IS READ LIVE — every word of the
-       long note on the COB's own drag applies here unchanged, so it is not
-       repeated. The short of it: "Alt then drag" and "drag then Alt" are one
-       gesture, the ORIGINAL is put back where it was picked up, the TWIN is what
-       keeps moving, and once made it stays made whether or not Alt is let go. */
-    copy: true,
-    mintId: () => newShapeId(),
-    onCopy: ({ ids }) => setSel(select('shape', ids[0])),
-  });
-
-  const shapePointerMove = (e) => {
-    if (!shape.drag || !pxPerFt) return;
-    /* --- A SLOT DOES NOT MOVE, AND THAT IS THE HONEST ANSWER -----------------
-       Both its ends are on the plaster — that is what makes it buildable, see
-       `spanOnOutline` — so there is no direction it can be dragged in that
-       leaves it a cove. Sliding it along its own two walls is not a translation
-       and every other direction pulls it off them.
-       IT IS STOPPED HERE RATHER THAN CLAMPED, because `clampCoveMove` is the
-       keep-off-the-plaster rule and a slot is deliberately ON the plaster: it
-       would find the shape already illegal and refuse every pixel, which is a
-       drag that judders rather than one that plainly does nothing. The band is
-       still grabbable, because grabbing it is how it is SELECTED and deleted.
-       AND IT IS THE CALLER'S GUARD, NOT THE HOOK'S. Where an object's drag is
-       deliberately constrained the constraint belongs beside the object, and
-       this one is absolute: the whole frame is declined. */
-    if (shapeIsOpen(ceilingShapes.find((q) => q.id === shape.drag.id))) return;
-    shape.move(e);
-  };
-  const shapePointerUp = shape.up;
-
-  /**
-   * A GRIP ON THE FRAME, PRESSED.
-   *
-   * NO SLOP AND NO `live` FLAG, which every other drag on this canvas has. Those
-   * exist to stop a click that wobbles from writing a hand position onto
-   * something a rule had placed — but a grip is not a thing you click, it is a
-   * thing you drag, and a press on one that goes nowhere resizes the shape to
-   * exactly the size it already is. There is nothing to protect against.
-   */
-  /* --- A DRAWN TRACK'S POINTS, PICKED UP AND MOVED --------------------------
-     THE SAME SHAPE AS `shapeHandleDown` DIRECTLY BELOW, and deliberately: a
-     grip is a grip. The press selects the point, takes the pointer, and marks
-     `shapeTook` so the click it synthesises on release is not read as a press
-     on bare plan — which would close the path being edited on every drag.
-
-     THE POINT MOVES WITH ITS TWO LEGS. See `penMovePoint`: the corner goes
-     where the pointer is and the two neighbours follow it onto their own axes,
-     so a path that was square stays square without the far end of the run
-     swinging about behind the hand. */
-  const trackPointDown = (e, id, i) => {
-    if (e.button != null && e.button !== 0) return;
-    e.preventDefault(); e.stopPropagation();
-    shapeTook.current = true;
-    setTrackEditId(id); setSelTrackPt(i);
-    svgRef.current?.setPointerCapture?.(e.pointerId);
-    setTrackGrip({ id, i });
-  };
-
-  /** ...and dragged. Written straight into the list on every move, exactly as a
-   *  shape's resize is: the answer depends only on where the pointer is now. */
-  const trackGripMove = (e) => {
-    if (!trackGrip || !pxPerFt) return;
-    const p = svgPoint(e);
-    const at = { x: p.x / pxPerFt, y: p.y / pxPerFt };
-    const held = manualTracks.find((t) => t.id === trackGrip.id);
-    if (!held) return;
-    const pts = penMovePoint(held.ptsFt, trackGrip.i, at);
-    docActions.patchTrack(trackGrip.id, { ptsFt: pts, lengthFt: penLengthFt(pts) });
-  };
-
-  /**
-   * A WHOLE DRAWN RUN, TAKEN OFF THE PLAN.
-   *
-   * IT PUTS THE LIGHTS BACK, AND THERE IS NOTHING HERE THAT DOES SO. That is
-   * the point worth stating: a track never moved a light out of the layout, it
-   * only carried one that was already there — see the doctrine at the top of
-   * track.js — so removing the path is the whole of the undo. The layout memo
-   * re-runs with one fewer entry in `manualTracks`, the absorption that
-   * relabelled those fittings simply does not happen, and every one of them is
-   * back on its own grid position as a recessed downlight. Same as deleting a
-   * cove, and for a simpler reason: a cove had to re-cut the grid to be
-   * removed, and this only has to stop being consulted.
-   */
-  const deleteTrack = useCallback((id) => {
-    docActions.removeTrack(id);
-    setTrackEditId(null); setSelTrackPt(null); setTrackGrip(null);
-  }, [docActions]);
-
-  /**
-   * A POINT TAKEN OUT, AND THE PATH PUT BACK ON ITS AXES BEHIND IT.
-   *
-   * Removing a corner leaves the two points that were either side of it joined
-   * by a diagonal, and a track cannot be built along one — so the tail is
-   * re-squared from the cut. See `penRelock` for why it cascades.
-   *
-   * Below the minimum the whole track goes instead — see the guard.
-   */
-  const deleteTrackPoint = useCallback((id, i) => {
-    const t = manualTracks.find((q) => q.id === id);
-    if (!t) return;
-    /* A CIRCUIT NEEDS THREE POINTS AND A RUN NEEDS TWO. Below that there is no
-       path left to have, so the whole track goes rather than being left as a
-       line doubled back on itself — which is what a two-point closed loop is —
-       and the editor closes with it, because there is nothing to keep open. */
-    if (t.ptsFt.length <= (t.closed ? 3 : 2)) { deleteTrack(id); return; }
-    const cut = [...t.ptsFt.slice(0, i), ...t.ptsFt.slice(i + 1)];
-    const pts = penRelock(cut, Math.max(1, i));
-    docActions.patchTrack(id, { ptsFt: pts,
-      lengthFt: penLengthFt(pts, { closed: !!t.closed }) });
-    setSelTrackPt(null);
-  }, [docActions, manualTracks, deleteTrack]);
-
-  /**
-   * OPENING A PATH FROM A RAIL SOMEBODY CLICKED.
-   *
-   * The canvas hands over the track's `key`, which for a drawn run IS the
-   * manual track's id — stamped in the layout pass — so this is a lookup rather
-   * than a hit test. Guarded anyway: a key that matches nothing would open an
-   * editor with no points in it, which reads as the feature being broken.
-   */
-  const openTrackEdit = useCallback((key) => {
-    if (!manualTracks.some((t) => t.id === key)) return;
-    setTrackEditId(key); setSelTrackPt(null);
-  }, [manualTracks]);
-
-  /** Shut the point editor. One place, because three keys and a press reach it. */
-  const closeTrackEdit = useCallback(() => {
-    setTrackEditId(null); setSelTrackPt(null); setTrackGrip(null);
-  }, []);
 
   /**
    * OPEN AN ARRAY, AND CLOSE EVERYTHING ELSE THAT WANTS THE SAME SPACE.
@@ -5452,217 +4446,8 @@ export default function App({
   }, [docActions, closeShapeTool, clearShapeEdit, closeTrackEdit, closeBoardPlace,
       disarmAdd, cobArrays]);
 
-  const shapeHandleDown = (e, id, handle) => {
-    if (e.button != null && e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    // The click this press will synthesise lands on the <svg> once the pointer
-    // is captured — see `shapeTook` — and must not read as a press on bare plan.
-    shapeTook.current = true;
-    setSel(select('shape', id)); setShapeEditId(id);
-    svgRef.current?.setPointerCapture?.(e.pointerId);
-    setShapeResize({ id, handle });
-  };
 
-  /**
-   * ...AND DRAGGED. Written straight into the list on every move, exactly as a
-   * shape's own drag is, and for the reason `resizeShape` gives: the side
-   * opposite the grip does not move, so reading the shape back off the list each
-   * frame gives the same anchor it gave last frame. There is no start-of-gesture
-   * geometry to carry, which is what makes this three lines instead of thirty.
-   */
-  const shapeResizeMove = (e) => {
-    if (!shapeResize || !pxPerFt) return;
-    const p = svgPoint(e);
-    const at = { x: p.x / pxPerFt, y: p.y / pxPerFt };
-    /* THE UPDATER FORM, because a resize is per-frame: two pointermoves can
-       land before a re-render and the second must see the first. See
-       LIST_UPDATED in usePlanDoc. */
-    docActions.updateShapes((l) => l.map((q) => {
-      if (q.id !== shapeResize.id) return q;
-      const next = resizeShape(q, shapeResize.handle, at, { uniform: e.shiftKey });
-      /* A GRIP MAY NOT PUSH THE COVE INTO THE KEEP-OUT BAND EITHER. Growing a
-         shape is a move of one of its sides, and the six inches off the plaster
-         is a rule about where the cove IS, not about how it got there. There is
-         nothing to slide along here — a resize has one degree of freedom and it
-         is already at its limit — so the side simply stops. */
-      const room = roomAt({ x: q.x * pxPerFt, y: q.y * pxPerFt });
-      const poly = room?.geo?.polygonPlanFt;
-      if (poly && !coveClearOfOutline(shapeBboxFt(next), poly, COVE_GAP_FT)) return q;
-      return next;
-    }));
-  };
 
-  /**
-   * THE PRESS THAT DRAWS. Returns true when it has taken the event, so the
-   * handler below it can stop reading rather than testing the same conditions a
-   * second time.
-   *
-   * TWO GESTURES BEHIND ONE TOOL. The five primitives are a drag — press,
-   * span, release — and the pen is a run of separate clicks that ends on the
-   * first point. Nothing about the two can be shared beyond this branch, which
-   * is why the split is here and not four levels down.
-   */
-  /**
-   * TAKE A GEOMETRY ALREADY ON THE DRAWING AS THE TOOL'S DRAFT.
-   *
-   * A FUNCTION AND NOT A BRANCH, because two different presses arrive at it. With
-   * a primitive armed the press lands on the <svg> and comes through
-   * `shapeToolDown`; with the bar merely OPEN the shape's own grab band answers
-   * first and stops the event, so it comes through `shapePointerDown`. Same act,
-   * same result, and one copy of it — the alternative was the same eight lines in
-   * two handlers, which is how they come to disagree about whether the role is
-   * stripped.
-   *
-   * IT ALWAYS TAKES THE EVENT. `shapeTook` is what stops the click the browser
-   * synthesises on release being read as a press on bare plan, which would clear
-   * the selection and swap this bar for the space's own, forty milliseconds after
-   * the draft appeared.
-   */
-  const takeGeometry = (e, took) => {
-    const { id: _id, role: _role, ...draft } = took;
-    e.preventDefault();
-    e.stopPropagation();
-    setShapeSpan(null); setShapeAt(null); setGuides([]); setGeomHover(null);
-    /* THE SOURCE IS KEPT AND THE OFFSET IS RESET. Kept, because every later
-       change to the distance is computed from it rather than from the last
-       answer — see `heldSrc`. Reset to "on the line", because the first thing to
-       be sure of is that the right geometry was taken, and the only arrangement
-       that shows that unambiguously is the one drawn on it. The distance is
-       carried at a foot so choosing a side is one press. */
-    setHeldSrc(draft);
-    setHeldOff({ side: 'on', ft: 1 });
-    setShapeHeld(draft);
-    shapeTook.current = true;
-    return true;
-  };
-
-  const shapeToolDown = (e) => {
-    if (!shapeMenuOn || !pxPerFt) return false;
-    const p = svgPoint(e);
-    /* --- A GEOMETRY ALREADY ON THE DRAWING IS SOMETHING TO SPAN FROM --------
-       THE WHOLE POINT OF A GUIDE IS THAT SOMETHING GETS BUILT ON IT, and until
-       this branch existed nothing could be: you drew a line to set out from,
-       reached for the cove tool, and then had to drag a second rectangle over
-       the first by eye — on the one drawing where the geometry to match was
-       already there and exact. So a press on a geometry of the OTHER role hands
-       that geometry to the tool as its draft. See `geomUnder` for why "the other
-       role" and not "any shape".
-
-       IT ARRIVES AS A HELD DRAFT AND NOT AS A COMMITTED COVE, which is what
-       makes this one branch rather than a feature: the bar goes to its `draw`
-       state, showing the size and a tick and a cross, and `commitShape` does the
-       rest exactly as it does for a shape somebody dragged out. A cove is a
-       piece of building — see the note there — so it gets its confirmation
-       whether the outline was drawn or borrowed.
-
-       THE ID AND THE ROLE ARE STRIPPED, AND BOTH MATTER. The id, because
-       `sealShape` mints a fresh one and a draft carrying the source's would
-       commit a second shape claiming to be the first. The role, because
-       `sealShape` spreads the draft and only ADDS `role: 'guide'` — so a guide
-       copied with its role intact would come back a guide however the tool was
-       armed, which is this branch failing silently at the one thing it does.
-
-       AND THE GUIDE STAYS WHERE IT IS. It was a setting-out line before the
-       press and it is one after: the cove is a new shape on the same outline,
-       and consuming the line that positioned it would take away the thing the
-       next detail is set out from.
-
-       NOT WHILE A PEN PATH IS OPEN. A click mid-path is a corner, and a corner
-       is not a press anything else may take — the same rule every in-flight
-       gesture on this canvas owns its pointer by. */
-    /* --- AND AN ARMED TOOL OWNS THIS PRESS ---------------------------------
-       `canTakeGeometry` IS THE WHOLE TEST AND IT IS NOT INLINE ANY MORE. It read
-       `covePen.isEmpty && geomUnder(p)` here, and `geomUnder` answers for
-       whichever tool is in hand — so with a track MODULE armed it returned the
-       track under the pointer and this branch converted it into a fresh draft.
-       The press never reached the module branch below: the diffuser and the spot
-       were unreachable, which is what was reported. See the note on that
-       function for the rule and tools/test-mag-track.mjs for the truth table. */
-    const took = shapeAtPointer(p);
-    if (canTakeGeometry({ shape: took, role: shapeRole, menuOpen: shapeMenuOn,
-                          addTool, penEmpty: covePen.isEmpty })) {
-      return takeGeometry(e, took);
-    }
-    /* NOTHING WAS TAKEN. With no primitive armed the bar is merely OPEN — the
-       state a rail cell and a space click both leave it in — and this press is
-       not its business: it falls through to the canvas, where it selects the
-       space or lets go of a selection like any other press on bare plan. */
-    if (!shapeTool) return false;
-    e.preventDefault();
-    /* THE PRESS IS ABOUT TO DRAW, so the highlight goes — here rather than in
-       the two branches below. The move handler stops tracking for the length of a
-       gesture (a span owns the pointer, and a pen with points down draws a band
-       instead), so a shape lit up a pixel before the press would stay lit for the
-       whole of it, claiming a press already spent on something else. */
-    setGeomHover(null);
-    const at = shapeTool === 'pen'
-      // THE POINT THE GUIDES ARE PROMISING. `penSnap` is what the rubber band
-      // was drawn from a moment ago, so running it again on the press is the
-      // only way the click can land where the preview said it would.
-      ? penSnap(p, covePen)
-      // ...AND THE SAME RULE FOR THE FIVE DRAGGED PRIMITIVES. The anchor of a
-      // marquee is a corner somebody aimed at a line; see `shapeSnapFt`.
-      : shapeSnapFt(p);
-    if (shapeTool === 'pen') {
-      // A NEW PATH REPLACES WHATEVER WAS HELD, exactly as a new span does
-      // below: the first click of a second outline means "not that one, this
-      // one". Without it the held shape would keep winning in `shapeDraft` and
-      // the clicks would appear to do nothing at all.
-      if (shapeHeld && covePen.isEmpty) setShapeHeld(null);
-      /* A DOUBLE-CLICK FINISHES THE RUN OPEN, which is what the track pen does
-         and what every pen in every drawing tool does. It was Enter and a button
-         only, and a gesture everybody already has in their hands should not have
-         to be found on a keyboard.
-         `detail > 1` AND NOT AN `onDoubleClick` HANDLER, for the reason the
-         track pen gives: the second click of a double lands on the same pixel as
-         the first, so the hook would refuse it as a zero-length segment — and
-         "refused" and "finished" are different answers. */
-      if (e.detail > 1) {
-        if (canFinishOpen) finishOpenCove();
-        return true;
-      }
-      /* CLICKING THE FIRST POINT CLOSES IT, which is the gesture everybody
-         already knows from Figma — and the shape closes on its own anyway, so
-         this is a way to say "done" rather than the only way to get a closed
-         path. The tolerance is in PIXELS and converted, not in feet: it is
-         about how accurately a person can hit a dot on screen, which does not
-         change when the drawing is scaled. */
-      const closeFt = Math.max(6, pxPerFt * 0.4) / pxPerFt;
-      /* THE PEN ANSWERS WHICH OF THE TWO THINGS THE CLICK WAS, rather than this
-         branch testing the first point itself and the hook testing it again on
-         the way in. Two tests of one question is how they come to disagree. */
-      if (covePen.add(at, { shiftHeld: e.shiftKey, tolFt: closeFt }) === 'closed') {
-        setShapeHeld(penShape(covePen.pts));
-        // THE PATH GOES WITH IT. `penDraft` and the held shape are two drawings
-        // of the same outline, and leaving both up would draw it twice — the
-        // dots and the rubber band over the shape they made.
-        covePen.reset(); setShapeAt(null);
-        return true;
-      }
-      setShapeAt(at);
-      return true;
-    }
-    // A NEW SPAN REPLACES WHATEVER WAS HELD. Pressing on the plan with a shape
-    // waiting for its tick means "not that one, this one" — the alternative is
-    // a press that does nothing until you have found the cross.
-    setShapeHeld(null);
-    /* THE ROOM IS DECIDED AT THE PRESS AND HELD FOR THE WHOLE DRAG, and only a
-       slot needs it. Re-deciding it per move would let a drag that strayed over
-       a doorway re-target the neighbouring room halfway through, so the end you
-       had already placed would jump to a wall of a room you were not drawing
-       in. One press, one room. */
-    const roomId = shapeTool === 'line' ? (roomForSlot(at)?.id ?? null) : null;
-    setShapeSpan({ aFt: at, uniform: e.shiftKey, roomId });
-    setShapeAt(at);
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-    return true;
-  };
-
-  const { projections: { coveShapesPx, draftShapePx, trackDraftPx, trackEditPx, penDraftPx } } = useSceneShapeProjections({
-    ceilingShapes, rooms, pxPerFt, shapeDraft, addTool, trackPen, trackEditId, manualTracks,
-    shapeMenuOn, shapeTool, covePen
-  });
 
   /**
    * THE ANSWER, AND THE ONE THING IT TURNS ON.
@@ -5757,16 +4542,32 @@ export default function App({
        offering both would put two targets three inches apart on one object and
        make which of them you caught a matter of luck. The line is the one the
        drawing is dimensioned from. */
-    shapes: coveShapesPx.map((sh) => ({ id: sh.id, pts: sh.pts })),
+    shapes: geometry.canvas.coveShapes.map((sh) => ({ id: sh.id, pts: sh.pts })),
     /* WHATEVER THE GESTURE IS ALREADY HOLDING — the pen's own points. Passed
        per call rather than collected here because they are not a fact about the
        drawing: they exist for the length of one path. */
     points,
     exclude: excludeId,
-  }), [rooms, obstaclesPx, coveShapesPx]);
+  }), [rooms, obstaclesPx, geometry.canvas.coveShapes]);
 
   /** Screen pixels -> plan pixels. The tolerance must not stiffen as you zoom. */
   const snapTol = () => SNAP_DEFAULTS.tolScreenPx / (zoom || 1);
+
+  /* --- THE GEOMETRY TOOL'S POINTER ------------------------------------------
+     THE FEATURE'S FOURTH AND LAST CALL SITE, AND IT IS BELOW `snapTargets`
+     BECAUSE THE TWO GEOMETRY SNAPS READ IT. That function is App's — the
+     ceiling objects, the lights and the COB snap against the same targets — and
+     it reads `geometry.canvas.coveShapes`, so the projections have to be built
+     above it and the gestures below it. `penSnap` and `shapeSnapFt` stood
+     exactly here before; the presses and the drag moved down to join them, and
+     every one of them is a plain function or a `useDrag` that nothing between
+     the two points calls. */
+  const geometryPointer = useGeometryGestures({
+    state: geomState, commands: geometryCommands, geometry,
+    rooms, pxPerFt, ceilingShapes, roomAt, svgPoint, svgRef, pressState, addTool,
+    docActions, setSel, setGuides, snapTargets, snapTol,
+  });
+  const { shapeTook } = geometryPointer;
 
   /**
    * THE SAME SNAP ENGINE THE TRACER USES, pointed at this screen's geometry.
@@ -5830,84 +4631,6 @@ export default function App({
     return z?.point ? z : null;
   }, [roomAt, pxPerFt]);
 
-  /**
-   * A PEN POINT, SNAPPED, WITH THE GUIDES TO SAY WHY.
-   *
-   * THE SAME BLUE DOTTED LINES THE TRACER DRAWS, and pointed at the same
-   * targets — the space outlines and the objects on them. Clicking out a run
-   * along a wall is the same problem as clicking out the wall was: a point a
-   * hair off the line it was aimed at is wrong in exactly the way a traced
-   * corner is, and a guide is the only thing on screen that says the aim has
-   * been taken. Without them the pen was the one placing tool on this screen
-   * with no alignment feedback at all.
-   *
-   * THE LOCK IS APPLIED FIRST AND THE SNAP SECOND, and the order is the whole
-   * of the tricky part. The pen decides which axis a segment runs along; the
-   * snap may then only move the point ALONG that axis. Snapping first would let
-   * a wall three feet away pull the point off the line the pen had locked it
-   * to, and the segment would come out crooked or the lock would silently be
-   * undone.
-   *
-   * ...AND NO GUIDE IS DRAWN FOR THE FROZEN AXIS. Same rule `applySnap` states
-   * below: a guide is a claim that the point took an alignment, and drawing one
-   * for a coordinate the lock is about to overwrite would be a line that lies
-   * about where the point is going.
-   */
-  /* A PLAIN FUNCTION, LIKE `applySnap` BELOW IT AND FOR ITS REASON: it is only
-     ever called from a pointer handler, so there is nothing for a memo to buy
-     and `snapTol` reads the live zoom rather than a captured one. */
-  const penSnap = (rawPx, pen) => {
-    const raw = { x: rawPx.x / pxPerFt, y: rawPx.y / pxPerFt };
-    const aim = penAim(pen.pts, raw, { lock: pen.locked });
-    const last = pen.pts[pen.pts.length - 1];
-    // WHICH COORDINATE THE LOCK FROZE, read off the answer rather than
-    // re-derived: the pen already decided, and asking again is a second rule
-    // that can disagree with the first.
-    const lock = (pen.locked && last)
-      ? (Math.abs(aim.y - last.y) < 1e-9 ? 'y' : 'x') : null;
-    const at = { x: aim.x * pxPerFt, y: aim.y * pxPerFt };
-    /* THE PATH'S OWN POINTS ARE TARGETS, which is what makes clicking out a
-       rectangle possible: the fourth corner lines up with the first, and no
-       source in `collectTargets` knows anything about a path that is still
-       being drawn. THE LAST POINT IS LEFT OUT — the segment in flight starts
-       there, so on a locked pen it is already exactly aligned on one axis and
-       offering it would jam the free axis onto it too, which is a pen that
-       cannot leave the point it is standing on. */
-    const own = pen.pts.slice(0, -1).map((q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt }));
-    const r = snapPoint(at, snapTargets(null, own), { tol: snapTol() });
-    setGuides(r.guides.filter((g) => g.axis !== lock));
-    return { x: (lock === 'x' ? at.x : r.x) / pxPerFt,
-             y: (lock === 'y' ? at.y : r.y) / pxPerFt };
-  };
-
-  /**
-   * A CORNER OF ONE OF THE FIVE DRAGGED PRIMITIVES, SNAPPED, IN PLAN FEET.
-   *
-   * THE PEN HAD GUIDES AND THE MARQUEE DID NOT, and there was no argument for
-   * the difference — only that the pen was wired up later. Dragging out a
-   * rectangle a foot inside another one is the single most common thing anybody
-   * does with the geometry tool, and by eye at any zoom it is a guess. So the
-   * anchor and the moving corner both go through the same engine everything else
-   * on this screen uses, and the blue dotted lines say what was caught.
-   *
-   * NO LOCK IS PASSED, and that is the one place this differs from `penSnap`.
-   * Shift on a primitive does not freeze an axis — it makes the shape UNIFORM
-   * (a square, a circle, an equilateral triangle), which `shapeFromDrag` applies
-   * to the pair of points AFTER this — so there is no frozen coordinate for a
-   * guide to lie about. Squaring up a rectangle whose corner has snapped is
-   * exactly what somebody holding Shift asked for.
-   *
-   * IT SNAPS THE POINTER AND NOT THE RESULT. A slot's ends are then projected
-   * onto the room's outline by `spanOnOutline`, and a circle is fitted into the
-   * box the two corners make; in both the snap decides where the DRAG is, which
-   * is the thing the guides are drawn about.
-   */
-  const shapeSnapFt = (rawPx) => {
-    if (!pxPerFt) return { x: 0, y: 0 };
-    const r = snapPoint(rawPx, snapTargets(null), { tol: snapTol() });
-    setGuides(r.guides);
-    return { x: r.x / pxPerFt, y: r.y / pxPerFt };
-  };
 
   /**
    * Snap a point, publish the guides for it, and hand back where it landed.
@@ -6492,7 +5215,7 @@ export default function App({
          branch at the foot of this handler would do with the same keypress.
          Escape drops the point if one is picked and closes the editor if not —
          the two-stage back-out the door editor has. */
-      if (trackEditId) {
+      if (geometry.tracks.editId) {
         /* DELETE MEANS THE POINT IF ONE IS PICKED AND THE WHOLE RUN IF NOT, and
            it RETURNS either way. That last part is the bug this fixes: the
            branch only claimed the key while a point was selected, so pressing
@@ -6507,14 +5230,14 @@ export default function App({
            grid the moment it stops being consulted. */
         if (e.key === 'Delete' || e.key === 'Backspace') {
           e.preventDefault();
-          if (trackGrip) return;
-          if (selTrackPt != null) deleteTrackPoint(trackEditId, selTrackPt);
-          else deleteTrack(trackEditId);
+          if (geometry.tracks.grip) return;
+          if (geometry.tracks.selPt != null) deleteTrackPoint(geometry.tracks.editId, geometry.tracks.selPt);
+          else deleteTrack(geometry.tracks.editId);
           return;
         }
         if (e.key === 'Escape') {
           e.preventDefault();
-          if (selTrackPt != null) setSelTrackPt(null); else closeTrackEdit();
+          if (geometry.tracks.selPt != null) setSelTrackPt(null); else closeTrackEdit();
           return;
         }
       }
@@ -6534,8 +5257,8 @@ export default function App({
          BACKSPACE TAKES THE LAST POINT BACK and Escape throws the path away but
          keeps the tool, exactly as the track pen's do — the same two-stage
          back-out, so a mis-clicked corner is not a reason to start again. */
-      if (shapeMenuOn && shapeTool === 'pen' && !covePen.isEmpty) {
-        if (e.key === 'Enter' && canFinishOpen) {
+      if (geometry.status.menuOn && geometry.status.tool === 'pen' && !covePen.isEmpty) {
+        if (e.key === 'Enter' && geometry.panel.canFinishOpen) {
           e.preventDefault(); finishOpenCove(); return;
         }
         if (e.key === 'Backspace') { e.preventDefault(); covePen.undo(); return; }
@@ -6566,8 +5289,8 @@ export default function App({
            nothing to do. First Escape abandons the draft, second puts the pen
            down — which is what the cross in the bar and the cove button in the
            panel do, in that order. */
-        if (shapeMenuOn) {
-          if (shapeDraft || !covePen.isEmpty || shapeSpan) abandonShape();
+        if (geometry.status.menuOn) {
+          if (geometry.status.draft || !covePen.isEmpty || geometry.status.span) abandonShape();
           else closeShapeTool();
           return;
         }
@@ -6575,7 +5298,7 @@ export default function App({
            innermost-first order the whole of this handler follows: Escape
            undoes the last thing you asked for, and asking for dimensions was
            the last thing. */
-        if (shapeEditId) { setShapeEditId(null); return; }
+        if (geometry.shapes.editId) { setShapeEditId(null); return; }
         if (selShapeId) { setSel(clear()); return; }
         /* THE ARRAY'S BAR IS A CONTEXTUAL MENU AND CLOSES LIKE ONE, ahead of the
            plain selections below: it is the innermost thing open, and Escape
@@ -6649,7 +5372,7 @@ export default function App({
         deleteArray(selArrayId);
         return;
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selShapeId && !shapeDrag) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selShapeId && !geometry.shapes.dragging) {
         e.preventDefault();
         deleteShape(selShapeId);
         return;
@@ -6760,16 +5483,21 @@ export default function App({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [objMode, armed, selObjId, selObjIds, objDrag, selAccId, accDrag, addTool, disarmAdd,
-      finishTrack, trackPen, trackEditId, selTrackPt, trackGrip,
+      finishTrack, trackPen, geometry.tracks.editId, geometry.tracks.selPt, geometry.tracks.grip,
       deleteTrackPoint, deleteTrack, closeTrackEdit,
       deleteAccent, focusId, readOnly, selSpotId, deleteSpot,
       docActions,
       selBoardId, deleteBoard, selFlowId, flowDrag, boardPlace, closeBoardPlace,
       doorEdit, selDoorId, doorDrag, deleteDoor, closeDoorEdit,
       zoneEdit, closeZoneEdit, wallEdit, closeWallEdit,
-      shapeMenuOn, shapeTool, shapeDraft, covePen, shapeSpan, abandonShape, closeShapeTool,
-      canFinishOpen, finishOpenCove,
-      selShapeId, shapeDrag, deleteShape, shapeEditId,
+      geometry.status.menuOn, geometry.status.tool, geometry.status.draft, covePen,
+      geometry.status.span, abandonShape, closeShapeTool,
+      geometry.panel.canFinishOpen, finishOpenCove,
+      selShapeId, geometry.shapes.dragging, deleteShape, geometry.shapes.editId,
+      /* THE TWO SETTERS THE GEOMETRY BRANCHES CALL. In the array because the
+         scanner asks for them; a setter's identity is stable for the life of
+         the component, so the listener is not re-bound on their account. */
+      setShapeEditId, setSelTrackPt,
       selLightId, lightDrag, resetLightMove, selCobId, cob.drag, cobOpen,
       selArrayId, arrayDrag, deleteArray, trackMode,
       selModuleId, moduleDrag, deleteModule]);
@@ -6937,7 +5665,7 @@ export default function App({
        AND ONLY WHEN NOTHING ELSE IS ALREADY OPEN, which is `onCanvasClick`'s own
        gate for its own reason: somebody drawing a COVE must not have the tool
        taken out of their hands by a press on a room in the list. */
-    if (!off && !shapeMenuOn && !boardPlace && !zoneEdit) {
+    if (!off && !geometry.status.menuOn && !boardPlace && !zoneEdit) {
       openShapeTool('guide', { arm: false });
     }
     /* `setMaterialsEdit` IS IN THE ARRAY AND WAS NOT, and nothing about when
@@ -6945,7 +5673,7 @@ export default function App({
        through the room-intelligence panel group now that the finishes flag
        lives in that feature, and a setter's identity is stable for the life of
        the component. */
-  }, [docActions, focusId, optionPickFor, hideCoach, shapeMenuOn, boardPlace, zoneEdit,
+  }, [docActions, focusId, optionPickFor, hideCoach, geometry.status.menuOn, boardPlace, zoneEdit,
       openShapeTool, setMaterialsEdit]);
 
   /**
@@ -7013,7 +5741,7 @@ export default function App({
        rather than in a branch of its own: a click on empty plan is how every
        other selection on this canvas is cleared, and a shape you cannot let go
        of is a shape whose ring reads as part of the drawing. */
-    if (shapeMenuOn && shapeTool) return;
+    if (geometry.status.menuOn && geometry.status.tool) return;
     /* THE CLICK THAT CAME OFF A SHAPE IS NOT A CLICK ON THE PLAN, however much
        it looks like one by the time it gets here — see `shapeTook`. It is
        consumed outright rather than merely skipping the deselect: picking a
@@ -7030,12 +5758,12 @@ export default function App({
        `selArrayPathPx`), the module, the light, and the four below that used to
        be cleared only outside a room. One register, one line. */
     setSel(clear());
-    if (shapeEditId) setShapeEditId(null);
+    if (geometry.shapes.editId) setShapeEditId(null);
     // AND THE TRACK'S POINTS, which are a selection like any other: a path left
     // open with its grips on the drawing reads as part of the drawing. A press
     // that came off a grip never reaches here — see `shapeTook` above, which
     // the grip sets for exactly this.
-    if (trackEditId) closeTrackEdit();
+    if (geometry.tracks.editId) closeTrackEdit();
     // THE SCALE IS SETTLED BY THE TIME WE ARE HERE. Measuring belongs to the
     // tracer screen, where the scale is actually being decided; leaving the
     // click live on this screen meant a stray click could redefine px-per-foot
@@ -7099,7 +5827,7 @@ export default function App({
        gesture, and switching them to guides mid-drag would take the tool out of
        their hands. Every other machine on this canvas has already returned long
        before this line — a press with a tool armed never reaches here at all. */
-    if (hit && !shapeMenuOn && !boardPlace && !zoneEdit) {
+    if (hit && !geometry.status.menuOn && !boardPlace && !zoneEdit) {
       openShapeTool('guide', { arm: false });
     }
     /* --- SELECTING A SPACE OPENS ITS OPTIONS, WHEREVER YOU SELECTED IT FROM
@@ -7360,7 +6088,7 @@ export default function App({
        or a ceiling object see it first is a path where the press does two
        things. A press with the BAR open but no primitive picked falls straight
        through, which is correct — there is nothing to draw yet. */
-    if (shapeToolDown(e)) return;
+    if (geometryPointer.shapeToolDown(e)) return;
 
     // --- ADDITIONAL LIGHTING, before anything else claims the press ---------
     /* THE SWITCHBOARD STEP OWNS THE CLICK OUTRIGHT, and it is first because it
@@ -7428,17 +6156,7 @@ export default function App({
          it as a zero-length segment anyway — but "refused" and "finished" are
          different answers and the gesture has to give the second one. */
       if (addTool === 'track') {
-        e.preventDefault();
-        if (e.detail > 1) { finishTrack(); return; }
-        /* CLICKING THE FIRST POINT CLOSES THE RUN, which is the gesture the
-           cove pen already answers and the one everybody tries on a rectangle.
-           The tolerance is in PIXELS and converted, not in feet: it is about
-           how accurately a person can hit a dot on screen, which does not
-           change when the drawing is scaled. */
-        const closeFt = Math.max(6, pxPerFt * 0.4) / pxPerFt;
-        if (trackPen.add(penSnap(p, trackPen), { tolFt: closeFt }) === 'closed') {
-          finishTrack(true);
-        }
+        geometryPointer.trackPenPress(e, p);
         return;
       }
       if (addTool === 'cove') {
@@ -7742,66 +6460,22 @@ export default function App({
     setDraftZone({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
   };
   const onZoneMove = (e) => {
-    /* THE SPAN, WHILE IT IS BEING DRAWN. `shapeAt` is the only thing that
-       moves — the anchor was fixed at the press — and the shape itself is a
-       memo over the pair. Shift is read live rather than at the press, so
-       holding it halfway through a rectangle squares it up under your hand.
-       AHEAD OF EVERY OTHER BRANCH, matching the press. */
-    if (shapeSpan && shapeMenuOn && shapeTool && pxPerFt) {
-      const p = svgPoint(e);
-      // SNAPPED, AND THE GUIDES SAY WHY — see `shapeSnapFt`. The far corner of a
-      // marquee is aimed at a line as much as the near one was.
-      setShapeAt(shapeSnapFt(p));
-      if (shapeSpan.uniform !== e.shiftKey) {
-        setShapeSpan((d) => (d ? { ...d, uniform: e.shiftKey } : d));
-      }
-      return;
-    }
-    /* --- A PRIMITIVE IS ARMED AND NOTHING IS BEING DRAWN YET ---------------
-       THE ONE THING WORTH KNOWING IN THIS STATE is whether the next press would
-       drag out a new shape or take the geometry already under the pointer — see
-       the branch at the top of `shapeToolDown`, whose `covePen.isEmpty` gate
-       this mirrors exactly. Nothing else on this canvas is live here (every grab
-       handler is withheld while a primitive is armed), so this owns the move.
+    /* --- THE GEOMETRY TOOL'S FOUR BRANCHES, IN THE ORDER THEY STOOD IN -----
+       Each answers `true` when it has taken the move, which is the idiom
+       `shapeToolDown` already uses on the press. The bodies are the feature's —
+       see useGeometryGestures — and the ORDER between them is this router's,
+       because two of the branches below belong to other machines.
 
-       AFTER THE SPAN AND BEFORE THE PEN'S RUBBER BAND, and both halves of that
-       are the gate. A span is a gesture in flight and owns the pointer, so a
-       drag passing over a guide must not light it up. A pen with no points down
-       has nothing to draw a band from and CAN still take a geometry, so it wants
-       the cue; a pen mid-path cannot, and falls through to the band below. */
-    if (shapeMenuOn && pxPerFt && covePen.isEmpty
-        && !shapeResize && !shapeDrag && !trackGrip) {
-      const h = geomUnder(svgPoint(e));
-      const id = h?.id ?? null;
-      if (id !== geomHover) setGeomHover(id);
-      /* IT ONLY OWNS THE MOVE WHEN A PRIMITIVE IS ARMED. Unarmed, the bar is
-         merely open — the state a rail cell and a space click both leave it in —
-         and every grab handler on this canvas is live underneath it. Returning
-         here would swallow the moves that drag a shape, resize one by its grips
-         or slide a track's point. */
-      if (shapeTool) return;
-    }
-    /* THE PEN'S RUBBER BAND. No press to wait for — the path is a run of
-       clicks — so the segment from the last point to the pointer is drawn
-       whenever there is a point to draw it from. */
-    if (shapeMenuOn && shapeTool === 'pen' && pxPerFt) {
-      // SHIFT IS READ LIVE, exactly as the drag primitives read it: holding it
-      // halfway along a segment straightens that segment under your hand rather
-      // than only affecting the next one. The pen is handed a point that is
-      // already snapped — see `penSnap` — so the guides on screen, the rubber
-      // band and the click all describe one place.
-      covePen.move(penSnap(svgPoint(e), covePen), e.shiftKey);
-      return;
-    }
-    // A TRACK POINT BEING DRAGGED, with the rest of the in-flight gestures and
-    // for their reason: a gesture that has the pointer owns it until it is
-    // released, whatever else is armed.
-    if (trackGrip) { trackGripMove(e); return; }
-    // A GRIP ON A SHAPE'S FRAME, ahead of the shape's own drag: a gesture
-    // already in flight owns the pointer until it is released, and these two
-    // start from the same press on the same object.
-    if (shapeResize) { shapeResizeMove(e); return; }
-    if (shapeDrag) { shapePointerMove(e); return; }
+       THE SPAN, WHILE IT IS BEING DRAWN, ahead of every other branch and
+       matching the press. Then the hover cue, which owns the move only when a
+       primitive is armed. Then the pen's rubber band. */
+    if (geometryPointer.spanMove(e)) return;
+    if (geometryPointer.hoverMove(e)) return;
+    if (geometryPointer.penMove(e)) return;
+    /* A TRACK POINT, A SHAPE'S GRIP AND THE SHAPE ITSELF, in that order and
+       ahead of the light: a gesture that has the pointer owns it until it is
+       released, whatever else is armed. */
+    if (geometryPointer.dragMove(e)) return;
     // A LIGHT BEING SLID INSIDE ITS OWN CELL. Same rule as every drag above it:
     // a gesture already in flight owns the pointer until it is released.
     if (lightDrag) { lightPointerMove(e); return; }
@@ -7895,12 +6569,8 @@ export default function App({
         setAddAt(raw);
         return;
       }
-      /* THE TRACK'S RUBBER BAND, and it is the pen's own aimed point that gets
-         drawn — the pointer with the axis lock already on it. Nothing is shown
-         before the first click, because a locked segment has to be locked TO
-         something. */
       if (addTool === 'track') {
-        trackPen.move(penSnap(raw, trackPen));
+        geometryPointer.trackPenMove(raw);
         return;
       }
       /* --- WHAT THE COB BAR IS TALKING ABOUT -----------------------------
@@ -7961,30 +6631,13 @@ export default function App({
     setDraftZone((d) => (d ? { ...d, x1: p.x, y1: p.y } : d));
   };
   const onZoneUp = () => {
-    /* A SPAN LET GO IS A SHAPE HELD, NOT A SHAPE PLACED. The draft is frozen
-       where the pointer left it and the bar turns into a tick and a cross; see
-       `commitShape` for why a cove is confirmed rather than dropped. Anything
-       too small to be a shape is simply forgotten — a click that wobbled is a
-       click, and leaving a two-inch cove on the drawing to be hunted down is
-       the worse of the two ways to be wrong. */
-    if (shapeSpan) {
-      const held = shapeDraft;
-      setShapeSpan(null);
-      /* THE GUIDES GO WITH THE GESTURE, whichever way it ended. `abandonShape`
-         clears them on the throw-away path; a shape that is KEPT would otherwise
-         be left standing beside the dotted lines that helped place it, and a
-         guide that outlives its drag is a drawn line. */
-      setGuides([]);
-      if (held && bigEnough(held)) setShapeHeld(held); else abandonShape();
-      return;
-    }
-    /* A TRACK POINT IS LET GO, and there is nothing to commit: `trackGripMove`
-       wrote every frame straight into the list, exactly as a shape's resize
-       does, so the release only has to put the gesture away. The path is
-       re-measured on each write, so the schedule is already right. */
-    if (trackGrip) { setTrackGrip(null); return; }
-    if (shapeResize) { setShapeResize(null); return; }
-    if (shapeDrag) { shapePointerUp(); return; }
+    /* A SPAN LET GO IS A SHAPE HELD, NOT A SHAPE PLACED — see `spanUp`, and
+       `commitShape` for why a cove is confirmed rather than dropped. Ahead of
+       every other release, matching the press and the move. */
+    if (geometryPointer.spanUp()) return;
+    /* THEN THE THREE GESTURES THAT HAD THE POINTER: a track point, a shape's
+       grip and the shape itself, in that order and ahead of the light. */
+    if (geometryPointer.gestureUp()) return;
     if (lightDrag) { lightPointerUp(); return; }
     /* --- THE DOOR EDITOR'S RELEASE, AND THE ONE WRITE IT MAKES -------------
        A move commits here and nowhere else — see `doorDrag`, which carries the
@@ -8822,9 +7475,8 @@ export default function App({
              armed, so clipping six diffusers on is six presses and not twelve.
              `selTrackId` is the selection; a track is a ceiling shape, so being
              selected is `selShapeId` naming one. */
-          trackOn={shapeMenuOn && shapeRole === 'track'}
-          onTrack={() => (shapeMenuOn && shapeRole === 'track'
-            ? closeShapeTool() : openShapeTool('track', { arm: false }))}
+          trackOn={geometryCommands.toolbar.trackOn}
+          onTrack={geometryCommands.toolbar.toggleTrack}
           trackDrawer={!!selTrackId || addTool === 'module'}
           trackMode={trackMode} trackSoon={MODULE_SOON}
           onTrackPick={(m) => {
@@ -8862,9 +7514,8 @@ export default function App({
              is up as the space's geometry — which is true: pressing it then is
              not "close", it is "make this a cove instead", and switching the bar
              over is what somebody asking for that means. */
-          shapeOn={shapeMenuOn && shapeRole === 'cove'}
-          onShape={() => (shapeMenuOn && shapeRole === 'cove'
-            ? closeShapeTool() : openShapeTool('cove'))}
+          shapeOn={geometryCommands.toolbar.coveOn}
+          onShape={geometryCommands.toolbar.toggleCove}
           zoneOn={zoneEdit} onZones={openZoneEdit}
           onPick={(t, arms) => {
             /* TWO MACHINES BEHIND ONE COLUMN. Most of these arm `addTool`, the
@@ -9181,8 +7832,8 @@ export default function App({
                    `geomHover` IS ONLY EVER SET WHILE ONE OF THOSE TOOLS IS
                    ARMED — see it — so this cannot fire under anything else. */
                 : geomHover ? 'pointer'
-                : (shapeMenuOn && shapeTool) ? 'crosshair'
-                : shapeDrag ? 'grabbing'
+                : (geometry.status.menuOn && geometry.status.tool) ? 'crosshair'
+                : geometry.shapes.dragging ? 'grabbing'
                 /* THE TRACK PEN, FOR THE COVE'S REASON ONE LINE DOWN: a run is
                    set out over the drawing, and a leg deliberately taken to the
                    wall lands a pixel outside the polygon. A pointer that turned
@@ -9289,26 +7940,24 @@ export default function App({
                  which somebody is placing one and can be stopped by it. On a
                  finished sheet it would be a rule drawn over a drawing for
                  nobody. */
-              coveClampPx={!readOnly && pxPerFt
-                && ((shapeMenuOn && shapeTool) || shapeDrag?.moved || shapeResize)
+              coveClampPx={!readOnly && pxPerFt && geometry.canvas.clampLive
                 ? COVE_GAP_FT * pxPerFt : null}
               /* THE KEEP-OUT BAND, AND ONLY WHILE IT IS BEING MET. Shown while
                  a cove is being drawn, moved or resized — the three states in
                  which somebody is placing one and can be stopped by it. On a
                  finished sheet it would be a rule drawn over a drawing for
                  nobody to meet. */
-              coveClampPx={!readOnly && pxPerFt
-                && ((shapeMenuOn && shapeTool) || shapeDrag?.moved || shapeResize)
+              coveClampPx={!readOnly && pxPerFt && geometry.canvas.clampLive
                 ? COVE_GAP_FT * pxPerFt : null}
-              coveShapes={coveShapesPx}
+              coveShapes={geometry.canvas.coveShapes}
               selShapeId={readOnly ? null : selShapeId}
               /* AND WHICH ONE IS SHOWING ITS DIMENSIONS, which is a second and
                  narrower thing — see `shapeEditId`. */
               shapeEditId={readOnly || armed || addTool || boardPlace || zoneMode
-                ? null : shapeEditId}
-              onShapeHandleDown={readOnly ? null : shapeHandleDown}
+                ? null : geometry.shapes.editId}
+              onShapeHandleDown={readOnly ? null : geometryPointer.shapeHandleDown}
               onShapePointerDown={readOnly || !canGrab(pressState)
-                ? null : shapePointerDown}
+                ? null : geometryPointer.shapePointerDown}
               /* WHICH GEOMETRY THE TOOL IN HAND WOULD TAKE, so the line itself
                  says it before the press — the third of the three cues
                  `geomHover` drives, alongside the cursor and the array's ghost. */
@@ -9327,13 +7976,13 @@ export default function App({
               selModuleId={readOnly ? null : selModuleId}
               onModulePointerDown={readOnly || armed || boardPlace || zoneMode
                 ? null : modulePointerDown}
-              draftShape={readOnly ? null : draftShapePx}
+              draftShape={readOnly ? null : geometry.canvas.draftShape}
               /* ONE PEN DRAWING, WHICHEVER PEN IS HOLDING THE POINTER. The two
                   cannot both be live — arming the track tool closes the shape
                   menu and vice versa — so this is a choice and not a merge. */
-              penDraft={readOnly ? null : (penDraftPx ?? trackDraftPx)}
-              trackEdit={readOnly ? null : trackEditPx} selTrackPt={selTrackPt}
-              onTrackPointDown={readOnly ? null : trackPointDown}
+              penDraft={readOnly ? null : (geometry.canvas.penDraft ?? geometry.canvas.trackDraft)}
+              trackEdit={readOnly ? null : geometry.canvas.trackEdit} selTrackPt={geometry.tracks.selPt}
+              onTrackPointDown={readOnly ? null : geometryPointer.trackPointDown}
               /* NOT WHILE THE PEN IS ARMED. A double click on the drawing is
                  how a run is FINISHED — see `finishTrack` — so letting it also
                  open the points of a run underneath would give one gesture two
@@ -9386,7 +8035,7 @@ export default function App({
                  somebody selected a room would be the drawing reacting to a
                  selection. It is the LIVE primitive that means "I am about to
                  place geometry". */
-              placingGeometry={!readOnly && shapeMenuOn && !!shapeTool}
+              placingGeometry={!readOnly && geometry.canvas.placingGeometry}
               selCobId={readOnly ? null : selCobId}
               onCobPointerDown={readOnly || !canGrab(pressState) ? null : cobPointerDown}
               /* THE GHOST CARRIES THE POOL IT WOULD THROW, so the beam angle on
@@ -9550,20 +8199,24 @@ export default function App({
                 sits in the tree decides only what it is a sibling of.
                 NOT ON THE READ-ONLY SHEET. Every button on it changes the
                 ceiling. */}
-            {!readOnly && shapeMode && (
-              <ShapeMenu stage={stageRef} mode={shapeMode}
-                tool={shapeTool} sides={shapeSides}
-                sizeLabel={shapeMode === 'draw' && shapeToCommit ? shapeSizeLabel(shapeToCommit)
-                  : shapeMode === 'edit' && selShape ? shapeSizeLabel(selShape) : null}
-                canCommit={canCommitShape}
+            {!readOnly && geometry.bar.mode && (
+              <ShapeMenu stage={stageRef} mode={geometry.bar.mode}
+                tool={geometry.status.tool} sides={geometry.bar.sides}
+                sizeLabel={geometry.bar.mode === 'draw' && geometry.bar.toCommit
+                  ? shapeSizeLabel(geometry.bar.toCommit)
+                  : geometry.bar.mode === 'edit' && geometry.shapes.selected
+                    ? shapeSizeLabel(geometry.shapes.selected) : null}
+                canCommit={geometry.bar.canCommit}
                 /* THE OFFSET, AND IT IS NULL UNLESS THE DRAFT WAS BORROWED. See
                    `heldAsks` — a shape dragged out from scratch has no geometry
                    to be set in from. */
-                offset={heldAsks}
+                offset={geometry.bar.offset}
                 onOffsetSide={(id) => setHeldOffset({ side: id })}
                 onOffsetFt={(ft) => setHeldOffset({ ft: Math.max(0, Number(ft) || 0) })}
-                radius={shapeMode === 'edit' && selShape && roundable(selShape)
-                  ? { ft: selShape.radiusFt || 0, max: maxRadiusFt(selShape) } : null}
+                radius={geometry.bar.mode === 'edit' && geometry.shapes.selected
+                  && roundable(geometry.shapes.selected)
+                  ? { ft: geometry.shapes.selected.radiusFt || 0,
+                      max: maxRadiusFt(geometry.shapes.selected) } : null}
                 onTool={pickShapeTool}
                 onSides={(n) => { setShapeSides(n); setShapeAskSides(false); }}
                 onCommit={commitShape}
@@ -9573,12 +8226,13 @@ export default function App({
                      there is nothing to throw away and the tool goes back to
                      unarmed. Everywhere else there IS a draft and this is the
                      bin. */
-                  if (shapeAskSides) { setShapeAskSides(false); setShapeTool(null); return; }
+                  if (geometry.bar.askSides) { setShapeAskSides(false); setShapeTool(null); return; }
                   abandonShape();
                 }}
-                onRadius={(ft) => selShape && docActions.patchShape(selShape.id, { radiusFt: ft })}
-                onDuplicate={() => selShape && duplicateShape(selShape.id)}
-                onDelete={() => selShape && deleteShape(selShape.id)} />
+                onRadius={(ft) => geometry.shapes.selected
+                  && docActions.patchShape(geometry.shapes.selected.id, { radiusFt: ft })}
+                onDuplicate={() => geometry.shapes.selected && duplicateShape(geometry.shapes.selected.id)}
+                onDelete={() => geometry.shapes.selected && deleteShape(geometry.shapes.selected.id)} />
             )}
           </div>
         )}
@@ -9663,7 +8317,7 @@ export default function App({
             file formats and a modal invite over the top of one is an invitation
             to walk away from a thing that is happening. */}
         {source && !readOnly && !prep && !doorEdit && !zoneEdit && !boardPlace
-          && !stepTool && !wallEdit && !coveDraw && !sheetOpen && (
+          && !stepTool && !wallEdit && !geometry.panel.coveDraw && !sheetOpen && (
           <header className="flex-none flex items-center justify-between gap-2
             pt-4 px-4 pb-3">
             {/* NOTHING TO EXPORT ON THE TRACER. There is no layout yet, so all
@@ -9809,7 +8463,7 @@ export default function App({
             and no layout is the same blank page, and this strip only exists past
             `step !== 'trace'`, which is exactly "there is a layout". */}
         {source && step !== 'trace' && !readOnly && !prep && !doorEdit && !zoneEdit
-          && !boardPlace && !stepTool && !wallEdit && !coveDraw && (
+          && !boardPlace && !stepTool && !wallEdit && !geometry.panel.coveDraw && (
           /* NO RULE UNDER THE STRIP. It carried `border-b border-border/10` — a
              full-width hairline, the convention for a tab strip on a light
              ground where the tabs are cards sitting on a sheet. These are not
@@ -10316,7 +8970,7 @@ export default function App({
               <button className={`${BTN_EXIT} w-full`} onClick={closeZoneEdit}>Done</button>
             </div>
           </div>
-        ) : coveDraw ? (
+        ) : geometry.panel.coveDraw ? (
           /* --- DRAWING A COVE, AND THE PANEL HOLDS NOTHING ELSE -------------
              THE FOURTH STEP ON THIS SCREEN AND THE SAME SHAPE AS THE OTHERS.
              The bar with the primitives on it is on the DRAWING, where the
@@ -10336,27 +8990,27 @@ export default function App({
             <div className="flex-1 flex flex-col items-center justify-center gap-4
               text-center px-1 py-6">
               <p className="m-0 text-[17px] leading-[1.35] tracking-[-0.02em] text-white
-                max-w-[22ch]">{coveDraw.title}</p>
+                max-w-[22ch]">{geometry.panel.coveDraw.title}</p>
 
               <div className="flex flex-col items-center gap-2 px-4 pt-3.5 pb-3
                 border border-border rounded-[10px] bg-input-bg text-center">
-                {coveDraw.art}
+                {geometry.panel.coveDraw.art}
                 <p className="m-0 text-[11px] leading-[1.5] text-muted max-w-[30ch]">
-                  {coveDraw.hint}
+                  {geometry.panel.coveDraw.hint}
                 </p>
               </div>
 
               {/* WHY THE SPAN IN FLIGHT IS NOT A COVE. Under the card because it
                   is the answer to the drag being made right now, and it is only
                   ever there when something is wrong. */}
-              {coveDraw.why && <p className={`${NW} m-0 text-left`}>{coveDraw.why}</p>}
+              {geometry.panel.coveDraw.why && <p className={`${NW} m-0 text-left`}>{geometry.panel.coveDraw.why}</p>}
 
               {/* FINISHING THE PATH IS NOT FINISHING WITH THE PEN, so it is its
                   own button and it only exists while there is a path that can be
                   finished — which for an open cove means one that lands on a
                   wall at both ends. Enter says the same thing; a keystroke
                   nobody is told about is not a way out. */}
-              {canFinishOpen && (
+              {geometry.panel.canFinishOpen && (
                 <button className={`${BTN_FULL} w-full`} onClick={finishOpenCove}>
                   Finish the run
                 </button>
@@ -10540,7 +9194,7 @@ export default function App({
                   purpose: it is the answer to the press that was just made, and
                   it is the last thing on the panel because it is only ever
                   there when something did not work. See `trackNotes`. */}
-              {stepTool.id === 'track' && trackNoteLines.map((ln) => (
+              {stepTool.id === 'track' && geometry.tracks.noteLines.map((ln) => (
                 <p key={ln.why} className={`${NW} m-0 text-left w-full`}>
                   {ln.n > 1 ? `${ln.n} runs are not on the plan. ` : 'That run is not on the plan. '}
                   {ln.text}
