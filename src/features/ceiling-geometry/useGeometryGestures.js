@@ -29,8 +29,9 @@ import { snapPoint } from '../../lib/snapGuides.js';
 import { COVE_GAP_FT, coveClearOfOutline } from '../../lib/cove.js';
 import {
   penShape, clampCoveMove, canTakeGeometry, resizeShape, bigEnough, newShapeId,
-  isOpen as shapeIsOpen, isBuilt as shapeIsBuilt, bboxFt as shapeBboxFt,
+  isBuilt as shapeIsBuilt, bboxFt as shapeBboxFt,
 } from '../../lib/ceilingShapes.js';
+import { shapeCanTranslate } from './geometryRules.js';
 
 /** How long two presses on one thing count as a double. */
 const DOUBLE_MS = 400;
@@ -270,9 +271,11 @@ export function useGeometryGestures({
      position the cove's rule exists to forbid. Applying it to a guide would make
      the tool refuse the thing it is for. Hence `shapeIsBuilt`.
 
-     NO SHIFT LOCK AND NO SNAP, which is what this drag has always done: a cove
-     is positioned against the room's own geometry by the clamp, and there is
-     nothing else on the ceiling for it to line up with.
+     SHIFT LOCKS THE TRANSLATION TO ONE AXIS. The modifier is read live by
+     `useDrag`, so it may be pressed before or during the move; whichever axis
+     has travelled farther wins. There is still no snap: a cove is positioned
+     against the room's own geometry by the clamp, while a guide or magnetic
+     track follows the pointer on the locked horizontal or vertical line.
 
      ITS THRESHOLD IS A FRACTION OF THE DRAWING — a floor of three screen pixels
      or 12% of a foot, whichever is larger, converted into feet because that is
@@ -290,6 +293,7 @@ export function useGeometryGestures({
       return { ...o, x: at.x, y: at.y };
     },
     setList: docActions.updateShapes,
+    ortho: true,
     moved: (from, p) => Math.hypot(p.x - from.x, p.y - from.y)
       >= Math.max(3, pxPerFt * 0.12) / pxPerFt,
     /* ALT LEAVES A COPY BEHIND, AND THE MODIFIER IS READ LIVE — every word of the
@@ -317,7 +321,7 @@ export function useGeometryGestures({
        AND IT IS THE CALLER'S GUARD, NOT THE HOOK'S. Where an object's drag is
        deliberately constrained the constraint belongs beside the object, and
        this one is absolute: the whole frame is declined. */
-    if (shapeIsOpen(ceilingShapes.find((q) => q.id === shape.drag.id))) return;
+    if (!shapeCanTranslate(ceilingShapes.find((q) => q.id === shape.drag.id))) return;
     shape.move(e);
   };
   const shapePointerUp = shape.up;

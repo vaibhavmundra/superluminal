@@ -2212,7 +2212,8 @@ export default function App({
      see the note where they are declared. */
   const cobTool = useCobTool({
     state: fixtureState, manualCobs, pxPerFt, ceilingMmFor, zoom,
-    roomAt, basisFor: cobBasisFor, addTool, roomTypes, setGuides,
+    roomAt, basisFor: cobBasisFor, addTool, roomTypes,
+    fanClearance: opt.fanClearance, setGuides,
   });
   /* THE NAMES THIS FILE ALREADY USED. All eight are read by the markup — the
      lamps and their throw rings on the canvas, and the bar at the foot of the
@@ -2223,6 +2224,7 @@ export default function App({
   const cobInForce = cobTool.inForce;
   const cobDirty = cobTool.dirty;
   const cobGuide = cobTool.guide;
+  const cobBlocked = cobTool.blocked;
 
   /**
    * WHICH WALL A COVE CLICK LANDED ON, and everything the rest of the gesture
@@ -5371,7 +5373,8 @@ export default function App({
                    crosshair, which would claim the ceiling was a target. Over a
                    run the `geomHover` branch above has already made it a hand. */
                 : addTool === 'module' ? 'default'
-                : addTool === 'cob' ? (overRoom ? 'crosshair' : 'default')
+                : addTool === 'cob'
+                  ? (cobBlocked ? 'not-allowed' : overRoom ? 'crosshair' : 'default')
                 : (armed || addTool) ? (overRoom ? 'crosshair' : 'pointer')
                 : null}
               zones={drawnZones} draftZone={readOnly ? null : draftZone}
@@ -5582,6 +5585,7 @@ export default function App({
               cobGhost={!readOnly && addTool === 'cob' && overRoom && addAt
                 && !geomHover
                 ? { ...addAt,
+                    blocked: cobBlocked,
                     throwFt: throwDiameterFt(cobShow.beam,
                       (cobRoom ? ceilingMmFor(cobRoom.id) / 304.8 : 0) || DEFAULT_DROP_FT) }
                 : null}
@@ -5704,6 +5708,7 @@ export default function App({
                   : geometry.bar.mode === 'edit' && geometry.shapes.selected
                     ? shapeSizeLabel(geometry.shapes.selected) : null}
                 canCommit={geometry.bar.canCommit}
+                showDrawActions={geometry.status.role !== 'cove'}
                 /* THE OFFSET, AND IT IS NULL UNLESS THE DRAFT WAS BORROWED. See
                    `heldAsks` — a shape dragged out from scratch has no geometry
                    to be set in from. */
@@ -6513,7 +6518,13 @@ export default function App({
                 </button>
               )}
 
-              <button className={`${BTN_EXIT} w-full`} onClick={closeShapeTool}>Done</button>
+              {/* DONE IS THE COVE'S ONLY CONFIRMATION. If a valid draft is on
+                  the drawing it is committed; otherwise Done simply leaves the
+                  tool, preserving the button's existing way-out behaviour. */}
+              <button className={`${BTN_EXIT} w-full`}
+                onClick={geometry.bar.canCommit ? commitShape : closeShapeTool}>
+                Done
+              </button>
             </div>
           </div>
         ) : wallEdit ? (

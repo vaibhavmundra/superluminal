@@ -19,12 +19,13 @@
 // the gridding engine would have installed in that cell. You are overruling
 // WHERE, and you get WHAT for free until you overrule that too.
 //
-// AND NOTHING IS CLAMPED, WHICH IS THE OTHER HALF OF THE SAME RULE. The two
-// places this engine will not put a light — hard against a wall, and over a bed
-// — are drawn under the pointer as you go near them, and then the click is
-// honoured anyway. A guide that refuses the press is a rule wearing a hint's
-// clothes, and somebody who has just been told about the bed and pressed anyway
-// has said something about their drawing that this file does not get to ignore.
+// WALLS AND BEDS ARE NOT CLAMPED, WHICH IS THE OTHER half of the same rule. The
+// two places the layout merely advises against — hard against a wall, and over
+// a bed — are drawn under the pointer as you go near them, and the click is
+// honoured anyway. A ceiling object's reserved area is different: a downlight
+// physically cannot share the fan sweep or cassette clearance, so that one is
+// shown as disabled and refused by the gesture before this placement function
+// is called.
 //
 // WHAT LIVES HERE is the specification a hand-placed lamp can carry, the reading
 // of the engine's answer for a point, and the two warnings. What does not is any

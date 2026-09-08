@@ -17,7 +17,8 @@
  */
 import assert from 'node:assert/strict';
 import {
-  lightKey, clampContext, cobAlignTargets, cobWallGuide, chunkSpecInForce,
+  lightKey, clampContext, cobAlignTargets, cobWallGuide, cobObstacleBlocked,
+  chunkSpecInForce,
   absorbAutoplaceSpots,
   autoplaceCobs, reconcileCobSpecs, rollbackCobs, arrayLanded,
   arrayBarFor, arrayDraftBar, nextArrayDraft, draftCount, moduleU,
@@ -37,7 +38,7 @@ const cell = (chunk, x0, y0, wFt, hFt) => ({
 });
 
 /** A lit space in the shape the rules are handed. 20 ft x 12 ft at 30 px/ft. */
-const room = ({ cells = [], zonesPx = [], chunks = [] } = {}) => ({
+const room = ({ cells = [], zonesPx = [], chunks = [], fansPx = [] } = {}) => ({
   id: 'r1',
   outline: { name: 'Living' },
   geo: {
@@ -47,7 +48,7 @@ const room = ({ cells = [], zonesPx = [], chunks = [] } = {}) => ({
   },
   coves: [],
   plan: { ok: true, polygonPx: polyPx(0, 0, 600, 360),
-          gridCellsPx: cells, gridChunksPx: chunks, zonesPx },
+          gridCellsPx: cells, gridChunksPx: chunks, zonesPx, fansPx },
 });
 
 let n = 0;
@@ -179,6 +180,24 @@ console.log('the two things worth saying before the click');
   assert.equal(over.bandPx, 0);
   assert.deepEqual(over.bed, bed);
   ok('over a bed it reports the bed and no band');
+
+  const fan = { kind: 'fan', shape: 'circle', x: 300, y: 180, r: PPF };
+  const withFan = room({ fansPx: [fan] });
+  assert.equal(cobObstacleBlocked({
+    room: withFan, at: { x: 350, y: 180 }, pxPerFt: PPF, clearanceFt: 1,
+  }), true);
+  assert.equal(cobObstacleBlocked({
+    room: withFan, at: { x: 360, y: 180 }, pxPerFt: PPF, clearanceFt: 1,
+  }), false);
+  ok('a fan blocks a manual lamp inside its drawn clearance, but not on its edge');
+
+  const cassette = { kind: 'ac', shape: 'rect', x: 300, y: 180,
+    w: 60, h: 30, rot: Math.PI / 2 };
+  assert.equal(cobObstacleBlocked({
+    room: room({ fansPx: [cassette] }), at: { x: 300, y: 225 },
+    pxPerFt: PPF, clearanceFt: 1,
+  }), true);
+  ok('the same refusal follows a rotated rectangular ceiling obstacle');
 }
 
 // --------------------------------------------------------------------------

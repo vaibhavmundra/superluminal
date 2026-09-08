@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import {
   roomForSlotAt, shapeUnderPoint, takeableGeometry, slotSpan, arrayOutlineFor,
   trackRefusals, groupTrackRefusals, shapeBarMode, offsetGapFt,
-  trackPtsFromSegments,
+  trackPtsFromSegments, shapeCanTranslate,
 } from '../src/features/ceiling-geometry/geometryRules.js';
 import { TRACK_REFUSALS } from '../src/lib/track.js';
 import { lineShape } from '../src/lib/ceilingShapes.js';
@@ -159,6 +159,20 @@ const rect = (id, x, y, wFt, hFt, extra = {}) =>
   // means what it always meant: pick it up.
   assert.equal(takeableGeometry(cove, {}), null);
   assert.equal(takeableGeometry(null, barCove), null);
+}
+
+// --- which open shapes may move ---------------------------------------------
+
+{
+  const run = lineShape({ x: 2, y: 5 }, { x: 8, y: 5 });
+  assert.equal(shapeCanTranslate(run), false,
+    'an open cove stays pinned to the walls that make it buildable');
+  assert.equal(shapeCanTranslate({ ...run, role: 'track' }), true,
+    'a single-run magnetic track moves as one object');
+  assert.equal(shapeCanTranslate({ ...run, role: 'guide' }), true,
+    'an open guide remains movable too');
+  assert.equal(shapeCanTranslate(rect('closed', 5, 5, 4, 4)), true,
+    'closed shapes keep their existing move behaviour');
 }
 
 // --- the slot in flight, and why it is refused when it is --------------------

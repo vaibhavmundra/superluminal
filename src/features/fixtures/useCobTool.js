@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSceneManualProjections } from '../scene/useSceneFixtureProjections.js';
 import { recommendCob } from '../../lib/cob.js';
 import { snapPoint, SNAP_DEFAULTS } from '../../lib/snapGuides.js';
-import { cobAlignTargets, cobWallGuide } from './fixtureRules.js';
+import { cobAlignTargets, cobObstacleBlocked, cobWallGuide } from './fixtureRules.js';
 
 /**
  * THE MANUAL DOWNLIGHT'S LIVE MODEL — the feature's THIRD call site.
@@ -22,7 +22,7 @@ import { cobAlignTargets, cobWallGuide } from './fixtureRules.js';
  */
 export default function useCobTool({
   state, manualCobs, pxPerFt, ceilingMmFor, zoom, roomAt, basisFor,
-  addTool, roomTypes, setGuides,
+  addTool, roomTypes, fanClearance, setGuides,
 }) {
   const { cobAt, cobDraft, cobOnce, cobStanding } = state;
 
@@ -140,12 +140,20 @@ export default function useCobTool({
     () => cobWallGuide({ room: cobRoom, at: cobAt, pxPerFt }),
     [cobRoom, cobAt, pxPerFt]);
 
+  /* A CEILING OBJECT IS PHYSICAL, unlike the two advisory layout warnings
+     above. The preview reads this and the press repeats the same test at its
+     final snapped point, so the mark can never promise a placement that the
+     click then accepts. */
+  const cobBlocked = useMemo(() => cobObstacleBlocked({
+    room: cobRoom, at: cobAt, pxPerFt, clearanceFt: fanClearance,
+  }), [cobRoom, cobAt, pxPerFt, fanClearance]);
+
   return {
     cobsPx: manualCobsPx,
     targets: cobTargets, snap: cobSnap, snapAt: cobSnapAt,
     room: cobRoom, engine: cobEngine,
     inForce: cobInForce, show: cobShow, dirty: cobDirty,
     recommended: !cobDraft && !cobOnce && !cobStanding,
-    guide: cobGuide,
+    guide: cobGuide, blocked: cobBlocked,
   };
 }

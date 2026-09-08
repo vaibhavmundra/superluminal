@@ -184,7 +184,7 @@ function useStageRect(stage) {
  */
 export default function ShapeMenu({
   stage, mode, tool = null, sides = POLY_SIDES.initial, radius = null, sizeLabel = null,
-  canCommit = true,
+  canCommit = true, showDrawActions = true,
   /* --- THE OFFSET, AND ONLY FOR A DRAFT BORROWED FROM A GEOMETRY -----------
      `{ sideId, ft, sides, maxFt }` OR NULL, and null is the ordinary case. A
      shape dragged out with a primitive has no source to be offset FROM — the
@@ -287,19 +287,24 @@ export default function ShapeMenu({
           </>)}
           {SEP}
         </>)}
-        {/* GREYED UNTIL THERE IS SOMETHING TO KEEP. Two clicks of the pen is
-            a line, not a shape — and a tick that silently does nothing is worse
-            than one that visibly cannot yet. */}
-        <button type="button" title="Keep this shape" className={BTN} disabled={!canCommit}
-          style={{ color: '#0a7d3c', opacity: canCommit ? 1 : 0.35,
-                   cursor: canCommit ? 'pointer' : 'not-allowed' }}
-          onClick={onCommit}>
-          <Glyph d={TICK} />
-        </button>
-        <button type="button" title="Throw it away" className={BTN}
-          style={{ color: '#b3261e' }} onClick={onCancel}>
-          <Glyph d={CROSS} />
-        </button>
+        {/* COVES ARE CONFIRMED BY THE PANEL'S DONE BUTTON. Guides and magnetic
+            tracks have no dedicated panel step, so they keep the bar's own
+            confirmation controls. */}
+        {showDrawActions && (<>
+          {/* GREYED UNTIL THERE IS SOMETHING TO KEEP. Two clicks of the pen is
+              a line, not a shape — and a tick that silently does nothing is worse
+              than one that visibly cannot yet. */}
+          <button type="button" title="Keep this shape" className={BTN} disabled={!canCommit}
+            style={{ color: '#0a7d3c', opacity: canCommit ? 1 : 0.35,
+                     cursor: canCommit ? 'pointer' : 'not-allowed' }}
+            onClick={onCommit}>
+            <Glyph d={TICK} />
+          </button>
+          <button type="button" title="Throw it away" className={BTN}
+            style={{ color: '#b3261e' }} onClick={onCancel}>
+            <Glyph d={CROSS} />
+          </button>
+        </>)}
       </>)}
 
       {mode === 'edit' && (<>

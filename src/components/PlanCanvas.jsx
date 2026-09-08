@@ -373,8 +373,9 @@ const PlanCanvas = forwardRef(function PlanCanvas(
 
        `cobGhost` IS THE ONE UNDER THE POINTER, before the click, and `cobGuide`
        is the warning that goes with it — the band along the walls, the bed. Both
-       are momentary and belong to the gesture rather than to the sheet; both are
-       drawn and NEITHER refuses anything. */
+       are momentary and belong to the gesture rather than to the sheet. A ghost
+       may also carry `blocked` for a physical ceiling-object clearance; that
+       state greys the lamp, marks it prohibited, and is refused by the gesture. */
     manualCobs = [], selCobId = null, onCobPointerDown = null,
     cobGhost = null, cobGuide = null,
     /* THE RING AN ARRAY IS BEING SET OUT ON, while the bar is still asking about
@@ -3836,7 +3837,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     edge is left to the hatch: it is where the hatching stops,
                     which is exactly the line, and drawing it would mean offsetting
                     the polygon after all. */}
-                <path d={d} clipPath={`url(#${cid})`} fill="none"
+                <path className="real-width" d={d} clipPath={`url(#${cid})`} fill="none"
                   stroke="url(#cob-nogo)" strokeWidth={cobGuide.bandPx * 2} />
                 <path d={d} clipPath={`url(#${cid})`} fill="none"
                   stroke={C.nogo} strokeWidth={HATCH_LINE_PX / (zoom || 1)}
@@ -4030,8 +4031,16 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           pointer is — because that is exactly where the lamp will land. */}
       {cobGhost && (() => {
         const R = Math.max(s * 0.3, lw * 3);
+        const blocked = !!cobGhost.blocked;
+        /* A BLOCKED PREVIEW IS A FITTING THAT CANNOT EMIT. Grey replaces the
+           light ramp, the throw disappears, and the conventional prohibition
+           sign sits over the aperture. Its size and line weight are divided by
+           zoom for the same reason as a selection ring: this is momentary UI,
+           not a dimension on the drawing. */
+        const noR = Math.max(R * 1.45, 8 / (zoom || 1));
+        const noW = 1.8 / (zoom || 1);
         return (
-          <g pointerEvents="none" opacity="0.5">
+          <g pointerEvents="none" opacity={blocked ? 0.9 : 0.5}>
             {/* AND THE POOL IT WOULD THROW, WHICH IS THE HALF WORTH SEEING
                 BEFORE THE PRESS. Where a lamp goes is a decision you can take by
                 eye; how much floor it covers is the thing the beam angle on the
@@ -4044,13 +4053,21 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 `roomId` — and it costs nothing: the ghost is only ever drawn
                 while the pointer is inside a room, so the spill is a foot or two
                 at the wall for the moment before the click resolves it. */}
-            {cobGhost.throwFt > 0 && (
+            {!blocked && cobGhost.throwFt > 0 && (
               <circle cx={cobGhost.x} cy={cobGhost.y} r={(cobGhost.throwFt / 2) * s}
                 fill="url(#lp-throw)" opacity={THROW_STYLE.opacity} />
             )}
-            <circle cx={cobGhost.x} cy={cobGhost.y} r={R} fill="url(#lp-core)" />
+            <circle cx={cobGhost.x} cy={cobGhost.y} r={R}
+              fill={blocked ? C.zone : 'url(#lp-core)'} />
             <circle cx={cobGhost.x} cy={cobGhost.y} r={R} fill="none"
-              stroke={rim} strokeWidth={lw * 2.1} />
+              stroke={blocked ? C.zone : rim} strokeWidth={lw * 2.1} />
+            {blocked && (
+              <g stroke={C.nogo} strokeWidth={noW} fill="none" strokeLinecap="round">
+                <circle cx={cobGhost.x} cy={cobGhost.y} r={noR} />
+                <line x1={cobGhost.x - noR * 0.7} y1={cobGhost.y + noR * 0.7}
+                  x2={cobGhost.x + noR * 0.7} y2={cobGhost.y - noR * 0.7} />
+              </g>
+            )}
           </g>
         );
       })()}

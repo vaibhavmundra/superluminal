@@ -122,6 +122,20 @@ export function takeableGeometry(shapeAt, { addTool, cobMode, shapeMenuOn, shape
 }
 
 /**
+ * MAY THIS SHAPE BE TRANSLATED AS ONE OBJECT?
+ *
+ * AN OPEN COVE MAY NOT MOVE. Its two ends are fixed to the walls that make the
+ * slot buildable, so translating it would pull both ends off the plaster. That
+ * is a rule about the cove, not about open geometry in general: a straight
+ * magnetic track and an open guide are ceiling-mounted runs and must move just
+ * like their closed counterparts. Testing `isOpen` alone made a single-run
+ * track selectable but immovable while a rectangular track worked normally.
+ */
+export function shapeCanTranslate(shape) {
+  return !(shapeIsOpen(shape) && shapeRoleOf(shape) === 'cove');
+}
+
+/**
  * THE SLOT IN FLIGHT, AND WHY IT IS REFUSED WHEN IT IS.
  *
  * ONE ANSWER FOR BOTH, because the two are the same computation and a refusal

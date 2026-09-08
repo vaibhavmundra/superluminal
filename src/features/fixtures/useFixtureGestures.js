@@ -38,7 +38,7 @@ import {
   applyResize, withSweep, newCeilingObjectId,
 } from '../../lib/ceilingObjects.js';
 import { clampContext, lightKey, moduleU, nextArrayDraft,
-         rollbackCobs, arrayLanded } from './fixtureRules.js';
+         rollbackCobs, arrayLanded, cobObstacleBlocked } from './fixtureRules.js';
 
 export default function useFixtureGestures({
   state, fixtures, cobTool,
@@ -735,6 +735,12 @@ export default function useFixtureGestures({
     if (cobLock && room.id !== cobLock) return true;
     const sn = cobTool.snap(p);
     const at = { x: sn.x, y: sn.y };
+    /* A fan/cassette clearance is a physical no-light area, not a preference.
+       Test the click's final snapped point (rather than trusting the previous
+       hover frame) and consume the press without writing a lamp. */
+    if (cobObstacleBlocked({
+      room, at, pxPerFt, clearanceFt: opt.fanClearance,
+    })) return true;
     const override = cobOnce ?? cobStanding ?? null;
     const spec = override ?? recommendCob(room, at, basisFor(room));
     const lamp = placeCob({

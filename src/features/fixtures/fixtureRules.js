@@ -19,6 +19,7 @@ import { moduleAt, uAt, placeableU } from '../../lib/magTrack.js';
 import { ABSORB_FT, DODGE_FT } from '../../lib/track.js';
 import { nearestOnSegment, pathLength, pointAt, pointInPolygon }
   from '../../lib/geometry.js';
+import { surfaceDistance } from '../../lib/planner.js';
 
 /* WHICH LIGHT IS PICKED, as `${outlineId}|${cellKey}` — the same pairing the
    store is keyed on, flattened, because a selection is one value. */
@@ -247,10 +248,11 @@ export function cobAlignTargets(cobsPx, p, exclude = null) {
 }
 
 /* --- THE TWO THINGS WORTH SAYING BEFORE THE CLICK -------------------------
-   AND NEITHER OF THEM STOPS IT. See the header of lib/cob.js: the whole tool
-   exists because the engine's answer is sometimes the wrong one, and a guide
-   that refused the press would be the engine winning the argument anyway, in a
-   quieter voice.
+   AND NEITHER OF THESE TWO STOPS IT. See the header of lib/cob.js: the whole
+   tool exists because the engine's answer is sometimes the wrong one, and a
+   wall or bed guide that refused the press would be the engine winning the
+   argument anyway, in a quieter voice. Physical ceiling-object clearances are
+   tested separately below and do refuse placement.
    NULL WHERE THERE IS NOTHING TO SAY, so the canvas draws the ordinary case —
    which is most of the ceiling — with no extra marks on it at all. */
 export function cobWallGuide({ room, at, pxPerFt }) {
@@ -260,6 +262,22 @@ export function cobWallGuide({ room, at, pxPerFt }) {
   const bed = bedUnder(at, room.plan?.zonesPx ?? []);
   if (!near && !bed) return null;
   return { polygonPx, bandPx: near ? near.limitFt * pxPerFt : 0, bed };
+}
+
+/**
+ * WHETHER A MANUAL DOWNLIGHT WOULD FOUL A CEILING OBJECT'S RESERVED AREA.
+ *
+ * `fansPx` is the exact pixel-space list used to draw the dashed clearance
+ * outlines. `surfaceDistance` is the planner's own face-distance calculation,
+ * so a round fan and a rotated rectangular cassette are tested against the
+ * same geometry the automatic layout obeys. Wall and bed warnings remain
+ * advisory; a physical ceiling obstruction is the one hard refusal.
+ */
+export function cobObstacleBlocked({ room, at, pxPerFt, clearanceFt }) {
+  if (!room || !at || !(pxPerFt > 0) || !(clearanceFt >= 0)) return false;
+  const obstacles = room.plan?.fansPx ?? room.geo?.fansInRoom ?? [];
+  const clearancePx = clearanceFt * pxPerFt;
+  return obstacles.some((f) => !f.offCeiling && surfaceDistance(f, at) < clearancePx);
 }
 
 /**

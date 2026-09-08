@@ -451,7 +451,7 @@ input:focus,select:focus,textarea:focus{
 .plan rect,.plan circle,.plan ellipse,.plan line,.plan path,
 .plan polygon,.plan polyline,.plan text{vector-effect:non-scaling-stroke}
 /* A stroke whose width is a real dimension rather than a line weight: the track
-   rail's one-inch extrusion, and nothing else so far. */
+   rail's one-inch extrusion and the manual-COB's two-foot warning band. */
 .plan .real-width{vector-effect:none}
 
 /* ---------- the plan, inverted -------------------------------------------
