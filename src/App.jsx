@@ -3,8 +3,10 @@ import PlanCanvas from './components/PlanCanvas.jsx';
 import ChunkPicker from './components/ChunkPicker.jsx';
 import OutlineTracer from './components/OutlineTracer.jsx';
 import { UNITS } from './lib/dxf.js';
-import { regionFromOutline, outlineStats } from './lib/outline.js';
-import { PLAN_OPTIONS, FITTING_LUMENS,
+/* `regionFromOutline` AND `outlineStats` WENT WITH THE WORK THAT ASKED THEM —
+   the whole-plan bed pass's per-room crop and the claim's area, both now in
+   features/lighting-planner/. Nothing else in this file measures an outline. */
+import { PLAN_OPTIONS,
          SIMPLIFY_ROOM_TO_RECTANGLE,
          /* `THROW_STYLE` WAS IMPORTED HERE — the accent ramp, handed to the
             chunking icon in the spaces list. The icon went with the accordion
@@ -15,7 +17,8 @@ import { PLAN_OPTIONS, FITTING_LUMENS,
    run and resolve a second enumeration of the chunkings, on a different room
    from the one the drawing used — see the note in the rooms memo. There is one
    enumeration now and `designChunking` owns it. */
-import { nextChunkOption } from './lib/ceilingDesign.js';
+/* `nextChunkOption` WENT WITH THE ARROWS THAT CALL IT — see `chunkOptionPicks`
+   in features/lighting-planner/lightingRules.js. */
 import { COVE_GAP_FT } from './lib/cove.js';
 import { useDrag } from './hooks/useDrag.js';
 import useViewPrefs from './hooks/useViewPrefs.js';
@@ -28,12 +31,13 @@ import { useScenePlanProjections } from './features/scene/useScenePlanProjection
 import usePlanRecognition from './features/recognition/usePlanRecognition.js';
 import useRoomIntelligence from './features/room-intelligence/useRoomIntelligence.js';
 import useRoomEditing from './features/room-intelligence/useRoomEditing.js';
-import { absorbContest } from './features/room-intelligence/bedContest.js';
-import { mapLimit } from './lib/mapLimit.js';
+/* THE BED CONTEST'S FOLD AND THE BOUNDED-CONCURRENCY RUNNER WENT WITH THE
+   PIPELINE — `absorbContest` and `mapLimit` are both read in
+   features/lighting-planner/usePlanPipeline.js and nowhere else here. */
 import { newHistory, record, stepBack, stepForward, historyDepth,
          QUIET_MS } from './lib/undo.js';
 import { NONE, select, clear, idOf } from './lib/selection.js';
-import { bbox, pointInPolygon } from './lib/geometry.js';
+import { pointInPolygon } from './lib/geometry.js';
 import { openingPx, DOOR_WIDTHS } from './lib/doors.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
@@ -53,9 +57,14 @@ import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
 import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
-import { buildBOQ, FIXTURE_BY_ID } from './lib/boq.js';
-import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from './lib/boqExport.js';
-import { PROJECT_BY_ID, roomTypeIn, wantsAccents, wantsSpots, expectsBed } from './lib/roomTypes.js';
+/* THE SCHEDULE IS BUILT AND ENCODED IN features/lighting-planner/ — the
+   catalogue, the table and the three formats. What is left in this file is the
+   BOQView call site and the `download` that hands the file over. */
+/* WHICH TYPES TAKE ACCENTS, WHICH TAKE SPOTS AND WHICH EXPECT A BED are read by
+   the pipeline, in features/lighting-planner/, along with the project's own
+   label. What this file still reads is the label of ONE space's type, which is
+   markup. */
+import { roomTypeIn } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
 import CobSpec from './components/CobSpec.jsx';
 /* THE DOWNLIGHT SOMEBODY PUTS DOWN THEMSELVES. Every rule about one — what it
@@ -65,22 +74,24 @@ import CobSpec from './components/CobSpec.jsx';
    WHAT IS LEFT HERE IS WHAT THE MARKUP READS: the ring a lamp throws (drawn on
    the ceiling), the fallback drop, the wattage band the analysis prints, and
    the three the array bar's own controls are built from. */
-import { throwDiameterFt, DEFAULT_DROP_FT, clampWatts, nearestBeam,
-         COB_WATT_RANGE } from './lib/cob.js';
+import { throwDiameterFt, DEFAULT_DROP_FT, clampWatts,
+         nearestBeam } from './lib/cob.js';
 /* THE MAGNETIC TRACK. Its RUN is a ceiling shape with `role: 'track'` — which
    is why there is no store of paths here and why it resizes, duplicates and
    snaps like everything else in the geometry library — and the modules that
    clip into one are features/fixtures/. See its header for why it is not
    track.js. What is left here is the catalogue line a module bills under and
    the list of the ones not written yet, both of them markup. */
-import { MODULE_BY_ID, MODULE_SOON, moduleWatts } from './lib/magTrack.js';
+import { MODULE_SOON } from './lib/magTrack.js';
 import OptionCoach from './components/OptionCoach.jsx';
 /* The walkthrough, playing in the panel rather than linked out of it. Named
    export: the default one is the line of type that opens it in a dialog. */
 import { HowToVideo } from './components/HowToLink.jsx';
 import { chunkFor } from './lib/taskSpots.js';
-import { bedsIn, contestFor, judgeNote,
-         applyVerdict } from './lib/bedFit.js';
+/* WHAT IS LEFT OF THE BED CONTEST IN THIS FILE IS ONE SENTENCE ON THE ADMIN
+   SHEET. The boxes in a room, the contest, the verdict and its fallback are the
+   pipeline's — see features/lighting-planner/usePlanPipeline.js. */
+import { judgeNote } from './lib/bedFit.js';
 import { manualReverseCove } from './lib/reverseCove.js';
 /* THE ROOM PASSES' OWN IMPORTS WENT WITH THEM to
    features/room-intelligence/ — the crop and the request, the furniture,
@@ -117,6 +128,15 @@ import useGeometryState from './features/ceiling-geometry/useGeometryState.js';
 import useCeilingGeometry from './features/ceiling-geometry/useCeilingGeometry.js';
 import useGeometryCommands from './features/ceiling-geometry/useGeometryCommands.js';
 import useGeometryGestures from './features/ceiling-geometry/useGeometryGestures.js';
+/* --- THE HIGH-LEVEL LIGHTING WORKFLOW -------------------------------------
+   THREE CALL SITES, and the reason for each is at the site: the run's own
+   screen early, because half the controls on this editor carry `!prep`; what
+   the plan adds up to between the fitting projections and the fitting commands,
+   because one reads the first and the other is handed the second; and the
+   workflow itself where the pipeline stood. See that feature's README. */
+import useLightingRun from './features/lighting-planner/useLightingRun.js';
+import useLightingAnalysis from './features/lighting-planner/useLightingAnalysis.js';
+import useLightingPlanner from './features/lighting-planner/useLightingPlanner.js';
 import SwitchboardCard from './components/SwitchboardCard.jsx';
 import { HeightField } from './components/SwitchboardCard.jsx';
 import SwitchboardSheet from './components/SwitchboardSheet.jsx';
@@ -143,7 +163,9 @@ import SpaceDetail from './components/SpaceDetail.jsx';
 import WallTonePopup from './components/WallTonePopup.jsx';
 import { DEFAULT_CEILING_MM, CEILING_MM_MIN, CEILING_MM_MAX,
          materialsOf, wallMix, wallMixLabel, materialsSummary } from './lib/materials.js';
-import { analyseSpace, FIXTURE_FAMILIES, FAMILY_BY_ID } from './lib/lumens.js';
+/* THE ILLUMINANCE MODEL, THE FAMILY TABLE AND THE FAMILY DEFAULTS are read in
+   features/lighting-planner/, which is the only thing that counts what is on a
+   ceiling or asks what that makes of a room. */
 import {
   BTN, BTN_FULL, BTN_PRIMARY, BTN_EXIT, BTN_SECOND, BTN_MID, BTN_TINY,
   BTN_NUDGE, BTN_EXPORT, BTN_BOQ, N, NW, NE, NOTE, NOTE_WARN, CODE, PILL,
@@ -494,7 +516,8 @@ export default function App({
      drop over the bed are two runs at two wattages — so each is keyed by its own
      id. Twelve COBs are one decision about COBs and share one entry; a wattage
      per COB would be twelve rows in the panel saying the same thing, and eleven
-     chances for two of them to disagree. See `roomFixtureGroups`.
+     chances for two of them to disagree. See `fixtureGroups` in
+     features/lighting-planner/lightingRules.js.
      IN THE DOCUMENT REDUCER, with `ceilingMm` and `materials` above. */
 
   /* --- THE DERIVED RUNS SOMEBODY THREW AWAY --------------------------------
@@ -1046,10 +1069,21 @@ export default function App({
   // Both are in the document reducer — `projectType` and `roomTypes`. The
   // reason this file goes on calling the first one `projectId` is at the
   // destructure above.
-  // The pipeline's own state while it runs. Null when it is not running, which
-  // is also what the loader keys off.
-  const [prep, setPrep] = useState(null);
-  const cancelPrep = useRef(false);
+  /* --- THE LIGHTING WORKFLOW'S OWN SCREEN ---------------------------------
+     THE FEATURE'S FIRST CALL SITE, AND IT IS HERE BECAUSE `stepTool` IS. Half
+     the controls below carry `!prep` — while the pipeline runs the layout is
+     being replaced underneath — and the first of those readers stands three
+     hundred lines above the point where the workflow can be composed. A hook's
+     arguments are evaluated DURING RENDER, so the controller cannot be moved up
+     to meet it; the state can be. Same split `useFixtureState`,
+     `useGeometryState` and `useBoardStep` make. See the feature's README. */
+  const lightingRun = useLightingRun();
+  /* THE NAMES THIS FILE ALREADY USED. Twenty-odd guards below say `prep`, one of
+     them inside a memo's dependency array, and `resetForNewPlan` names the reset
+     in its own — so both are taken off the session rather than reached through
+     it, because the session is a fresh object every render. Same reason the
+     geometry's four setters are taken off theirs. */
+  const { prep, reset: resetLightingRun } = lightingRun;
   // WHICH SPOT IS PICKED. Its own selection and not `selAccId`, because a spot
   // is not an accent: the two panels describe different things and a click on
   // one must not leave the other looking selected. Same shape and same lifetime
@@ -1077,6 +1111,14 @@ export default function App({
   const quietTimer = useRef(null);
   const docRef = useRef(null);
   const undoRef = useRef(null);
+  /* AND THE EXPENSIVE SAVE, DECLARED HERE AND ASSIGNED AT THE FOOT OF THIS
+     COMPONENT. The same latest-values pattern as `docRef` and `undoRef`, met
+     from the other side: the lighting workflow is handed this ref hundreds of
+     lines above the render that fills it, and a hook's arguments are evaluated
+     DURING RENDER — so the REF has to exist by then even though the function it
+     will hold cannot. See `milestone.current =` at the bottom, which is the line
+     that used to declare it. */
+  const milestone = useRef(null);
   const [undoDepth, setUndoDepth] = useState({ past: 0, future: 0 });
 
   const selAccId = idOf(sel, 'acc');
@@ -1217,7 +1259,7 @@ export default function App({
     // the plan-level dialog back in front of a user whose project already
     // answered the question.
     docActions.setProjectType(initialProjectType ?? null);
-    docActions.clearRoomTypes(); setPrep(null); cancelPrep.current = false;
+    docActions.clearRoomTypes(); resetLightingRun();
     recognitionReset.current.doors();
     // ...AND THE CONFIRMATION GOES WITH THEM. It is an answer about ONE set of
     // door boxes; carrying it onto a fresh sheet would draw wiring off a
@@ -1247,7 +1289,8 @@ export default function App({
     docActions.clearLit(); docActions.setFocusId(null);
     setOutlinesOpen(false); docActions.clearDirty();
     docActions.setUnitId(null);
-  }, [docActions, initialProjectType, geomState.reset, fixtureReset]);
+  }, [docActions, initialProjectType, geomState.reset, fixtureReset,
+      resetLightingRun]);
 
   // --- the plan source ------------------------------------------------------
   const {
@@ -1422,87 +1465,17 @@ export default function App({
     ceilingShapes, lightMoves, manualTracks, isAdmin
   });
 
-  // ---------------------------------------------------------------------------
-  // LIGHTING A SPACE COSTS SOMETHING, AND THESE THREE ARE WHERE IT IS ASKED FOR.
-  //
-  // THEY SIT HERE, BELOW `pxPerFt`, AND THE POSITION IS LOAD-BEARING. A hook's
-  // dependency array is evaluated DURING RENDER, so `[..., pxPerFt]` a hundred
-  // lines above the `const pxPerFt` it names is a temporal-dead-zone
-  // ReferenceError on the first paint — which in React means the whole tree
-  // unmounts and the app is a white page. The same trap as the `outlinesPx`
-  // note above, arrived at from the other direction: there the value was wrong,
-  // here it does not exist yet.
-  // ---------------------------------------------------------------------------
-  /**
-   * CLAIM THE SPACES ABOUT TO BE LIT, AND SAY WHETHER TO GO ON.
-   *
-   * Every route into a layout goes through here — the tracer's Light button, the
-   * panel's "Light all N outlines", a single room confirmed by double-click, and
-   * the pipeline itself. Four call sites and one gate, because a fifth route
-   * added later that forgot to ask would be a free tier with no ceiling.
-   *
-   * SAFE TO CALL FROM ALL FOUR, because the claim is keyed on the geometry of
-   * each space (see fingerprintOutline in lib/plans.js). Lighting one room and
-   * then the whole plan charges the room once, not twice; a double click charges
-   * once; a re-light of untouched outlines charges nothing at all.
-   *
-   * NO SCALE, NO CHARGE. `outlineStats` needs px/ft to produce an area, and
-   * without one nothing is laid out either — there is no cost to meter and no
-   * layout to refuse. Letting it through is not a hole; it is the only reading
-   * that is not an error message in front of a drawing that was never going to
-   * light.
-   */
-  const claimSpaces = useCallback(async (ids) => {
-    if (!onClaimLayout || readOnly) return true;
-    const wanted = new Set(ids);
-    const spaces = [];
-    for (const o of outlinesPx) {
-      if (!wanted.has(o.id)) continue;
-      const sqft = outlineStats(o, pxPerFt)?.areaSqft ?? 0;
-      if (!(sqft > 0)) continue;
-      // THE RESOLVED PIXEL POINTS, not the stored drawing units, and the two are
-      // interchangeable here for one reason: `pointsPx` is a deterministic
-      // function of `pointsDu` and the source, so it is just as stable across a
-      // reload — and it is the list that is guaranteed to exist. A
-      // detector-proposed outline has no `pointsPx` until the memo above builds
-      // them, which is the same trap documented at `planAreaSqft`.
-      spaces.push({ id: o.id, points: o.pointsPx ?? [], pxPerFt, sqft });
-    }
-    if (!spaces.length) return true;
-    const verdict = await onClaimLayout({ spaces });
-    return !!verdict?.ok;
-  }, [onClaimLayout, readOnly, outlinesPx, pxPerFt]);
-
-  /** Light everything traced or proposed. The primary act on the tracer screen. */
-  const lightWholePlan = useCallback(async () => {
-    if (!await claimSpaces(outlines.map((o) => o.id))) return;
-    /* ONE ACT. Marking everything reviewed, lighting the lot, clearing the
-       dirty list and dropping the focus are four writes and one decision — see
-       PLAN_LIT, which also carries the note on why nothing is selected to begin
-       with. The lit list is read off the document in there rather than from
-       `outlines` here. */
-    docActions.lightWholePlan();
-    docActions.clearDirty();
-    setPickingId(null);
-    setOutlinesOpen(false);
-  }, [outlines, claimSpaces, docActions]);
-
-  const lightOneRoom = useCallback(async (id) => {
-    if (!await claimSpaces([id])) return;
-    docActions.lightOneRoom(id);
-    setPickingId(null);
-    setOutlinesOpen(false);
-    // CONFIRMING THE SPACES IS ITS OWN DATAPOINT — "here is what the segmenter
-    // proposed and here is what a person accepted" — and it is worth recording
-    // whether or not the pipeline is ever run on it.
-    //
-    // THE BEAT IS THE POINT. `milestone` is reassigned on every render and reads
-    // the state of the render it was assigned in, so calling it synchronously
-    // here would record the state as it was BEFORE the four setters above. A
-    // quarter of a second is far longer than a commit needs and short enough
-    // that nothing else can have happened.
-    setTimeout(() => milestone.current?.('outlines'), 250);
-  }, [claimSpaces, docActions]);
+  /* --- LIGHTING A SPACE COSTS SOMETHING ------------------------------------
+     THE TILL AND THE TWO ACTS THAT PUT A DRAWING THROUGH IT ARE
+     features/lighting-planner/ — `claimSpaces`, `lightWholePlan` and
+     `lightOneRoom`, all three taken off `lighting.commands` at the workflow's
+     own call site below. They stood HERE, below `pxPerFt`, and that position is
+     still load-bearing for the same reason: a hook's dependency array is
+     evaluated DURING RENDER, so a call naming the scale above the `const
+     pxPerFt` it names is a temporal-dead-zone ReferenceError on the first paint
+     — which in React means the whole tree unmounts and the app is a white page.
+     Nothing between this line and that one claims or lights anything, so the
+     move is a move. See that feature's README. */
 
   /* NO PLAN-SIZE BRANCHING IN THE BED PASSES, and this is the shape the whole
      thing settled into: the WHOLE SHEET goes to both detectors on every plan,
@@ -1715,69 +1688,16 @@ export default function App({
      reordering of anything. */
 
 
-  /**
-   * The layout, in the one number a lighting drawing is actually judged on.
-   *
-   * Counting fittings says nothing on its own — twelve lights in a 400 sqft hall
-   * and twelve in a 90 sqft bedroom are different jobs. Lumens per square foot
-   * is the figure that travels: 15-20 reads as comfortable ambient light for a
-   * living space, 25+ as bright. Summed over the plan and not averaged over the
-   * rooms, because a plan's brightness is its light over its area, and averaging
-   * the ratio would let a bright cupboard flatter a dim hall.
-   */
-  const totals = useMemo(() => {
-    const done = rooms.filter((r) => r.plan?.ok);
-    // PER FITTING, THROUGH THE CATALOGUE — not two counts times two constants.
-    // The counts were `stats.small` and `stats.large`, which are GEOMETRY, and
-    // the moment a room could contain a 5 W narrow lamp in a toilet or in the
-    // band outside a cove they stopped matching what is actually specified. The
-    // BOQ's own catalogue is the single place a fitting's output lives, so the
-    // headline figure and the schedule cannot drift apart.
-    const lumensOfLight = (l) =>
-      FIXTURE_BY_ID[l.fixture]?.lumens
-      ?? (l.kind === 'large' ? FITTING_LUMENS.large : FITTING_LUMENS.small);
-    const gridLumens = done.reduce(
-      (t, r) => t + r.plan.lights.reduce((u, l) => u + lumensOfLight(l), 0), 0);
-    // AND THE COVES, which are the reason this had to change: a cove can be the
-    // only ambient source in a space, and a lm/sqft figure that ignored it
-    // would report a coved living room as unlit.
-    const coveLumens = done.reduce((t, r) => t
-      + (r.coves ?? []).reduce((u, c) => u + c.coveLumens, 0), 0);
-    const lumens = gridLumens + coveLumens;
-    const areaSqft = done.reduce((s, r) => s + r.plan.stats.areaSqft, 0);
-    return {
-      rooms: done.length,
-      failed: rooms.length - done.length,
-      lights: done.reduce((s, r) => s + r.plan.lights.length, 0),
-      coves: done.reduce((t, r) => t + (r.coves?.length ?? 0), 0),
-      areaSqft, lumens, gridLumens, coveLumens,
-      perSqft: lumens / Math.max(1, areaSqft),
-    };
-  }, [rooms]);
-
-  /**
-   * THE SCHEDULE, derived like everything else here.
-   *
-   * A BOQ held in state would be a second copy of the drawing that drifts the
-   * moment a light moves — and lights move constantly: a fan is dropped, a
-   * chunking is re-picked, a strip is dragged. So it is a memo over the same
-   * sources the canvas draws from, which makes "the schedule matches the
-   * drawing" a property of the code rather than something to remember.
-   */
-  /**
-   * THE AIMED SPOTS THAT ACTUALLY LANDED, for the Result panel's count.
-   *
-   * `taskSpotsPx` carries an entry for every surface the placer was ASKED about,
-   * including the ones it turned down — those hold a `rejected` or `skipped`
-   * reason and no coordinates, so the panel can say why a dining table has no
-   * spot over it. They are not fittings and must not be counted as any.
-   */
-  const spotsPlaced = useMemo(
-    () => taskSpotsPx.filter((sp) => !sp.rejected && sp.x != null).length,
-    [taskSpotsPx]);
+  /* --- WHAT THIS PLAN ADDS UP TO ------------------------------------------
+     THE PLAN'S TOTALS, THE SPOTS THAT LANDED AND THE SCHEDULE ITSELF ARE ALL
+     features/lighting-planner/ NOW, and they are composed a little below this
+     rather than here: the analysis reads the projected tracks, modules and array
+     lamps, so it cannot stand above the call that builds them. Nothing between
+     the two points reads a total, a count or a schedule row, so the move is a
+     move. See that feature's README. */
 
   /* --- THE CEILING-GEOMETRY DOMAIN ------------------------------------------
-     THE FEATURE'S SECOND CALL SITE, AND IT SITS ABOVE `roomFixtureGroups` AND
+     THE FEATURE'S SECOND CALL SITE, AND IT SITS ABOVE THE LIGHTING ANALYSIS AND
      `placeArray` FOR THE REASON THE BLOCK IT REPLACES GAVE: both read
      `arrayOutline`, and a `useCallback` evaluates its dependency ARRAY on every
      render, so a hook naming it below its own `const` would touch the binding
@@ -1802,8 +1722,8 @@ export default function App({
 
   /* --- WHAT IS ON THE CEILING, PROJECTED -----------------------------------
      THE FITTING FEATURE'S SECOND CALL SITE, AND IT STANDS WHERE THE BLOCK IT
-     REPLACES STOOD — above `roomFixtureGroups`, which names `tracks.modulesPx`
-     and `arrays.lampsPx`, and above the BOQ, which names both again. A `useMemo`
+     REPLACES STOOD — above the lighting analysis, which names `tracks.modulesPx`
+     and `arrays.lampsPx` for its grouping and again for the schedule. A `useMemo`
      evaluates its dependency array on every render, so a reader above its own
      `const` is a temporal dead zone and a blank screen.
 
@@ -1830,379 +1750,50 @@ export default function App({
   const cobBasisFor = fixtures.cob.basisFor;
 
 
-  /**
-   * WHAT IS ON THIS CEILING, COUNTED BY FAMILY — the input to the lumen model.
-   *
-   * COUNTING IS HERE AND THE ARITHMETIC IS IN lib/lumens.js, and the split is
-   * deliberate: knowing that a zone with `kind: 'reverse-cove'` is a reverse
-   * cove is this file's business — it is the only place that knows what any of
-   * these lists are — and knowing what a reverse cove does to a room is the
-   * model's. Neither has to learn the other's vocabulary, and the model can be
-   * tested without a drawing.
-   *
-   * EVERY LINEAR RUN ON THE PLAN IS `type: 'strip'` — that is what lets the
-   * canvas, the schedule and the DXF take a cove, a reverse cove and a shelf run
-   * without any of them knowing what a cove is — so `kind` is what separates
-   * them here, exactly as it does in the BOQ.
-   *
-   * THE THREE THINGS THAT BECOME A COB. The ambient grid's downlights, the heads
-   * a track has swallowed and the directional spots are one family: a recessed
-   * lamp throwing down. They are three different products in the schedule and
-   * one distribution here, which is the distinction this file exists to make.
-   *
-   * ...AND A CHANDELIER IS A LAMP. It is the one decorative fitting this app
-   * places, it throws in every direction, and the floor/table lamp split is the
-   * only one of the six that describes that. Stated rather than left out,
-   * because a pendant contributing nothing to a room's level would read as a
-   * bug on a plan that has one.
-   */
-  const roomFixtureGroups = useCallback((r) => {
-    const g = new Map();
-    /* `key` IS THE ROW'S IDENTITY and `familyId` is what it is made of — see
-       `analyseSpace`. Two groups with the same key merge; two with different
-       keys are two rows even when they are the same family. */
-    const bump = (key, familyId, count, lengthFt) => {
-      const cur = g.get(key) ?? { key, familyId, count: 0, lengthFt: 0 };
-      cur.count += count; cur.lengthFt += lengthFt;
-      g.set(key, cur);
-    };
-    // FEET FROM PIXELS AND THE LIVE SCALE, never from a stored length — see
-    // `runMetres` in boq.js for the bug that rule exists to prevent.
-    const ft = (px) => (pxPerFt > 0 ? (px ?? 0) / pxPerFt : 0);
+  /* --- WHAT THIS PLAN ADDS UP TO, ROOM BY ROOM AND AS A SCHEDULE -----------
+     THE FEATURE'S SECOND CALL SITE, AND ITS POSITION IS LOAD-BEARING IN BOTH
+     DIRECTIONS. It reads the projected fittings above it — `tracks.modulesPx`,
+     `arrays.lampsPx` — so it cannot stand any higher; and `useFixtureCommands`
+     below it is handed `spaceAnalysis`, which the diffuser allocator runs
+     backwards, so it cannot stand any lower. A `useMemo` evaluates its
+     dependency array on every render, so a reader above its own `const` is a
+     temporal dead zone and a blank screen.
 
-    for (const z of accentZonesPx) {
-      if (z.roomId !== r.id || z.rejected) continue;
-      if (z.type === 'sconce') { bump('sconce', 'sconce', 1, 0); continue; }
-      if (z.type !== 'strip') continue;
-      const familyId = z.kind === 'cove' ? 'cove'
-        : z.kind === 'reverse-cove' ? 'reverse_cove'
-        : z.kind === 'shelf' ? 'shelf_strip'
-        // A run that is none of those is one somebody drew on the ceiling,
-        // which is the family the brief calls "LED strips on the ceiling".
-        : 'ceiling_strip';
-      /* --- ONE ROW PER RUN, AND THE RUN'S OWN ID IS THE KEY -----------------
-         A LENGTH OF TAPE IS A THING YOU SPECIFY ON ITS OWN. A bedroom's
-         perimeter cove and the drop over the bed are two runs of two different
-         lengths that a designer routinely orders at two different wattages, and
-         one row saying "Cove — 32 ft" could express neither. Every other linear
-         thing on this plan is the same: a reverse cove along one wall, a strip
-         under a shelf, a run somebody clicked out by hand.
-         COUNTED FAMILIES ARE NOT SPLIT THIS WAY, and the rule is the unit rather
-         than a list of ids: anything sold by the METRE gets a row per run, and
-         anything sold by the piece gets one row for the lot. Twelve COBs are one
-         decision about COBs; twelve rows of chips would be eleven chances for
-         two of them to disagree.
-         THE KEY IS THE ZONE'S ID, which is what a chosen wattage is stored
-         against — the same handle `accentDismissed` and `runTrims` already use,
-         and stable for the same reasons. A run that stops existing takes its
-         entry out of use; the entry simply lapses, exactly as a `lightMoves`
-         offset does when its cell is re-cut. */
-      bump(z.id, familyId, 1, ft(z.runLength));
-    }
+     IT TAKES FOUR DOMAINS THROUGH THEIR PUBLIC LISTS AND NOTHING ELSE — the
+     scene's accent runs and task surfaces, the fittings' tracks, modules and
+     array lamps, the rooms' polygons and ambient grids. Nothing in there
+     reaches into any of their private files.
 
-    /* --- THE THREE THINGS THAT USED TO BE ONE ROW --------------------------
-       The ambient grid, the spots aimed at work surfaces and the spots aimed at
-       pictures were bumped together as `cob`, on the argument that they are one
-       family: a recessed lamp throwing down. That is still true of the PHYSICS —
-       they share a distribution and the model treats them identically — and it
-       was never true of the DESIGN. They are three layers of a lighting scheme,
-       a designer specifies them separately, and now that the panel has three
-       sections a single row could only appear in one of them.
-       SO THE FAMILY STAYS ONE AND THE ROWS BECOME THREE, which is exactly the
-       split `layer` was added for: `split` is where the light goes, `layer` is
-       what it is for. See FIXTURE_FAMILIES in lumens.js.
-       AND EACH OPENS AT ITS OWN CATALOGUE WATTAGE. A spot is a 5 W lamp and the
-       grid's is 7 W — one row at one figure had to be wrong about one of them.
-       See `defaultWatts` on the group and the note in `wattsFor`. */
-    const grid = r.plan?.ok ? r.plan.lights.length : 0;
-    if (grid) bump('cob', 'cob', grid, 0);
+     NOTHING THERE HOLDS DOCUMENT STATE. The wattage overrides, the finishes, the
+     placed lamps, the arrays and the ceiling objects are read out of the stores
+     handed in; nothing is copied and nothing is written from there.
 
-    for (const sp of taskSpotsPx) {
-      if (sp.roomId !== r.id || sp.rejected || sp.x == null) continue;
-      /* WHICH SPOT IT IS, OFF THE FITTING ITSELF. `art-spot` is a 24-degree lamp
-         aimed at a picture and `spot` a 30-degree one aimed at a worktop; the
-         schedule has always billed them as two lines, and they are two LAYERS
-         for the same reason — one is what you work by, the other is what you
-         look at. */
-      const art = sp.fixture === 'art-spot';
-      bump(art ? 'art-spot' : 'spot', 'cob', 1, 0);
-      const row = g.get(art ? 'art-spot' : 'spot');
-      row.label = art ? 'Art spot' : 'Directional spot';
-      row.layer = art ? 'accent' : 'task';
-      row.defaultWatts = FIXTURE_BY_ID[art ? 'art-spot' : 'spot']?.watts ?? null;
-    }
+     `setOptionPick` IS PASSED IN because one effect in there moves the panel:
+     clicking a fitting on the drawing reveals the analysis row it is, and the
+     options pill over the chunk it stood in has to go with it. The pill is
+     App's. */
+  const { analysis: lightingAnalysis, boq: lightingBoq } = useLightingAnalysis({
+    rooms, pxPerFt, source, country, projectId,
+    accentZonesPx, taskSpotsPx,
+    magTracksPx, trackModulesPx, arrayCobsPx,
+    manualCobs, cobArrays, ceilingObjs,
+    materials, fixtureWatts, ceilingMmFor,
+    selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId,
+    docActions, setOptionPick,
+  });
+  /* THE NAMES THIS FILE ALREADY USED. Six are read by the footer, the Result
+     panel, the space detail and the schedule tab, and `spaceAnalysis` is handed
+     to the fitting commands below; every one of those bindings is App's. Taken
+     off the group rather than reached through it for the reason the geometry's
+     four setters are: several of them are named in dependency arrays, and the
+     group is a fresh object every render. */
+  const { totals, planLumens, spaceAnalysis, highlight: analysisHighlight,
+          stripRuns, spotsPlaced, troubles } = lightingAnalysis;
+  /* AND THE TWO HALVES OF THE SCHEDULE, taken off rather than reached through
+     for the reason above: `boq` is named in three dependency arrays and
+     `boqFile` in a fourth, and the group is a fresh object every render. */
+  const { table: boq, file: boqFile } = lightingBoq;
 
-    /* --- ...AND ONE ROW PER COB SOMEBODY PLACED BY HAND --------------------
-       THIS IS THE COUNTED FAMILIES' RULE BROKEN ON PURPOSE, and it is worth
-       saying why rather than leaving it to be found. The rule above is that
-       anything sold by the piece gets ONE row for the lot, because twelve COBs
-       are one decision about COBs and twelve rows of chips would be eleven
-       chances for two of them to disagree. That holds exactly as long as one
-       decision is what they are: the engine buys off the catalogue, once, for
-       every cell in the room.
-       A HAND-PLACED LAMP WAS SPECIFIED AS IT WAS PLACED. That is the whole point
-       of the bar on the drawing — you may put a 24-degree 18 W lamp over the
-       console and leave the rest of the ceiling alone — so each one is its own
-       decision, and merging them into a row would be the panel unable to show
-       the thing the tool exists to let somebody do. It is the same test the
-       linear runs pass: a thing you point at and specify on its own.
-       ITS OWN LABEL, so the numbering below does not run through the grid's row
-       as if they were a series. See `analyseSpace`.
-       AND IT CARRIES ITS OWN WATTAGE AND OPTIC rather than looking them up in
-       `fixtureWatts`: the figures are on the fitting — see `manualCobs` — which
-       is what makes them survive a room being re-gridded under them. */
-    /* --- AN ARRAY IS ONE ROW, WHATEVER ITS COUNT --------------------------
-       AND THAT IS THE OPPOSITE OF THE RULE BELOW IT, on purpose. A lamp placed
-       by hand is its own decision and gets its own row. Twelve lamps on one ring
-       are ONE decision — a geometry, a count and an offset — and they carry one
-       wattage and one optic between them, because there is only one figure for
-       them to read. So the row is the array, the quantity is how many it works
-       out to, and changing the wattage here changes all twelve at once. That is
-       not a convenience; it is what an array IS. See `cobArrays`. */
-    for (const a of cobArrays) {
-      const n = arrayCobsPx.filter((c) => c.arrayId === a.id && c.roomId === r.id).length;
-      if (!n) continue;
-      bump(a.id, 'cob', n, 0);
-      const row = g.get(a.id);
-      row.label = 'Spot array';
-      row.layer = 'ambient';
-      row.watts = clampWatts(a.watts);
-      row.wattRange = COB_WATT_RANGE;
-      row.beam = nearestBeam(a.beam);
-    }
-
-    /* --- THE MODULES ON A MAGNETIC TRACK, ONE ROW PER RUN -----------------
-       ONE ROW PER RUN AND PER KIND, which is the array's rule rather than the
-       hand-placed lamp's, and for the array's reason: four diffusers on one
-       profile are ONE decision — a run, a module, a wattage — and they carry one
-       figure between them. Two kinds on one run are two rows, because a diffuser
-       and a spot are two products doing two different jobs on the same carrier.
-
-       THE DIFFUSER IS AMBIENT AND THE SPOT IS NOT, and that is the whole point
-       of offering both. A diffuser is a lens over a linear board: its light
-       leaves a face that is already the ceiling and spreads (70% at the walls,
-       30% at the floor — the `panel` family, which has been specified in
-       lumens.js since it was written and had no tool behind it until now). A
-       spot puts a cone on the floor and is `cob`'s distribution, layered as
-       task light. So a run of four 18 W diffusers moves the two figures at the
-       top of this panel and a run of four spots barely does, which is a true
-       statement about the two products and the reason the choice matters.
-
-       THE FAMILY COMES OFF THE MODULE and not out of a table here — see
-       TRACK_MODULES in lib/magTrack.js, which is the one place a module's
-       distribution is named. */
-    /* --- ONE ROW PER MODULE, WHICH IS THE HAND-PLACED LAMP'S RULE ----------
-       IT WENT FROM ONE ROW PER RUN, TO ONE PER RUN PER WATTAGE, TO THIS. Each
-       step was forced by the one before it, and the third is where it should have
-       started: a module on a track is a thing you point at and specify on its
-       own, which is exactly the test the note below `manualCobs` sets out for
-       breaking the counted-family rule.
-
-       WHY THE FIRST TWO FAILED. One row per run assumed a run carries one
-       figure, and the corner-first allocator puts 5 W at the corners and a 10 W
-       in the middle of a rail. Grouping by wattage fixed the arithmetic and left
-       you unable to say anything about ONE of them: five diffusers on a run, four
-       of them in one row, and no way to change the wattage of a single corner or
-       to see which row the module you just dragged belongs to.
-
-       SO THE KEY IS THE FITTING'S OWN ID, and the rows are numbered by
-       `analyseSpace` — "Track diffuser 1", "Track diffuser 2" — which is what it
-       already does for any two rows sharing a label. Press a chip and it moves
-       that module and nothing else.
-
-       AND THE LAYER IS THE FAMILY'S. A diffuser is ambient and a spot is task;
-       both now have families of their own that say so (see `track_diffuser` and
-       `track_spot` in lumens.js), so this no longer decides it per module id. */
-    for (const t of magTracksPx) {
-      if (t.roomId !== r.id) continue;
-      for (const q of trackModulesPx) {
-        if (q.trackId !== t.id) continue;
-        const m = MODULE_BY_ID[q.kind];
-        if (!m?.family) continue;    // the wall washer, which has no numbers yet
-        bump(q.id, m.family, 1, 0);
-        const row = g.get(q.id);
-        row.label = `Track ${m.label.toLowerCase()}`;
-        row.watts = q.watts ?? moduleWatts(q.kind);
-        row.beam = q.beam ?? m.beam;
-      }
-    }
-
-    for (const c of manualCobs) {
-      if (c.roomId !== r.id) continue;
-      bump(c.id, 'cob', 1, 0);
-      const row = g.get(c.id);
-      row.label = 'Placed COB';
-      /* AMBIENT, like the grid it stands in. A downlight placed by hand is doing
-         the ambient layer's job in a cell the ambient grid cut — where it came
-         from is a fact about who decided, not about what it is for. */
-      row.layer = 'ambient';
-      row.watts = clampWatts(c.watts);
-      row.wattRange = COB_WATT_RANGE;
-      row.beam = nearestBeam(c.beam);
-    }
-
-    const pendants = (r.geo?.fansInRoom ?? []).filter(
-      (f) => f.kind === 'chandelier').length;
-    if (pendants) bump('lamp', 'lamp', pendants, 0);
-
-    /* IN THE TABLE'S OWN ORDER, so the rows do not reshuffle as fittings are
-       added, and within a family in the order the drawing produced them.
-       `FIXTURE_FAMILIES` is ordered the way the work happens — the surface
-       details first, the things mounted on them after. */
-    const order = new Map(FIXTURE_FAMILIES.map((f, i) => [f.id, i]));
-    return [...g.values()].sort(
-      (a, b) => (order.get(a.familyId) ?? 99) - (order.get(b.familyId) ?? 99));
-  }, [accentZonesPx, taskSpotsPx, pxPerFt, manualCobs, cobArrays, arrayCobsPx,
-      magTracksPx, trackModulesPx]);
-
-  /**
-   * IS THIS SPACE BRIGHT ENOUGH — the Analysis section of the space detail.
-   *
-   * ASKED PER SPACE, WHICH IS THE POINT. The figure in the footer is the whole
-   * plan's, and that is the right thing for a sheet and the wrong thing for a
-   * decision: you light a bedroom against a bedroom's surfaces, and a flat that
-   * averages out can hold one room a thousand lumens short.
-   *
-   * EVERY INPUT IS SOMETHING THE PANEL ABOVE THIS ONE ASKED FOR — the height,
-   * the three finishes, the wattage of each family. That is the whole design:
-   * Materials is what the room IS, and this is what that makes it, and pressing
-   * anything in the first moves the second while you watch. See lib/lumens.js
-   * for the model and for every constant it reads.
-   */
-  const spaceAnalysis = useCallback((r) => analyseSpace({
-    polygonFt: r.geo.polygonFt,
-    ceilingMm: ceilingMmFor(r.id),
-    materials: materialsOf(materials, r.id),
-    projectId,
-    // WHERE THE BUILDING IS, and it decides what a watt is worth: 75 lm/W in
-    // India against 100 elsewhere. Same prop the switchboards read, same
-    // forgiving lookup — see `lumensPerWattFor`.
-    country,
-    groups: roomFixtureGroups(r),
-    watts: fixtureWatts[r.id] ?? {},
-  }), [ceilingMmFor, materials, projectId, country, roomFixtureGroups, fixtureWatts]);
-
-  /**
-   * THE SAME READING FOR THE WHOLE PLAN — what the footer prints.
-   *
-   * A SUM OF THE ROOMS AND NOT A SECOND MODEL. Every figure here comes out of
-   * `spaceAnalysis`, one room at a time, so the line at the bottom of the screen
-   * and the panel beside it cannot come to disagree — which they would within a
-   * week if this recomputed anything.
-   */
-  const planLumens = useMemo(() => {
-    let required = 0, achieved = 0;
-    for (const r of rooms) {
-      const a = spaceAnalysis(r);
-      required += a.required; achieved += a.achieved;
-    }
-    return { required, achieved };
-  }, [rooms, spaceAnalysis]);
-
-  /**
-   * WHICH ANALYSIS ROWS THE CURRENT SELECTION IS, as row keys.
-   *
-   * THE TRANSLATION LIVES HERE BECAUSE ONLY THIS FILE KNOWS BOTH ENDS. The panel
-   * is handed rows keyed by whatever `roomFixtureGroups` decided identifies one,
-   * and that is a different kind of handle per family: a placed COB and a length
-   * of tape are each their own row, so a fitting's id IS the key; every task spot
-   * in a room is one row, so the key is the catalogue line it is billed as. A
-   * component given a fitting id could not resolve either without learning the
-   * grouping rules, which are this file's.
-   *
-   * A LIST, because more than one thing can be picked at once — a run and a spot
-   * are separate selections on this canvas and both should light up.
-   *
-   * A SELECTED SPACE IS NOT IN HERE. Opening a room is how you get the panel to
-   * be about it at all; highlighting every row in it would be the panel telling
-   * you what you just asked for.
-   */
-  const analysisHighlight = useMemo(() => {
-    const keys = [];
-    let roomId = null;
-    if (selCobId) {
-      keys.push(selCobId);
-      roomId = manualCobs.find((c) => c.id === selCobId)?.roomId ?? roomId;
-    }
-    /* AN ARRAY'S ROW IS KEYED BY THE ARRAY, which is what `roomFixtureGroups`
-       bumps it under: twelve lamps on one ring are one decision and therefore
-       one row, so clicking any of the twelve marks the row all twelve share. */
-    if (selArrayId) {
-      keys.push(selArrayId);
-      roomId = cobArrays.find((a) => a.id === selArrayId)?.roomId ?? roomId;
-    }
-    /* A MODULE'S ROW IS KEYED BY THE FITTING, exactly as a hand-placed COB's is
-       — one row per module, see `roomFixtureGroups` — so clicking one on the
-       drawing reveals the row that is about it and nothing else. */
-    if (selModuleId) {
-      keys.push(selModuleId);
-      roomId = trackModulesPx.find((q) => q.id === selModuleId)?.roomId ?? roomId;
-    }
-    /* A RUN'S ROW IS KEYED BY THE ZONE'S OWN ID — see the note in
-       `roomFixtureGroups` on why anything sold by the metre gets a row apiece —
-       except a sconce, which is counted and therefore shares one. */
-    if (selAccId) {
-      const z = accentZonesPx.find((q) => q.id === selAccId);
-      keys.push(z?.type === 'sconce' ? 'sconce' : selAccId);
-      roomId = z?.roomId ?? roomId;
-    }
-    if (selSpotId) {
-      const sp = taskSpotsPx.find((q) => q.id === selSpotId);
-      if (sp) {
-        keys.push(sp.fixture === 'art-spot' ? 'art-spot' : 'spot');
-        roomId = sp.roomId ?? roomId;
-      }
-    }
-    /* AND A GRID LIGHT LIGHTS THE GRID'S ROW. They are one row for the lot, so
-       clicking one of twelve marks the decision all twelve share — which is the
-       honest answer to "what is this fitting" for a lamp whose wattage cannot be
-       set on its own. */
-    if (selLightId) {
-      keys.push('cob');
-      /* THE ID IS `<roomId>|<cellKey>` — see where it is set on the canvas. The
-         room is the half before the bar, which is the only part this needs. */
-      roomId = String(selLightId).split('|')[0] || roomId;
-    }
-    return { keys, roomId };
-  }, [selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId,
-      manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx]);
-
-  /**
-   * CLICKING A FITTING TAKES YOU TO IT IN THE ANALYSIS.
-   *
-   * ONE EFFECT AND NOT FOUR HANDLERS, which is why `analysisHighlight` carries
-   * the room as well as the keys. A COB, a length of tape, a spot and a grid
-   * light are picked up by four different pointer handlers with four different
-   * stores behind them, and "show me what I just clicked" is one behaviour: put
-   * it in each of them and the fourth one gets forgotten, which is exactly what
-   * had already happened before this existed.
-   *
-   * IT FIRES ON THE SELECTION CHANGING AND NOT ON EVERY RENDER, so somebody who
-   * selects a lamp and then goes to read the BOQ is not dragged back to the
-   * Spaces tab a moment later. `keys` is the dependency; re-selecting the same
-   * fitting is not a change and does nothing.
-   *
-   * OPENING THE ROW AND SCROLLING TO IT IS SpaceAnalysis's HALF. This gets the
-   * right space in front of you; that panel gets the right row in front of you.
-   * The split is the same one this file makes everywhere: which space the panel
-   * is about is the editor's business, how the panel reads is the panel's.
-   */
-  const revealed = useRef('');
-  useEffect(() => {
-    const { keys, roomId } = analysisHighlight;
-    const tag = keys.join('|');
-    if (!tag) { revealed.current = ''; return; }
-    if (tag === revealed.current) return;
-    revealed.current = tag;
-    if (roomId) { docActions.setFocusId(roomId); setOptionPick(null); }
-    docActions.setView('spaces');
-  }, [analysisHighlight, docActions]);
-
-  /** ONE ROW'S WATTAGE, IN ONE ROOM — a run's own, or a counted family's. `key`
-   *  is whatever `roomFixtureGroups` said identifies the row; `familyId` is only
-   *  needed to know what its default is. A choice that lands back on that
-   *  default is stored as nothing, the rule every override in this file
-   *  follows — see `boardKinds` and the wall tones. */
   /* --- WHAT A CHUNK HAS ALREADY BEEN DECIDED TO BE -------------------------
      BOTH OF THESE ARE THE FITTING FEATURE'S NOW and both are taken off the call
      site above as `fixtures.cob.specInForce` and `fixtures.cob.basisFor`. The
@@ -2242,6 +1833,11 @@ export default function App({
   /* THE NAMES THIS FILE ALREADY USED — the panel's chips, the array bar's five
      controls, the ToolRail, the fan's sweep row and the keydown handler's nine
      Delete branches all call these, and every one of those bindings is App's. */
+  /* THE ONE NAME HERE THAT IS NOT A CALL SITE. Filling a ceiling's own grid is
+     this feature's command, and the control it sits under is the lighting
+     workflow's panel — so it is taken off here and handed STRAIGHT ON to
+     `useLightingPlanner`, which re-exposes it beside the per-space state that
+     says which ceilings are switched on. See the space detail's two props. */
   const setAutoplace = fixtureCommands.autoplace.set;
   const { place: placeArray, setSpec: setArraySpec,
           setShape: setArrayShape, remove: deleteArray } = fixtureCommands.arrays;
@@ -2256,48 +1852,6 @@ export default function App({
      taken off its session. */
   const { remove: deleteObjects, setSweep: setFanSweep } = fixtureCommands.objects;
   const resetLightMove = fixtureCommands.lights.reset;
-
-  /* THE FAMILY'S DEFAULT IS RESOLVED HERE, for the reason `materialsOf` is
-     above: FAMILY_BY_ID is the catalogue and the catalogue is not the document's
-     to know. What the action carries is the number a row at its default would
-     be, which is the whole of what the reducer needs to decide whether this
-     wattage is a decision or a restatement. */
-  const setRowWatts = useCallback(
-    (roomId, key, familyId, watts) =>
-      docActions.setRowWatts(roomId, key, watts, FAMILY_BY_ID[familyId]?.defaultWatts),
-    [docActions]);
-
-  /**
-   * RUNS OF TAPE ON THE DRAWING — coves, reverse coves, shelf strips and every
-   * run somebody set out by hand.
-   *
-   * A COUNT AND NOT METRES, which is a change of unit from what the Result
-   * panel printed and is deliberate. The footer line beside it counts LIGHTS and
-   * SPOTS, and "12 lights, 3 spots, 4.7 m of strip" mixes a quantity with a
-   * measurement in one comma list — the eye reads all three as counts and the
-   * third one is not. The metres are still on the schedule, which is where a
-   * number somebody orders against belongs.
-   */
-  const stripRuns = useMemo(
-    () => accentZonesPx.filter((a) => a.type === 'strip' && !a.rejected).length,
-    [accentZonesPx]);
-
-  const boq = useMemo(() => buildBOQ({
-    rooms,
-    accents: accentZonesPx,
-    spots: taskSpotsPx,
-    objects: ceilingObjs,
-    /* THE MAGNETIC TRACKS AND THEIR MODULES, resolved. The profile is billed by
-       the metre off the LIVE outline and the LIVE scale — never a stored length,
-       which is the rule `runMetres` exists to enforce — and each module names
-       its own catalogue line. See `magTracksPx`. */
-    magTracks: magTracksPx,
-    modules: trackModulesPx.map((m) => ({
-      roomId: m.roomId, fixture: MODULE_BY_ID[m.kind]?.fixture ?? null })),
-    pxPerFt,
-    plan: source?.name ?? null,
-  }), [rooms, accentZonesPx, taskSpotsPx, ceilingObjs, magTracksPx, trackModulesPx,
-       pxPerFt, source]);
 
   /**
    * MAY THIS EXPORT GO AHEAD — one gate, awaited by all nine export buttons.
@@ -2318,625 +1872,72 @@ export default function App({
     }
   }, [onBeforeExport]);
 
-  /** The schedule as a file. Three formats, one table — see boqExport.js. */
+  /** The schedule as a file. Three formats, one table — see boqExport.js.
+   *  THE THREE FORMATS ARE PREPARED IN features/lighting-planner/ AND ARE HANDED
+   *  OVER HERE. Naming the file, titling the sheet and encoding the table are
+   *  facts about the SCHEDULE; putting a blob in front of a person is a fact
+   *  about a BROWSER, and it is the thing the contact gate stands in front of.
+   *  So the boundary runs between the two, and the gate stays on this side. */
   const exportBOQ = useCallback(async (fmt) => {
     // GATED ONCE FOR ALL THREE FORMATS, which is the whole reason this stayed a
     // single function when the buttons were split out.
     if (!await gateExport()) return;
-    const base = (source?.name || 'plan').replace(/\.[^.]+$/, '');
-    const title = `Lighting schedule — ${base}`;
-    if (fmt === 'csv') {
-      // The BOM is what makes Excel read the file as UTF-8 rather than as the
-      // local codepage, which is the difference between 36° and 36Â°.
-      download(`${base}-boq.csv`, CSV_BOM + boqToCSV(boq), 'text/csv;charset=utf-8');
-      return;
-    }
-    if (fmt === 'xlsx') {
-      download(`${base}-boq.xlsx`, boqToXLSX(boq),
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      return;
-    }
-    download(`${base}-boq.pdf`, boqToPDF(boq, { title }), 'application/pdf');
-  }, [boq, source, gateExport]);
+    const f = boqFile(fmt);
+    download(f.name, f.data, f.mime);
+  }, [boqFile, gateExport]);
 
-  /** One line per room, and only where something actually went wrong. */
-  const troubles = useMemo(() => rooms.flatMap((r) => {
-    const name = r.outline.name || 'Space';
-    if (!r.plan) return [];
-    if (!r.plan.ok) return [{ name, msg: r.plan.reason }];
-    const st = r.plan.stats;
-    if (st.unserved > 0) return [{ name, msg: `${st.unserved} cell${st.unserved > 1 ? 's have' : ' has'} no light at all — that should not happen.` }];
-    if (st.clashes > 0) return [{ name, msg: `${st.clashes} light${st.clashes > 1 ? 's sit' : ' sits'} inside a fan's clearance or a no-light zone, because the cell has nowhere else to go.` }];
-    // A CEDED CELL IS A CELL THE OBSTACLE WON, and which obstacle matters. The
-    // message named the fan unconditionally, which was true while a fan was the
-    // only thing that could take a cell — a cove ceiling changed that, because
-    // its chunk plan carries the beds as no-light zones rather than carving them
-    // out, so a cell can now be ceded to a mattress in a room with no fan in it.
-    if (st.ceded > 0) return [{ name, msg: st.fans
-      ? `${st.ceded} cell${st.ceded > 1 ? 's are' : ' is'} left to the fan — no light fits clear of the blades.`
-      : `${st.ceded} cell${st.ceded > 1 ? 's have' : ' has'} no light — the whole middle of ${st.ceded > 1 ? 'each' : 'it'} is a no-light zone.` }];
-    if (st.outsideBand > 0) return [{ name, msg: `${st.outsideBand} light${st.outsideBand > 1 ? 's sit' : ' sits'} off its cell centre.` }];
-    return [];
-  }), [rooms]);
 
   // An image reaches the tracer with no scale yet; the tracer is where it gets
   // set, so `trace` covers "measure this plan", "correct what was found" and
   // "draw one the detector missed".
-  /**
-   * THE PIPELINE, and the loading screen is its progress.
-   *
-   * Pressing "Light the whole plan" used to be one synchronous act: mark the
-   * outlines lit and land on the layout. It now runs up to four model calls per
-   * room before the user sees anything, which is a minute on a six-room flat, so
-   * the wait needs to be both visible and worth it.
-   *
-   * WHY THE ROOMS ARE READ FROM A REF. Everything after step one needs the
-   * COMPUTED rooms — polygons, chunks, the ambient lights — and those come out
-   * of a memo that cannot run until React has re-rendered with the new litIds.
-   * An async function holding `rooms` from its own closure would hold the empty
-   * array it was created with, forever. So the ref is the live view and the
-   * pipeline waits for it to fill.
-   *
-   * NOTHING ABORTS THE WHOLE RUN. A room whose classification fails is an
-   * `other` and gets no accent pass; a room whose accent call 502s is noted and
-   * skipped. Five rooms lit and one not is a far better outcome than a spinner
-   * that gave up at room two, and every failure is on the console.
-   */
-  const roomsRef = useRef(rooms);
-  useEffect(() => { roomsRef.current = rooms; }, [rooms]);
+  /* --- THE HIGH-LEVEL LIGHTING WORKFLOW -----------------------------------
+     THE FEATURE'S THIRD CALL SITE, AND THE PUBLIC ONE. What it means to light a
+     plan: what a space is claimed for, which passes run over it and in what
+     order, what the loading screen says while they do, and what happens to a
+     room that fails. The pipeline itself — the bed passes before the layout, the
+     classifier, the accents, the task surfaces, two and three calls at a time,
+     the checklist, the cancellation and the milestone at the end — is in
+     features/lighting-planner/usePlanPipeline.js, and the ordering note that
+     used to sit at the head of this block sits at the head of that file.
 
-  // BEDS FIRST, and it is the only step whose ORDER is load-bearing.
-  //
-  // A bed is a no-light zone, a zone changes where the ambient lights go, and
-  // everything after this reads those light positions: the accent pass is shown
-  // them so it does not put a sconce under a downlight, and the task spots are
-  // placed on the grid they form. Decide the beds after the layout and every
-  // one of those is working from a layout that is about to change.
-  //
-  // So this runs before "Reading your geometry" — before the rooms are marked
-  // lit at all — and it works off the traced outlines, which is everything it
-  // needs. The layout is then computed ONCE, with the beds already in it.
-  const PREP_STEPS = useMemo(() => [
-    // The whole-plan bed pass. Its step is listed only when the superseded
-    // contested version is switched on (it is gated on `bedSets`); the live
-    // `bed-filter` call runs on upload, before there is a pipeline to show.
-    { key: 'beds', label: 'Placing the beds' },
-    { key: 'geometry', label: 'Reading your geometry' },
-    { key: 'types', label: 'Understanding space types' },
-    // AFTER the classification, because it is the classification that makes it
-    // possible: only once a space is known to be a bedroom is "no bed here" a
-    // contradiction worth spending a model call on.
-    { key: 'beds2', label: 'Checking the bedrooms' },
-    { key: 'accents', label: 'Adding accent lighting' },
-    { key: 'spots', label: 'Aiming task lights' },
-  ], []);
+     IT STANDS WHERE `runPipeline` STOOD, which is the highest point at which
+     everything it needs exists: the analysis group is built above (because
+     `useFixtureCommands`, between the two, is handed `spaceAnalysis`), the
+     recognition and room-intelligence commands are composed above that, and the
+     autoplace command is taken off the fitting commands a few lines up.
 
-  /**
-   * ONE FUNCTION FOR THE WHOLE RUN AND FOR EVERY RE-RUN.
-   *
-   * `opts` picks the steps. The tracer's button runs all three; the panels'
-   * recompute buttons run one. Which means a recompute is the SAME code as the
-   * first pass — same loader, same per-room progress, same error handling —
-   * rather than a second implementation that drifts from it. The old per-room
-   * "Find accent zones" button was exactly that second implementation, and it
-   * is gone.
-   */
-  /**
-   * ...AND `only` RUNS IT OVER A SUBSET, WHICH IS THE RELIGHT-WHAT-CHANGED PATH.
-   *
-   * An array of outline ids, or null for the whole sheet. Three things read it
-   * and they are the three things that made a partial run impossible before:
-   *
-   *   THE CLAIM. `claimSpaces` is handed the subset, so a plan where one corner
-   *   moved is charged for one space. This is what the pricing page has always
-   *   said happens.
-   *
-   *   THE WORK LIST. Every pass runs `mapLimit` over `list`, so filtering that
-   *   one array narrows the classifier, the accents and the surfaces together.
-   *
-   *   THE BED PASS, WHICH IS SKIPPED. It is one call over the WHOLE sheet — it
-   *   contests bed candidates against each other across rooms — so running it
-   *   for one room would either re-do the sheet or produce a worse answer than
-   *   the one already saved. `beds` therefore defaults to "only on a full run".
-   *
-   * AND THE MERGES MATTER MORE THAN THE FILTER. `setRoomTypes(found)` REPLACED
-   * the map, which is invisible on a full run and wipes eight rooms' types on a
-   * partial one. The accent and surface passes already merged; the classifier
-   * now does too.
-   */
-  const runPipeline = useCallback(async (opts = {}) => {
-    const { classify = true, accents = true, surfaces = true, relight = true,
-            only = null } = opts;
-    const { beds = !only } = opts;
-    if (!source || !outlines.length) return;
-    // The subset, as ids, narrowed to outlines that still exist.
-    const ids = only ? outlines.filter((o) => only.includes(o.id)).map((o) => o.id) : null;
-    if (ids && !ids.length) return;
-    const inRun = (id) => !ids || ids.includes(id);
+     IT COORDINATES THE OTHER DOMAINS THROUGH THEIR PUBLIC COMMANDS AND NOTHING
+     ELSE — `computeBedFit`, `refindBeds` and `absorbBedRows` are
+     features/recognition/'s; `computeRoomType`, `computeAccents` and
+     `computeSurfaces` are features/room-intelligence/'s. All six are handed in
+     from this file, which is where cross-domain wiring belongs.
 
-    /* THE STEP LIST AND THE ROOM STATES ARE BUILT BEFORE THE GATE, and they are
-       up here rather than below it for one reason: the loading screen needs them
-       and the loading screen now goes up first. Both are pure and cost nothing —
-       a filter over a constant and a loop over the outlines already in hand. */
-    const wanted = PREP_STEPS.filter((st) =>
-      st.key === 'beds' ? (beds && !!bedSets)
-      // The re-check needs the classification to know which spaces are bedrooms,
-      // so it is listed only when both are running.
-      : st.key === 'beds2' ? (beds && classify)
-      : st.key === 'geometry' ? relight
-      : st.key === 'types' ? classify
-      : st.key === 'accents' ? accents
-      : surfaces);
-    const roomState = {};
-    for (const o of outlines) if (inRun(o.id)) roomState[o.id] = 'idle';
-
-    /* THE LOADING SCREEN GOES UP FIRST, AND THEN THE GATE. THIS IS A REVERSAL.
-       The claim used to be the very first statement in this function, on the
-       argument that everything below it spends money and a refusal should leave
-       the tracer exactly as it was rather than show a progress dialog that dies
-       on its first step. That is still the right instinct about the REFUSAL, and
-       it is still honoured — the screen is torn down again below. What it got
-       wrong is the WAIT.
-
-       `claimSpaces` is a network round trip: the plan row has to have landed
-       (`whenRowReady`) and then the till is asked over HTTP. That is a few
-       hundred milliseconds on a warm function and a second or more on a cold
-       one, and for the whole of it the old code painted nothing at all. The user
-       had pressed the one button this screen exists for and the app looked
-       broken — no press, no spinner, no dialog, just the tracer sitting there —
-       so the honest reading of a second of silence is "it did not take the
-       click", and the honest response to that is to press it again.
-
-       IT IS NOT A FAKE STEP. Nothing in `wanted` is marked busy: every step is
-       idle, the bar is at zero, and the phase says what is actually happening,
-       which is that the spaces are being counted. The first real `paint()` below
-       is what lights step one, so the checklist never claims work that has not
-       started.
-
-       `cancelPrep` IS RESET BEFORE THE SCREEN, not after the claim. The panel
-       beside the loader offers "Stop and start over" the moment `prep` is
-       truthy, so the flag it clears has to already be live by then; and a stale
-       `true` left by a previous abandoned run would otherwise make step one bail
-       on a run that was never cancelled. */
-    cancelPrep.current = false;
-    setPrep({
-      phase: relight ? 'Checking your spaces' : 'Getting ready',
-      detail: relight ? 'Counting what this run covers' : '',
-      steps: wanted.map((st) => ({ ...st, state: 'idle' })),
-      roomState, done: 0, total: 0,
-    });
-
-    // THE GATE. Everything past it spends something: three detectors, a room
-    // classifier and an accent pass, two model calls at a time, across every
-    // space on the sheet.
-    //
-    // ONLY WHEN THE LAYOUT IS ACTUALLY BEING (RE)BUILT. `runPipeline({ relight:
-    // false })` is how the accent and surface passes are re-run over a layout
-    // that already exists — the spaces were paid for when they were lit and
-    // asking again would charge a second time for one dismissed accent.
-    //
-    // A REFUSAL PUTS THE SCREEN BACK DOWN. The paywall the claim raises is its
-    // own dialog; leaving the loader up behind it would be a progress screen for
-    // a run that is not going to happen.
-    if (relight && !await claimSpaces(ids ?? outlines.map((o) => o.id))) {
-      setPrep(null);
-      return;
-    }
-    // A room that fails is skipped, not fatal — but a silent skip is how six
-    // rooms quietly become four. Counted here and reported in the step's own
-    // note, so a partial run says it was partial.
-    const failed = { beds: 0, beds2: 0, types: 0, accents: 0, surfaces: 0 };
-    const withFails = (text, n) => (n ? `${text} · ${n} space${n > 1 ? 's' : ''} failed` : text);
-    // THE BED LIST AS IT STANDS, threaded through the run rather than read back
-    // from state. Step 0 replaces it and step 2b adds to it, and neither can see
-    // the other's setState — a React update is not visible until the next render
-    // and this function does not get one.
-    let bedsNow = detections;
-    let steps = wanted.map((st, i) => ({ ...st, state: i === 0 ? 'busy' : 'idle' }));
-    let done = 0, total = relight ? (ids ?? outlines).length : 0;
-    /* `phase` AFTER `...prev`, AND `detail` BEFORE IT. The two are spread on
-       opposite sides on purpose and the difference is which one is allowed to
-       persist.
-
-       `detail` is the sub-line, and most `paint()` calls do not pass one — a
-       room going busy, a room going done. Defaulting it ahead of `...prev` means
-       those calls keep whatever the last detail said instead of blanking the
-       line under the heading on every tick.
-
-       `phase` is the heading, and it is DERIVED: whichever step is busy. Spread
-       ahead of `...prev` (which is where it was) the derivation ran and was then
-       immediately overwritten by the previous render's value, so the heading
-       froze on the first step of the run and stayed there while the checklist
-       below it advanced — "Reading your geometry" over a plan three steps into
-       its accents. Recomputed after `...prev` it tracks `stepTo`, and `...patch`
-       still comes last so the final paint's explicit 'Ready' wins. */
-    const paint = (patch = {}) => setPrep((prev) => ({
-      detail: '', ...prev,
-      phase: steps.find((x) => x.state === 'busy')?.label ?? 'Finishing',
-      ...patch, steps: [...steps], roomState: { ...roomState },
-      done, total,
-    }));
-    const stepTo = (key) => {
-      const at = steps.findIndex((q) => q.key === key);
-      if (at < 0) return false;
-      steps = steps.map((st, i) => ({ ...st, state: i === at ? 'busy' : i < at ? 'done' : st.state }));
-      return true;
-    };
-    const note = (key, text) => {
-      steps = steps.map((st) => (st.key === key ? { ...st, note: text } : st));
-    };
-    paint({ detail: beds && bedSets ? 'Two readings of the beds' : relight ? 'Working out where the spaces are' : '' });
-
-    // --- 0. the beds, decided BEFORE anything is laid out
-    //
-    // Room by room, because that is the unit the question makes sense in: a
-    // whole-sheet A/B forces one detector to win every bedroom, and on a plan
-    // where Roboflow nails one bed and GPT nails another there is no answer that
-    // is right. Per room, each bed is judged against the other reading OF THAT
-    // BED, in the same isolated crop the accent and task passes are shown.
-    /* SKIPPED WHILE THE WHOLE-PLAN PASS IS OFF. `bedSets` is only ever set by
-       that pass, so this whole step — the sheet-wide contest between the two
-       vendors — is dormant by construction rather than by a flag. Switching the
-       pass back on brings it back with it. */
-    if (beds && bedSets) {
-      stepTo('beds');
-      const A = bedSets.roboflow || [], B = bedSets.openai || [];
-      total += outlines.length;
-      for (const o of outlines) roomState[o.id] = 'idle';
-      paint({ detail: `${A.length} from Roboflow, ${B.length} from GPT` });
-
-      // TWO AT A TIME, like the accent pass. Each contested room is a
-      // high-detail two-image call and running eight of them at once is how a
-      // rate limit turns into eight failures instead of one queue.
-      const perRoom = await mapLimit(outlines, 2, async (o) => {
-        if (cancelPrep.current) return null;
-        const region = regionFromOutline(o, pxPerFt);
-        const poly = region?.ok ? (useBoundingRect ? region.boundingRect : region.polygon) : null;
-        const a = poly ? bedsIn(A, poly) : [];
-        const b = poly ? bedsIn(B, poly) : [];
-
-        roomState[o.id] = 'busy'; paint();
-        const c = contestFor(a, b);
-        let rec = { ...c, asked: false, confidence: 0 };
-
-        if (c.ask) {
-          paint({ detail: `Two readings of ${o.name || 'a space'}` });
-          try {
-            const out = await computeBedFit(o, a, b);
-            rec = { kind: 'judged', asked: true, ...applyVerdict(a, b, out.verdict) };
-          } catch (err) {
-            // A judge that cannot be reached is not a reason to lose both
-            // answers. applyVerdict with no verdict takes the documented
-            // fallback and says it fell back, and the room is counted as failed
-            // so the step's own note admits the run was partial.
-            console.warn('[beds] the judge failed for', o.name, err);
-            failed.beds++;
-            rec = { kind: 'judged', asked: true, failed: true, ...applyVerdict(a, b, null) };
-          }
-        }
-        roomState[o.id] = 'done'; done++; paint();
-        return { id: o.id, name: o.name, a, b, rec };
-      });
-      if (cancelPrep.current) { setPrep(null); return; }
-
-      const rows = perRoom.filter((r) => r && !r.error);
-      /* THE FOLD IS features/room-intelligence/bedContest.js — one verdict per
-         space, one merged list of beds attributed to whoever won them, and the
-         boxes in no traced room kept as they always were. No call in it, which
-         is why it is not in here. */
-      const { verdicts, won } = absorbContest(rows, { a: A, b: B });
-
-      bedsNow = won;
-      docActions.setBedVerdicts(verdicts);
-      // A DISMISSAL CANNOT SURVIVE THIS. The ids it holds are the merged set's
-      // (`det-3-...`); the judged list's are the winning detector's
-      // (`det-rf-0-...`), so a kept dismissal would silently apply to nothing —
-      // a box the user struck out would come back with no way to tell that it
-      // had. Cleared, so the list on screen is the list that was decided.
-      docActions.clearDismissed();
-      docActions.replaceDetections(won);
-
-      const asked = rows.filter((r) => r.rec.asked).length;
-      const withBeds = rows.filter((r) => r.rec.kind !== 'none').length;
-      // COUNTED IN ROOMS, not over the whole list: the loose ones belong to no
-      // room and saying "4 beds in 2 rooms" when two of them are in neither is
-      // a sentence that does not add up on the screen it is printed on.
-      const inRooms = won.filter((d) => d.roomId).length;
-      note('beds', withFails(
-        `${inRooms} bed${inRooms === 1 ? '' : 's'} in ${withBeds} space${withBeds === 1 ? '' : 's'}`
-        + (asked ? ` · ${asked} judged` : ' · none needed judging'), failed.beds));
-      console.log('[beds] verdicts', verdicts);
-    }
-
-    if (relight) {
-      // Not a model call: mark everything lit so the memo produces the ambient
-      // layout the rest of this depends on. AFTER the beds, so it is computed
-      // once with their zones in it rather than once without and once with.
-      /* ONE ACT AGAIN, AND THE LIT LIST IS A UNION. On a partial relight the
-         spaces that were already lit have to STAY lit — assigning the subset
-         would blank the rest of the sheet, which is the very thing the partial
-         run exists to stop doing. `ids` null is the whole sheet, and RELIT
-         reads that off the document rather than from `outlines` here. It also
-         carries the note on why nothing is selected to begin with. */
-      docActions.relight(ids);
-      setPickingId(null);
-      stepTo('geometry');
-      paint({ detail: 'Working out where the spaces are' });
-    }
-
-    // --- 1. the ambient layout
-    let list = [];
-    for (let i = 0; i < 80 && !cancelPrep.current; i++) {
-      list = (roomsRef.current || []).filter((r) => r.plan?.ok && inRun(r.id));
-      if (list.length) break;
-      await new Promise((res) => setTimeout(res, 60));
-    }
-    if (cancelPrep.current) { setPrep(null); return; }
-    if (!list.length) {
-      // Nothing laid out at all: there is no pipeline to run and the layout
-      // screen will say why. Better to land there than to hold a loader over an
-      // explanation the user needs to read.
-      setPrep(null);
-      return;
-    }
-    if (relight) {
-      note('geometry', `${list.length} space${list.length > 1 ? 's' : ''}, `
-        + `${list.reduce((n, r) => n + r.plan.lights.length, 0)} ambient lights`);
-    }
-
-    // --- 2. classify, unless we already know
-    const shots = {};
-    let types = roomTypes;
-    if (classify) {
-      stepTo('types');
-      paint({ detail: `${PROJECT_BY_ID[projectId]?.label ?? 'Project'} — reading each space` });
-      total += list.length;
-      const found = {};
-      await mapLimit(list, 3, async (r) => {
-        if (cancelPrep.current) return null;
-        roomState[r.id] = 'busy'; paint({ detail: `Reading ${r.outline.name || 'a room'}` });
-        try {
-          const out = await computeRoomType(r);
-          // The crop is kept and reused by the next two passes. It is the same
-          // picture of the same room, and building it three times is three
-          // canvas renders and three JPEG encodes for one image.
-          shots[r.id] = out.shot;
-          found[r.id] = { type: out.type, confidence: out.confidence,
-                          why: out.why, matched: out.matched };
-        } catch (err) {
-          console.warn('[types] failed for', r.outline.name, err);
-          failed.types++;
-          found[r.id] = { type: 'other', confidence: 0, why: 'could not be read', matched: false };
-        }
-        roomState[r.id] = 'done'; done++; paint();
-        return null;
-      });
-      if (cancelPrep.current) { setPrep(null); return; }
-      // MERGED, for the reason in this function's header: `found` covers only
-      // the rooms in this run, and replacing the map would drop the type of
-      // every room that was not.
-      types = { ...roomTypes, ...found };
-      docActions.mergeRoomTypes(found);
-      const named = (r) => roomTypeIn(projectId, found[r.id]?.type)?.label ?? 'unclassified';
-      note('types', withFails(list.map((r) => named(r)).slice(0, 4).join(', ')
-        + (list.length > 4 ? `, +${list.length - 4}` : ''), failed.types));
-      console.log('[pipeline] room types', found);
-    }
-
-    // --- 2b. bedrooms with no bed in them
-    //
-    // A CONTRADICTION, NOT A RESULT. See refindBeds for why this happens on a
-    // large plan and why it matters more than any other miss: a bed is the one
-    // piece of furniture that changes the ceiling, and a missed one is a
-    // downlight over somebody's face.
-    //
-    // Gated on `classify` because the question cannot be asked without the
-    // answer to "what kind of space is this", and on `beds` so that a re-run
-    // asking only for accents does not quietly spend a model call per room.
-    if (beds && classify) {
-      // ASKING CHATGPT IS THE EXCEPTION, NOT THE ROUTINE.
-      //
-      // The whole sheet goes to the `bed-filter` workflow on upload — one call,
-      // one trained segmenter — and that is the primary path for every bed on
-      // every plan. This step exists for ONE situation: the classifier has
-      // called a space a BEDROOM and the whole-plan pass put no bed in it. A
-      // declared bedroom with no bed is a contradiction between two answers we
-      // already have, and the cheapest way to resolve it is to look at that one
-      // room, on its own, at four times the resolution.
-      //
-      // ONE CALL PER SUCH ROOM, and only such rooms. Not two samples, not a
-      // judge — see the header of refindBeds.
-      //
-      // NO PLAN-SIZE BRANCH. It used to re-ask every bedroom on a sheet over
-      // LARGE_PLAN_SQFT, on the theory that a big sheet's hits are as likely to
-      // be mis-attributed neighbours as real beds. That is two calls per bedroom
-      // spent on rooms whose answer nobody doubted, and the size of the sheet is
-      // a poor proxy for the thing actually being asked. The contradiction is
-      // the trigger; nothing else is.
-      const bedrooms = list.filter((r) => expectsBed(projectId, types[r.id]?.type));
-      const isEmpty = (r) => {
-        const poly = r.plan?.polygonPx ?? r.geo?.polygonPx;
-        return poly ? bedsIn(bedsNow, poly).length === 0 : false;
-      };
-      const empty = bedrooms.filter(isEmpty);
-
-      stepTo('beds2');
-      total += empty.length;
-      if (!empty.length) note('beds2', 'every bedroom already has a bed');
-      // `inRun` FOR THE SAME REASON THE WORK LIST IS NARROWED: a partial run
-      // must not paint a row for a space it is not touching. See the header.
-      for (const o of outlines) if (inRun(o.id)) roomState[o.id] = empty.some((r) => r.id === o.id) ? 'idle' : 'done';
-      paint({ detail: empty.length
-        ? `${empty.length} bedroom${empty.length > 1 ? 's' : ''} with no bed — looking closer`
-        : 'nothing to re-check' });
-
-      // Two at a time, like the accent pass: eight at once is how a rate limit
-      // turns into eight failures instead of one queue.
-      const rows = await mapLimit(empty, 2, async (r) => {
-        if (cancelPrep.current) return null;
-        roomState[r.id] = 'busy';
-        paint({ detail: `Looking again in ${r.outline.name || 'a bedroom'}` });
-        try {
-          const out = await refindBeds(r, { reuseShot: shots[r.id] });
-          roomState[r.id] = 'done'; done++; paint();
-          return { id: r.id, name: r.outline.name,
-                   poly: r.plan?.polygonPx ?? r.geo?.polygonPx ?? null, ...out };
-        } catch (err) {
-          console.warn('[beds] failed for', r.outline.name, err);
-          failed.beds2++;
-          roomState[r.id] = 'done'; done++; paint();
-          return null;
-        }
-      });
-      if (cancelPrep.current) { setPrep(null); return; }
-
-      // The same three rules the admin button applies — see absorbBedRows.
-      const { found, verdicts } = absorbBedRows(rows, bedsNow);
-      if (found.length) bedsNow = [...bedsNow, ...found];
-
-      const stillEmpty = empty.length
-        - rows.filter((x) => x && (x.rec.winner || []).length).length;
-      if (empty.length) {
-        note('beds2', withFails(
-          `${found.length} bed${found.length === 1 ? '' : 's'} in ${empty.length} `
-          + `bedroom${empty.length === 1 ? '' : 's'}`
-          + (stillEmpty ? ` · ${stillEmpty} still empty` : ''), failed.beds2));
-      }
-      console.log(`[beds] ${empty.length} declared bedroom(s) had no bed after the`
-        + ` whole-plan pass — asked GPT about each crop, added ${found.length}`, { verdicts });
-    }
-
-    const forAccents = list.filter((r) => wantsAccents(projectId, types[r.id]?.type));
-    const forSpots = list.filter((r) => wantsSpots(projectId, types[r.id]?.type));
-
-    // --- 3. accents, for the types entitled to them
-    if (accents) {
-      total += forAccents.length;
-      stepTo('accents');
-      if (!forAccents.length) note('accents', 'nothing in this plan takes accents');
-      paint({ detail: forAccents.length
-        ? `${forAccents.length} space${forAccents.length > 1 ? 's' : ''} qualify` : 'none' });
-      for (const o of outlines) if (inRun(o.id)) roomState[o.id] = forAccents.some((r) => r.id === o.id) ? 'idle' : 'done';
-      const got = {};
-      await mapLimit(forAccents, 2, async (r) => {
-        if (cancelPrep.current) return null;
-        roomState[r.id] = 'busy'; paint({ detail: `Accents in ${r.outline.name || 'a room'}` });
-        try {
-          // `bedsNow` AND NOT `detections`. This step runs after 2b in the same
-          // invocation, so the GPT crop's beds are in the local list but not yet
-          // in React state — a bedroom bed-filter missed would otherwise get its
-          // sconces from no bed at all. Same reason the bed list is threaded
-          // through this function rather than read back: a setState is not
-          // visible until the next render and this loop does not get one.
-          const out = await computeAccents(r, { reuseShot: shots[r.id], beds: bedsNow });
-          got[r.id] = out.result;
-        } catch (err) { console.warn('[accents] failed for', r.outline.name, err); failed.accents++; }
-        roomState[r.id] = 'done'; done++; paint();
-        return null;
-      });
-      if (cancelPrep.current) { setPrep(null); return; }
-      // A re-run REPLACES a room's fittings, so its dismissals go too — the ids
-      // are positional and would otherwise strike out whatever takes that index
-      // next.
-      docActions.dropAccentDismissals(forAccents.map((r) => r.id));
-      docActions.mergeAccentResults(got);
-      const fittings = Object.values(got)
-        .reduce((n, a) => n + a.zones.filter((z) => !z.rejected).length, 0);
-      if (forAccents.length) {
-        note('accents', withFails(`${fittings} fitting${fittings === 1 ? '' : 's'}`, failed.accents));
-      }
-    }
-
-    // --- 4. task surfaces, which is what the directional spots derive from
-    if (surfaces) {
-      total += forSpots.length;
-      stepTo('spots');
-      if (!forSpots.length) note('spots', 'nothing to aim at');
-      for (const o of outlines) if (inRun(o.id)) roomState[o.id] = forSpots.some((r) => r.id === o.id) ? 'idle' : 'done';
-      paint({ detail: forSpots.length ? 'Looking for task surfaces' : 'none' });
-      const got = {};
-      await mapLimit(forSpots, 2, async (r) => {
-        if (cancelPrep.current) return null;
-        roomState[r.id] = 'busy'; paint({ detail: `Task surfaces in ${r.outline.name || 'a room'}` });
-        try {
-          const out = await computeSurfaces(r, { reuseShot: shots[r.id] });
-          got[r.id] = out.result;
-        } catch (err) { console.warn('[surfaces] failed for', r.outline.name, err); failed.surfaces++; }
-        roomState[r.id] = 'done'; done++; paint();
-        return null;
-      });
-      if (cancelPrep.current) { setPrep(null); return; }
-      docActions.dropSurfaceDismissals(forSpots.map((r) => r.id));
-      docActions.mergeSurfaceResults(got);
-      const n = Object.values(got).reduce((acc, sr) => acc + sr.surfaces.length, 0);
-      if (forSpots.length) note('spots', withFails(`${n} surface${n === 1 ? '' : 's'}`, failed.surfaces));
-    }
-
-    const anyFailed = failed.types + failed.accents + failed.surfaces + failed.beds2;
-    steps = steps.map((st) => ({ ...st, state: 'done' }));
-    paint({ phase: anyFailed ? 'Ready, with gaps' : 'Ready',
-            detail: anyFailed
-              ? `${anyFailed} space${anyFailed > 1 ? 's' : ''} could not be read — recompute from the panel`
-              : '' });
-    // A beat on "Ready" rather than a cut. The list of what was found is worth
-    // half a second, and a loader that vanishes the instant it completes reads
-    // as a glitch.
-    await new Promise((res) => setTimeout(res, anyFailed ? 2200 : 550));
-    setPrep(null);
-    // WHAT THE RUN ANSWERED IS NO LONGER OUTSTANDING. A full run clears the list
-    // outright; a partial one clears only the ids it was given, so a space
-    // somebody moved WHILE this was running stays marked and is still offered.
-    if (relight) docActions.clearDirty(ids);
-    // ...AND THE TRACER GETS OUT OF THE WAY. A relight is the act of leaving the
-    // outlines, so finishing one lands on the drawing it just built rather than
-    // back on the screen the user pressed the button from.
-    /* ...AND ON THE SPACES TAB, WHICH USED TO BE Design. Finishing a run means
-       the spaces have been taken up; what somebody does next is go into one and
-       say how high it is and what it is finished in — see AUTO_GRID. Design is
-       the tab with nothing on it until a tool has been used. */
-    if (relight) { setOutlinesOpen(false); docActions.setView('spaces'); }
-    /* AND THE DESIGN SCREEN INTRODUCES ITSELF WHEN IT ARRIVES — but nothing
-       about that is arranged here. The run used to raise the flag itself, which
-       made a hint about the ceiling a property of HOW you got to the design
-       rather than of being on it: a reload of the same plan, or "Back to the
-       design" from the outlines, landed on the identical screen and said
-       nothing. It is a fact about arriving, so it is watched for where arriving
-       can be seen — see `landed` and the effect that raises it. */
-    // A DESIGN NOW EXISTS. This is the moment worth a snapshot and a row in the
-    // revision trail — the beat above is also what makes it safe, since React
-    // has re-rendered by now and the milestone reads the finished state rather
-    // than the state as it was when this function was called.
-    milestone.current?.('design');
-  }, [source, outlines, projectId, roomTypes, PREP_STEPS, pxPerFt, useBoundingRect,
-      bedSets, detections, computeBedFit, computeRoomType, computeAccents, computeSurfaces,
-      refindBeds, absorbBedRows, planAreaSqft, claimSpaces, docActions]);
-
-  /** Stop the run where it is and land on whatever finished. */
-  const stopPipeline = useCallback(() => {
-    cancelPrep.current = true;
-    setPrep(null);
-  }, []);
-
-  /**
-   * The shapes the loader draws.
-   *
-   * Taken from the OUTLINES rather than from the computed rooms, so the loader
-   * has something to draw the instant it opens — the layout it is waiting for
-   * does not exist yet, and a loading screen that starts empty and fills in is
-   * the thing it exists to avoid.
-   */
-  const loaderRooms = useMemo(() => outlinesPx.map((o) => {
-    const b = bbox(o.pointsPx);
-    return {
-      id: o.id,
-      points: o.pointsPx,
-      centre: { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 },
-      label: roomTypes[o.id]
-        ? (roomTypeIn(projectId, roomTypes[o.id].type)?.label ?? null)
-        : (o.name || null),
-      state: prep?.roomState?.[o.id] ?? 'idle',
-    };
-  }), [outlinesPx, prep, roomTypes, projectId]);
+     AND `usePlanDoc` REMAINS THE ONE DOCUMENT BOUNDARY. Every answer the run
+     produces is written through `docActions`; the only thing the feature holds
+     is the run's own screen, which is the first call site above. */
+  const lighting = useLightingPlanner({
+    run: lightingRun,
+    analysis: lightingAnalysis, boq: lightingBoq,
+    source, outlines, outlinesPx, rooms, pxPerFt, projectId, useBoundingRect,
+    planAreaSqft,
+    roomTypes, detections, autoSpots, docActions,
+    bedSets, computeBedFit, refindBeds, absorbBedRows,
+    computeRoomType, computeAccents, computeSurfaces,
+    setAutoplace,
+    readOnly, onClaimLayout, setPickingId, setOutlinesOpen, hideCoach, milestone,
+  });
+  /* THE NAMES THIS FILE ALREADY USED — the tracer's two buttons, the loading
+     screen, the panel's Stop, the recompute buttons, the space detail's wattage
+     rows and the chunk pill's arrows all call these, and every one of those
+     bindings is App's. */
+  /* `claim` IS NOT TAKEN OFF HERE and used to be a `const` in this file. Its
+     four call sites were the tracer's two buttons and the pipeline, and all
+     three of those are inside the feature now — so the gate is reached through
+     the two acts below it rather than by hand, which is the point of it. */
+  const { lightWholePlan, lightOneRoom,
+          run: runPipeline, stop: stopPipeline,
+          setRowWatts, cycleChunkOption } = lighting.commands;
+  const loaderRooms = lighting.pipeline.loaderRooms;
 
   /* `outlinesOpen` IS THE FLAG THAT USED NOT TO EXIST — see its declaration.
      `!litIds.length` stays alongside it and is not redundant: a plan with
@@ -4389,44 +3390,10 @@ export default function App({
   }, [docActions, focusId, optionPickFor, hideCoach, geometry.status.menuOn, boardPlace, zoneEdit,
       openShapeTool, setMaterialsEdit]);
 
-  /**
-   * FLIP ONE CHUNK THROUGH ITS OPTIONS.
-   *
-   * THE CURRENT ANSWER IS READ OFF THE LAYOUT, not out of `designPicks`, and
-   * that is what makes the legacy path and the "standard costs no state" rule
-   * agree with each other. `designChunksPx` says what each chunk ACTUALLY got —
-   * including a cove that came from the old room-level switch and a pick that
-   * was dropped because the chunk it named no longer exists — so writing the
-   * whole space back from it retires the legacy entry, keeps every other chunk
-   * exactly as it is, and still stores nothing for a standard ceiling.
-   */
-  const cycleChunkOption = useCallback((roomId, key, dir = 1) => {
-    // THE ARROW WAS PRESSED, SO THE CARD HAS DONE ITS JOB — and it goes now
-    // rather than on the second press, because the first flip is the moment the
-    // chip stops being a label and starts being a control.
-    hideCoach();
-    const room = rooms.find((r) => r.id === roomId);
-    const chunk = room?.designChunksPx?.find((d) => d.key === key);
-    if (!chunk || (chunk.options?.length ?? 0) < 2) return;
-    /* THE STEP ITSELF IS IN ceilingDesign.js, and it is there rather than here
-       because it was wrong for as long as it lived in this handler and nothing
-       could catch it: the symptom was "the right arrow never reaches the track,
-       the left one does", which no test of a LAYOUT would ever see. See
-       `nextChunkOption` for the two lists and why it steps from what was asked
-       for rather than from what got built. */
-    const next = nextChunkOption(chunk, dir);
-    if (!next) return;
-    const base = {};
-    // EVERY OTHER CHUNK KEEPS WHAT IT ASKED FOR, not what it got. Reading `pick`
-    // here dropped a neighbour's declined request the moment anybody flipped a
-    // different chunk — invisible on the drawing, and a decision quietly lost.
-    for (const d of room.designChunksPx) {
-      const want = d.requested ?? d.pick;
-      if (d.key !== key && want !== 'standard') base[d.key] = want;
-    }
-    if (next === 'standard') delete base[key]; else base[key] = next;
-    docActions.setDesignPick(roomId, base);
-  }, [docActions, rooms, hideCoach]);
+  /* FLIPPING ONE CHUNK THROUGH ITS OPTIONS IS features/lighting-planner/ —
+     `cycleChunkOption`, taken off `lighting.commands` above. The arithmetic is
+     `chunkOptionPicks`, which is pure and carries the argument for reading the
+     current answer off the LAYOUT rather than out of `designPicks`. */
 
   const onCanvasClick = (e) => {
     // Ceiling objects are handled entirely in the pointer events — see the note
@@ -5527,9 +4494,11 @@ export default function App({
   /**
    * The expensive save, reachable from anywhere in this component without
    * threading twelve values through a callback. Kept in a ref for the same
-   * reason as `live`: runPipeline is async and captures its closure early.
+   * reason as `live`: the pipeline is async and captures its closure early.
+   * THE REF IS DECLARED WITH THE OTHER LATEST-VALUES REFS at the top of this
+   * component — see the note there. Only the assignment is here, where the
+   * values it closes over exist.
    */
-  const milestone = useRef(null);
   milestone.current = (kind) => {
     if (!onMilestone) return;
     onMilestone(kind, { editorState, stats, status, getDesign, getSnapshot });
@@ -7776,9 +6745,9 @@ export default function App({
               /* THE AMBIENT GRID, FILLED OR NOT. Per space, because it is a
                  decision about one ceiling: a flat can have its bedrooms laid
                  out automatically and its living room by hand. */
-              autoplace={autoSpots.includes(openRoom.id)}
+              autoplace={lighting.status.autoplaceIn(openRoom.id)}
               onAutoplace={readOnly ? null
-                : (on) => setAutoplace(openRoom.id, on)} />
+                : (on) => lighting.commands.setAutoplace(openRoom.id, on)} />
           ) : (
             <div className={SEC}>
               {/* --- THE HEADING CARRIES THE WAY BACK TO THE TRACER -------
