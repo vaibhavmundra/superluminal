@@ -3065,14 +3065,34 @@ export default function App({
   }, 'pen');
 
   /* --- 2. CLIPPING A LIGHT ONTO A TRACK -------------------------------------
-     The module is armed, the bar at the foot of the drawing is showing the watts
-     and the optic the next press will spend, and the run is waiting. That is a
-     flow somebody is halfway through rather than a tool they picked up by
-     mistake, and Escape does not end it — the drawer's own latched cell does.
-     NOTHING TO CLEAR, so the claim carries no handler; what it does is stop the
-     stand-down, which is the whole point of claiming. */
+     TWO PRESSES, TWO SIZES OF EXIT, because arming a module is TWO decisions
+     stacked and not one: "I am filling this run" and "with a 12 W spot". One
+     press that undid both would charge somebody who changed their mind about
+     the WATTAGE the drawer, the run they had pressed and the trip back to the
+     rail — and one press that undid NEITHER, which is what this claim used to
+     be, left the key dead in the one flow people hold longest.
+
+       FIRST PRESS   the light type goes, the command stays. The drawer is still
+                     open beside the rail with no cell latched, so the next kind
+                     is one press away.
+       SECOND PRESS  nothing is armed, so this claim is no longer standing and
+                     the key falls through to `standDown` — the whole command,
+                     the same exit as everywhere else.
+
+     THE CLAIM IS ITS OWN LADDER AND NEEDS NO COUNTER. What registers it is
+     `trackMode` and what the handler clears is `trackMode`, so the release runs
+     on the very next render and the second press finds an empty stack. A
+     press-count beside it would be a second piece of state saying what the
+     first already says, and one more thing to reset.
+
+     THE RUNG BETWEEN THEM IS A STATE THAT ALREADY EXISTED. `moduleDown` gates
+     on `!trackMode` and places nothing; `moduleBarOn` reads `moduleSpec`, so
+     the specification bar comes off with the arming rather than lingering over
+     a module nobody is holding; and the plus over a run is deliberate there
+     whether or not a module is armed — see the cursor's own note. Nothing new
+     is being invented for the middle press to land in. */
   const placingTrackLight = addTool === 'module' && !!trackMode;
-  useEscapeClaim(placingTrackLight, () => {}, 'track-module');
+  useEscapeClaim(placingTrackLight, () => fixtureReset.module(), 'track-module');
 
   /* --- 3. TRACING THE SPACE OUTLINES ---------------------------------------
      Claimed by OutlineTracer itself, because the draft it throws away is that
