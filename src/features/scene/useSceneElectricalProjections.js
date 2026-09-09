@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { projectAllBoardsPx, projectFlowsPx, projectSwitchboardsPx } from '../../lib/electricalProjection.js';
 export function useSceneElectricalProjections({
   rooms, boardsFor, bayBoardsFor, placedBoardsFor, bayResults, obstaclesPx, accentZonesPx,
-  taskSpotsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends, layers, doorEdit
+  taskSpotsPx, lampsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends, layers, doorEdit
 }) {
   /**
    * SB1, SB2, SB3 — every plate on the job, numbered.
@@ -60,8 +60,8 @@ export function useSceneElectricalProjections({
    * well as the drawing, and a memo that only runs while something is visible is
    * a memo that recomputes the moment somebody looks at it.
    */
-  const flowsPx = useMemo(() => projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx, outdoorFeeds, pxPerFt, baysOf, allBoardsPx, placedBoardsFor, flowBoards, flowBends), [rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx,
-      outdoorFeeds, pxPerFt, baysOf, allBoardsPx, placedBoardsFor, flowBoards, flowBends]);
+  const flowsPx = useMemo(() => projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx, outdoorFeeds, pxPerFt, baysOf, allBoardsPx, placedBoardsFor, flowBoards, flowBends, lampsPx), [rooms, boardsFor, bayBoardsFor, bayResults, obstaclesPx, accentZonesPx, taskSpotsPx,
+      outdoorFeeds, pxPerFt, baysOf, allBoardsPx, placedBoardsFor, flowBoards, flowBends, lampsPx]);
 
   const switchboardsPx = useMemo(() => projectSwitchboardsPx(rooms, boardsFor, bayBoardsFor, placedBoardsFor, boardNames, layers.electrical, doorEdit, pxPerFt), [rooms, boardsFor, bayBoardsFor, placedBoardsFor, boardNames,
       layers.electrical, doorEdit, pxPerFt]);

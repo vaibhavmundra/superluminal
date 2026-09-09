@@ -346,6 +346,26 @@ console.log('\n-- the bedsides, and the plate under each of them --');
     boards: live, owner: cb.owner, pxPerFt: PPF,
   });
   ok(!f2.find((f) => f.kind === 'object').also, 'a chandelier gets one point');
+
+  /* --- AND A PENDANT IS WIRED LIKE ONE AND NAMED LIKE ITSELF ---------------
+     A PENDANT CARRIES `kind: 'chandelier'` ON PURPOSE — see ceilingObjects.js —
+     which is what gets it onto the lighting circuit at all. The trap is that the
+     gate and the NAME used to be the same lookup, so it would have been wired
+     correctly and then written onto the schedule as a chandelier. The `typeId`
+     is what tells them apart. */
+  const { flows: f3 } = planFlows({
+    room, bays,
+    chunks: res.chunks.map((ch) => ({ ...rp(ch),
+      xLines: ch.xLines.map((v) => v * PPF), yLines: ch.yLines.map((v) => v * PPF) })),
+    cells: res.cells.map(rp), lights: res.lights.map((l) => ({ ...l, ...toPx(l) })),
+    zones: [rp(bed)], accents: sconces,
+    objects: [{ id: 'pd1', kind: 'chandelier', typeId: 'pendant', ...toPx({ x: 9, y: 13 }) }],
+    boards: live, owner: cb.owner, pxPerFt: PPF,
+  });
+  const pd = f3.find((f) => f.kind === 'object');
+  ok(!!pd, 'a pendant is on the lighting circuit, because the gate is the kind');
+  ok(pd?.label === 'Pendant', `and it is called a pendant, not a chandelier (got ${pd?.label})`);
+  ok(/^pendant —/.test(pd?.what ?? ''), 'the sentence under it follows the label');
 }
 
 console.log('\n-- a bay plate steps clear of a dedicated one --');
@@ -1117,6 +1137,100 @@ console.log('\n-- a dragged plate moves the wire and NOT the switching --');
     `a bay plate follows the drag as well (got ${bm?.hand.point.x}, ${bm?.hand.point.y})`);
   ok(bayMoved.owner.get('R') === settled.owner.get('R'),
     'and its bay still runs off it');
+}
+
+console.log('\n-- a lamp a hand placed is a downlight in its cell\'s row --');
+{
+  /* THE SAME ROOM AND THE SAME POSITIONS, HANDED IN TWICE. Once as the
+     planner's own answer, once as lamps somebody put there — stripped to
+     `{id, x, y}`, so the cell each one is seated in is doing all the work. The
+     claim is that the second is grouped exactly like the first: the grid is the
+     formation whether the fitting came off it or was dropped onto it, and where
+     a lamp came from is not a question the wiring asks. */
+  const g = lay([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }]);
+  const auto = wire(g).flows.filter((f) => f.kind === 'row');
+  const lamps = g.lights.map((l, i) => ({ id: `cob-${i}`, roomId: 'r1', x: l.x, y: l.y }));
+  const hand = wire({ ...g, lights: [] }, { lamps }).flows.filter((f) => f.kind === 'row');
+
+  ok(auto.length === 2 && hand.length === 2,
+    `hand-placed lamps come out as the same two rows (got ${hand.length})`);
+  ok(hand.every((f) => f.count === 4), 'four lamps on each');
+  ok(hand.map((f) => f.id).join() === auto.map((f) => f.id).join(),
+    'with the same ids — the same chunks, the same row numbers, so a stored'
+    + ' override still names the wire it was dragged onto');
+  ok(hand.every((f) => new Set(f.nodes.map((n) => n.y.toFixed(3))).size === 1),
+    'and each row still runs along the length rather than across it');
+  ok(hand.every((f) => f.boardId), 'every one of them reaches a plate');
+  ok(hand.every((f) => f.nodes.every((n) => n.what === 'a downlight')),
+    'and each is called a downlight, which is what it is');
+
+  // NOT CLUSTERED BY DISTANCE, which is the rule this is not. The lamps in one
+  // row are about seven feet apart and the rows about six, so a 6 ft
+  // single-link cluster would chain some or all of the eight into one flow.
+  // Two rows of four is the answer; one switch for the room is not.
+  ok(!hand.some((f) => f.count === 8), 'and the ceiling is not one flow of eight');
+}
+
+console.log('\n-- a lamp standing on no cell falls back to proximity --');
+{
+  /* 16 x 14 ft WITH A BED IN IT, which is how a real ceiling comes to have a
+     patch with no grid on it: the bed is a no-light zone, so the chunker cuts
+     round it and there are no cells over the mattress at all. A hand can still
+     drop a lamp there — nothing stops it, and the ceiling over a bed is often
+     the only place the wall behind it can be lit from — so that lamp has no row
+     to be in and has to be switched some other way. */
+  const g = lay([{ x: 0, y: 0 }, { x: 16, y: 0 }, { x: 16, y: 14 }, { x: 0, y: 14 }],
+    { zones: [{ x0: 5, y0: 0, x1: 11, y1: 7, cls: 'bed' }] });
+  const off = (x, y, id) => ({ id, roomId: 'r1', x: x * PPF, y: y * PPF });
+  const onGrid = (p) => g.cells.some((c) => p.x >= c.x0 && p.x <= c.x1
+                                         && p.y >= c.y0 && p.y <= c.y1);
+
+  // TWO OVER THE BED WITHIN REACH OF EACH OTHER, ONE OVER IT BEYOND REACH, and
+  // a fourth out on the ordinary ceiling to prove the two rules do not mix.
+  const a = off(5.5, 0.5, 'cob-a'), b = off(6.5, 1.5, 'cob-b');
+  const c = off(10.5, 6.5, 'cob-c'), d = off(2, 3, 'cob-d');
+  ok(![a, b, c].some(onGrid) && onGrid(d),
+    'the three over the bed stand on no cell; the fourth stands on one');
+
+  const { flows, notes } = wire({ ...g, lights: [] }, { lamps: [a, b, c, d] });
+  const stray = flows.filter((f) => f.kind === 'lamps');
+  ok(stray.length === 2, `two clusters over the bed, so two flows (got ${stray.length})`);
+  ok(stray.some((f) => f.count === 2) && stray.some((f) => f.count === 1),
+    'the pair within 6 ft is one switch and the far one is its own');
+  ok(stray.every((f) => f.boardId), 'and both reach a plate');
+  ok(!notes.some((n) => n.includes('belongs to no chunk')),
+    'none of them was silently dropped with a note');
+
+  /* AND THE ONE ON THE GRID IS ROWED, not clustered — even though it is 5.1 ft
+     from `a` and would have joined that cluster on distance alone. Seating
+     comes first, which is the whole order of the rule. */
+  const rows = flows.filter((f) => f.kind === 'row');
+  ok(rows.length === 1 && rows[0].count === 1,
+    `the lamp on a cell is a row of its own (got ${rows.length} rows)`);
+  ok(!stray.some((f) => f.nodes.some((n) => n.id === 'cob-d')),
+    'and it is not in either cluster, though it is within reach of one');
+
+  // A ROOM THE CHUNKER CUT AND A ROOM IT DID NOT ARE THE SAME RULE. With no
+  // grid at all every lamp is a stray, and the pair is still one switch.
+  const bare = planFlows({ room: g.room, bays: g.bays, pxPerFt: PPF,
+                           lamps: [a, b, c] });
+  ok(bare.flows.filter((f) => f.kind === 'lamps').length === 2,
+    'with no grid at all, the same two clusters');
+}
+
+console.log('\n-- and the lamps are counted as modules on the plate --');
+{
+  const g = lay([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }]);
+  const lamps = g.lights.map((l, i) => ({ id: `cob-${i}`, roomId: 'r1', x: l.x, y: l.y }));
+  const { flows } = wire({ ...g, lights: [] }, { lamps });
+  const boardId = flows[0]?.boardId;
+  const units = pointsFromFlows(COUNTRIES.IN, flows, boardId);
+  ok(units.length === flows.filter((f) => f.boardId === boardId).length,
+    `one switch module per flow on that plate (got ${units.length})`);
+  ok(units.every((u) => u.kind === 'switch'), 'and every one of them is a switch');
+  ok(flowSummary(flows).fittings === lamps.length,
+    `every lamp on the ceiling is on a flow (got ${flowSummary(flows).fittings}`
+    + ` of ${lamps.length})`);
 }
 
 console.log('\n-- nothing at all --');

@@ -40,7 +40,7 @@ import { useBoardGestures } from './useBoardGestures.js';
 
 export function useElectrical({
   // --- the scene ---------------------------------------------------------
-  rooms, pxPerFt, obstaclesPx, wardrobesPx, accentZonesPx, taskSpotsPx,
+  rooms, pxPerFt, obstaclesPx, wardrobesPx, accentZonesPx, taskSpotsPx, lampsPx,
   // --- room intelligence and the drawing's own facts ----------------------
   roomTypes, doors, projectId, country, layers, doorEdit,
   // --- the shared selection service ---------------------------------------
@@ -68,7 +68,7 @@ export function useElectrical({
   const { projections: { allBoardsPx, flowsPx, switchboardsPx, boardNames } } =
     useSceneElectricalProjections({
       rooms, boardsFor, bayBoardsFor, placedBoardsFor, bayResults, obstaclesPx, accentZonesPx,
-      taskSpotsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends, layers, doorEdit
+      taskSpotsPx, lampsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends, layers, doorEdit
     });
 
   const panel = useBoardPanel({

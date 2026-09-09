@@ -116,7 +116,14 @@ Inputs: `state`, `geometry` (call 2), `docActions`, `ceilingShapes`,
 
 Inputs: `state`, `commands`, `geometry`, `rooms`, `pxPerFt`, `ceilingShapes`,
 `roomAt`, `svgPoint`, `svgRef`, `pressState`, `addTool`, `docActions`, `setSel`,
-`setGuides`, `snapTargets`, `snapTol`.
+`setGuides`, `snapTargets`, `snapTol`, `onTrackPress`.
+
+`onTrackPress` is handed in for the reason `setSel` is. A press on a MAGNETIC
+TRACK opens the module drawer beside the rail cell, and that drawer is the
+fitting session's (`trackAdd` — see features/fixtures) — the press belongs to
+this file and the thing it opens does not. `shapePointerDown` calls it with the
+id when the shape pressed is a run and with `null` for anything else, so
+pressing a cove closes the drawer without either side having to know that.
 
 | Member | What it is |
 | --- | --- |

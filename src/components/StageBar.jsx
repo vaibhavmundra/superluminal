@@ -77,6 +77,41 @@ export const SCENE = 'flex items-center h-9 px-2.5 rounded-[7px] border-0 '
   + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] '
   + 'focus-visible:outline-black/40';
 
+/* --- A SCENE THAT IS A STATE RATHER THAN A DESTINATION ---------------------
+   THE OTHER TAIL BUTTONS LEAVE and this one does not: the wiring is drawn over
+   the layout you are already looking at, so the honest picture of it is a
+   switch that is visibly on or off, not a word you press and then have to look
+   at the drawing to find out what happened.
+
+   THE STATE IS WRITTEN INSIDE THE TRACK, opposite the knob. A capsule with a
+   knob and no word is a control you read by remembering which side means on;
+   ON and OFF in the track say it outright, in the space the knob is not using,
+   without a caption beside the bar. */
+export function SceneSwitch({ label, on = false, title = null, onClick }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} title={title ?? undefined}
+      className={`${SCENE} gap-2`} onClick={onClick}>
+      {label}
+      <span aria-hidden="true"
+        className={'relative flex-none block w-[46px] h-[20px] rounded-full '
+          + 'transition-colors duration-150 '
+          + (on ? 'bg-black' : 'bg-black/[0.13]')}>
+        <span className={'absolute top-1/2 -translate-y-1/2 text-[9px] leading-none '
+          + 'font-semibold tracking-[0.08em] '
+          + (on ? 'left-[7.5px] text-white' : 'right-[6.5px] text-black/55')}>
+          {on ? 'ON' : 'OFF'}
+        </span>
+        {/* `left` AND NOT A TRANSFORM, because the knob is inside a box that is
+            already translating its own label vertically; two transforms on one
+            capsule is one of them being overwritten. */}
+        <span className={'absolute top-[3px] w-[14px] h-[14px] rounded-full bg-white '
+          + 'shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-[left] duration-150 '
+          + (on ? 'left-[29px]' : 'left-[3px]')} />
+      </span>
+    </button>
+  );
+}
+
 /**
  * `stage` is the scroll container to centre on. `tail` is drawn at the right
  * end after a rule, separated from `children` because it is the part that is
@@ -89,8 +124,16 @@ export default function StageBar({ stage, className = '', label = null,
 
   return (
     <div
-      className={'fixed z-30 flex items-center gap-0.5 rounded-[11px] bg-white '
-        + 'border border-black/[0.10] shadow-[0_6px_24px_rgba(0,0,0,0.22)] '
+      /* --- ONE ROW, WHATEVER IS IN IT -----------------------------------
+         `flex-nowrap` IS STATED RATHER THAN LEFT TO THE DEFAULT, because it is
+         a rule about this bar and not an accident of flexbox: a contextual bar
+         that wraps is a bar whose buttons move to a different line as you use
+         it — the tick you were about to press is suddenly under the wattage
+         slider — and the position people have learned is the CENTRE of one row.
+         The downlight bar carried `flex-wrap` and a 92vw cap for exactly the
+         case this forbids; it grows sideways now. */
+      className={'fixed z-30 flex flex-nowrap items-center gap-0.5 rounded-[11px] '
+        + 'bg-white border border-black/[0.10] shadow-[0_6px_24px_rgba(0,0,0,0.22)] '
         + 'px-1.5 py-1.5 ' + className}
       style={{ left: (box.left + box.right) / 2,
                bottom: Math.max(12, window.innerHeight - box.bottom + BOTTOM),

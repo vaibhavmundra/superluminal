@@ -149,11 +149,12 @@ export default function CobSpec({
   const editing = !!array?.editing;
 
   return (
-    /* `flex-wrap` AND A WIDTH CAP, which is this bar's own and not the shell's:
-       it carries a count, a side, a distance, a wattage and eight optics, and on
-       a narrow window that is more than one row. The shape bar never needs it. */
-    <StageBar stage={stage} tail={tail} label="Downlight"
-      className="flex-wrap gap-y-1 max-w-[92vw]">
+    /* IT CARRIED `flex-wrap` AND A 92vw CAP, AND BOTH ARE GONE. This is the
+       longest bar in the app — a count, a side, a distance, a wattage and eight
+       optics — so it was the one that hit the cap and split, and a contextual
+       bar in two rows is a bar whose buttons move under your finger as you use
+       it. It grows sideways instead; see the note on `flex-nowrap` in StageBar. */
+    <StageBar stage={stage} tail={tail} label="Downlight">
 
       {/* --- WHAT THE ARRAY IS BEING SET OUT ON, AND HOW ------------------
           AHEAD OF THE SPECIFICATION, because it is the question that comes

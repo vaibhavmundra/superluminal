@@ -24,7 +24,7 @@ export function projectAllBoardsPx(rooms, boardsFor, bayBoardsFor, placedBoardsF
 /** Project the room's fittings into switched circuit paths. */
 export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
   obstaclesPx, accentZonesPx, taskSpotsPx, outdoorFeeds, pxPerFt, baysOf,
-  allBoardsPx, placedBoardsFor, flowBoards, flowBends) {
+  allBoardsPx, placedBoardsFor, flowBoards, flowBends, lampsPx = []) {
     const out = [];
     if (!(pxPerFt > 0)) return out;
     for (const r of rooms) {
@@ -65,9 +65,33 @@ export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
       const { flows } = planFlows({
         room: { id: r.id, polygonPx: r.plan.polygonPx },
         bays,
-        chunks: r.plan.chunksPx ?? [],
-        cells: r.plan.cellsPx ?? [],
+        /* THE CHUNKER'S OWN CUT AND ITS CELLS, WHICH IS NOT THE SAME LIST AS
+           `chunksPx`/`cellsPx` WHILE THE FITTINGS ARE SWITCHED OFF.
+           They are identical whenever `AUTO_GRID` is on — `gridChunks` is
+           captured out of the very same `res.chunks` before the blanking runs,
+           so this changes nothing about a plan the grid laid out itself. What it
+           changes is the case that matters now: with the fittings off, the
+           visible lists are empty and the private ones still hold the cut, and
+           the cut is what a hand-placed lamp is seated in. Handing in the empty
+           pair meant every lamp on the drawing was a lamp in no cell and no
+           chunk, which is why the rows never ran.
+           SEE THE NOTE ON `gridChunksPx` IN layout.js: these are deliberately
+           NOT put back into `plan` in place of the visible lists, because
+           everything else downstream of those is COUNTING what stands in them
+           and would start reporting a layout that is not on the sheet. Reading
+           them here is the reader that note anticipates — this pass counts
+           nothing and places nothing; it asks which row a fitting is in. */
+        chunks: r.plan.gridChunksPx ?? r.plan.chunksPx ?? [],
+        cells: r.plan.gridCellsPx ?? r.plan.cellsPx ?? [],
         lights: r.plan.lightsPx ?? [],
+        /* AND THE LAMPS SOMEBODY PUT THERE THEMSELVES. See `lamps` in flows.js
+           for what is in this list and why it arrives separately from `lights`.
+           FILTERED BY `roomId` LIKE THE SPOTS ABOVE, and every lamp on the
+           drawing carries one: a hand-placed COB is stamped with the space it
+           was dropped in, and an array's lamps take theirs from the array or
+           from the geometry it was set out on. A lamp with no room is a lamp on
+           no ceiling and matches nothing, which is the right answer for it. */
+        lamps: lampsPx.filter((c) => c.roomId === r.id),
         objects: obstaclesPx.filter((f) => pointInPolygon({ x: f.x, y: f.y }, r.plan.polygonPx)),
         accents: accentZonesPx.filter((a) => a.roomId === r.id),
         spots: taskSpotsPx.filter((sp) => sp.roomId === r.id),

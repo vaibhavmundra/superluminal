@@ -112,7 +112,7 @@ export const TRACK_MODULES = [
      the THROW rather than the body: a diffuser washes the whole width under it,
      a spot drops a cone, a washer throws sideways at a wall. Three renders of
      one extrusion, differing in the one thing that matters. */
-  { id: 'diffuser', label: 'Diffuser', icon: '/icons/track_ambient.png',
+  { id: 'diffuser', label: 'Diffuser', icon: '/icons/new_icons/track_diffuser.png',
     title: 'Track diffuser — a linear ambient module',
     /* ITS OWN FAMILY AND NOT `panel`'s. The two share a distribution and nothing
        else — see the note on `track_diffuser` in lumens.js — and sharing the
@@ -139,7 +139,7 @@ export const TRACK_MODULES = [
        solves for a wattage against the room. This is only what a diffuser placed
        BY HAND opens at. */
     beam: null },
-  { id: 'spot', label: 'Spot', icon: '/icons/track_spot.png',
+  { id: 'spot', label: 'Spot', icon: '/icons/new_icons/track_directional.png',
     title: 'Track spot — an aimed directional module',
     /* ITS OWN FAMILY AND NOT `cob`'s, for the diffuser's reason: the two share a
        cone on the floor and nothing else, and sharing the family meant sharing
@@ -156,7 +156,7 @@ export const TRACK_MODULES = [
        light goes and a beam angle is which reflector is in the fitting. 30
        degrees is what boq.js's `track-spot` line specifies. */
     beam: 30 },
-  { id: 'washer', label: 'Washer', icon: '/icons/track_wall_washer.png',
+  { id: 'washer', label: 'Washer', icon: '/icons/new_icons/track_washer.png',
     title: 'Track wall washer — not in this build yet',
     soon: true, family: null, fixture: null,
     lenIn: 8, wideIn: 1.5, watts: null, beam: null },
@@ -188,6 +188,30 @@ export const moduleWatts = (kind) => {
   const m = MODULE_BY_ID[kind];
   if (m?.watts != null) return m.watts;
   return FAMILY_BY_ID[m?.family]?.defaultWatts ?? 7;
+};
+
+/**
+ * WHAT A MODULE IS SOLD AT — the whole range, and it is the FAMILY's list.
+ *
+ * THE BAR AT THE FOOT OF THE DRAWING ASKS THIS. Arming a module puts a
+ * specification bar up beside the ceiling (see ModuleSpec), because a wattage
+ * chosen after the fitting is on the run is a wattage chosen in the panel about
+ * a fitting somebody has stopped looking at. Which figures to offer is a fact
+ * about the product's range, and `FIXTURE_FAMILIES` is where every other range
+ * in this app is written down — see TRACK_DIFFUSER_WATTS and TRACK_SPOT_WATTS,
+ * both of which exist precisely so a track module's range is not the recessed
+ * downlight's.
+ *
+ * A LIST WITH THE DEFAULT IN IT, WHATEVER THE TABLE SAYS. A module whose family
+ * is unknown — the wall washer, which is declared and not built — would
+ * otherwise offer no figure at all, and a bar of nothing is worse than a bar of
+ * one. Deduplicated and sorted, so the chips read as a range either way.
+ */
+export const moduleWattList = (kind) => {
+  const m = MODULE_BY_ID[kind];
+  const list = FAMILY_BY_ID[m?.family]?.watts ?? [];
+  const all = new Set([...list, moduleWatts(kind)]);
+  return [...all].sort((a, b) => a - b);
 };
 
 /**

@@ -34,7 +34,7 @@ import { snapPoint } from '../../lib/snapGuides.js';
 import { COVE_GAP_FT, coveClearOfOutline } from '../../lib/cove.js';
 import {
   penShape, clampCoveMove, canTakeGeometry, resizeShape, bigEnough, newShapeId,
-  isBuilt as shapeIsBuilt, bboxFt as shapeBboxFt,
+  isBuilt as shapeIsBuilt, bboxFt as shapeBboxFt, isTrack as shapeIsTrack,
 } from '../../lib/ceilingShapes.js';
 import { shapeCanTranslate } from './geometryRules.js';
 
@@ -45,6 +45,14 @@ export function useGeometryGestures({
   state, commands, geometry,
   rooms, pxPerFt, ceilingShapes, roomAt, svgPoint, svgRef, pressState, addTool,
   docActions, setSel, setGuides, snapTargets, snapTol,
+  /* A PRESS ON A MAGNETIC TRACK OPENS ITS MODULE DRAWER, and that drawer is the
+     fitting domain's — see `trackAdd`. It is handed in for the reason `setSel`
+     is: the press belongs to this file and the thing it opens does not, and a
+     drawer this hook owned would be a second answer to a question the rail
+     already asks the fixture session. Called with the id of the shape pressed
+     when it is a run and with null for anything else, because pressing a cove
+     has to CLOSE the drawer as surely as pressing a run opens it. */
+  onTrackPress = null,
 }) {
   const {
     shapeMenuOn, shapeTool, shapeRole, shapeSpan, shapeHeld, shapeDrag,
@@ -252,6 +260,12 @@ export function useGeometryGestures({
     setShapeMenuOn(false); setShapeTool(null); abandonShape();
     setSel(select('shape', id));
     const src = ceilingShapes.find((q) => q.id === id);
+    /* AND IF IT IS A RUN, ITS MODULE DRAWER COMES UP. This is the whole of the
+       gesture the plus cursor over a profile promises — see the grab band in
+       PlanCanvas, which is drawn with `copy` for a track and `move` for
+       everything else. AHEAD OF THE `pxPerFt` RETURN, because the drawer is
+       about the object and not about the drag that may follow it. */
+    onTrackPress?.(src && shapeIsTrack(src) ? id : null);
     if (!src || !pxPerFt) return;
     // AND THE HIGHLIGHT GOES WITH THE PRESS. The move handler stops tracking for
     // the length of a drag, so a value left behind would keep the cursor a hand

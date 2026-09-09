@@ -20,8 +20,24 @@ import { PLAN_OPTIONS } from '../src/lib/settings.js';
 let fail = 0; const ok = (c,m)=>{console.log((c?'  ok  ':'  FAIL')+'  '+m); if(!c) fail++;};
 const near=(a,b,e=1e-3)=>Math.abs(a-b)<=e;
 
-ok(CEILING_TYPES.map(t=>t.id).join(',') === 'fan,chandelier,ac,split_ac,geyser,trapdoor',
-  `six types, in catalogue order: ${CEILING_TYPES.map(t=>t.id).join(', ')}`);
+ok(CEILING_TYPES.map(t=>t.id).join(',')
+     === 'fan,chandelier,pendant,ac,split_ac,geyser,trapdoor',
+  `seven types, in catalogue order: ${CEILING_TYPES.map(t=>t.id).join(', ')}`);
+// --- SEVEN IDS AND SIX KINDS, WHICH IS THE POINT OF HAVING BOTH -------------
+// A PENDANT IS A CHANDELIER AT HALF THE DIAMETER. Nine files in this app decide
+// what a fitting does by testing `kind === 'chandelier'` — the grid keeps off
+// it, a task spot under it is vetoed, it lands on the DXF's decorative layer, it
+// glows on a night sheet, it is counted as a lamp — and the pendant is meant to
+// have every one of those. Giving it a `kind` of its own would have been nine
+// edits and nine chances to miss one, and this asserts the choice that was made
+// instead: same kind, own id, own size.
+ok(makeCeilingObject('pendant',{x:0,y:0}).kind === 'chandelier',
+  'a pendant IS a chandelier to everything that asks by kind');
+ok(sizeLabel(makeCeilingObject('pendant',{x:0,y:0})) === '450 mm ⌀',
+  'and it is the half-diameter one');
+ok(near(radiusFt(makeCeilingObject('pendant',{x:0,y:0})) * 2,
+        radiusFt(makeCeilingObject('chandelier',{x:0,y:0}))),
+  'so it reserves exactly half the chandelier\'s clearance radius');
 // THE TWO WALL-MOUNTED ONES, and the flag that keeps the grid off their case.
 // A split unit at 2100mm and a geyser over a door obstruct no downlight, so a
 // layout must not open a hole for either. See `offCeiling`.

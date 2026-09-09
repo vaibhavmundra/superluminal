@@ -76,6 +76,7 @@
 import { pointInPolygon } from './geometry.js';
 import { footGeometry, BED_GRID_DEFAULTS } from './bedGrid.js';
 import { servesBay } from './electrical.js';
+import { CEILING_BY_ID } from './ceilingObjects.js';
 
 export const FLOW_DEFAULTS = {
   // ft — two directional spots further apart than this are two formations.
@@ -305,6 +306,28 @@ export function planFlows({
   chunks = [],
   cells = [],
   lights = [],
+  /* THE LAMPS A HAND PUT ON THIS CEILING — `[{ id, x, y }]` in plan pixels.
+     Hand-dropped COBs, the ones the autoplace tick filled the grid with, and
+     the lamps of a committed array. One list, because on the ceiling they are
+     the same fitting: a recessed COB is a recessed COB whether somebody put it
+     there or a geometry did.
+
+     THEY WERE NOT HANDED IN AT ALL, AND THAT WAS THE BUG. `lights` is the
+     PLANNER's own answer and `AUTO_GRID` blanks it, so on a hand-laid ceiling
+     this pass was given every derived fitting on the drawing — the coves, the
+     tracks, the fans, the task spots — and not one of the lamps somebody had
+     actually placed. They came out with no wire, no module and no plate: a
+     ceiling full of fittings that the sheet said nothing about switching. It
+     was not a rule declining to connect them; nothing had shown them to it.
+
+     SEPARATE FROM `lights` AND NOT MERGED BY THE CALLER, for the reason
+     section 1 gives: a planner light can be ON A TRACK and carries the stamp
+     that says which piece of which rail it is a module of. A hand-placed lamp
+     never is — the absorber moves one into `trackFixtures` and out of this list
+     the moment it clips into a profile — so merging the two upstream would
+     invite section 1 to interrogate a stamp that cannot be there. They join in
+     section 6, which is where the question is the same for both. */
+  lamps = [],
   objects = [],
   accents = [],
   spots = [],
@@ -800,10 +823,21 @@ export function planFlows({
   // touch both plates from the same spot — whereas the far side of the bed is
   // precisely the corner of the room from which nothing is reachable. So the
   // extra point goes where the room is currently worst served.
+  /* WHAT GETS A FLOW IS THE `kind`; WHAT IT IS CALLED ON THE SHEET IS NOT.
+     Those were one lookup until a pendant existed, and a pendant is a chandelier
+     to every piece of geometry in this app deliberately — one `kind`, two
+     catalogue entries, see ceilingObjects.js. Left as one lookup it wired the
+     pendant correctly and then labelled its flow "chandelier", which is a
+     schedule naming a fitting nobody ordered.
+     SO THE GATE STAYS ON THE KIND — that is the question being asked here, which
+     is "is this thing on the lighting circuit at all" — and the NAME comes off
+     the catalogue entry the object was placed from, falling back to the gate's
+     own word for an object stored before `typeId` was carried. */
   const POWERED = { fan: 'Fan', chandelier: 'Chandelier' };
   for (const ob of objects) {
-    const label = POWERED[ob.kind];
-    if (!label) continue;
+    const powered = POWERED[ob.kind];
+    if (!powered) continue;
+    const label = CEILING_BY_ID[ob.typeId]?.label ?? powered;
     const bayKey = bayAt(ob)?.key ?? null;
     const main = boardFor(bayKey, ob);
     const twoWay = ob.kind === 'fan' && main && bedsideBoards.length
@@ -860,7 +894,39 @@ export function planFlows({
   }
 
   // --- 6. the downlights, chunk by chunk -----------------------------------
-  const ambient = lights.filter((l) => !onTrack.has(l.id));
+  //
+  /* A HAND-PLACED LAMP IS SEATED IN THE CELL IT STANDS IN, and then it IS a
+     downlight as far as everything below is concerned.
+     THE CELL AND NOT THE PROXIMITY OF THE NEXT LAMP, which is the whole of the
+     rule and is worth saying against the obvious alternative. A cluster test
+     would have been two lines — the directional spots already have one — and it
+     is wrong here for the reason the header gives about the row: the grid is
+     ALREADY the formation. A lamp somebody dropped on a ceiling was dropped on
+     the grid the app drew for them, so the cell it landed in says which row it
+     belongs to, and the row is the switch. Clustering by distance would instead
+     chain the whole ceiling into one flow — cells are four or five feet across
+     and `spotGroupFt` is six, and single-link clustering is transitive — which
+     is "one switch for eighteen lamps" said in code.
+     SO AUTOPLACE AND A HAND ARE NOT TOLD APART. An autoplaced lamp carries a
+     `gridCell` stamp and a dropped one carries nothing, and this deliberately
+     reads neither: two lamps in the same cell are in the same row whichever way
+     they got there, and a rule that read the stamp would switch them
+     differently for a reason nobody looking at the ceiling could see.
+     THE GRID IS STILL THERE TO BE SEATED ON while the fittings are switched
+     off — see `gridCellsPx` in layout.js, which is kept aside from the blanking
+     for exactly this kind of reader. */
+  const seated = [];
+  const strays = [];
+  for (const c of lamps) {
+    if (!Number.isFinite(c?.x) || !Number.isFinite(c?.y)) continue;
+    const cell = cells.find((q) => inRect(c, q));
+    // `kind: 'small'` BECAUSE THAT IS WHAT IT IS: one lamp in one cell. The
+    // planner's other kind is a large fitting spanning several, which nothing a
+    // hand places ever is.
+    if (cell) seated.push({ ...c, kind: 'small', cell, cells: [cell.id] });
+    else strays.push(c);
+  }
+  const ambient = [...lights, ...seated].filter((l) => !onTrack.has(l.id));
   const byChunk = new Map();
   const chunkOf = (l) => (l.kind === 'small'
     ? l.cell?.chunk ?? cellById.get(l.cells?.[0])?.chunk
@@ -1052,6 +1118,40 @@ export function planFlows({
     }
 
     rowFlows(mineChunks.filter((ch) => !flankIds.has(ch.id) && !footIds.has(ch.id)), bay.key);
+  }
+
+  /* --- 7. the lamps standing on no cell ------------------------------------
+     A LAMP OFF THE GRID FALLS BACK TO PROXIMITY, because it has no row to be
+     in. Two ways to get here and both are ordinary: a lamp dropped in the strip
+     of ceiling a decomposition left over, and every lamp in a space the chunker
+     could not cut at all — which has no cells, so all of them come through
+     here and the room is grouped by distance from end to end.
+     AND NOT SILENTLY NOTHING, which is what section 6 does with a light that
+     belongs to no chunk. That note is right about a PLANNER light — one exists
+     because a cell existed, so a cell it cannot name is a contradiction worth
+     reporting — and it is wrong about a lamp somebody placed by hand, which is
+     on the ceiling because they put it there and has to be switched from
+     somewhere whatever the grid underneath it says.
+     THE SAME REACH THE DIRECTIONAL SPOTS USE. It is the one distance this file
+     states about fittings that have no grid to order them, and a second figure
+     for the same question would be a second thing to keep in step. */
+  if (strays.length) {
+    const reach = o.spotGroupFt * (pxPerFt || 1);
+    for (const group of cluster(strays, reach)) {
+      add({
+        kind: 'lamps',
+        // The cluster's lowest lamp id, for the reason the spot clusters use
+        // theirs: a cluster is recovered from proximity and has no id of its own.
+        tag: `lamps-${group.map((l) => l.id).sort()[0]}`,
+        label: 'Downlights',
+        what: `${group.length} downlight${group.length === 1 ? '' : 's'} standing on`
+          + ' no cell of this ceiling\'s grid'
+          + (group.length > 1 ? ', within reach of each other' : ''),
+        nodes: group.map((l) => ({ id: l.id, x: l.x, y: l.y, what: 'a downlight' })),
+        bayKey: bayAt(centroid(group))?.key ?? null,
+        order: 'walk',
+      });
+    }
   }
 
   if (!live.length && flows.length) {

@@ -65,7 +65,22 @@ Everything else it returns is the session's own working state, listed member by
 member rather than spread so a reader can see exactly what the session is:
 `objType`, `fanSweepMm`, `objDrag`, `objMode`, `armed`, `ghost`, the six COB
 drawer slots, `cobRun`, `cobLock`, `cobAt`, `cobDraftArray`, `arrayDrag`,
-`trackMode`, `moduleDrag` and `lightDrag`, each with its setter.
+`trackMode`, `trackAdd`, `moduleSpec`, `moduleDrag` and `lightDrag`, each with
+its setter.
+
+`trackAdd` and `moduleSpec` are the magnetic track's drawer, and both exist
+because neither is derivable from something already true. `trackAdd` is the run
+that was PRESSED on the drawing — not the one selected, because committing a
+shape selects it (that is how the geometry bar becomes the new object's
+contextual menu), so a drawer following the selection flew open the instant a
+run was drawn. The rail reads it against `selTrackId`, which is what closes the
+drawer when the selection moves anywhere else. It is written by
+`shapePointerDown` in the geometry feature, through an `onTrackPress` callback
+App hands over — the press belongs there and the drawer belongs here.
+`moduleSpec` is what the next module will be, in the tense `cobDraft` is: the
+bar at the foot of the drawing shows it (see ModuleSpec) and `moduleDown` spends
+it, so the figures on screen and the fitting that lands cannot disagree.
+`reset.module` clears both with `trackMode`.
 
 `reset` has five members and not one because `resetForNewPlan` and `disarmAdd`
 did not run those statements together: the objects went in one block with

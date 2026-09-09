@@ -67,6 +67,9 @@ import BOQView from './components/BOQView.jsx';
 import { roomTypeIn } from './lib/roomTypes.js';
 import FixtureTip from './components/FixtureTip.jsx';
 import CobSpec from './components/CobSpec.jsx';
+/* THE SAME PLACE AT THE FOOT OF THE DRAWING, ABOUT THE NEXT MODULE. One bar
+   stands there at a time — see the note where this one is rendered. */
+import ModuleSpec from './components/ModuleSpec.jsx';
 /* THE DOWNLIGHT SOMEBODY PUTS DOWN THEMSELVES. Every rule about one — what it
    may be specified at, what the gridding engine would have installed where the
    pointer is, and the two things worth warning about before the click — is in
@@ -82,7 +85,8 @@ import { throwDiameterFt, DEFAULT_DROP_FT, clampWatts,
    clip into one are features/fixtures/. See its header for why it is not
    track.js. What is left here is the catalogue line a module bills under and
    the list of the ones not written yet, both of them markup. */
-import { MODULE_SOON } from './lib/magTrack.js';
+import { MODULE_SOON, MODULE_BY_ID, moduleWatts,
+         moduleWattList } from './lib/magTrack.js';
 import OptionCoach from './components/OptionCoach.jsx';
 /* The walkthrough, playing in the panel rather than linked out of it. Named
    export: the default one is the line of type that opens it in a dialog. */
@@ -157,7 +161,7 @@ import { openPdf } from './lib/pdfPlan.js';
 import PdfPagePicker from './components/PdfPagePicker.jsx';
 import ToolRail from './components/ToolRail.jsx';
 import Popover, { PopoverButton } from './components/Popover.jsx';
-import StageBar, { SCENE } from './components/StageBar.jsx';
+import StageBar, { SceneSwitch } from './components/StageBar.jsx';
 import SpaceDetail from './components/SpaceDetail.jsx';
 import WallTonePopup from './components/WallTonePopup.jsx';
 import { DEFAULT_CEILING_MM, CEILING_MM_MIN, CEILING_MM_MAX,
@@ -581,6 +585,11 @@ export default function App({
     cobDraft, setCobDraft, cobOnce, setCobOnce, cobStanding, setCobStanding,
     cobRun, cobLock,
     arrayDrag, trackMode, setTrackMode, moduleDrag, lightDrag,
+    /* WHICH RUN WAS PRESSED, AND WHAT THE NEXT MODULE WILL BE. The first is
+       what opens the module drawer beside the rail and the second is what the
+       bar at the foot of the drawing shows; see `trackAdd` and `moduleSpec` in
+       the fitting session for why neither is derivable from the selection. */
+    trackAdd, setTrackAdd, moduleSpec, setModuleSpec,
     fanSweepMm, setObjType,
     /* THE FOUR RESETS. `resetForNewPlan` calls three of them and `disarmAdd`
        the other two, each where the statements they replace stood, so the
@@ -1708,7 +1717,28 @@ export default function App({
     const base = layers.invert
       ? { ...layers, dim: false, cells: false, region: false, labels: false }
       : layers;
-    const aiming = stepTool?.id === 'cove' ? { ...base, region: true } : base;
+    /* --- THE PLATES BELONG TO THE WIRING, AND THEY GO OFF WITH IT ----------
+       `switchboards` AND `electrical` WERE TWO INDEPENDENT SWITCHES, and the
+       combination that made them wrong is the ordinary one: the wiring off,
+       the plates on, which is what every plan opened with. A lighting sheet
+       came up carrying nine blue rectangles on its walls with nothing running
+       off them — half of a drawing the reader had not asked for, and unnamed,
+       because the loops that say what a plate IS were the half that was off.
+       SO THE WIRING IS ONE LAYER WITH TWO KINDS OF MARK IN IT. `switchboards`
+       still stands on its own INSIDE the scene — plates without loops is a
+       legitimate thing to want to look at once you are looking at wiring — it
+       simply cannot outlive the scene it is part of.
+       DERIVED AND NOT SET, as everything else in this memo is: the View
+       switch's own tick and the saved plan are untouched, so turning the
+       wiring back on brings the plates back exactly as they were left.
+       EXCEPT WHILE THE STEP THAT PLACES THEM IS RUNNING. The switchboard tool
+       seats plates on walls with the layer in whatever state it was in, and a
+       step whose whole output is invisible is a step that looks broken. It is
+       the same exception the cove step's `region` is: the gesture turns on the
+       thing the gesture is about, for as long as it lasts. */
+    const wiring = base.electrical || boardPlace
+      ? base : { ...base, switchboards: false };
+    const aiming = stepTool?.id === 'cove' ? { ...wiring, region: true } : wiring;
     const doors = doorEdit ? { ...aiming, electrical: false } : aiming;
     /* --- AND THE WALL STEP TAKES EVERYTHING OFF BUT THE PLAN ---------------
        ONE SPACE'S EDGES ARE THE SUBJECT, so they have to be the only thing on
@@ -1724,7 +1754,7 @@ export default function App({
       cells: false, region: false, lights: false, labels: false, fan: false,
       zones: false, accents: false, spots: false, switchboards: false,
       electrical: false } : doors;
-  }, [layers, doorEdit, stepTool, wallEdit]);
+  }, [layers, doorEdit, stepTool, wallEdit, boardPlace]);
 
   /* --- THE ELECTRICAL PASS WAS HERE, AND IT HAS BEEN RETIRED ---------------
      `computeElectrical` and `planElectrical` — the bolt in the list of spaces.
@@ -2535,8 +2565,22 @@ export default function App({
      computed on this side of the call any more: the three board passes, the
      flows, the plate compositions, the schedule, both gestures and every command
      are in features/electrical/. See its README. */
+  /* EVERY LAMP A HAND PUT ON A CEILING, AS ONE LIST FOR THE WIRING.
+     THE SAME PAIR THE CANVAS DRAWS, and that is the point of assembling it
+     here: `manualCobs` on PlanCanvas is `manualCobsPx` and `arrayCobsPx`
+     together for the reason given at that prop — on the ceiling they are the
+     same fitting — and a fitting the sheet draws and the sheet does not switch
+     is the fault this list exists to close.
+     WITHOUT THE DRAFT, which is the one member of that trio left out. A draft
+     array is what the bar is still asking about; it appears and disappears as
+     the count is typed, and giving it flows would put a switch module on a
+     plate for each keystroke. It joins this list when the tick keeps it, at
+     which point it is in `cobArrays` like any other. */
+  const lampsPx = useMemo(() => [...manualCobsPx, ...arrayCobsPx],
+    [manualCobsPx, arrayCobsPx]);
+
   const electrical = useElectrical({
-    rooms, pxPerFt, obstaclesPx, wardrobesPx, accentZonesPx, taskSpotsPx,
+    rooms, pxPerFt, obstaclesPx, wardrobesPx, accentZonesPx, taskSpotsPx, lampsPx,
     roomTypes, doors, projectId, country, layers, doorEdit,
     sel, setSel, svgPoint, svgRef, pressState, boardStep, doc, docActions,
   });
@@ -2820,6 +2864,12 @@ export default function App({
     state: geomState, commands: geometryCommands, geometry,
     rooms, pxPerFt, ceilingShapes, roomAt, svgPoint, svgRef, pressState, addTool,
     docActions, setSel, setGuides, snapTargets, snapTol,
+    /* A PRESS ON A RUN OPENS ITS MODULE DRAWER, and the drawer is the fitting
+       session's — see `trackAdd`. Handed over raw because the gesture already
+       answers the only question there is: it calls this with the id when the
+       shape pressed is a track and with null for anything else, so pressing a
+       cove closes the drawer without this line having to know that. */
+    onTrackPress: setTrackAdd,
   });
 
   /**
@@ -4644,85 +4694,67 @@ export default function App({
     || troubles.length > 0 || !rooms.length
   );
 
-  /* --- WHICH DRAWING YOU ARE LOOKING AT, ON THE BAR OVER THE DRAWING ------
-     TWO BUTTONS THAT ARE ALWAYS THERE, whatever else the bar happens to be
-     carrying. It was a tab strip in the panel — Spaces / Design / Boards / BOQ —
-     and the half of it that was real is this: the lighting layout, the
-     electrical layout, and the schedule are not tabs of a panel, they are
-     different DRAWINGS of the same plan. A control that says which one you are
-     looking at belongs on the sheet, not in the column beside it.
+  /* --- IS THE WIRING SHOWING, ON THE BAR OVER THE DRAWING -----------------
+     ONE SWITCH THAT IS ALWAYS THERE, whatever else the bar happens to be
+     carrying. It was a latched switch at the foot of the panel reading "Show
+     electrical layout", then a pair of scene buttons — Lighting / Electrical
+     layout — beside a third that left for the schedule.
 
-     ...AND THE ELECTRICAL SWITCH IS ONE OF THEM. It was a latched switch at the
-     foot of the panel reading "Show electrical layout", which framed the wiring
-     as a layer ticked on top of the lights. It is not: nothing in the lighting
-     window means anything while you are looking at wiring, and the window swaps
-     over with it — see `elecScene`. Two scenes, one press each way.
+     IT IS A SWITCH AGAIN, AND THE PAIR WAS THE WRONG SHAPE FOR IT. A pair of
+     words says "these are two places you can be", which is what a schedule is;
+     the wiring is not a place, it is the same drawing with the loops and the
+     plates drawn on it. So the control that says whether they are showing is a
+     thing that is visibly on or off, and it says which in the track.
+
+     THE SCHEDULE LEFT THIS BAR ENTIRELY. It IS a different place, and where you
+     go is a fact about the DOCUMENT rather than about the sheet in front of you
+     — so it is a button in the top bar beside Share, with everything else that
+     is about the document. The bar over the drawing is left holding exactly one
+     thing, which is the one thing on it that changes the drawing.
 
      THE FIRST PRESS STILL ASKS ABOUT THE DOORS, which is the one piece of
-     behaviour carried over verbatim from that switch. A switchboard is placed
-     beside a door, so this cannot honestly show the wiring until somebody has
-     said the door boxes are right — and the honest answer to "show me the
-     electricals", the first time it is asked, is a question. See `doorsOk`.
+     behaviour carried through every version of this control. A switchboard is
+     placed beside a door, so this cannot honestly show the wiring until
+     somebody has said the door boxes are right — and the honest answer to "show
+     me the electricals", the first time it is asked, is a question. See
+     `doorsOk`.
 
-     THE ELECTRICAL SCHEDULE IS DRAWN AND INERT, which is the honest picture of a
-     scene this build does not have: out of reach rather than absent, the same
-     rule the COB drawer's unbuilt gesture follows. A pair that grew a second
-     item later would be a pair somebody had already learned the shape of.
+     AND THE PLATES COME AND GO WITH IT. `canvasLayers` takes `switchboards`
+     off while this is off: a plate on the wall with no loop running off it is
+     half the wiring drawn on a lighting sheet, which reads as a layout with
+     some unexplained blue rectangles in it. One switch, one layer. */
+  const flipElectrical = () => {
+    /* THE DOOR EDITOR IS THE QUESTION THIS SWITCH ASKED, so pressing it again
+       while the question is open is the answer "not now" rather than a second
+       question. */
+    if (doorEdit) { closeDoorEdit(); return; }
+    if (layers.electrical) { toggleElectricalLayer(); return; }
+    if (!doorsOk) { openDoorEdit(); return; }
+    toggleElectricalLayer();
+  };
 
-     OFF A SHEET, BOTH BUTTONS GO BACK TO THE DRAWING. The schedule and the
-     switchboard sheet replace the plan, and the tab strip used to be the way
-     off them; these are. Which is also why the pair is never two buttons that
-     both do nothing — whatever scene you are in, both of these leave it. */
-  const sceneTail = !source || showTrace || prep || readOnly ? null : (
-    <>
-      {sheetOpen ? (
-        <>
-          <button type="button" className={SCENE}
-            title="Back to the lighting layout"
-            onClick={() => {
-              docActions.setView('design');
-              if (layers.electrical) toggleElectricalLayer();
-            }}>Lighting</button>
-          <button type="button" className={SCENE}
-            title="Back to the drawing, showing the wiring"
-            onClick={() => {
-              docActions.setView('design');
-              if (!doorsOk) { openDoorEdit(); return; }
-              if (!layers.electrical) toggleElectricalLayer();
-            }}>Electrical layout</button>
-        </>
-      ) : elecScene ? (
-        <>
-          <button type="button" className={SCENE}
-            title="Back to the lighting layout"
-            onClick={toggleElectricalLayer}>Lighting</button>
-          <button type="button" className={SCENE} disabled
-            title="The electrical schedule is not built yet">
-            Electrical BOQ
-          </button>
-        </>
-      ) : (
-        <>
-          <button type="button" className={SCENE}
-            title={doorsOk
-              ? 'Loop every fitting back to its switchboard'
-              : 'Confirm the doors, then the wiring'}
-            onClick={() => {
-              /* IN THE VIEWER IT WOULD BE A LAYER SWITCH AND NOTHING MORE — an
-                 operator looking at somebody else's plan is not the person who
-                 can answer whether the doors are right. It never gets here:
-                 `sceneTail` is null on a read-only sheet, which is the same
-                 judgement said once rather than per button. */
-              if (doorEdit) { closeDoorEdit(); return; }
-              if (!doorsOk) { openDoorEdit(); return; }
-              toggleElectricalLayer();
-            }}>Electrical layout</button>
-          <button type="button" className={SCENE}
-            title="The schedule of everything on this plan"
-            onClick={() => docActions.setView('boq')}>Lights BOQ</button>
-        </>
-      )}
-    </>
+  /* --- IS THE MODULE BAR THE ONE STANDING AT THE FOOT OF THE DRAWING? -------
+     ONE BAR IN THAT PLACE, AND THIS IS THE FOURTH THING THAT CLAIMS IT — after
+     the downlight's specification, a selected array's, and the shape bar. So it
+     is a named condition rather than an inline test, because it is read TWICE:
+     once to draw the bar and once by the plain bar below it, whose whole
+     condition is the negation of every claim on that position.
+     `geometry.bar.mode` IS IN IT AND IS NOT REDUNDANT. Arming a module clears
+     the selection and puts the primitives down, which in the ordinary flow
+     leaves that bar closed — the run was pressed, and a press on a shape closes
+     the geometry bar (see `shapePointerDown`) — but the bar deliberately
+     survives arming when it was already open, and two pills in one place is two
+     controls competing for the position people have learned. The shape bar wins
+     because it is about the drawing rather than about the next press. */
+  const moduleBarOn = !readOnly && addTool === 'module' && !!trackMode
+    && !!moduleSpec && !geometry.bar.mode;
+
+  const sceneTail = !source || showTrace || prep || readOnly || sheetOpen ? null : (
+    <SceneSwitch label="Electrical layer" on={layers.electrical}
+      title={doorsOk
+        ? 'Show the plates and loop every fitting back to its switchboard'
+        : 'Confirm the doors, then the wiring'}
+      onClick={flipElectrical} />
   );
 
   return (
@@ -5068,11 +5100,44 @@ export default function App({
             while you use it; up here it was in the row that names the plan and
             says whether it is busy, four hundred pixels from the thing it
             changes. */}
-        {/* THE DESIGN/BOQ PAIR WAS HERE, and it is the two scene buttons on the
-            bar over the drawing now — see the StageBar at the end of this file.
-            Where you are is a thing about the SHEET: lighting or electrical, the
-            plan or a schedule. It belongs on the sheet's own bar rather than in
-            the row that names the document. */}
+        {/* --- THE SCHEDULE, BESIDE THE THING IT IS A SCHEDULE FOR ---------
+            IT WAS ON THE BAR OVER THE DRAWING, on the reasoning that the plan
+            and the schedule are two DRAWINGS of one job and the control that
+            says which you are looking at belongs on the sheet. Half of that is
+            right and it is the wrong half: the wiring is a layer on this sheet,
+            which is why the switch for it stayed down there — the schedule is
+            not a layer, it is somewhere else, and it takes the whole stage when
+            you go. Where the document is open TO is the same kind of fact as
+            what it is called and where it goes next, and that is this bar.
+
+            IT ALSO GIVES THE SCHEDULE ITS WAY BACK. The bar over the drawing is
+            not rendered while a sheet is up, so the button that used to leave
+            the schedule was drawn on a bar nobody could see; latched here, one
+            control opens it and closes it and is legible from both.
+
+            QUIET, BESIDE SHARE AND NOT DRESSED AS IT. Share is the one act on
+            this screen that reaches somebody else and it is the only filled
+            button in the chrome; this goes to another page of the same
+            document. */}
+        {source && !readOnly && !prep && !showTrace && (
+          <button type="button" aria-pressed={boqOpen}
+            title={boqOpen
+              ? 'Back to the drawing'
+              : 'The schedule of everything on this plan'}
+            onClick={() => docActions.setView(boqOpen ? 'design' : 'boq')}
+            className={'flex-none text-[11.5px] leading-none px-3 py-[7px] rounded '
+              + 'border cursor-pointer inline-flex items-center justify-center '
+              + 'transition-colors duration-[120ms] '
+              + 'focus-visible:outline-2 focus-visible:outline-accent '
+              + 'focus-visible:outline-offset-2 '
+              /* ONE BACKGROUND CLASS EITHER WAY — see the outlines link above
+                 for the emission-order trap that makes two of them a bug. */
+              + (boqOpen
+                ? 'border-border-strong bg-ink/[0.07] text-ink'
+                : 'border-border-strong bg-transparent text-ink hover:bg-ink/[0.06]')}>
+            BOQ
+          </button>
+        )}
 
         {/* --- SHARE, AND EVERYTHING THAT LEAVES IS BEHIND IT --------------
             IT WAS FOUR BUTTONS: DXF, PNG, PDF and then Share, three of them
@@ -5372,15 +5437,40 @@ export default function App({
              same shape the Cove cell's latch has — and there is no second piece
              of state to keep in step with it.
 
-             AND THE DRAWER OPENS ON A SELECTED RUN. Press a track on the drawing
+             AND THE DRAWER OPENS ON A PRESSED RUN. Press a track on the drawing
              and the three modules appear beside the cell, which is where
              somebody has already learned a drawer lives. It stays up while one is
              armed, so clipping six diffusers on is six presses and not twelve.
-             `selTrackId` is the selection; a track is a ceiling shape, so being
-             selected is `selShapeId` naming one. */
+
+             A PRESSED RUN AND NOT A SELECTED ONE, WHICH IS THE FIX. `selTrackId`
+             is the selection — a track is a ceiling shape, so being selected is
+             `selShapeId` naming one — and committing a shape SELECTS it, because
+             that is how the geometry bar becomes the new object's contextual
+             menu (see `commitShape`). So a drawer following the selection alone
+             flew open the moment a run was drawn, over a profile the allocator
+             had just filled and that nobody had asked to add anything to. What
+             opens it is the act: hover the profile, see the plus, press it. See
+             `trackAdd`, which is the one thing that press writes, and the note on
+             `trackDrawer` in ToolRail for the flow this produces.
+             READ AGAINST `selTrackId` RATHER THAN ALONE, so a selection moved
+             anywhere else closes the drawer for free — including the rail cell's
+             own press, which clears the selection on its way to opening the bar
+             (see `openShapeTool`). */
           trackOn={geometryCommands.toolbar.trackOn}
-          onTrack={geometryCommands.toolbar.toggleTrack}
-          trackDrawer={!!selTrackId || addTool === 'module'}
+          /* TWO MESSAGES, AND THE SECOND IS THE RAIL'S ONE-PANEL RULE REACHING
+             OUT HERE. A bare press is the cell's own toggle; `'close'` is what
+             the other four cells say on the way in, and it has to be GUARDED by
+             `trackOn` because `toggleTrack` would otherwise OPEN the bar — a
+             cell pressed to show the Electrical flyout would raise the track's
+             geometry bar as a side effect. See `openOnly` in ToolRail. */
+          onTrack={(m) => {
+            if (m === 'close') {
+              if (geometryCommands.toolbar.trackOn) geometryCommands.toolbar.toggleTrack();
+              return;
+            }
+            geometryCommands.toolbar.toggleTrack();
+          }}
+          trackDrawer={(!!trackAdd && trackAdd === selTrackId) || addTool === 'module'}
           trackMode={trackMode} trackSoon={MODULE_SOON}
           onTrackPick={(m) => {
             /* A MODULE IS ARMED, AND THE PRIMITIVES ARE PUT DOWN WITH IT. Two
@@ -5397,6 +5487,16 @@ export default function App({
             setCobOpen(false); setCobMode(null); setSel(clear());
             setAddTool(next ? 'module' : null);
             setTrackMode(next);
+            /* AND THE BAR AT THE FOOT OF THE DRAWING OPENS ON THE MODULE'S OWN
+               DEFAULTS, which is what makes it an answer before it is a
+               question: the ordinary case is that you read two figures, agree,
+               and press the run. `moduleWatts` is the family's figure and the
+               beam is the product's optic — the same two the placement falls
+               back to — so the bar and the press cannot come to disagree. See
+               ModuleSpec, and `moduleDown` for where they are spent. */
+            setModuleSpec(next
+              ? { watts: moduleWatts(next), beam: MODULE_BY_ID[next]?.beam ?? null }
+              : null);
           }}
           /* ONE CELL FOR TWO ROLES' WORTH OF BAR, AND ONLY THE COVE IS IN THE
              RAIL. The bar draws the same six primitives either way and `shapeRole`
@@ -5761,7 +5861,13 @@ export default function App({
                    rule, because this is the exception that rule is worth having.
                    `geomHover` IS ONLY EVER SET WHILE ONE OF THOSE TOOLS IS
                    ARMED — see it — so this cannot fire under anything else. */
-                : geomHover ? 'pointer'
+                /* AND A PLUS WHERE THE PRESS ADDS SOMETHING TO THE OBJECT
+                   RATHER THAN TAKING IT. The array tool BORROWS the line it is
+                   over — a hand is exactly right for that — and the module tool
+                   CLIPS ONTO the run it is over, which is the same thing the
+                   grab band says with `copy` when no tool is in hand. One
+                   gesture, one pointer, whether or not a module is armed. */
+                : geomHover ? (addTool === 'module' ? 'copy' : 'pointer')
                 : (geometry.status.menuOn && geometry.status.tool) ? 'crosshair'
                 : geometry.shapes.dragging ? 'grabbing'
                 /* THE TRACK PEN, FOR THE COVE'S REASON ONE LINE DOWN: a run is
@@ -5774,7 +5880,7 @@ export default function App({
                 /* A MODULE HAS NOWHERE TO GO BUT A RUN, so off one the press is
                    dead and the cursor says so with a plain arrow — never a
                    crosshair, which would claim the ceiling was a target. Over a
-                   run the `geomHover` branch above has already made it a hand. */
+                   run the `geomHover` branch above has already made it a plus. */
                 : addTool === 'module' ? 'default'
                 : addTool === 'cob'
                   ? (cobBlocked ? 'not-allowed' : overRoom ? 'crosshair' : 'default')
@@ -6080,24 +6186,43 @@ export default function App({
                 onOffset={(ft) => setArrayShape(selArrayId, { offsetFt: ft })}
                 onDeleteArray={() => deleteArray(selArrayId)} />
             )}
+            {/* --- AND THE SAME BAR, ABOUT THE NEXT MODULE ON A RUN ----------
+                THE SPECIFICATION HAS TO BE ON SCREEN AT THE MOMENT OF CLIPPING,
+                which is CobSpec's argument and is why this is the same object in
+                the same place — see ModuleSpec for why it is not that component
+                with three more flags on it.
+                IT IS THE LAST STEP OF THE TRACK'S OWN FLOW: draw the run and the
+                allocator fills it, hover the profile and the pointer turns into a
+                plus, press it and the modules arrive beside the rail cell, pick
+                one and this says what the next press will clip in. */}
+            {moduleBarOn && (
+              <ModuleSpec stage={stageRef} tail={sceneTail}
+                label={MODULE_BY_ID[trackMode]?.label ?? 'Module'}
+                watts={moduleSpec.watts} wattList={moduleWattList(trackMode)}
+                beam={moduleSpec.beam}
+                onWatts={(w) => setModuleSpec((d) => ({ ...d, watts: w }))}
+                onBeam={(b) => setModuleSpec((d) => ({ ...d, beam: b }))} />
+            )}
             {/* --- AND THE BAR ITSELF, WHEN NOTHING IS BEING DONE TO THE PLAN --
-                THE TWO SCENE BUTTONS ARE ALWAYS ON SCREEN, which is what makes
-                them findable: "where do I switch to the wiring" has one answer
-                and it is in the same place whatever else is happening. When a
-                gesture IS running they ride on that gesture's own bar — see
+                THE ELECTRICAL SWITCH IS ALWAYS ON SCREEN, which is what makes
+                it findable: "where do I turn the wiring on" has one answer and
+                it is in the same place whatever else is happening. When a
+                gesture IS running it rides on that gesture's own bar — see
                 `tail` on the three above — because two pills side by side at the
                 foot of the drawing would be two controls competing for the
                 position people have learned.
 
                 SO THIS IS THE SAME BAR WITH NOTHING IN FRONT OF THE TAIL. The
-                condition is exactly the negation of the three: `addTool ===
+                condition is exactly the negation of the four: `addTool ===
                 'cob'` renders the specification bar, a selected array renders
-                it in its editing tense, and `geometry.bar.mode` renders the
-                shape bar. `readOnly` is in there because none of those three is
-                drawn on a viewer's sheet — and neither is the tail, which is
-                null there, so this collapses to nothing on its own. */}
+                it in its editing tense, `geometry.bar.mode` renders the shape
+                bar, and `moduleBarOn` renders the module's own — which carries
+                its own `readOnly` rather than borrowing this one's, because it
+                is read in two places. `readOnly` is in here because none of the
+                others is drawn on a viewer's sheet — and neither is the tail,
+                which is null there, so this collapses to nothing on its own. */}
             {!(!readOnly && (addTool === 'cob' || selArrayBar || geometry.bar.mode))
-              && sceneTail && (
+              && !moduleBarOn && sceneTail && (
               <StageBar stage={stageRef} tail={sceneTail} label="Drawing" />
             )}
             {/* --- THE CARD THAT EXPLAINS THE OPTIONS PILL --------------------
@@ -6914,12 +7039,13 @@ export default function App({
             and a walkthrough over that is an invitation to walk away from a
             thing that is happening. */}
         {showTrace && !prep && <HowToVideo className="flex-none mb-3" />}
-        {/* THE BOQ PANEL HAS ONE JOB.        {/* THE BOQ PANEL HAS ONE JOB. Every other section here is a control over
+        {/* THE BOQ PANEL HAS ONE JOB. Every other section here is a control over
             the drawing — arm a fan, recompute the accents, toggle a layer — and
             not one of them means anything while a schedule is on screen. A panel
             full of controls that act on something you cannot see is worse than
-            an empty one, so it collapses to the only thing there is to do with a
-            schedule: get it out of here — which the strip above now does. */}
+            an empty one, so it collapses to the three things there are to do
+            with a schedule: Excel, CSV, PDF. The way out is the BOQ button in
+            the top bar, latched, which is also the way in. */}
         {boardsOpen ? (
           /* --- THE PANEL BESIDE THE SHEET, AND IT SAYS ALMOST NOTHING.
               THE SAME ARGUMENT THE SCHEDULE'S PANEL MAKES. Every other section
@@ -6969,10 +7095,10 @@ export default function App({
                 measured. Set the scale and the metres appear.
               </p>
             )}
-            {/* "← BACK TO THE DRAWING" WAS HERE. The Design tab in the strip
-                at the top of this panel is the same act, said once, in the place
-                that also says where you are. A button at the foot of a panel
-                whose only job is to leave it was the second answer. */}
+            {/* "← BACK TO THE DRAWING" WAS HERE. The BOQ button in the top bar
+                is the same act, said once, latched, in the place that also says
+                where you are. A button at the foot of a panel whose only job is
+                to leave it was the second answer. */}
           </div>
         ) : readOnly ? (
           /* THE READING, NOT THE CONTROLS. See ViewerPanel for why the editing
@@ -8124,12 +8250,14 @@ export default function App({
             and it appears and disappears with that thing, so a footer pinned
             under it was three whole-plan facts hanging off a panel about a
             room.
-            THE SWITCH IS THE SCENE BUTTON ON THE BAR OVER THE DRAWING. "Show
-            electrical layout" is not a layer you tick on top of a lighting
-            drawing, it is the other drawing — so it is one of the two scene
-            buttons in the StageBar, beside the schedule. Its first press still
-            asks about the doors, for the reason it always did: a switchboard is
-            placed beside one. See the tail on that bar.
+            THE SWITCH IS ON THE BAR OVER THE DRAWING. It went out as a pair of
+            scene buttons — Lighting / Electrical layout — and came back as a
+            switch, because the wiring is neither a tick on a list of twelve
+            layers nor a place you travel to: it is this drawing with the plates
+            and the loops on it, and a control that is visibly on or off is the
+            honest picture of that. Its first press still asks about the doors,
+            for the reason it always did: a switchboard is placed beside one.
+            See `sceneTail`.
             THE OTHER TWO ARE IN THE BOTTOM BAR, on the left, where the standing
             readings go. */}
       </div>

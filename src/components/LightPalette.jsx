@@ -111,6 +111,19 @@ export const LIGHT_TOOLS = [
     // like a fan does, so the grid moves out of its way — which looks like the
     // lights having been deleted if you did not know it was coming.
     consequence: 'The ambient grid keeps clear of it.' },
+  /* THE SAME FITTING AT HALF THE SIZE, AND IT IS THE SAME `kind` UNDERNEATH.
+     A pendant is a chandelier to every piece of geometry in this app — it hangs,
+     it reserves clearance, it lights what is under it — and 450mm against 900 is
+     the whole of the difference. See the note beside its catalogue entry in
+     ceilingObjects.js for why that is one `kind` with two `id`s rather than a
+     tenth thing for nine files to learn about.
+     WHICH IS ALSO WHY THE HINT AND THE CONSEQUENCE ARE WORD FOR WORD THE
+     CHANDELIER'S. They are the same gesture and the same surprise, and writing
+     the second pair differently to avoid the repetition would be inventing a
+     distinction that is not there. */
+  { id: 'pendant', label: 'Pendant', arms: 'object',
+    hint: 'Click the ceiling to drop it.',
+    consequence: 'The ambient grid keeps clear of it.' },
 ];
 
 /**
@@ -119,11 +132,12 @@ export const LIGHT_TOOLS = [
  * than a broken one — see the guard at the call site.
  */
 export const LIGHT_ICON = {
-  strip:  '/icons/led_strip.png',
-  sconce: '/icons/sconce.png',
-  spot:   '/icons/directional.png',
-  chandelier: '/icons/chandelier.png',
-  cove:   '/icons/reverse_cove.png',
+  strip:  '/icons/new_icons/led_strip.png',
+  sconce: '/icons/new_icons/wall_sconce.png',
+  spot:   '/icons/new_icons/directional_spot.png',
+  chandelier: '/icons/new_icons/chandelier.png',
+  pendant: '/icons/new_icons/pendant.png',
+  cove:   '/icons/new_icons/reverse_cove.png',
   track:  '/icons/track.png',
 };
 

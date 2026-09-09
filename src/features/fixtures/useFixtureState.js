@@ -191,6 +191,25 @@ export default function useFixtureState({ sel, setSel }) {
      SELECTED RUN, so both were state that had to be kept in step with something
      already true. See the cell at the ToolRail call site. */
   const [trackMode, setTrackMode] = useState(null);
+  /* --- WHICH RUN'S DRAWER IS OPEN, AND WHY IT IS NOT `selTrackId` -----------
+     A PRESS ON A RUN OPENS THE MODULE DRAWER, and being selected is not the
+     same fact. `commitShape` selects the shape it has just landed — that is how
+     the geometry bar becomes the new object's contextual menu — so a drawer
+     following the selection alone would fly open the instant a track was drawn,
+     over a run that has just been filled by the allocator and that nobody has
+     asked to add anything to. What opens it is the ACT: hover the profile, see
+     the plus, press it. See `shapePointerDown`, which is the one place that
+     writes this, and the ToolRail call site, which reads it against
+     `selTrackId` — so a selection moved elsewhere closes the drawer for free.
+     NULL FOR A PRESS ON ANYTHING ELSE, which is why the write is unconditional
+     rather than guarded at the call site: pressing a cove has to CLOSE this. */
+  const [trackAdd, setTrackAdd] = useState(null);
+  /* WHAT THE NEXT MODULE WILL BE, and it is the COB draft's idea said about a
+     module: the specification has to be on screen at the moment of placing, not
+     in a panel about a fitting already on the run. Null while nothing is armed;
+     set to the module's own defaults when one is (see the ToolRail call site),
+     which is what makes the bar an answer before it is a question. */
+  const [moduleSpec, setModuleSpec] = useState(null);
   /* WHICH MODULE IS HELD, AND THE SLIDE IN FLIGHT.
      A DIFFUSER THE ALLOCATOR PUT DOWN IS A PROPOSAL AND NOT A DECISION — it
      answered "how much light" from the room's shortfall and "where" from the
@@ -234,7 +253,7 @@ export default function useFixtureState({ sel, setSel }) {
     objects: () => { setObjMode(false); setObjDrag(null); },
     lightMoves: () => setLightDrag(null),
     armed: () => { setArmed(null); setGhost(null); },
-    module: () => setTrackMode(null),
+    module: () => { setTrackMode(null); setModuleSpec(null); },
     /* THE COB BAR AND THE HALF-MADE CHANGE ON IT — `disarmAdd`'s half of this
        feature. `cobAt` is the point the bar was answering for, so it has to go
        with the tool; `cobDraft` is a slider position nobody committed and
@@ -270,7 +289,9 @@ export default function useFixtureState({ sel, setSel }) {
     cobRun, setCobRun, cobLock, setCobLock, cobAt, setCobAt,
     cobDraftArray, setCobDraftArray,
     selArrayId, arrayDrag, setArrayDrag,
-    trackMode, setTrackMode, selModuleId, moduleDrag, setModuleDrag,
+    trackMode, setTrackMode, trackAdd, setTrackAdd,
+    moduleSpec, setModuleSpec,
+    selModuleId, moduleDrag, setModuleDrag,
     selLightId, lightDrag, setLightDrag,
     reset,
   };

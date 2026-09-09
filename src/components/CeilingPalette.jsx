@@ -62,19 +62,19 @@ import PaletteButton from './PaletteButton.jsx';
    the chandelier, and for the same reason: the row is a row of things to place,
    not a row of one machine's tools. */
 export const CEILING_GROUPS = [
-  { key: 'fan',        ids: ['fan'],       icon: '/icons/fan.png' },
+  { key: 'fan',        ids: ['fan'],       icon: '/icons/new_icons/fan.png' },
   /* LABELLED FOR WHAT IT PLACES, WHICH IS A SOCKET. It is a switchboard — one
      socket and no switch, the one composition allowed to have none — and calling
      the button "Switchboard" would promise the wrong thing twice: that something
      gets switched FROM it, and that there is a configuring step afterwards.
      There is not. It lands, it wires itself to the nearest board, and that board
      grows the switch. */
-  { key: 'board',      ids: ['board'],     icon: '/icons/sb.png',
+  { key: 'board',      ids: ['board'],     icon: '/icons/new_icons/switchboard.png',
     label: 'Socket', arms: 'board' },
-  { key: 'ac',         ids: ['ac'],        icon: '/icons/casette.png' },
-  { key: 'split_ac',   ids: ['split_ac'],  icon: '/icons/split_ac.png' },
+  { key: 'ac',         ids: ['ac'],        icon: '/icons/new_icons/casette.png' },
+  { key: 'split_ac',   ids: ['split_ac'],  icon: '/icons/new_icons/split.png' },
   // The crossed square, which is the mark everyone already knows for a hatch.
-  { key: 'trapdoor',   ids: ['trapdoor'],  icon: '/icons/trap.png' },
+  { key: 'trapdoor',   ids: ['trapdoor'],  icon: '/icons/new_icons/trap.png' },
 ];
 
 /**

@@ -130,17 +130,25 @@ const short = (label) => SHORT[label] ?? label;
    every cell has one now, so the panel is RailFlyout and the table is here with
    the other four groups' contents. */
 export const COB_MODES = [
-  { id: 'manual', label: 'Manual', icon: '/icons/cob_manual.png',
+  { id: 'manual', label: 'Manual', icon: '/icons/new_icons/cob_manual.png',
     title: 'Manual — click the ceiling to place one at a time' },
-  { id: 'array', label: 'Array', icon: '/icons/cob_array.png',
+  { id: 'array', label: 'Array', icon: '/icons/new_icons/cob_array.png',
     title: 'Array — a run of them, evenly spaced' },
 ];
 
 /** Which fitting from LIGHT_TOOLS goes in which category. Ids, because the
  *  table those come from is ordered for a row that no longer exists. */
 const IN_COVES = ['cove', 'strip'];
-const IN_LAMPS = ['chandelier', 'sconce'];
+/* THE TWO CEILING DROPS FIRST AND THE WALL FITTING LAST, which is the order
+   they differ in: a chandelier and a pendant are one fitting at two sizes — see
+   ceilingObjects.js — and a sconce is the only one of the three that seats
+   itself on a wall. */
+const IN_LAMPS = ['chandelier', 'pendant', 'sconce'];
 const IN_SPOTS = ['spot'];
+
+/** THE CELLS WHOSE FLYOUT IS NOTHING BUT A PANEL, so this file owns whether it
+ *  is showing. Spots and Tracks are the editor's — see `openOnly`. */
+const OWN_PANEL = new Set(['coves', 'lamps', 'electrical']);
 
 export default function ToolRail({
   tool = null, objArmed = null, onPick,
@@ -164,12 +172,27 @@ export default function ToolRail({
      guide already on the drawing and have its outline handed over. A flyout
      offering three fittings and no way to make a run would be a panel about
      nothing on a fresh plan.
-     SO THE THREE MODULES ARE `disabled` UNTIL THERE IS A RUN. `trackDrawer` is
-     the caller's answer to "is there something to clip onto" — it used to decide
-     whether the drawer appeared at all, and now it decides whether its cells can
-     be pressed. Shown-and-out-of-reach rather than absent, which is the rule the
-     COB's unbuilt gesture follows: a panel that grows two more cells once you
-     have done something else is a panel nobody can learn the shape of. */
+     SO THE FLYOUT IS NOT WHAT THE CELL OPENS, AND THAT IS THE WHOLE OF THIS
+     CATEGORY'S FLOW. It followed `trackOn` — the bar's own role — so pressing
+     the cell put a geometry bar at the foot of the drawing AND three modules
+     beside the rail, on a plan that very often had no profile to clip one into.
+     Two panels for one press, one of them about nothing.
+     `trackDrawer` IS WHEN IT SHOWS NOW: a run has been PRESSED on the drawing,
+     or a module is already armed. So the order is the order of the work — draw
+     the run, and the allocator fills it; hover the profile and the pointer turns
+     into a plus; press it and the modules arrive beside the cell you learned
+     they live behind. See `trackAdd` in features/fixtures/useFixtureState.js for
+     why a pressed run is not the same fact as a selected one.
+     WHICH ALSO RETIRES THE DISABLED STATE. Every cell in here is now shown only
+     when there is something to clip onto, so "shown and out of reach" would be a
+     picture of a precondition that is met by definition. `trackSoon` still greys
+     the module this build does not answer for, which is a different claim. */
+  /* `onTrack('close')` IS THE ONE MESSAGE THIS HANDLER TAKES BESIDES A PLAIN
+     PRESS, and it exists because every OTHER cell needs a way to put this panel
+     away — see `openOnly`. Called bare it toggles, which is the cell's own press;
+     called with `'close'` it closes and is a no-op if the bar is already down,
+     because a rule that says "put the others away" must never be able to OPEN
+     one. The COB's handler has taken its four messages this way from the start. */
   trackOn = false, onTrack = null,
   trackDrawer = false, trackMode = null, onTrackPick = null, trackSoon = [],
   /* NO `onGeometry`. The guide primitives are the same bar the cove opens and
@@ -185,14 +208,42 @@ export default function ToolRail({
   const lampsRef = useRef(null);
   const elecRef = useRef(null);
 
-  /* WHICH FLYOUT IS SHOWING, and only the two that own no state of their own.
+  /* WHICH FLYOUT IS SHOWING, and only the three that own no state of their own.
      Spots is `cobOpen` and Tracks is `trackOn`, both of which belong to the
      editor because pressing those cells arms or opens something out there; the
      other three open nothing but a panel, so the panel's own visibility is the
-     whole of what there is to remember. ONE AT A TIME, because two panels
-     standing over the drawing is two answers to "what did I just press". */
+     whole of what there is to remember. */
   const [openId, setOpenId] = React.useState(null);
-  const show = (id) => setOpenId((cur) => (cur === id ? null : id));
+
+  /* --- ONE PANEL AT A TIME, AND IT IS ONE RULE NOW RATHER THAN FIVE ---------
+     TWO PANELS STANDING OVER THE DRAWING IS TWO ANSWERS TO "WHAT DID I JUST
+     PRESS", which the file has claimed since the flyouts were built — and the
+     claim was not true. `openId` holds at most one id, so the three cells that
+     live in it were exclusive for free; the other two are not in it, and closing
+     them was left to each cell to remember on its own. Every cell did remember
+     the COB (`onCob('close')` on the way in) and NO cell remembered the track,
+     so with the Tracks flyout up, pressing Electrical left both panels open —
+     and so did pressing Spots, which put a second one beside it.
+
+     THE FIX IS NOT A SIXTH CLOSE IN FIVE PLACES. Four closes hand-written five
+     times is a rule that exists only in the heads of the people who wrote it,
+     which is how this one came to have a hole in it. This is the rule, once, and
+     the next category obeys it by asking rather than by remembering.
+
+     IT ASKS THE OTHER TWO TO CLOSE RATHER THAN CLOSING THEM, because it cannot:
+     `cobOpen` is the editor's and the track's panel is the geometry bar in its
+     own role, so closing either means putting a machine away out on the drawing
+     and the editor is the only thing that knows what else goes with it. Both
+     take `'close'` — see the note on `onTrack` in the props above. */
+  const openOnly = (id) => {
+    if (id !== 'spots') onCob?.('close');
+    if (id !== 'tracks') onTrack?.('close');
+    /* AND THE PRESS IS STILL A TOGGLE. `cur === id` is a second press on the
+       cell whose panel is already up, which means close — the same thing it
+       meant when this was `show`. A cell whose panel is the editor's is never
+       stored here, so it falls to `null` and its own handler does the toggling. */
+    setOpenId((cur) => (OWN_PANEL.has(id) && cur !== id ? id : null));
+  };
 
   const isOn = (t) => (t.arms === 'object' ? objArmed === t.id : tool === t.id);
   const byId = (ids) => ids
@@ -221,7 +272,12 @@ export default function ToolRail({
   const anyOn = (ids) => byId(ids).some(isOn);
   const spotsLive = cobOpen || !!cobMode || anyOn(IN_SPOTS);
   const covesLive = openId === 'coves' || shapeOn || anyOn(IN_COVES);
-  const tracksLive = trackOn || !!trackMode;
+  /* AND `trackDrawer` IS IN THIS ONE, WHICH THE OTHER FOUR DO NOT NEED. Every
+     other category's flyout is opened by pressing the cell, so "the panel is
+     open" and "this cell was pressed" are the same fact; this one is opened by a
+     press on the DRAWING, and without this the modules would hang off a cell
+     that read as off. See the note on `trackDrawer` in the props. */
+  const tracksLive = trackOn || trackDrawer || !!trackMode;
   const lampsLive = openId === 'lamps' || anyOn(IN_LAMPS);
   const elecLive = openId === 'electrical' || boardOn
     || CEILING_GROUPS.some((g) => !g.arms && g.ids.includes(objArmed));
@@ -283,9 +339,9 @@ export default function ToolRail({
                 /* THE CELL IS THE COB DRAWER'S OWN TOGGLE, which is what keeps
                    the two from disagreeing: `cobOpen` is the panel, and the
                    editor is what puts every other machine away when it opens.
-                   Closing the other three panels is this file's, because they
-                   are this file's state — one panel at a time. */
-                setOpenId(null);
+                   `openOnly` shuts the other four first — including the track,
+                   which this cell used to leave standing beside its own. */
+                openOnly('spots');
                 onCob(cobOpen ? 'close' : 'open');
               }} />
           </div>
@@ -319,31 +375,30 @@ export default function ToolRail({
           <div ref={covesRef} className="flex-none">
             <RailCell mark={MARK.coves} label="Coves" on={covesLive}
               title="Coves, reverse coves and LED strip"
-              onClick={() => { onCob?.('close'); show('coves'); }} />
+              onClick={() => openOnly('coves')} />
           </div>
         )}
         {onShape && openId === 'coves' && (
           <RailFlyout anchor={covesRef} label="Coves">
-            <PaletteButton icon="/icons/cove.png" label="Cove" title="Cove"
+            <PaletteButton icon="/icons/new_icons/normal_cove.png" label="Cove" title="Cove"
               on={shapeOn} disabled={disabled} onClick={onShape} />
             {byId(IN_COVES).map(cell)}
           </RailFlyout>
         )}
 
         {/* --- TRACKS ------------------------------------------------------
-            THE CELL OPENS THE GEOMETRY BAR, which is the run being drawn, and
-            the flyout's three modules wait on one existing. See the note on
-            `trackDrawer` in the props above for why they are shown disabled
-            rather than withheld.
+            THE CELL OPENS THE GEOMETRY BAR AND NOTHING ELSE, which is the run
+            being drawn. The flyout's three modules arrive later and off a press
+            on the drawing — see the note on `trackDrawer` in the props above.
             NOT DISABLED WITH THE REST, for the Spots cell's reason. */}
         {onTrack && (
           <div ref={trackRef} className="flex-none">
             <RailCell mark={MARK.tracks} label="Tracks" on={tracksLive}
               title="Magnetic track"
-              onClick={() => { onCob?.('close'); setOpenId(null); onTrack(); }} />
+              onClick={() => { openOnly('tracks'); onTrack(); }} />
           </div>
         )}
-        {onTrackPick && trackOn && (
+        {onTrackPick && trackDrawer && (
           <RailFlyout anchor={trackRef} label="Magnetic track">
             {TRACK_MODULES.map((m) => (
               /* `airy`, BECAUSE THESE THREE PICTURES REACH THE BOTTOM EDGE.
@@ -352,15 +407,15 @@ export default function ToolRail({
                  sits in the light. See PaletteButton. */
               <PaletteButton key={m.id} icon={m.icon} label={short(m.label)}
                 title={m.title} airy on={trackMode === m.id}
-                /* OUT OF REACH FOR THREE DIFFERENT REASONS, AND THEY ARE
-                   NOT THE SAME REASON. `disabled` is "no scale and no lit
-                   space", which is the guard on every placer in this rail;
-                   `!trackDrawer` is "there is no run to clip onto yet", which is
-                   this category's own precondition; `trackSoon` is a module this
-                   build does not answer for. All three come out as a cell you
-                   can see and cannot press, which is the honest picture of
-                   each. */
-                disabled={disabled || !trackDrawer || trackSoon.includes(m.id)}
+                /* OUT OF REACH FOR TWO DIFFERENT REASONS, AND THEY ARE NOT
+                   THE SAME REASON. `disabled` is "no scale and no lit space",
+                   which is the guard on every placer in this rail; `trackSoon`
+                   is a module this build does not answer for. Both come out as a
+                   cell you can see and cannot press, which is the honest picture
+                   of each. THE THIRD ONE IS GONE: "there is no run to clip onto"
+                   is now the condition on the whole flyout rather than on its
+                   cells — see the note on `trackDrawer` in the props above. */
+                disabled={disabled || trackSoon.includes(m.id)}
                 onClick={() => onTrackPick(m.id)} />
             ))}
           </RailFlyout>
@@ -374,7 +429,7 @@ export default function ToolRail({
         <div ref={lampsRef} className="flex-none">
           <RailCell mark={MARK.lamps} label="Lamps" on={lampsLive}
             title="Chandeliers and sconces"
-            onClick={() => { onCob?.('close'); show('lamps'); }} />
+            onClick={() => openOnly('lamps')} />
         </div>
         {openId === 'lamps' && (
           <RailFlyout anchor={lampsRef} label="Lamps">
@@ -390,7 +445,7 @@ export default function ToolRail({
         <div ref={elecRef} className="flex-none">
           <RailCell mark={MARK.electrical} label="Electrical" on={elecLive}
             title="Sockets, fans, air conditioners and hatches"
-            onClick={() => { onCob?.('close'); show('electrical'); }} />
+            onClick={() => openOnly('electrical')} />
         </div>
         {openId === 'electrical' && (
           <RailFlyout anchor={elecRef} label="Electrical">

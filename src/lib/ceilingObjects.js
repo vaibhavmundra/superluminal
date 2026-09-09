@@ -46,6 +46,25 @@ export const CEILING_TYPES = [
     diaFt: 1200 * MM, sweepsMm: [900, 1200] },
   { id: 'chandelier', kind: 'chandelier', label: 'Chandelier', colour: '#404040',
     diaFt: 900 * MM },
+  /* --- A PENDANT IS A CHANDELIER, AND THE `kind` SAYS SO ON PURPOSE --------
+     IT IS A SECOND `id` ON THE FIRST `kind`, which is the split this table's
+     header describes: `kind` is what a thing IS and `id` is what the picker
+     offers. A pendant hangs off a ceiling, reserves clearance the grid keeps
+     off, lights the table under it well enough to veto a task spot, lands on
+     the DXF's `decorative` layer, glows on a night sheet and is counted as a
+     lamp — every one of which this app already asks by testing `kind ===
+     'chandelier'`, in nine separate files.
+     SO A `kind: 'pendant'` WOULD BE NINE EDITS AND NINE CHANCES TO MISS ONE,
+     and the symptom of missing one is silent: a fitting the grid lays a
+     downlight straight through, or one absent from the schedule. The BOQ line
+     was already written for this — `boq.js` calls it "Chandelier / pendant" —
+     because the two are one item to anybody ordering them.
+     WHAT IS ACTUALLY DIFFERENT IS THE SIZE, and that is the whole of it. 450mm
+     against the chandelier's 900: half the diameter, so half the radius the
+     layout keeps clear and a proportionally shorter reach when `chandelierOver`
+     measures from its body to a worktop. */
+  { id: 'pendant',    kind: 'chandelier', label: 'Pendant',    colour: '#404040',
+    diaFt: 450 * MM },
   { id: 'ac',         kind: 'ac',         label: 'Cassette AC', colour: '#404040',
     wFt: 900 * MM, hFt: 900 * MM },
   /* --- AND TWO THINGS THAT ARE NOT ON THE CEILING AT ALL --------------------

@@ -63,7 +63,7 @@ export default function useFixtureGestures({
     armed, setArmed, ghost, setGhost, fanSweepMm,
     cobOnce, setCobOnce, cobStanding, setCobRun, cobLock, setCobLock,
     setCobAt, cobDraftArray, setCobDraftArray,
-    arrayDrag, setArrayDrag, trackMode, setTrackMode,
+    arrayDrag, setArrayDrag, trackMode, setTrackMode, moduleSpec,
     moduleDrag, setModuleDrag,
   } = state;
   const basisFor = fixtures.cob.basisFor;
@@ -706,16 +706,26 @@ export default function useFixtureGestures({
     if (!run || !trackMode) return true;
     e.preventDefault();
     const taken = pointsOn(trackFixtures, run.id);
+    /* WHAT IS ON THE BAR IS WHAT LANDS. `moduleSpec` is the specification the
+       bar at the foot of the drawing is showing — see ModuleSpec — and the
+       fallback is the module's own default, which is what that bar opens at, so
+       the two agree by construction rather than by coincidence. A press that
+       placed the default while the bar read 18 W would make every figure on it
+       a lie. */
+    const watts = moduleSpec?.watts ?? moduleWatts(trackMode);
     /* CLEARED AT THE BODY THIS MODULE WILL ACTUALLY BE, and every module
        already on the run at its own — a 5 W diffuser is a 200 mm stub and an
        18 W one a 400 mm bar, so one clearance figure for the lot would refuse
        the small one a gap it fits and let the big one overlap. See
-       `DIFFUSER_LENGTHS_MM`. */
-    const u = moduleU({ run, p, taken, kind: trackMode,
-                        watts: moduleWatts(trackMode) });
+       `DIFFUSER_LENGTHS_MM`. THE CHOSEN WATTAGE AND NOT THE DEFAULT, for that
+       same reason: the gap this module needs is the gap the body it is about to
+       have needs. */
+    const u = moduleU({ run, p, taken, kind: trackMode, watts });
     if (u == null) return true;   // the run is full — see `placeableU`
     docActions.addTrackFixtures([
-      placeModule({ on: run.id, kind: trackMode, u, seq: trackFixtures.length })]);
+      placeModule({ on: run.id, kind: trackMode, u, watts,
+                    beam: moduleSpec?.beam ?? null,
+                    seq: trackFixtures.length })]);
     /* AND THE PANEL GOES TO THE SPACE IT LANDED IN, on the first module of
        a run, for the reason the first COB of a run opens its space: a
        diffuser is an ambient source and the two figures at the top of the

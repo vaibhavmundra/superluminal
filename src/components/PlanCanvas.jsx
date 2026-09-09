@@ -4179,7 +4179,25 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   <path key={i} className="hit" d={path(band, sh.open)} fill="none"
                     stroke="transparent" strokeWidth={Math.max(lw * 8, 6)}
                     strokeLinejoin="round"
-                    style={{ pointerEvents: 'stroke', cursor: 'move' }}
+                    /* --- A PLUS OVER A MAGNETIC TRACK, AND A MOVE OVER
+                        EVERYTHING ELSE. The band is one target answering one
+                        press for every shape on the sheet, and for a cove or a
+                        guide the honest thing to say about that press is "this
+                        picks the object up". A RUN IS DIFFERENT because the
+                        press does something further: it opens the module drawer
+                        beside the rail, which is how fittings get onto a
+                        profile. So the pointer says ADD rather than MOVE — the
+                        drag still works, exactly as it does on a cove, but the
+                        thing somebody came to the profile to do is clip
+                        something onto it. See `shapePointerDown`.
+                        `copy` AND NOT `cell`. Both draw a plus; `cell` is a
+                        bare crosshair, which on this canvas already means "a
+                        press here places a fitting at this point", and a module
+                        does not land at the point — it lands at the nearest
+                        place on the run its body fits. `copy` is the arrow with
+                        a plus beside it: the object under it gains something. */
+                    style={{ pointerEvents: 'stroke',
+                             cursor: sh.track ? 'copy' : 'move' }}
                     onPointerDown={(e) => onShapePointerDown(e, sh.id)}
                     /* AND THE CLICK IS STOPPED TOO, WHICH IS NOT THE SAME ACT
                        AS STOPPING THE PRESS. A click is its own event:
