@@ -5793,8 +5793,8 @@ export default function App({
                  TREATMENT. `wash` is a designed pass with a reason of its own —
                  a scrim of the GROUND's colour, under our line work, so a cove
                  or a wall can be aimed at somebody else's scan — and stacking a
-                 55% blackout on top of it would be two dimmers fighting over
-                 one drawing. The condition is exactly the `wash` one below.
+                 blackout on top of it would be two dimmers fighting over one
+                 drawing. The condition is exactly the `wash` one below.
 
                  OFF FOR A VIEWER. The shared sheet is a drawing rather than an
                  editor: there is no rail and no Escape out there, so a stray

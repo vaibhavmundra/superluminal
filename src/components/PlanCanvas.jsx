@@ -95,6 +95,41 @@ const C = {
 };
 
 /**
+ * ONE SPACE LEFT LIT, AND THE REST OF THE SHEET PUT OUT — the scrim `isolateId`
+ * draws. That prop says what the state is and why it is a path rather than a
+ * mask; this is the part of it anybody is ever likely to want to move.
+ *
+ * IT IS NAMED BECAUSE THE FIGURE IS A JUDGEMENT AND NOT A FACT. Nearly every
+ * other number in this file is derived from something you can check it against
+ * — a wattage, a beam angle, a line weight, a clearance in feet. How far down
+ * to take the rest of the drawing cannot be checked against anything: it is a
+ * balance between "the clicked room is obviously the subject" and "I can still
+ * tell where I am on the sheet", and the only way to settle it is to look. A
+ * number like that has to be somewhere a person can find it, which a bare
+ * `opacity="0.4"` nine hundred lines down is not — this file already has ten
+ * unrelated uses of that same literal, so grepping the value leads nowhere.
+ *
+ * 0.4 IS DELIBERATELY SHORT OF ISOLATION. At this strength the neighbouring
+ * rooms stay legible as context and the clicked space reads as the subject by
+ * CONTRAST. Past roughly 0.7 the rest of the drawing becomes a silhouette,
+ * which is a different instrument altogether: that is a modal step, and a modal
+ * step owes the reader a visible way out. This one's way out is a click.
+ *
+ * NOT IN settings.js WITH THE OTHER STYLE BLOCKS, and the line is the one `C`
+ * above is drawn on. Those describe PRODUCT — a strip, a throw, a cove band —
+ * things the sheet depicts and a builder measures off. This is interface that
+ * happens to be rendered in the drawing's coordinate space, like the grips and
+ * the guides beside it, so it lives where they do.
+ */
+const ISOLATE_STYLE = {
+  /** Black on BOTH grounds — see `isolateId` for why this is the one decision
+      on this canvas that takes no colour from `layers.invert`. */
+  ink: '#000000',
+  /** How far down the rest of the sheet goes. */
+  opacity: 0.4,
+};
+
+/**
  * HOW WIDE A POOL THIS CATALOGUE LINE THROWS, IN FEET — or null for none.
  *
  * Asked of the fitting's STATED WATTAGE and not of its id, which is the whole
@@ -4979,7 +5014,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const hole = poly.map((p, k) => `${k ? 'L' : 'M'}${p.x},${p.y}`).join(' ');
         return (
           <path d={`M0,0 H${width} V${height} H0 Z ${hole} Z`}
-            fillRule="evenodd" fill="#000000" opacity="0.4"
+            fillRule="evenodd" fill={ISOLATE_STYLE.ink}
+            opacity={ISOLATE_STYLE.opacity}
             pointerEvents="none" />
         );
       })()}
