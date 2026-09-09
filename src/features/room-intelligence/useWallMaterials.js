@@ -20,19 +20,18 @@ export default function useWallMaterials({ rooms, materials, docActions }) {
   const [wallEdit, setWallEdit] = useState(null);
   const [wallPick, setWallPick] = useState(null);
 
-  /* WHICH SPACE HAS ITS FINISHES OPEN — a room id, or null, and it is a SCREEN
-     rather than a decision so it is not saved. Setting the finishes replaces the
-     analysis in the space panel; see SpaceDetail for why that is a swap and not
-     a disclosure.
-     A ROOM ID AND NOT A BOOLEAN, which is what makes it close itself: opening a
-     different space is a different id, so the finishes collapse with no effect
-     to watch `focusId` and no way for the two to disagree.
-     IT SURVIVES THE WALL STEP, which is the reason it lives out here with the
-     rest of the editor's state rather than inside SpaceDetail. "Configure walls"
-     is reached FROM the finishes and unmounts the whole panel while it runs;
-     local state would put somebody back on the analysis when they pressed Done,
-     one step further out than they left. */
-  const [materialsEdit, setMaterialsEdit] = useState(null);
+  /* --- `materialsEdit` WAS HERE, AND THE FOLD IT GATED IS GONE ------------
+     IT HELD THE ID OF THE SPACE WHOSE FINISHES WERE OPEN, because the finishes
+     used to be a one-line summary you pressed to expand, and expanding them
+     REPLACED the analysis in the space panel. The floating window shows the
+     ceiling height, the three tone rows and the readout at once — every one of
+     those rows moves the figure under it, which is the argument for having them
+     on one screen — so there is nothing to be open or closed.
+     IT LIVED OUT HERE RATHER THAN IN SpaceDetail for a reason worth keeping in
+     mind if a fold ever comes back: "Configure walls" is reached FROM the
+     finishes and unmounts the whole panel while the wall step runs, so local
+     state would put somebody back on the analysis when they pressed Done, one
+     step further out than they left. */
 
   /* THESE DO NOT RESOLVE THE ROOM'S CURRENT TONES AND MUST NOT. The reducer
      reads them off its own state, which is what the `setMaterials` updater these
@@ -101,7 +100,6 @@ export default function useWallMaterials({ rooms, materials, docActions }) {
 
   return {
     wallEdit, wallPick, setWallPick, wallEditRoom, wallEditGeo,
-    materialsEdit, setMaterialsEdit,
     setSurfaceTone, setWallTone, pickWallSegment,
     openWallEdit, closeWallEdit,
   };

@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React from 'react';
 import { BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.js';
+import StageBar from './StageBar.jsx';
 
 /* ---------------------------------------------------------------------------
    CobSpec — WHAT THE NEXT COB WILL BE, WHILE YOU ARE DECIDING WHERE IT GOES.
@@ -53,13 +54,11 @@ import { BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.js';
    two bars read as the same kind of thing rather than as two inventions.
    --------------------------------------------------------------------------- */
 
-/** Its clearance from the foot of the stage. ShapeMenu's own figure — the two
- *  are never up together, so they sit in the same place rather than beside each
- *  other. That is enforced rather than hoped for: arming a COB closes the shape
- *  tool, and opening an array closes both (see `openArray` in App.jsx). Two bars
- *  at this figure would be two rows of buttons in one place, half of them about
- *  an object nobody is looking at. */
-const BOTTOM = 26;
+/* THE CLEARANCE AND THE PILL ARE StageBar's. This bar and the shape bar sit in
+   exactly the same place, which is enforced rather than hoped for: arming a COB
+   closes the shape tool, and opening an array closes both (see `openArray` in
+   App.jsx). Two bars in one place would be two rows of buttons, half of them
+   about an object nobody is looking at. */
 
 const CAP = 'text-[10.5px] leading-none tracking-[0.02em] text-black/55 px-1.5 select-none';
 const VAL = 'text-[11.5px] leading-none text-black tabular-nums '
@@ -106,38 +105,6 @@ const Glyph = ({ d }) => (
 );
 
 /**
- * WHERE THE BAR SITS — centred over the stage, near its foot. Measured rather
- * than positioned, for ShapeMenu's two reasons: the stage is a scroll container,
- * so an absolutely positioned child scrolls away with the drawing; and this must
- * not be inside the <svg>, where the zoom would scale it.
- *
- * `null` while the stage has not been measured, which is one frame on mount.
- */
-function useStageRect(stage) {
-  const [box, setBox] = useState(null);
-  const measure = useCallback(() => {
-    const el = stage?.current;
-    setBox(el ? el.getBoundingClientRect() : null);
-  }, [stage]);
-  useEffect(() => {
-    measure();
-    const el = stage?.current;
-    window.addEventListener('resize', measure);
-    el?.addEventListener('scroll', measure);
-    // The stage changes width when the panel does, and neither of the two
-    // listeners above fires for that.
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
-    if (el && ro) ro.observe(el);
-    return () => {
-      window.removeEventListener('resize', measure);
-      el?.removeEventListener('scroll', measure);
-      ro?.disconnect();
-    };
-  }, [measure, stage]);
-  return box;
-}
-
-/**
  * `recommended` says the two figures showing are the engine's answer for the
  * point under the cursor and nobody has overruled them. `dirty` says there is a
  * change waiting on one of the two buttons. `placed` is how many lamps this run
@@ -153,6 +120,11 @@ export default function CobSpec({
      decides the controls from the GEOMETRY rather than leaving this bar to work
      it out from three flags. */
   array = null,
+  /* THE TWO SCENE BUTTONS, DRAWN AT THE FAR END. See the note on `tail` in
+     ShapeMenu: they say which DRAWING you are looking at, they belong to no
+     contextual bar in particular, and they are on whichever one happens to be up
+     so that there is never a second pill beside this one saying it. */
+  tail = null,
   onWatts, onBeam, onRecommended, onThis, onAll, onKeep, onDiscard,
   onCount, onSide, onOffset, onPlaceArray, onDeleteArray,
 }) {
@@ -175,22 +147,13 @@ export default function CobSpec({
      a distance, a wattage, eight optics — is identical in both, and two copies
      of it would be two bars to keep in step. */
   const editing = !!array?.editing;
-  const box = useStageRect(stage);
-  if (!box) return null;
 
   return (
-    <div
-      className="fixed z-30 flex items-center flex-wrap gap-y-1 max-w-[92vw]
-        rounded-[11px] bg-white border border-black/[0.10]
-        shadow-[0_6px_24px_rgba(0,0,0,0.22)] px-2 py-1.5"
-      style={{ left: (box.left + box.right) / 2,
-               bottom: Math.max(12, window.innerHeight - box.bottom + BOTTOM),
-               transform: 'translateX(-50%)' }}
-      /* NOTHING IN HERE IS A PRESS ON THE PLAN. The bar floats over the drawing,
-         so without this a press on a beam chip would also be the press that
-         places a fitting — under the bar. Same guard ShapeMenu carries. */
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}>
+    /* `flex-wrap` AND A WIDTH CAP, which is this bar's own and not the shell's:
+       it carries a count, a side, a distance, a wattage and eight optics, and on
+       a narrow window that is more than one row. The shape bar never needs it. */
+    <StageBar stage={stage} tail={tail} label="Downlight"
+      className="flex-wrap gap-y-1 max-w-[92vw]">
 
       {/* --- WHAT THE ARRAY IS BEING SET OUT ON, AND HOW ------------------
           AHEAD OF THE SPECIFICATION, because it is the question that comes
@@ -370,6 +333,6 @@ export default function CobSpec({
         <Glyph d={CROSS} />
       </button>
       </>)}
-    </div>
+    </StageBar>
   );
 }

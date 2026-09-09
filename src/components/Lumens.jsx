@@ -1,7 +1,7 @@
 import React from 'react';
 
 /* ---------------------------------------------------------------------------
-   THE READING. Four figures and a verdict, and it is an instrument panel.
+   THE READING. Four figures, and it is an instrument panel.
 
    IT IS THE ONE THING SOMEBODY IS WATCHING WHILE THEY WORK. Every other line in
    this panel is a control or a note; this is the number the controls are being
@@ -14,36 +14,36 @@ import React from 'react';
    once and a reading is watched. The big figure is only meaningful against it,
    so it is on screen — not so loud that the two compete.
 
-   --- AND THE TOTAL IS SPLIT INTO THE LAYERS THAT MAKE IT --------------------
-   A ROOM THAT REACHES ITS NUMBER ON SPOTS IS NOT A LIT ROOM. That is the whole
-   reason the split is drawn: 4,285 lumens of task light and 3,000 of ambient
-   adds up to a room over its target and reads, correctly, as a room lit wrongly.
-   Nothing but the two figures side by side says that.
+   --- AND THE TOTAL IS SPLIT IN TWO -----------------------------------------
+   A ROOM THAT REACHES ITS NUMBER ON DOWNLIGHTS IS NOT A LIT ROOM. That is the
+   whole reason the split is drawn: 4,285 lumens of task light and 3,000 of
+   ambient adds up to a room over its target and reads, correctly, as a room lit
+   wrongly. Nothing but the two figures side by side says that.
 
-   THE SPLIT IS NOT THIS FILE'S ARITHMETIC — `byLayer` arrives on the analysis
-   and is `achieved` broken up, always summing back to it. See lib/lumens.js.
+   WHAT IS WASHING THE ROOM, AND WHAT IS BEING POINTED AT SOMETHING. That is the
+   question, and it is why the two figures are not two of the scheme's three
+   LAYERS: accent light is ambient light as far as a room's level goes — a sconce
+   washes a wall, a pendant throws in every direction — while a recessed COB puts
+   eighty percent of its output at the floor. The fixture list still groups by
+   the three layers, because that is how a scheme is designed; this is how it is
+   read.
 
-   ACCENT IS DRAWN ONLY WHEN THERE IS SOME, and that is not a tidying-up: it is
-   what keeps the three printed lines adding up to the big one. A room with a
-   shelf strip in it has a third contribution, and hiding it would make the
-   readout's own arithmetic wrong by the amount of the thing being hidden.
+   NEITHER FIGURE IS THIS FILE'S ARITHMETIC. `contributions` arrives on the
+   analysis and is `achieved` broken in two, always summing back to it — see the
+   note beside it in lib/lumens.js, which is also the one place that decides
+   which layer feeds which figure.
 
-   --- THE VERDICT IS ABOUT THE BALANCE, NOT THE TOTAL -----------------------
-   LOW MEANS THE AMBIENT LAYER IS NOT CARRYING THE ROOM, judged against what the
-   ROOM needs rather than against what it got — see AMBIENT_SHARE_MIN. Whether
-   the total is met is already said, in colour, by the big figure itself.
+   --- AND THERE IS NO VERDICT ON THE BALANCE --------------------------------
+   THERE WAS ONE: a LOW/OK badge under a rule, firing when the ambient figure
+   carried less than AMBIENT_SHARE_MIN of what the ROOM needed. It went when the
+   split did and has not come back with it — the four figures are what was asked
+   for, and a badge is a fifth thing that reads as a judgement rather than a
+   reading. The ambient figure against `required` is the same fact, stated by
+   two numbers somebody can compare themselves.
 
-   JUDGED ON THE ROUNDED FIGURES, both of them, so the badge can never contradict
-   the digits printed above it. The same rule the whole-plan readout follows.
+   JUDGED ON THE ROUNDED FIGURES, so the colour on the big number can never
+   contradict the digits printed. The same rule the whole-plan readout follows.
    --------------------------------------------------------------------------- */
-
-/* HOW MUCH OF A ROOM'S REQUIREMENT THE AMBIENT LAYER HAS TO CARRY BEFORE THE
-   SCHEME IS SOUND. 0.7 is a working figure, not a standard — turn it up to
-   demand a scheme that is mostly ambient, down to allow a heavily task-lit room
-   to pass. It is measured against REQUIRED and not against ACHIEVED on purpose:
-   against achieved, a room with ample ambient light would be marked LOW the
-   moment somebody added spots to it, which is the opposite of the advice. */
-export const AMBIENT_SHARE_MIN = 0.7;
 
 /* GROUPED THOUSANDS, PINNED TO en-US — the same rule and the same reason as in
    SpaceAnalysis: a lighting schedule is read by two people at once and a figure
@@ -59,18 +59,33 @@ const LBL = 'text-[11.5px] text-faint leading-[1.5]';
 /* THE FACE, AND THE ONE THING THAT HAS TO BE SWITCHED BACK OFF FOR IT. `body`
    turns on `ss01` for the whole app, because that is the stylistic set Neue
    Montreal wants (see styles.css) — and font features are inherited by NAME, so
-   Overtime, which happens to ship an ss01 of its own for its own reasons, would
-   quietly render somebody else's alternates. Reset wherever this face is asked
-   for. `tabular-nums` is a different property and is unaffected. */
+   any face asked for here would quietly render somebody else's alternates if it
+   happened to ship an ss01. Overtime did, which is why this reset arrived, and
+   Digital-7 does not — so it is precautionary now rather than load-bearing. It
+   stays: the cost is one declaration and the alternative is a readout whose
+   digits change shape the day the face does. `tabular-nums` is a different
+   property and is unaffected. */
 const LCD = "font-lcd tabular-nums [font-feature-settings:normal]";
-const FIG = `${LCD} text-[13px] text-text shrink-0`;
+/* --- 16px AND 66px, AND THEY ARE 13 AND 52 SCALED BY THE FACE --------------
+   THE FIGURES ARE SIZED TO THEIR DIGIT HEIGHT AND NOT TO THEIR EM. Every face
+   spends a different share of the em on a digit, and this readout has now been
+   set in two: Overtime's digits are 0.8240 em tall, Digital-7's are 0.6545, so
+   the same `font-size` in the new face renders a quarter shorter. 13 and 52
+   were chosen against Overtime and read small the moment the face changed.
+   x1.2589 IS THE RATIO OF THOSE TWO HEIGHTS, which puts the digits back where
+   they were rather than where a guess would land: 52 -> 65.5 -> 66px renders
+   43.2px of digit against Overtime's 42.8, and 13 -> 16.4 -> 16px renders
+   10.5px against 10.7. Both round to the nearest whole pixel, and 16 is the
+   closer of the two candidates for the small one.
+   SO A FACE SWAP MOVES THESE NUMBERS. If the readout is ever set in a third
+   face, divide 42.8 by its digit height in em — that is what these are. */
+const FIG = `${LCD} text-[16px] text-text shrink-0`;
 
 export default function Lumens({ analysis }) {
-  const { required, achieved, byLayer } = analysis;
-  const { ambient = 0, task = 0, accent = 0 } = byLayer ?? {};
+  const { required, achieved, contributions } = analysis;
+  const { ambient = 0, task = 0 } = contributions ?? {};
 
   const met = Math.round(achieved) >= Math.round(required);
-  const low = Math.round(ambient) < Math.round(required) * AMBIENT_SHARE_MIN;
 
   return (
     <div className="rounded-lg bg-surface px-4 py-3.5">
@@ -81,7 +96,7 @@ export default function Lumens({ analysis }) {
 
       {/* --- THE READING ---------------------------------------------------
           RIGHT-ALIGNED, because it is a figure in a column of figures: the
-          three lines under it are right-aligned and a 52px number starting
+          three lines around it are right-aligned and a 52px number starting
           from the left would be the one thing on the card off the grid.
           GREEN OR RED IS THE WHOLE OF "IS THERE ENOUGH LIGHT". Colour on the
           number itself rather than a sentence beneath it — the reading and the
@@ -90,7 +105,7 @@ export default function Lumens({ analysis }) {
       <div className="mt-1.5 mb-3 text-right">
         <div aria-label={`${lm(achieved)} lumens achieved,`
           + ` ${met ? 'requirement met' : 'below requirement'}`}
-          className={`${LCD} text-[52px] leading-[0.92] tracking-[0.01em] `
+          className={`${LCD} text-[66px] leading-[0.92] tracking-[0.01em] `
             + (met ? 'text-lcd' : 'text-danger')}>
           {lm(achieved)}
         </div>
@@ -101,7 +116,12 @@ export default function Lumens({ analysis }) {
         </div>
       </div>
 
-      {/* --- WHAT IT IS MADE OF, LAYER BY LAYER ---------------------------- */}
+      {/* --- WHAT IT IS MADE OF, AND THE TWO ADD BACK UP TO IT -------------
+          NO THIRD LINE. There was an accent one, drawn only when there was
+          something in it, on the reasoning that three printed figures had to add
+          up to the big one. They add up in two now — see the note at the top of
+          this file for why accent light belongs with the ambient half rather
+          than in a line of its own. */}
       <div className={ROW}>
         <span className={LBL}>Ambient lights contribution</span>
         <span className={FIG}>{lm(ambient)}</span>
@@ -109,27 +129,6 @@ export default function Lumens({ analysis }) {
       <div className={ROW}>
         <span className={LBL}>Task lights contribution</span>
         <span className={FIG}>{lm(task)}</span>
-      </div>
-      {Math.round(accent) > 0 && (
-        <div className={ROW}>
-          <span className={LBL}>Accent lights contribution</span>
-          <span className={FIG}>{lm(accent)}</span>
-        </div>
-      )}
-
-      {/* --- AND WHETHER THE AMBIENT LAYER IS DOING ITS JOB -----------------
-          A BADGE ON ITS OWN LINE, above a rule, because it is a judgement OF
-          the three lines above rather than a fourth reading. It is stated in
-          both directions: a verdict that only ever appears when something is
-          wrong is a verdict you cannot trust the absence of. */}
-      <div className="flex items-center justify-between gap-3 mt-3 pt-3
-        border-t border-white/10">
-        <span className={LBL}>Ambient lights contribution is</span>
-        <span className={'text-[9.5px] tracking-[0.12em] uppercase leading-none '
-          + 'px-2 py-[5px] rounded shrink-0 '
-          + (low ? 'bg-danger text-white' : 'bg-lcd text-ink')}>
-          {low ? 'Low' : 'Ok'}
-        </span>
       </div>
     </div>
   );

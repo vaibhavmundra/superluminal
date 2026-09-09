@@ -76,12 +76,10 @@ export default function useRoomIntelligence({
     /* THE SPACE THE WALL STEP IS ASKING ABOUT, as a room and not an id: the
        step's own panel prints its name and the mix of tones so far. */
     wallEditRoom: walls.wallEditRoom,
-    materialsEdit: walls.materialsEdit, setMaterialsEdit: walls.setMaterialsEdit,
   }), [accents.room, accents.roomId, accents.setRoomId, accents.shot,
        surfaces.roomId, surfaces.setRoomId,
        render.renders, render.shot, render.transcripts, render.grid,
-       walls.wallPick, walls.setWallPick, walls.wallEditRoom,
-       walls.materialsEdit, walls.setMaterialsEdit]);
+       walls.wallPick, walls.setWallPick, walls.wallEditRoom]);
 
   const commands = useMemo(() => ({
     computeRoomType,

@@ -97,20 +97,30 @@ const CODE = 'font-sans text-[10px] bg-input-bg px-[3px] rounded-[3px] text-text
 /* --- the status pills in the top bar. */
 const PILL_SHAPE = 'font-sans text-[10.5px] px-2 py-[3px] rounded-full border '
   + 'whitespace-nowrap tabular-nums';
-/* ONE GROUND FOR EVERY STATE OF THE SAVE PILL, AND IT IS WHITE. The three were
-   three different pills — 5% glass, a pale green wash, a pale red one — so the
-   thing in the corner of the bar changed SHAPE as well as wording every time it
-   changed state, which is a lot of movement for a label nobody is looking at.
-   White reads at 10.5px on this bar in a way glass does not, and the state is
-   then said by the type alone: grey while it is happening, green once it has,
-   red if it did not. The `-soft`/`-line` pairs it drops are light-theme tokens
-   anyway — #EDFAF1 on #FAFAFA was a tint of the old page, not of this one. */
-const PILL_WHITE = 'border-white bg-white';
-const PILL = `${PILL_SHAPE} ${PILL_WHITE} text-muted`;
-const PILL_OK = `${PILL_SHAPE} ${PILL_WHITE} text-ok`;
-const PILL_BAD = `${PILL_SHAPE} ${PILL_WHITE} text-danger-ink`;
-const PILL_VIEW = `${PILL_SHAPE} border-[#F0ABFC] bg-[#FDF2FE] text-[#C026D3]`;
-const PILL_RETRY = `${PILL_BAD} cursor-pointer hover:bg-danger-soft`;
+/* --- ONE SHAPE FOR EVERY STATE OF THE SAVE PILL, AND IT SITS ON WHITE ------
+   THE THREE WERE THREE DIFFERENT PILLS ONCE — 5% glass, a pale green wash, a
+   pale red one — so the thing in the corner of the bar changed SHAPE as well as
+   wording every time it changed state, which is two announcements for one fact.
+   That was fixed by giving all three one solid white ground and moving only the
+   ink.
+
+   THE TOP BAR IS WHITE NOW, so a white pill on it is a pill with no edges: the
+   ground has to come back, and it comes back as the WASHES the app already has
+   for exactly this — `--color-ok-soft` over `--color-ok-line`, and the same
+   pair in red. One shape, one position, one width class; the hue moves, which
+   is the original decision intact with a ground it can be seen on.
+
+   UPPERCASE, AND ONLY HERE. These are one- and two-word STATES rather than
+   sentences — a badge, read at a glance from the corner of the eye — where
+   `PILL_VIEW` below carries a phrase and would be shouting. */
+const PILL_STATE = `${PILL_SHAPE} uppercase tracking-[0.08em]`;
+const PILL = `${PILL_STATE} border-border bg-surface-3 text-muted`;
+const PILL_OK = `${PILL_STATE} border-ok-line bg-ok-soft text-ok`;
+const PILL_BAD = `${PILL_STATE} border-danger-line bg-danger-soft text-danger-ink`;
+/* THE OPERATOR'S PILL IS THE ONE THAT IS DELIBERATELY LOUD, and it keeps the
+   magenta wash it always had — it reads on white, which is what it is on. */
+const PILL_VIEW = `${PILL_SHAPE} border-op-line bg-op-soft text-op`;
+const PILL_RETRY = `${PILL_BAD} cursor-pointer hover:bg-danger-line`;
 
 /* TABULAR FIGURES WHEREVER A NUMBER IS READ DOWN A COLUMN. Not a nicety in
    this face: its proportional `1` is half the width of its `0`. */
@@ -192,8 +202,12 @@ const CHECK = 'flex items-center gap-2 mb-[7px] text-muted cursor-pointer';
    field all wear, and this is the last of the four to get it.
    `border-border/10` rather than `border-border` for the same reason: #EAEAEA at
    full strength is a bright outline round a translucent thing. */
-const TABS = 'inline-flex gap-0.5 p-0.5 rounded border border-border/10 '
-  + 'bg-surface backdrop-blur-md';
+/* THE GROUP AROUND UNDO AND REDO, AND ITS ONE CALLER IS THE WHITE TOP BAR.
+   It was a glass chip — 5% white over a `border-border/10` hairline — which is
+   a chip you can only see on a dark ground. On white, 5% white is nothing and a
+   tenth of #EAEAEA is nothing; the shape has to come from the app's own light
+   surfaces instead. */
+const TABS = 'inline-flex gap-0.5 p-0.5 rounded border border-border bg-surface-3';
 const TAB_SHAPE = 'appearance-none border-0 cursor-pointer text-[11.5px] leading-[1.5] '
   + 'tracking-[0.01em] py-1 rounded transition-[background-color,color] duration-[120ms]';
 /* `TAB` AND `TAB_ON` WERE HERE. They dressed the Design/BOQ pill pair in the top
@@ -210,8 +224,13 @@ const ICON_SHAPE_TAB = 'px-2 inline-flex items-center justify-center leading-[0]
    compounds into a smudge; `text-subtle` greys the one thing that should grey.
    THE HOVER IS A GROUND, NOT A COLOUR SHIFT, since the icon is already white.
    Gated on `enabled:` so a dead button does not light up under the pointer. */
-const STEP = `${TAB_SHAPE} ${ICON_SHAPE_TAB} bg-transparent text-white `
-  + 'enabled:hover:bg-white/10 disabled:text-subtle disabled:cursor-default';
+/* INK WHEN THERE IS SOMETHING TO DO, GREY WHEN THERE IS NOT — and for these two
+   "active" is exactly `enabled`. The pair is the only thing on screen that says
+   this plan HAS a history, and its disabled state says how much of one, so the
+   difference between them has to be legible at 15px. Both inverted with the bar:
+   white ink on a white bar was the pair vanishing outright. */
+const STEP = `${TAB_SHAPE} ${ICON_SHAPE_TAB} bg-transparent text-ink `
+  + 'enabled:hover:bg-ink/[0.07] disabled:text-border-strong disabled:cursor-default';
 /* `STEP_ON` WAS HERE — the same shell latched on, for an icon button that is a
    state rather than an action. The sun/moon switch was its only user, and that
    switch now says its state with the accent RAMP on the live icon instead of
@@ -319,13 +338,38 @@ const PTAB_SHAPE = 'appearance-none border-0 bg-transparent cursor-pointer '
 const PTAB = `${PTAB_SHAPE} text-subtle border-transparent hover:text-text`;
 const PTAB_ON = `${PTAB_SHAPE} text-white border-b-white`;
 
+/* --- ONE LINE OF ONE OF THE CHROME'S MENUS ---------------------------------
+   THE PANEL'S SECTIONS BECAME MENUS, and a menu item is a different control
+   from anything already in this file: full-bleed to the panel's edges so the
+   hover reads as a row rather than as a chip, two lines high because the second
+   line is the sentence the section used to carry as a paragraph, and no border
+   of its own — a stack of bordered rows in a 250px panel is a wall.
+
+   THE NAME AND THE NOTE ARE ONE PRESS, WHICH IS WHY THE NOTE IS INSIDE THE
+   BUTTON. It describes what pressing does; a caption beside a control is a
+   thing you read and then have to aim past. */
+const MENU_ITEM = 'w-full flex flex-col items-start gap-[3px] text-left '
+  + 'px-3 py-[7px] border-0 bg-transparent cursor-pointer '
+  + 'text-[12px] leading-[1.35] transition-colors duration-[120ms] '
+  + 'enabled:hover:bg-white/[0.07] disabled:opacity-[.4] '
+  + 'disabled:cursor-not-allowed '
+  + 'focus-visible:outline-2 focus-visible:outline-accent '
+  + 'focus-visible:outline-offset-[-2px]';
+const MENU_NOTE = 'text-[10.5px] leading-[1.3] text-subtle';
+
+/* THE HEADING OVER A GROUP INSIDE ONE. Quieter and smaller than `H3`, because
+   these sit inside a panel that is already one subject — see Admin's groups. */
+const MENU_H = 'text-[9.5px] tracking-[0.12em] uppercase text-subtle '
+  + 'px-3 pt-1.5 pb-1 leading-none';
+
 export {
   BTN_SHAPE, BTN_QUIET, BTN_CTA, BTN_WHITE, BTN, BTN_FULL, BTN_PRIMARY,
   BTN_EXIT, BTN_SECOND, BTN_MID, BTN_TINY, BTN_NUDGE, BTN_EXPORT, BOQ_SHAPE,
-  BTN_BOQ, N, NW, NE, NOTE, NOTE_WARN, CODE, PILL_SHAPE, PILL_WHITE, PILL,
+  BTN_BOQ, N, NW, NE, NOTE, NOTE_WARN, CODE, PILL_SHAPE, PILL_STATE, PILL,
   PILL_OK, PILL_BAD, PILL_VIEW, PILL_RETRY, KV_SHAPE, KV, KV_HEAD, KV_ADMIN,
   N_ADMIN, BTNROW, SEC, SEC_ADMIN, H3_SHAPE, H3, H3_FLUSH, H3_ADMIN,
   DISCLOSE_ADMIN, CHECK, TABS, TAB_SHAPE, ICON_SHAPE_TAB, STEP, ROW_TILE,
   ROW_EDGE, ROW_OFF, ROW_FLUSH, ROW_PICK, PROP_SHAPE, PROP_OFF, PROP_ON,
   PICK_SHAPE, PICK, NAME, META, RTYPE, PTAB_SHAPE, PTAB, PTAB_ON,
+  MENU_ITEM, MENU_NOTE, MENU_H,
 };

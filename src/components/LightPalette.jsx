@@ -72,7 +72,7 @@ export const LIGHT_TOOLS = [
      THE TRACK CELL IS A DRAWER NOW, not a tool this map can arm. A magnetic
      track has three modules under it and its RUN is drawn with the geometry bar,
      so the cell opens rather than arms — which is the same shape the COB cell
-     has and is rendered the same way. See TrackMenu, and `onTrack` in ToolRail.
+     has and is rendered the same way. See `onTrack` in ToolRail.
      THE ENTRY IS LEFT HERE AS A COMMENT AND NOT DELETED because `addTool ===
      'track'` is still a live gesture: the pen-drawn ABSORBING track (see
      track.js) is what every plan saved before this was built holds, and its

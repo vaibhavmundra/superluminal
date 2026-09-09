@@ -1,7 +1,6 @@
 import React, { useRef } from 'react';
 import PaletteButton from './PaletteButton.jsx';
-import CobMenu, { COB_MODES } from './CobMenu.jsx';
-import TrackMenu from './TrackMenu.jsx';
+import RailFlyout from './RailFlyout.jsx';
 import { TRACK_MODULES } from '../lib/magTrack.js';
 import { LIGHT_TOOLS, LIGHT_ICON } from './LightPalette.jsx';
 import { CEILING_GROUPS } from './CeilingPalette.jsx';
@@ -9,40 +8,103 @@ import { CEILING_BY_ID } from '../lib/ceilingObjects.js';
 
 /* ---------------------------------------------------------------------------
    THE TOOLS, DOWN THE LEFT EDGE, BESIDE THE THING THEY ACT ON.
-   They were two grids in the right-hand panel — Lighting, then Electrical
-   elements — under a tab you had to be on, above a spaces list and a View
-   disclosure. That put every act you can perform on the drawing in the same
-   column as every fact ABOUT the drawing, and the column had to scroll.
-   A tool is not a reading. It is a thing you pick up before you touch the
-   plan, and it belongs on the edge of the plan: always there, never scrolled
-   past, never competing with the space you are reading about. So the palettes
-   come out of the panel and stack here, one on top of the other, in the order
-   the work happens — what the ceiling IS, then what is mounted on it, then
-   what the electrical drawing is about.
-   ONE CELL SHAPE FOR ALL OF THEM, and it is the palettes' own (see
-   PaletteButton): the artwork is the name, and shrinking it to a bare glyph
-   would cost the one thing that made the palettes readable. The rail is as
-   slim as that picture allows and not slimmer.
+
+   FIVE CELLS NOW, AND THEY ARE CATEGORIES RATHER THAN FITTINGS. It held
+   fourteen — a cell per product, in the order the work happens — and fourteen
+   64px cells is a column taller than a laptop screen. So it scrolled, and a
+   tool strip that scrolls has given up the one thing it was for: the positions
+   are what people learn, and a position that moves is not one. Worse, the
+   scroll had no bar (deliberately — see the note further down), so the eight
+   cells past the fold were not merely awkward to reach, they were invisible.
+
+   SPOTS, COVES, TRACKS, LAMPS, ELECTRICAL — the five things a lighting drawing
+   is made of, which is also how anybody describes one out loud. Every fitting
+   that used to have a cell is still one press further in, in a flyout hinged off
+   its category (see RailFlyout), and the two cells that already worked that way
+   — the COB's two gestures and the track's three modules — are now the rule
+   rather than the exception.
+
+   AND ONE THING IS GONE RATHER THAN MOVED: the No-Light Zone. It is not in any
+   of the five categories because it is not a fitting, and it is not a sixth cell
+   because the tool is being retired. `zoneEdit` and every machine behind it are
+   untouched — a plan that already has zones still draws them and still has the
+   layer switch to hide them — there is simply no longer a way to arm a new one.
+
    NOTHING IS DECIDED HERE. Every press is handed straight back out, because
    which machine a tool arms and what it disarms on the way is the editor's
    business and there is exactly one place that knows it.
    --------------------------------------------------------------------------- */
 
-/* THE RAIL IS 64px AND THE PICTURE NOW FILLS IT.
-   IT WAS WIDENED AND PUT BACK, which is worth recording so it is not tried
-   again: at 84px the column read as a second panel rather than as an edge, and
-   the drawing is what this screen is for. The width was never what made the
-   artwork small — the padding and the cell border were, and those are gone (see
-   PaletteButton), so 64px of picture is half again what it used to be without
-   taking anything from the plan. */
+/* THE RAIL IS 86px, AND THE WIDTH IS THE CAPTION'S. At 64 — the width the old
+   column of artwork wanted — "Electrical" does not fit on one line, and a
+   category broken over two is a heading rendered as damage. The cells are five
+   words and five marks now rather than fourteen photographs, so the extra 22px
+   costs the drawing almost nothing and buys every label its own line.
+   AS A CLASS AND NOT AN INLINE `style`, which matters for one reason: under
+   960px the rail lies down across the top of the screen and wants the full
+   width, and an inline width would beat the media query that says so. */
 
-/* THE RULE BETWEEN THE GROUPS. A hairline and no heading: two words in this
-   column would wrap, and the groups are told apart by their pictures long
-   before anybody reads a label. Inset from both edges, because a divider that
-   runs the full width of a black column reads as the column ending. */
-const RULE = 'h-px mx-2 bg-border/15 my-1.5 flex-none';
+/* --- THE FIVE MARKS -------------------------------------------------------
+   LINE ART AND NOT THE PHOTOGRAPHS THE FLYOUTS USE, which is the same split
+   PaletteButton already draws inside itself. A cell whose subject is an OBJECT
+   gets a picture of the object: a fan, a cassette, a downlight. A cell whose
+   subject is a CATEGORY has no object to photograph — "Spots" is not a thing you
+   can take a picture of — so it gets a symbol, at the weight the rest of this
+   chrome is drawn at.
+   AT THEIR OWN SIZE, WHICH IS THE ONE THING TO GET RIGHT. These files are
+   16-35px of line work; stretched to fill an 86px square they would be a
+   blurred smear of what they are. `h-[30px] w-auto` renders them at roughly the
+   size they were drawn, and the varying widths are why the box centres rather
+   than stretches. */
+const MARK = {
+  spots: '/icons/new_icons/spots.png',
+  coves: '/icons/new_icons/cove.png',
+  tracks: '/icons/new_icons/track.png',
+  lamps: '/icons/new_icons/lamp.png',
+  electrical: '/icons/new_icons/bolt.png',
+};
 
-/* --- THE CAPTION IN A 64px COLUMN --------------------------------------------
+/* --- ONE OF THE FIVE CELLS ------------------------------------------------
+   NOT `PaletteButton`, AND THE REASON IS THE ARTWORK. That component scales its
+   icon to the full width of the cell, which is exactly right for a photograph
+   drawn to be scaled and exactly wrong for a 27px line drawing. The rest of it
+   — the black ground, the caption under the mark, the ring when it is live —
+   is reproduced here rather than parameterised, because a flag on that
+   component saying "except do not size the picture" would be a flag about this
+   one caller.
+   SENTENCE CASE AND NOT THE CAPS THE FLYOUT CELLS USE. Those are captions under
+   pictures; these are the five words the whole rail is, and small caps at 8.5px
+   is a size for a label on a symbol rather than for a heading. */
+function RailCell({ mark, label, on, disabled, title, onClick }) {
+  return (
+    <button type="button" disabled={disabled} onClick={onClick}
+      title={title ?? label} aria-expanded={on}
+      /* EXACTLY ONE BACKGROUND CLASS IS EVER APPLIED, which is a bug fix and
+         not a style. `bg-black` on the shell plus `bg-white/[0.10]` when live
+         are two single-class utilities of identical specificity, so which one
+         wins is decided by the ORDER TAILWIND EMITS THEM and not by the order
+         they appear in the attribute — the live cell would have been black
+         whatever this concatenation said. ShapeMenu's header tells the whole
+         story of the last time this happened, where it made the armed tool
+         invisible. The rule is always the same: make them alternatives, not
+         layers — and the "off" case is `bg-transparent`, so the rail's own grey
+         is what shows through rather than a second copy of it. */
+      className={'w-full flex flex-col items-center justify-center gap-[7px] '
+        + 'pt-[15px] pb-[13px] px-1 border-0 cursor-pointer '
+        + 'transition-colors duration-[120ms] '
+        + 'disabled:opacity-[.45] disabled:cursor-not-allowed '
+        + 'focus-visible:outline-2 focus-visible:outline-accent '
+        + 'focus-visible:outline-offset-[-2px] '
+        + (on ? 'bg-white/[0.10]' : 'bg-transparent enabled:hover:bg-white/[0.06]')}>
+      <img src={mark} alt="" className="h-[30px] w-auto select-none"
+        draggable="false" />
+      <span className={'text-[11px] leading-none tracking-[-0.01em] '
+        + (on ? 'text-white' : 'text-faint')}>{label}</span>
+    </button>
+  );
+}
+
+/* --- THE CAPTION IN A 64px FLYOUT CELL --------------------------------------
    Several of these names do not fit on two lines at the caption's size, and a
    label broken into "DIRECT / IONAL / SPOT" is worse than no label — it is the
    picture's name rendered as damage. So the ones that overflow get a shorter
@@ -52,7 +114,6 @@ const RULE = 'h-px mx-2 bg-border/15 my-1.5 flex-none';
    set of names to keep in step with the first; this is a list of exceptions,
    and a tool not in it is called what it is called. */
 const SHORT = {
-  'No Light Zone': 'No light',
   'Reverse cove': 'Rev. cove',
   'Directional spot': 'Spot',
   'LED strip': 'Strip',
@@ -62,77 +123,85 @@ const SHORT = {
 };
 const short = (label) => SHORT[label] ?? label;
 
-/* EVERY GESTURE IN THE DRAWER, for the one case where none of them can be had:
-   no scale, or no space laid out. The drawer still opens — see the cell — and
-   both cells in it are visibly out of reach, which is the honest picture. */
-const COB_ALL = COB_MODES.map((m) => m.id);
-/** ...and the same for the track's three, for the same reason. */
-const TRACK_ALL = TRACK_MODULES.map((m) => m.id);
+/* THE COB'S TWO GESTURES, and the artwork is the argument. Both marks are the
+   COB's own symbol with the gesture drawn beside it — a cursor, or the run it
+   steps along — so the pair says what each does without a sentence under it.
+   IT LIVED IN CobMenu.jsx, WHICH IS GONE. That file was one cell's drawer;
+   every cell has one now, so the panel is RailFlyout and the table is here with
+   the other four groups' contents. */
+export const COB_MODES = [
+  { id: 'manual', label: 'Manual', icon: '/icons/cob_manual.png',
+    title: 'Manual — click the ceiling to place one at a time' },
+  { id: 'array', label: 'Array', icon: '/icons/cob_array.png',
+    title: 'Array — a run of them, evenly spaced' },
+];
 
-/* --- THERE IS NO GEOMETRY CELL IN THIS RAIL, AND THAT IS DELIBERATE ---------
-   IT HAD ONE, UNDER THE COVE, and it was removed. The argument for it was that
-   the two open one bar and draw one set of shapes, so they belong beside each
-   other. What that missed is that they are not reached the same way.
-
-   A COVE IS A THING YOU DECIDE TO ADD. You pick it up off the rail like every
-   other fitting in this column, because nothing on the drawing tells you to —
-   it is an act you bring to the ceiling.
-
-   GEOMETRY IS WHAT YOU SET OUT IN A SPACE, and the space is what says which
-   one. Clicking a room IS the request: it names the ceiling, it puts the panel
-   on that ceiling, and the primitives arrive on the drawing at the same moment.
-   A rail cell for it was a second door into the same room, and a worse one —
-   pressed with no space chosen it armed a rectangle over whichever room the
-   panel had fallen back to.
-
-   SO THE BAR HAS EXACTLY ONE WAY IN, AND IT IS CLICKING A SPACE. A space can be
-   clicked in two places and both raise it unarmed: the room itself on the
-   drawing (`onCanvasClick`) and its row in the panel's list (`pickSpace`), both
-   in App.jsx. See `shapeRole` there for what a committed shape becomes.
-   Escape and reaching for any other tool are the ways out; there is no cell to
-   un-press, because there is no cell. */
+/** Which fitting from LIGHT_TOOLS goes in which category. Ids, because the
+ *  table those come from is ordered for a row that no longer exists. */
+const IN_COVES = ['cove', 'strip'];
+const IN_LAMPS = ['chandelier', 'sconce'];
+const IN_SPOTS = ['spot'];
 
 export default function ToolRail({
   tool = null, objArmed = null, onPick,
   shapeOn = false, onShape = null,
-  zoneOn = false, onZones = null,
   boardOn = false, onArmObject,
-  /* THE ONE CELL WITH A DRAWER UNDER IT. `cobOpen` is whether the drawer is
-     showing, `cobMode` which of its two gestures is armed, and the rail decides
-     neither — see the note at the top of this file. It is handed `cobSoon` too:
-     the gestures this build does not answer for yet, so the drawer can show the
-     cell without pretending it does something. */
+  /* THE COB'S DRAWER, AND IT IS NOW THE SPOTS FLYOUT. `cobOpen` is whether that
+     flyout is showing, `cobMode` which of its two gestures is armed, and the
+     rail decides neither — see the note at the top of this file. It is handed
+     `cobSoon` too: the gestures this build does not answer for yet, so the cell
+     can be shown without pretending it does something.
+     THE OPEN FLAG IS STILL THE COB'S, AND THAT IS DELIBERATE. The category's
+     flyout and the COB's drawer are the same panel now, so a second piece of
+     state saying "the Spots flyout is open" would be a second answer to one
+     question — and the editor already owns this one. */
   cobOpen = false, cobMode = null, onCob = null, cobSoon = [],
-  /* --- THE MAGNETIC TRACK, AND ITS DRAWER IS NOT OPENED BY ITS CELL ---------
-     THIS IS WHERE IT PARTS COMPANY WITH THE COB. That cell's two entries are
-     GESTURES — place a lamp, or set a run of them out — and either is available
-     the moment the cell is pressed, so the drawer belongs to the press. These
-     three are MODULES, and a module has nowhere to go until there is a profile
-     to clip it into. A drawer offering three fittings with no run on the drawing
-     is three controls that cannot do anything.
-     SO THE CELL OPENS THE GEOMETRY BAR AND NOTHING ELSE: draw a run, or press a
-     guide already on the drawing to span one. `trackOn` is that latch.
-     AND THE DRAWER OPENS WHEN A RUN IS SELECTED. `trackDrawer` is the caller's
-     answer to "is there a track in hand" — see `onTrack` at the call site — so
-     the three modules appear at the moment they become placeable and not
-     before. It still hangs off this cell, because that is where somebody has
-     learned a drawer lives. */
+  /* --- THE MAGNETIC TRACK ---------------------------------------------------
+     ITS CELL OPENS THE GEOMETRY BAR AND NOT JUST A PANEL, which is the one
+     category whose press does something on the drawing as well. A module has
+     nowhere to go until there is a profile to clip it into, and the two ways of
+     getting one are both the shape tool's — drag out a primitive, or press a
+     guide already on the drawing and have its outline handed over. A flyout
+     offering three fittings and no way to make a run would be a panel about
+     nothing on a fresh plan.
+     SO THE THREE MODULES ARE `disabled` UNTIL THERE IS A RUN. `trackDrawer` is
+     the caller's answer to "is there something to clip onto" — it used to decide
+     whether the drawer appeared at all, and now it decides whether its cells can
+     be pressed. Shown-and-out-of-reach rather than absent, which is the rule the
+     COB's unbuilt gesture follows: a panel that grows two more cells once you
+     have done something else is a panel nobody can learn the shape of. */
   trackOn = false, onTrack = null,
   trackDrawer = false, trackMode = null, onTrackPick = null, trackSoon = [],
   /* NO `onGeometry`. The guide primitives are the same bar the cove opens and
-     they are reached by clicking a SPACE rather than by picking a tool up — see
-     the note above `ToolRail` on why this rail has no cell for them. */
+     they are reached by clicking a SPACE rather than by picking a tool up. */
   disabled = false, objDisabled = false,
 }) {
-  /* THE DRAWER MEASURES OFF THIS BUTTON. It cannot be a child of it — the rail
-     clips its own overflow, so a drawer inside would be cut off at the rail's
-     edge and never seen. See CobMenu. */
-  const cobRef = useRef(null);
+  /* EACH FLYOUT MEASURES OFF ITS OWN CELL. They cannot be children of the
+     cells — the rail clips its overflow, so a panel inside one would be cut off
+     at the rail's edge and never seen. See RailFlyout. */
+  const spotsRef = useRef(null);
+  const covesRef = useRef(null);
   const trackRef = useRef(null);
-  const isOn = (t) => (t.arms === 'object' ? objArmed === t.id : tool === t.id);
-  const surfaces = LIGHT_TOOLS.filter((t) => t.surface);
-  const fittings = LIGHT_TOOLS.filter((t) => !t.surface);
+  const lampsRef = useRef(null);
+  const elecRef = useRef(null);
 
+  /* WHICH FLYOUT IS SHOWING, and only the two that own no state of their own.
+     Spots is `cobOpen` and Tracks is `trackOn`, both of which belong to the
+     editor because pressing those cells arms or opens something out there; the
+     other three open nothing but a panel, so the panel's own visibility is the
+     whole of what there is to remember. ONE AT A TIME, because two panels
+     standing over the drawing is two answers to "what did I just press". */
+  const [openId, setOpenId] = React.useState(null);
+  const show = (id) => setOpenId((cur) => (cur === id ? null : id));
+
+  const isOn = (t) => (t.arms === 'object' ? objArmed === t.id : tool === t.id);
+  const byId = (ids) => ids
+    .map((id) => LIGHT_TOOLS.find((t) => t.id === id))
+    .filter(Boolean);
+
+  /* ONE FLYOUT CELL, and it is the palettes' own (see PaletteButton): the
+     artwork is the name, and shrinking it to a bare glyph would cost the one
+     thing that made the palettes readable. */
   const cell = (t) => (
     <PaletteButton key={t.id} icon={LIGHT_ICON[t.id]} label={short(t.label)}
       on={isOn(t)} disabled={disabled}
@@ -140,133 +209,204 @@ export default function ToolRail({
       onClick={() => onPick(isOn(t) ? null : t.id, t.arms ?? 'tool')} />
   );
 
+  /* --- IS A CATEGORY CARRYING SOMETHING LIVE? -----------------------------
+     THE CELL HAS TO SAY SO WITH ITS PANEL CLOSED. A flyout is a glance: you
+     open it, press a fitting, and it goes away — and from that moment the only
+     thing on screen saying which tool is in hand would be the drawing's own
+     cursor. So a category reads as live while anything inside it is armed,
+     which is what makes the five cells a legible answer to "what am I holding".
+     `on` IS THEREFORE TWO THINGS AT ONCE — the panel is open, or something in
+     it is armed — and that is correct rather than a conflation: both mean "this
+     is the category you are working in". */
+  const anyOn = (ids) => byId(ids).some(isOn);
+  const spotsLive = cobOpen || !!cobMode || anyOn(IN_SPOTS);
+  const covesLive = openId === 'coves' || shapeOn || anyOn(IN_COVES);
+  const tracksLive = trackOn || !!trackMode;
+  const lampsLive = openId === 'lamps' || anyOn(IN_LAMPS);
+  const elecLive = openId === 'electrical' || boardOn
+    || CEILING_GROUPS.some((g) => !g.arms && g.ids.includes(objArmed));
+
   return (
-    /* ONE BLACK FIELD, AND THE BUTTONS DO NOT SIT ON IT — they are it. The rail
-       was frosted glass with a column of bordered black cells on top, which is
-       two grounds and a stack of boxes for a row of pictures. The rail, the
-       buttons and the images are now the same black with nothing between them,
-       so the symbols are the only thing the column draws. See PaletteButton.
-       THE HAIRLINE ON THE RIGHT STAYS. It is the edge between the rail and the
-       DRAWING, which is a real boundary — unlike the twelve it used to draw
-       inside itself. */
+    /* ONE GREY FIELD, AND THE CELLS DO NOT SIT ON IT — they are it. The rail,
+       the buttons and the marks are one surface with nothing between them, so
+       the five words and five symbols are the only thing the column draws.
+       THE HAIRLINE ON THE RIGHT WENT WITH THE BLACK. It was the edge between a
+       black rail and a black drawing, which needed drawing; #2F2F2F against the
+       plan's black is that edge already, and a #EAEAEA line on top of it would
+       be a border doing a job nothing needs done.
+       AND THIS COLUMN IS THE ONLY THING WEARING THAT GREY. The bar along the
+       foot of the stage is the drawing's own black — see the note on the
+       editor's four surfaces in styles.css for why a rail earns a surface and a
+       row of readings does not.
+       AND IT NO LONGER SCROLLS. Five cells fit on any screen this app runs on,
+       which is the whole argument for having five — so `overflow-y-auto`, and
+       the hidden scrollbar that had to go with it, are gone. If a sixth category
+       is ever added and the column overflows, the answer is not to put the
+       scroller back; it is that there are too many categories. */
     <nav aria-label="Design tools"
-      /* --- NO SCROLLBAR, AND IT IS A LAYOUT BUG AND NOT A PREFERENCE ---------
-         The list is taller than any screen, so this scrolls — and a classic
-         scrollbar takes its width out of the CONTENT box. 16px off 64 leaves the
-         buttons 48px wide, pinned at x=0 with a gutter down the right: the icons
-         read as left-aligned in their own column, which is exactly what they
-         were. Measured, not guessed — `clientWidth` was 48 against an
-         `offsetWidth` of 64.
-         HIDDEN RATHER THAN GUTTERED. `scrollbar-gutter: stable` would keep the
-         icons centred by reserving the 16px on both sides, which is a quarter of
-         the rail spent on nothing. A tool strip is a short fixed list you flick
-         through, not a document you navigate; the wheel and the trackpad still
-         work, and there is no position to keep track of. Both spellings, because
-         the two engines have never agreed on this one. */
-      className="w-[64px] flex-none pt-14 h-full overflow-y-auto overflow-x-hidden
-        [scrollbar-width:none] [&::-webkit-scrollbar]:hidden
-        border-r border-border/10 bg-black
+      /* --- IT SPANS BOTH ROWS, WHICH IS THE WHOLE OF ITS HEIGHT -------------
+         THE SHELL IS TWO COLUMNS AND TWO ROWS: the stage in the upper right and
+         the bar along the foot under it. Left to auto-placement this column took
+         the first row only, so the grey stopped level with that bar's top edge
+         and the last 48px of the left edge was the page showing through — a
+         notch out of the bottom of the rail that read as a rendering fault.
+         `h-full` IS NOT WHAT DOES IT. That is 100% of the grid AREA, and the
+         area was one row; the span is what makes the area the full height. Both
+         are needed and neither is redundant.
+         AND ONE ROW ON A NARROW SCREEN, where the shell is a single column and
+         this lies down across the top of it — a span of two there would eat the
+         stage's row. */
+      className="w-[86px] flex-none row-span-2 pt-14 h-full overflow-hidden bg-chrome
+        [@media(max-width:960px)]:row-span-1
         [@media(max-width:960px)]:w-full [@media(max-width:960px)]:h-auto
-        [@media(max-width:960px)]:overflow-x-auto [@media(max-width:960px)]:overflow-y-hidden
-        [@media(max-width:960px)]:border-r-0 [@media(max-width:960px)]:border-b">
+        [@media(max-width:960px)]:pt-0 [@media(max-width:960px)]:border-b">
       {/* NO GAP AND NO PADDING. A gap between full-bleed cells would put the
           rail's ground back between them as a stripe, which is the box this
           removed, drawn in negative. */}
-      <div className="flex flex-col pb-6
-        [@media(max-width:960px)]:flex-row [@media(max-width:960px)]:pb-0">
-        {/* THE RECESSED COB, AND IT IS FIRST BECAUSE IT IS THE FITTING.
-            Everything under it in this column changes what the ceiling IS or
-            hangs something off it; this is the downlight — the thing a lighting
-            plan is mostly made of, and the one somebody reaches for without
-            looking. The rest of the rail is in the order the work happens; the
-            work happens after you have decided you are placing downlights.
-            IT OPENS RATHER THAN ARMS. Two gestures, one fitting — see CobMenu.
+      <div className="flex flex-col [@media(max-width:960px)]:flex-row">
+
+        {/* --- SPOTS, AND IT IS FIRST BECAUSE IT IS THE FITTING -------------
+            A lighting plan is mostly downlights: the recessed COB is the thing
+            somebody reaches for without looking, and the directional spot is the
+            same lamp aimed at something. Everything under this cell either
+            changes what the ceiling IS or hangs something off it.
             NOT DISABLED WITH THE REST. `disabled` is "there is no scale and no
             lit space yet", which is the right guard on a placer; this cell
-            places nothing, it opens a drawer, and a drawer that will not open is
-            a cell nobody can find out the meaning of. The two gestures inside it
-            take the guard instead. */}
+            places nothing, it opens a panel, and a panel that will not open is a
+            cell nobody can find out the meaning of. The gestures inside take the
+            guard instead. */}
         {onCob && (
-          /* THE WRAPPER IS THERE TO BE MEASURED, and `[&>button]:w-full` is what
-             keeps it invisible. Every other cell is a direct child of the flex
-             column and stretches to the rail's 64px on its own; a cell inside a
-             div does not, because a <button> sizes to its content whatever its
-             display is. Without the rule this one cell would be narrower than
-             the eleven under it. */
-          <div ref={cobRef} className="flex-none [&>button]:w-full">
-            <PaletteButton icon="/icons/recessed_cob.png" label="COB"
-              title="Recessed COB" on={cobOpen}
-              onClick={() => onCob(cobOpen ? 'close' : 'open')} />
+          <div ref={spotsRef} className="flex-none">
+            <RailCell mark={MARK.spots} label="Spots" on={spotsLive}
+              title="Recessed COBs and directional spots"
+              onClick={() => {
+                /* THE CELL IS THE COB DRAWER'S OWN TOGGLE, which is what keeps
+                   the two from disagreeing: `cobOpen` is the panel, and the
+                   editor is what puts every other machine away when it opens.
+                   Closing the other three panels is this file's, because they
+                   are this file's state — one panel at a time. */
+                setOpenId(null);
+                onCob(cobOpen ? 'close' : 'open');
+              }} />
           </div>
         )}
         {onCob && cobOpen && (
-          <CobMenu anchor={cobRef} mode={cobMode}
-            disabled={disabled ? COB_ALL : cobSoon}
-            onPick={(m) => onCob(m)} />
+          <RailFlyout anchor={spotsRef} label="Spots">
+            {COB_MODES.map((m) => (
+              <PaletteButton key={m.id} icon={m.icon} label={m.label} title={m.title}
+                on={cobMode === m.id}
+                disabled={disabled ? true : cobSoon.includes(m.id)}
+                onClick={() => onCob(cobMode === m.id ? null : m.id)} />
+            ))}
+            {byId(IN_SPOTS).map(cell)}
+          </RailFlyout>
         )}
 
-        {/* --- THE MAGNETIC TRACK, AND IT SITS WITH THE COB ---------------
-            TWO DRAWERS, TOGETHER, AT THE TOP OF THE COLUMN. They are the two
-            cells in this rail that open instead of arming, and the two fittings
-            a lighting plan is mostly made of — a hole in the ceiling and a
-            profile on it. Keeping them adjacent is what says the drawer is a
-            KIND of cell rather than a quirk of the downlight.
-            IT OPENS THE GEOMETRY BAR AND NOT THE DRAWER, which the rail does
-            not know: a module needs a run to clip into, so this cell's whole job
-            is to put the primitives in front of you. The three modules arrive
-            when a run is selected. See `onTrack` at the call site.
-            NOT DISABLED WITH THE REST, for the COB cell's reason — this cell
-            places nothing, and the three cells in the drawer take the guard
-            instead. */}
-        {onTrack && (
-          <div ref={trackRef} className="flex-none [&>button]:w-full">
-            <PaletteButton icon="/icons/track.png" label="Track"
-              title="Magnetic track" on={trackOn} onClick={onTrack} />
+        {/* --- COVES, AND THE FIRST CELL IN IT IS NOT A PLACER --------------
+            ONE CELL FOR TWO ROLES' WORTH OF BAR, AND ONLY THE COVE IS IN THIS
+            RAIL. The shape bar draws the same six primitives either way and
+            `shapeRole` is the whole difference — what a committed shape BECOMES
+            — but the two are asked for in different ways:
+              COVE      an act you bring to a ceiling. Nothing on the drawing
+                        suggests it, so it lives here, latched while it is open.
+              GEOMETRY  what you set out IN a space, and the space is what says
+                        which one. A click on a room raises it.
+            THE OTHER TWO ARE THE FITTINGS THAT RUN IN A LINE — a reverse cove
+            spanned along a wall, and a length of tape between two ends. They are
+            the same KIND of thing as a cove, which is why they are behind the
+            same word. */}
+        {onShape && (
+          <div ref={covesRef} className="flex-none">
+            <RailCell mark={MARK.coves} label="Coves" on={covesLive}
+              title="Coves, reverse coves and LED strip"
+              onClick={() => { onCob?.('close'); show('coves'); }} />
           </div>
         )}
-        {onTrackPick && trackDrawer && (
-          <TrackMenu anchor={trackRef} mode={trackMode}
-            disabled={disabled ? TRACK_ALL : trackSoon}
-            onPick={onTrackPick} />
+        {onShape && openId === 'coves' && (
+          <RailFlyout anchor={covesRef} label="Coves">
+            <PaletteButton icon="/icons/cove.png" label="Cove" title="Cove"
+              on={shapeOn} disabled={disabled} onClick={onShape} />
+            {byId(IN_COVES).map(cell)}
+          </RailFlyout>
         )}
 
-        {/* THE CEILING'S OWN SHAPE. It arms no placer — it opens a bar on the
-            drawing, where its primitives live. See ShapeMenu.
-            AND IT IS THE ONLY SHAPE CELL IN THIS RAIL. The bar's other role —
-            geometry to set out from, built into nothing — used to sit directly
-            under this one and does not any more: it is raised by clicking a
-            SPACE. See the note above `ToolRail`. */}
-        {onShape && (
-          <PaletteButton icon="/icons/cove.png" label="Cove" title="Cove"
-            on={shapeOn} disabled={disabled} onClick={onShape} />
+        {/* --- TRACKS ------------------------------------------------------
+            THE CELL OPENS THE GEOMETRY BAR, which is the run being drawn, and
+            the flyout's three modules wait on one existing. See the note on
+            `trackDrawer` in the props above for why they are shown disabled
+            rather than withheld.
+            NOT DISABLED WITH THE REST, for the Spots cell's reason. */}
+        {onTrack && (
+          <div ref={trackRef} className="flex-none">
+            <RailCell mark={MARK.tracks} label="Tracks" on={tracksLive}
+              title="Magnetic track"
+              onClick={() => { onCob?.('close'); setOpenId(null); onTrack(); }} />
+          </div>
         )}
-        {surfaces.map(cell)}
-        {/* THE ABSENCE OF LIGHT, and the one cell that is never disabled with
-            the rest: the tools need a scale and a lit space before they can
-            place anything at real size, and a zone is a box over the drawing. */}
-        {onZones && (
-          <PaletteButton icon="/icons/no_light_zone.png" label={short('No Light Zone')}
-            title="No Light Zone — box out anything the light should keep off."
-            on={zoneOn} onClick={onZones} />
+        {onTrackPick && trackOn && (
+          <RailFlyout anchor={trackRef} label="Magnetic track">
+            {TRACK_MODULES.map((m) => (
+              /* `airy`, BECAUSE THESE THREE PICTURES REACH THE BOTTOM EDGE.
+                 Each is a rail with a beam thrown downward off it, so the bright
+                 part runs to the foot of the square and a caption tight under it
+                 sits in the light. See PaletteButton. */
+              <PaletteButton key={m.id} icon={m.icon} label={short(m.label)}
+                title={m.title} airy on={trackMode === m.id}
+                /* OUT OF REACH FOR THREE DIFFERENT REASONS, AND THEY ARE
+                   NOT THE SAME REASON. `disabled` is "no scale and no lit
+                   space", which is the guard on every placer in this rail;
+                   `!trackDrawer` is "there is no run to clip onto yet", which is
+                   this category's own precondition; `trackSoon` is a module this
+                   build does not answer for. All three come out as a cell you
+                   can see and cannot press, which is the honest picture of
+                   each. */
+                disabled={disabled || !trackDrawer || trackSoon.includes(m.id)}
+                onClick={() => onTrackPick(m.id)} />
+            ))}
+          </RailFlyout>
         )}
-        {fittings.map(cell)}
 
-        <div className={RULE} aria-hidden="true" />
+        {/* --- LAMPS -------------------------------------------------------
+            THE DECORATIVE FITTINGS: a chandelier dropped on the ceiling, a
+            sconce seated on a wall. Neither is part of the ambient grid and both
+            are chosen for how they look, which is what puts them behind one
+            word rather than beside the downlights. */}
+        <div ref={lampsRef} className="flex-none">
+          <RailCell mark={MARK.lamps} label="Lamps" on={lampsLive}
+            title="Chandeliers and sconces"
+            onClick={() => { onCob?.('close'); show('lamps'); }} />
+        </div>
+        {openId === 'lamps' && (
+          <RailFlyout anchor={lampsRef} label="Lamps">
+            {byId(IN_LAMPS).map(cell)}
+          </RailFlyout>
+        )}
 
-        {/* THE THINGS THE ELECTRICAL DRAWING IS ABOUT. Five drop a catalogue
-            object at a point; the switchboard opens a step. The group says
-            which machine it wants — see CeilingPalette. */}
-        {CEILING_GROUPS.map((g) => {
-          const board = g.arms === 'board';
-          const on = board ? boardOn : g.ids.includes(objArmed);
-          const armId = (on && !board && objArmed) || g.ids[0];
-          const label = g.label ?? CEILING_BY_ID[g.ids[0]]?.label ?? g.key;
-          return (
-            <PaletteButton key={g.key} icon={g.icon} label={short(label)} on={on}
-              title={label} disabled={objDisabled}
-              onClick={() => onArmObject(on ? null : armId, g.arms ?? 'object')} />
-          );
-        })}
+        {/* --- ELECTRICAL --------------------------------------------------
+            THE THINGS THE ELECTRICAL DRAWING IS ABOUT, and the things it has to
+            account for, behind one word. Four drop a catalogue object at a
+            point; the socket opens a step. The group says which machine it
+            wants — see CeilingPalette. */}
+        <div ref={elecRef} className="flex-none">
+          <RailCell mark={MARK.electrical} label="Electrical" on={elecLive}
+            title="Sockets, fans, air conditioners and hatches"
+            onClick={() => { onCob?.('close'); show('electrical'); }} />
+        </div>
+        {openId === 'electrical' && (
+          <RailFlyout anchor={elecRef} label="Electrical">
+            {CEILING_GROUPS.map((g) => {
+              const board = g.arms === 'board';
+              const on = board ? boardOn : g.ids.includes(objArmed);
+              const armId = (on && !board && objArmed) || g.ids[0];
+              const label = g.label ?? CEILING_BY_ID[g.ids[0]]?.label ?? g.key;
+              return (
+                <PaletteButton key={g.key} icon={g.icon} label={short(label)} on={on}
+                  title={label} disabled={objDisabled}
+                  onClick={() => onArmObject(on ? null : armId, g.arms ?? 'object')} />
+              );
+            })}
+          </RailFlyout>
+        )}
       </div>
     </nav>
   );

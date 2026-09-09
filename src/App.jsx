@@ -87,7 +87,6 @@ import OptionCoach from './components/OptionCoach.jsx';
 /* The walkthrough, playing in the panel rather than linked out of it. Named
    export: the default one is the line of type that opens it in a dialog. */
 import { HowToVideo } from './components/HowToLink.jsx';
-import { chunkFor } from './lib/taskSpots.js';
 /* WHAT IS LEFT OF THE BED CONTEST IN THIS FILE IS ONE SENTENCE ON THE ADMIN
    SHEET. The boxes in a room, the contest, the verdict and its fallback are the
    pipeline's — see features/lighting-planner/usePlanPipeline.js. */
@@ -144,9 +143,7 @@ import SwitchboardSheet from './components/SwitchboardSheet.jsx';
    a corner, rotating it and setting a fan's sweep are all features/fixtures/;
    what is read here is the label a palette prints, the sweep chips and the
    sweep the selected fan is at. */
-import { CEILING_BY_ID,
-         radiusFt, FAN_SWEEPS, sweepMm }
-         from './lib/ceilingObjects.js';
+import { CEILING_BY_ID, FAN_SWEEPS, sweepMm } from './lib/ceilingObjects.js';
 import { collectTargets, SNAP_DEFAULTS } from './lib/snapGuides.js';
 /* PICKING A THING UP, MOVING IT, AND LEAVING A COPY BEHIND — the four rules
    every draggable object on this canvas needs and each of which has been got
@@ -159,20 +156,21 @@ import { buildSnapIndex, snapAt } from './lib/snap.js';
 import { openPdf } from './lib/pdfPlan.js';
 import PdfPagePicker from './components/PdfPagePicker.jsx';
 import ToolRail from './components/ToolRail.jsx';
+import Popover, { PopoverButton } from './components/Popover.jsx';
+import StageBar, { SCENE } from './components/StageBar.jsx';
 import SpaceDetail from './components/SpaceDetail.jsx';
 import WallTonePopup from './components/WallTonePopup.jsx';
 import { DEFAULT_CEILING_MM, CEILING_MM_MIN, CEILING_MM_MAX,
-         materialsOf, wallMix, wallMixLabel, materialsSummary } from './lib/materials.js';
+         materialsOf, wallMix, wallMixLabel } from './lib/materials.js';
 /* THE ILLUMINANCE MODEL, THE FAMILY TABLE AND THE FAMILY DEFAULTS are read in
    features/lighting-planner/, which is the only thing that counts what is on a
    ceiling or asks what that makes of a room. */
 import {
   BTN, BTN_FULL, BTN_PRIMARY, BTN_EXIT, BTN_SECOND, BTN_MID, BTN_TINY,
-  BTN_NUDGE, BTN_EXPORT, BTN_BOQ, N, NW, NE, NOTE, NOTE_WARN, CODE, PILL,
+  BTN_NUDGE, BTN_BOQ, N, NW, NE, NOTE, NOTE_WARN, CODE, PILL,
   PILL_OK, PILL_BAD, PILL_VIEW, PILL_RETRY, KV, KV_HEAD, KV_ADMIN, N_ADMIN,
   BTNROW, SEC, SEC_ADMIN, H3, H3_FLUSH, H3_ADMIN, DISCLOSE_ADMIN, CHECK, TABS,
-  STEP, ROW_OFF, ROW_FLUSH, ROW_PICK, PROP_OFF, PROP_ON, PICK, NAME, META,
-  RTYPE, PTAB, PTAB_ON,
+  STEP, PROP_OFF, PROP_ON, MENU_ITEM, MENU_NOTE,
 } from './ui/tokens.js';
 import { introSpace, coachOff, silenceCoach } from './lib/intro.js';
 
@@ -285,6 +283,14 @@ export default function App({
   planName = null, planId = null, initialFile = null, restore = null, saveState = 'idle',
   initialProjectType = null, initialPdfPage = null, uploadState = null, isAdmin = false,
   onRename = null, onPersist = null, onMilestone = null, onBack = null,
+  /* THE WAY OUT OF THE EDITOR, AND IT IS THE DASHBOARD NOW. `onBack` went to
+     the PROJECT this plan sits in, as a worded link in the top-left; the top bar
+     is a row of marks either side of the plan's name, and a house is what
+     everything else in this app uses for "all the way out". The project page is
+     one press further on from there.
+     IT FALLS BACK TO `onBack` where a caller supplies only that — the tests and
+     the standalone editor — so neither loses its exit. */
+  onHome = null,
   onRetryUpload = null,
   /* WHERE THE BUILDING IS — an ISO code, a country name, or nothing.
      THE ONE THING IT DECIDES IS WHAT A SWITCHBOARD IS MADE OF: modules or
@@ -1367,6 +1373,28 @@ export default function App({
     fitZoom,
   } = useViewPrefs({ doc, source, stageRef });
 
+  /* --- WHICH OF THE THREE PANELS IN THE CHROME IS OPEN ---------------------
+     THE PANEL BECAME BARS, AND A BAR HAS NO ROOM FOR A LIST. Share's three file
+     formats, the View section's twelve layer checkboxes and the whole Admin
+     block were sections in a 340px scroller; they are now buttons in the top and
+     bottom bars that open over the drawing. See Popover.
+
+     LOCAL AND NOT IN THE DOCUMENT, all three. Which menu somebody has open is a
+     fact about the next half second, not about the plan — it must not be saved,
+     must not be undoable, and must not survive a reload. `useViewPrefs` above is
+     for the ones that are the opposite of all three.
+
+     ONE FLAG EACH RATHER THAN ONE `openMenu`, because they are in different
+     corners and do not exclude one another the way the rail's flyouts do: the
+     View panel and the Share panel cannot both be pressed without a press
+     landing outside one of them, and that press closes it. */
+  const [shareMenu, setShareMenu] = useState(false);
+  const [viewMenu, setViewMenu] = useState(false);
+  const [adminMenu, setAdminMenu] = useState(false);
+  const shareRef = useRef(null);
+  const viewRef = useRef(null);
+  const adminRef = useRef(null);
+
   /* --- TWO TOOLS ARE STEPS, AND THE OTHER THREE ARE NOT --------------------
      THE TEST IS WHETHER THE TOOL HAS A `GESTURE`, and that is deliberately the
      same test the palette already makes to decide between a picture card and a
@@ -1591,7 +1619,12 @@ export default function App({
   const { wallEdit: wallEditGeo, wallEditId: wallEdit,
           onWallSegment: pickWallSegment } = roomIntel.canvas;
   const { wallPick, setWallPick, wallEditRoom,
-          materialsEdit, setMaterialsEdit } = roomIntel.panel;
+          /* `materialsEdit` IS GONE FROM THIS GROUP. It gated a FOLD over the
+             finishes — a summary line you pressed to open, which replaced the
+             analysis while it was open — and the floating window shows the
+             finishes and the readout at once, so there is nothing to be open.
+             See the note where it used to be declared, in useWallMaterials. */
+        } = roomIntel.panel;
   const { computeRoomType, computeAccents, computeSurfaces,
           setSurfaceTone, setWallTone,
           openWallEdit: enterWallEdit, closeWallEdit } = roomIntel.commands;
@@ -1972,7 +2005,12 @@ export default function App({
      four call sites were the tracer's two buttons and the pipeline, and all
      three of those are inside the feature now — so the gate is reached through
      the two acts below it rather than by hand, which is the point of it. */
-  const { lightWholePlan, lightOneRoom,
+  /* `lightWholePlan` WENT WITH THE LIST'S "TAKE UP ALL N OUTLINES" BUTTON, and
+     the decision it made belongs on the step that owns it: the tracer's own
+     Proceed (`runPipeline`) is how a plan's outlines are taken up, on the screen
+     where you can see which ones they are. It is still on `lighting.commands`
+     for whoever wants it back. */
+  const { lightOneRoom,
           run: runPipeline, stop: stopPipeline,
           setRowWatts, cycleChunkOption } = lighting.commands;
   const loaderRooms = lighting.pipeline.loaderRooms;
@@ -2063,9 +2101,19 @@ export default function App({
     }
     hadLights.current = restoreApplied ? lit : null;
   }, [litIds, restoreApplied, docActions]);
-  // The BOQ tab takes the whole stage. Gated on `source` as well as on the tab
-  // so that a stale `view` cannot survive a Clear and render a schedule of a
-  // plan that is no longer loaded.
+  /* --- `view` NAMES A SCENE NOW, AND ONLY TWO OF ITS VALUES MEAN ANYTHING ---
+     IT USED TO NAME A TAB — Spaces, Design, Boards, BOQ, Admin — and the strip
+     is gone (see the note where it was). What survives is the half that was
+     real: two of those five REPLACE the drawing on the stage, and the other
+     three were views of a panel that is now driven by what is selected.
+     SO THE TEST IS ALWAYS AGAINST A SHEET AND NEVER FOR THE PLAN. 'boq' and
+     'boards' are the two sheets; every other value — 'spaces', which is still
+     the stored default, 'design', and a stale 'admin' out of somebody's saved
+     state — means the drawing. That is why nothing anywhere asks `view ===
+     'design'`, and why the half-dozen `setView('spaces')` calls scattered
+     through the features still read correctly: they mean "get off the sheet".
+     Gated on `source` as well, so a stale `view` cannot survive a Clear and
+     render a schedule of a plan that is no longer loaded. */
   const boqOpen = view === 'boq' && !!source;
   /* THE SWITCHBOARD SHEET TAKES THE STAGE TOO, on the same terms and gated the
      same way: a stale `view` must not survive a Clear and render a schedule of
@@ -2089,13 +2137,33 @@ export default function App({
      ViewerPanel and this condition comes off. */
   const boardsOpen = view === 'boards' && !!source && !readOnly;
   const sheetOpen = boqOpen || boardsOpen;
+  /* --- WHICH OF THE TWO DRAWINGS IS ON THE STAGE --------------------------
+     THE ELECTRICAL LAYER IS A SCENE AND NOT A LAYER, which is what the two
+     scene buttons on the bar over the drawing now say out loud. It was a switch
+     at the foot of the panel labelled "Show electrical layout", ticked on top of
+     a lighting drawing — but nothing in the lighting panel means anything while
+     you are looking at wiring, and nothing in the wiring panel means anything
+     while you are not. So the floating window swaps with it: a space's lumens
+     and its fittings on one, that space's plates on the other.
+     `!doorEdit` BECAUSE THE DOOR STEP IS THE WAY IN. The first press of the
+     scene button asks about the doors — a switchboard is placed beside one — and
+     while that question is open the wiring is not yet being shown. The same test
+     the old switch's own latch used. */
+  const elecScene = layers.electrical && !doorEdit;
   /* WHICH TAB THE PANEL IS ON, WITH ONE FALLBACK. `view` is what somebody
      clicked; this is what can actually be rendered. Admin is scoped to role 1,
      and a role can go away underneath a stale tab — a session that loses it, or
      an operator's own plan opened from the ordinary route — so an admin `view`
      without `isAdmin` reads as Design rather than as an empty column. Nothing
      resets `view` for it: the tab comes back if the role does. */
-  const panelView = view === 'admin' && !isAdmin ? 'design' : view;
+  /* `panelView` WENT WITH THE TAB STRIP. It was "which tab can actually be
+     rendered", with one fallback for an `admin` view held by somebody who is no
+     longer an admin — and there are no tabs: the floating window is driven by
+     what is selected on the drawing, and the two views that took the whole stage
+     (`boqOpen`, `boardsOpen`) are read straight off `view` above.
+     A RESTORED `view` OF 'admin' IS THEREFORE HARMLESS, which is what the
+     fallback existed to guarantee: it names no scene, so neither sheet opens and
+     the drawing is what shows. */
   const picking = pickingId ? rooms.find((r) => r.id === pickingId) : null;
   // `!doorEdit` FOR THE SAME REASON `!zoneMode` IS HERE: the picker replaces
   // the canvas, and a gesture that needs the drawing under it cannot be asked
@@ -2513,6 +2581,15 @@ export default function App({
 
      AND IT PUTS EVERY OTHER GESTURE AWAY, exactly as `openDoorEdit` does: one
      pointer pipeline, one owner. */
+  /* THE ZONE STEP'S OPENER, AND NOTHING CALLS IT ANY MORE. The No-Light Zone
+     tool is retired — see the note at the top of ToolRail — so there is no
+     control that arms this, and the step, its gates and the drawn zones a saved
+     plan already carries are all untouched: putting the tool back is putting one
+     cell in the Electrical flyout and pointing it here.
+     KEPT RATHER THAN DELETED because the way OUT of the step (`closeZoneEdit`)
+     and every `!zoneEdit` gate around the app are still live, and half a machine
+     is worse than a whole one nobody is currently pressing. */
+  // eslint-disable-next-line no-unused-vars
   const openZoneEdit = useCallback(() => {
     setZoneEdit(true);
     setSel(clear());
@@ -3388,46 +3465,18 @@ export default function App({
     return ch?.options?.find((o) => o.id === ch.pick)?.label ?? '';
   }, [coachOn, coach, rooms]);
 
-  const pickSpace = useCallback((roomId) => {
-    const off = focusId === roomId;
-    hideCoach();
-    docActions.setFocusId(off ? null : roomId);
-    setOptionPick(off ? null : optionPickFor(roomId));
-    /* AND THE FINISHES COLLAPSE ON THE WAY OUT. Leaving a room with its
-       materials open would mean coming back to it on the editor rather than on
-       the analysis, which is the resting state of that panel — see SpaceDetail.
-       Only on the way OUT: picking a different space from the list does not need
-       this, because `materialsEdit` holds a room id and stops matching by
-       itself. */
-    if (off) setMaterialsEdit(null);
-    /* --- ...AND IT PUTS THE GEOMETRY TOOLS IN FRONT OF YOU -----------------
-       CLICKING A SPACE RAISES THE BAR, AND THIS IS ONE OF THE TWO PLACES A
-       SPACE CAN BE CLICKED. The other is the room itself on the drawing — see
-       `onCanvasClick`, which carries the full argument. Both are the same act
-       and now have to do the same thing, because the rail cell that used to
-       offer these primitives has been removed (see the note above `ToolRail`):
-       a click on a space is the ONLY way in, so a route that selected a space
-       without raising the bar would be a route with no geometry tools at all.
-       IT WAS EXACTLY THAT ROUTE. This handler is how a space is picked out of
-       the panel's list, which is the more deliberate of the two gestures — you
-       have read the room's name — and it was the one that opened nothing.
-       NOT ON THE WAY OUT. Toggling a row off means "no space is selected", and
-       a bar of primitives for a room nobody has chosen would be a tool aimed at
-       whichever ceiling the panel happened to fall back to — which is the whole
-       fault the rail cell was removed for.
-       AND ONLY WHEN NOTHING ELSE IS ALREADY OPEN, which is `onCanvasClick`'s own
-       gate for its own reason: somebody drawing a COVE must not have the tool
-       taken out of their hands by a press on a room in the list. */
-    if (!off && !geometry.status.menuOn && !boardPlace && !zoneEdit) {
-      openShapeTool('guide', { arm: false });
-    }
-    /* `setMaterialsEdit` IS IN THE ARRAY AND WAS NOT, and nothing about when
-       this callback is rebuilt has changed: it is a `useState` setter, handed
-       through the room-intelligence panel group now that the finishes flag
-       lives in that feature, and a setter's identity is stable for the life of
-       the component. */
-  }, [docActions, focusId, optionPickFor, hideCoach, geometry.status.menuOn, boardPlace, zoneEdit,
-      openShapeTool, setMaterialsEdit]);
+  /* --- `pickSpace` WAS HOW A SPACE WAS PICKED OUT OF THE PANEL'S LIST -----
+     THE LIST IS GONE, so this is too. It did four things — move the focus, put
+     the right ceiling options up, clear the finishes flag, and raise the
+     geometry bar — and every one of them still happens on the OTHER route,
+     which is a click on the room itself on the drawing. See `onCanvasClick`,
+     which was always the more used of the two and is now the only one.
+     THE TWO WERE NEVER ONE FUNCTION, which is worth recording as the reason
+     this could be deleted rather than rewired: they were parallel
+     implementations of the same act, and keeping them in step was a standing
+     cost — the note that used to be here described a bug where the list's route
+     raised no geometry bar and the drawing's did. */
+
 
   /* FLIPPING ONE CHUNK THROUGH ITS OPTIONS IS features/lighting-planner/ —
      `cycleChunkOption`, taken off `lighting.commands` above. The arithmetic is
@@ -4552,13 +4601,161 @@ export default function App({
   };
 
 
+  /* --- WHAT THE CHROME DERIVES, AND IT IS DOWN HERE FOR A REASON ----------
+     THESE TWO READ HALF THE COMPONENT, and both of them sat up beside
+     `elecScene` — which is a hundred and fifty lines above `selBoardParts` is
+     taken off `electrical.panel`. A `const` read before its declaration is a
+     temporal dead zone, not an undefined, so the whole editor threw
+     "Cannot access 'selBoardParts' before initialization" on load.
+     SO THEY LIVE WHERE EVERYTHING THEY READ IS IN SCOPE, which is here, beside
+     the other thing the markup derives rather than holds. Anything added to
+     either expression has to be declared above this line; the rule is simply
+     that these are the LAST things the body computes. */
+  /* --- A STEP HAS TAKEN THE WINDOW OVER -----------------------------------
+     SIX GESTURES ASK A QUESTION AND EMPTY THE WINDOW DOWN TO IT: the doors, a
+     board being seated, a zone being boxed, a cove being spanned, a wall being
+     toned, and the two tools that have a `GESTURE`. This is the list those
+     branches are written from, said once — it was spelled out in full at three
+     different gates and they had already drifted by one term. */
+  const stepPanel = doorEdit || boardPlace || zoneEdit
+    || geometry.panel.coveDraw || wallEdit || !!stepTool;
+
+  /* --- IS THERE ANYTHING FOR THE FLOATING WINDOW TO SAY? ------------------
+     IT TAKES NO LAYOUT, SO IT MUST NOT BE DRAWN EMPTY. The window was a grid
+     track and an empty column is merely empty; it is a card floating over the
+     drawing now, and an empty card in the corner of a plan is a thing somebody
+     will click to find out what it is for.
+
+     THIS IS THE BRANCH LIST OF THE WINDOW'S OWN CONTENTS, IN ORDER. There is no
+     way to ask React "did that render anything", so the test is written out —
+     and it has to be kept in step with the chain inside. Adding a section to the
+     window means adding its condition here; the symptom of forgetting is a
+     section that never appears.
+
+     THE LAST FOUR TERMS ARE THE ONES THAT ARE NOT ABOUT A SELECTION. A trouble
+     to report, a plan that produced no layout, a fan being placed, and no scale
+     set — each of those is the window speaking without having been asked, which
+     is right in all four cases. */
+  const windowSpeaks = !!source && !boardsOpen && (
+    boqOpen || readOnly || prep || stepPanel || showTrace
+    || (elecScene ? true : !!openRoom)
+    || !!selBoardParts
+    || (!!armed || !pxPerFt)
+    || troubles.length > 0 || !rooms.length
+  );
+
+  /* --- WHICH DRAWING YOU ARE LOOKING AT, ON THE BAR OVER THE DRAWING ------
+     TWO BUTTONS THAT ARE ALWAYS THERE, whatever else the bar happens to be
+     carrying. It was a tab strip in the panel — Spaces / Design / Boards / BOQ —
+     and the half of it that was real is this: the lighting layout, the
+     electrical layout, and the schedule are not tabs of a panel, they are
+     different DRAWINGS of the same plan. A control that says which one you are
+     looking at belongs on the sheet, not in the column beside it.
+
+     ...AND THE ELECTRICAL SWITCH IS ONE OF THEM. It was a latched switch at the
+     foot of the panel reading "Show electrical layout", which framed the wiring
+     as a layer ticked on top of the lights. It is not: nothing in the lighting
+     window means anything while you are looking at wiring, and the window swaps
+     over with it — see `elecScene`. Two scenes, one press each way.
+
+     THE FIRST PRESS STILL ASKS ABOUT THE DOORS, which is the one piece of
+     behaviour carried over verbatim from that switch. A switchboard is placed
+     beside a door, so this cannot honestly show the wiring until somebody has
+     said the door boxes are right — and the honest answer to "show me the
+     electricals", the first time it is asked, is a question. See `doorsOk`.
+
+     THE ELECTRICAL SCHEDULE IS DRAWN AND INERT, which is the honest picture of a
+     scene this build does not have: out of reach rather than absent, the same
+     rule the COB drawer's unbuilt gesture follows. A pair that grew a second
+     item later would be a pair somebody had already learned the shape of.
+
+     OFF A SHEET, BOTH BUTTONS GO BACK TO THE DRAWING. The schedule and the
+     switchboard sheet replace the plan, and the tab strip used to be the way
+     off them; these are. Which is also why the pair is never two buttons that
+     both do nothing — whatever scene you are in, both of these leave it. */
+  const sceneTail = !source || showTrace || prep || readOnly ? null : (
+    <>
+      {sheetOpen ? (
+        <>
+          <button type="button" className={SCENE}
+            title="Back to the lighting layout"
+            onClick={() => {
+              docActions.setView('design');
+              if (layers.electrical) toggleElectricalLayer();
+            }}>Lighting</button>
+          <button type="button" className={SCENE}
+            title="Back to the drawing, showing the wiring"
+            onClick={() => {
+              docActions.setView('design');
+              if (!doorsOk) { openDoorEdit(); return; }
+              if (!layers.electrical) toggleElectricalLayer();
+            }}>Electrical layout</button>
+        </>
+      ) : elecScene ? (
+        <>
+          <button type="button" className={SCENE}
+            title="Back to the lighting layout"
+            onClick={toggleElectricalLayer}>Lighting</button>
+          <button type="button" className={SCENE} disabled
+            title="The electrical schedule is not built yet">
+            Electrical BOQ
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className={SCENE}
+            title={doorsOk
+              ? 'Loop every fitting back to its switchboard'
+              : 'Confirm the doors, then the wiring'}
+            onClick={() => {
+              /* IN THE VIEWER IT WOULD BE A LAYER SWITCH AND NOTHING MORE — an
+                 operator looking at somebody else's plan is not the person who
+                 can answer whether the doors are right. It never gets here:
+                 `sceneTail` is null on a read-only sheet, which is the same
+                 judgement said once rather than per button. */
+              if (doorEdit) { closeDoorEdit(); return; }
+              if (!doorsOk) { openDoorEdit(); return; }
+              toggleElectricalLayer();
+            }}>Electrical layout</button>
+          <button type="button" className={SCENE}
+            title="The schedule of everything on this plan"
+            onClick={() => docActions.setView('boq')}>Lights BOQ</button>
+        </>
+      )}
+    </>
+  );
+
   return (
-    /* THREE COLUMNS NOW, AND THE FIRST ONE IS `auto` SO IT CAN BE NOTHING.
-       The tools moved out of the right panel and onto the left edge (see
-       ToolRail), and a rail that is only there once a plan is laid out must not
-       leave a 58px gutter on the upload screen. Rendering nothing collapses the
-       track, which is what `auto` buys over a fixed width. */
-    <div className="grid grid-cols-[auto_1fr_340px] h-full gap-0 [@media(max-width:960px)]:grid-cols-1 [@media(max-width:960px)]:grid-rows-[auto_1fr_auto] [@media(max-width:960px)]:overflow-auto">
+    /* --- THE DRAWING TAKES THE SCREEN, AND THE CHROME SITS ON THE EDGES ----
+       IT WAS THREE COLUMNS, THE LAST OF THEM A 340px PANEL, and the panel was
+       the problem: it was a column of controls that mostly did not apply, it
+       had to scroll to hold them, and it took a fifth of the width of the one
+       thing this app is for away from it permanently — on every screen, whether
+       or not anything in it was being read.
+
+       SO THERE ARE TWO COLUMNS AND TWO ROWS. The rail down the left, the stage
+       filling everything else, and a bar across the foot of the stage for the
+       preferences and the readings. What used to be the panel is a WINDOW that
+       floats over the drawing's top-right corner (see the block after the
+       stage) — present when it has something to say about the thing you have
+       selected, and taking no layout at all when it does not.
+
+       THE FIRST COLUMN IS `auto` SO IT CAN BE NOTHING. The rail is only there
+       once a plan is laid out, and a rail that is not rendered must not leave an
+       86px gutter on the upload screen; rendering nothing collapses the track,
+       which is what `auto` buys over a fixed width. The tracks are named
+       explicitly on the two children below rather than left to auto-placement,
+       because auto-placement puts the footer beside the stage on exactly the
+       screens where the rail is absent.
+
+       AND THE FOOT OF THE STAGE IS NOT THE FOOT OF THE SCREEN. The bar is a
+       grid row rather than something absolute over the drawing: a scroll
+       container with chrome floating in front of its own last inch is a
+       container whose bottom edge you cannot reach. */
+    <div className="relative grid grid-cols-[auto_1fr] grid-rows-[1fr_auto] h-full gap-0
+      [@media(max-width:960px)]:grid-cols-1
+      [@media(max-width:960px)]:grid-rows-[auto_1fr_auto]
+      [@media(max-width:960px)]:overflow-auto">
       {/* ONE QUESTION, BEFORE ANYTHING ELSE. Shown the moment a plan is
           readable and dismissed only by answering — see ProjectTypeDialog. */}
       {source && !readOnly && (!projectId || doorState.status === 'running') && (
@@ -4602,65 +4799,153 @@ export default function App({
           something in the panel on the right, so the eye had two places to look
           and no reason to trust either. What is left is the name of the thing
           and whether it is busy. */}
-      <div className="absolute top-0 left-0 right-[340px] [@media(max-width:960px)]:right-0 h-14 z-[5] flex items-center gap-3.5 px-5 bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[2px]  border-b border-border/10">
-        {/* THE LOCKUP. The mark is drawn, not loaded: it is a lit aperture — a
-            disc with a halo — which is a circle and a box-shadow, and that is
-            smaller than the PNG, sharp at any density, and takes the ink colour
-            with it. The wordmark is live text in Lunar rather than an image, so
-            it stays crisp and can be selected and searched. */}
-        {/* THE WORDMARK GAVE UP ITS CORNER, and it was the right trade. On a
-            screen you reach by choosing a plan inside a project, the top-left
-            has one job: say which plan this is and get you back out. A brand
-            mark there is decoration in the most valuable position on the page —
-            and the mark is still on every screen that leads here.
+      {/* --- THE TOP BAR: OUT, BACK, WHICH PLAN, AND WHERE IT GOES ---------
+          FULL WIDTH NOW, over the rail as well as the stage. It used to stop
+          short of the panel's 340px, which is what a bar belonging to the
+          drawing does; it belongs to the SCREEN — the house takes you out of the
+          editor entirely and the name in the middle is the name of the whole
+          document, neither of which is about the sheet.
 
-            THE NAME IS EDITED IN PLACE rather than behind a dialog, because a
-            plan auto-named from a filename is a name nobody chose, and this is
-            where anybody who cares about it is looking. */}
-        {onBack ? (
-          <div className="flex items-center gap-3 min-w-0">
-            <button className="border-0 bg-none text-[12px] text-subtle cursor-pointer py-1 inline-flex items-center gap-[7px] m-0 whitespace-nowrap transition-colors duration-[120ms] hover:text-white [&>span]:text-[13px]" onClick={onBack}>
-              <span aria-hidden="true">←</span> Back to Projects
+          THE NAME IS IN THE CENTRE AND THE ACTS ARE AT THE ENDS. Left is
+          navigation — out of the plan, and back a step inside it. Right is
+          history and what leaves the building. Between them, the one fact this
+          bar exists to state.
+
+          THREE TRACKS AND NOT A `flex` WITH SPACERS, which is what makes the
+          centring true rather than approximate: with `1fr auto 1fr` the name is
+          in the middle of the SCREEN whatever is beside it, where a flexbox
+          would centre it in the space left over and shift it every time a pill
+          appeared. */}
+      {/* --- THE ONE WHITE SURFACE ON THE SCREEN, AND IT IS THE MASTHEAD ----
+          IT WAS FROSTED GLASS over the page's own graph paper, which was right
+          when it was one bar on a page whose ground you could see. There are
+          four surfaces now — this bar, the rail, the drawing and the bar along
+          the foot — and three of them are the chrome's grey (`--color-chrome`)
+          against a black drawing. This one is white.
+
+          WHY THE ODD ONE OUT IS THE RIGHT ONE. Everything in this bar is about
+          the DOCUMENT rather than about the sheet: what it is called, what has
+          happened to it, and where it goes next. Nothing in it changes a line on
+          the plan. The grey surfaces are the tools and the readings, which are
+          all about the drawing; a masthead in the same grey would file it with
+          them.
+
+          NO BOTTOM HAIRLINE. White against the drawing's black is already the
+          hardest edge on the screen, and a #EAEAEA line on top of it would be a
+          border nobody can see doing a job nothing needs done.
+
+          EVERY FOREGROUND IN HERE IS INKED FOR WHITE, and three of them are
+          shared tokens that had one caller each: `TABS` and `STEP` (the undo and
+          redo pair) and the save pills. See their notes in ui/tokens.js — all
+          three were built to be legible on a dark bar, and 5% white on white is
+          nothing at all. */}
+      <div className="absolute top-0 left-0 right-0 h-14 z-[5] grid
+        grid-cols-[1fr_auto_1fr] items-center gap-3.5 px-4 bg-white">
+        {/* --- OUT, AND BACK ONE STEP -----------------------------------
+            A HOUSE AND A WORDED LINK, WHICH IS THE RIGHT WAY ROUND. The house
+            is the same mark this app uses for "all the way out" everywhere else,
+            and it needs no label because it is the only icon in the corner. The
+            step back inside the plan does need one: "outlines" is this app's own
+            word for a stage of the work, and there is no picture of it.
+
+            THE OUTLINES LINK IS A TOGGLE AND IT LATCHES. Pressing it shows the
+            tracer; pressing it again puts the layout back. That is what
+            `backToOutlines` and `backToDesign` already were — see the note on
+            `outlinesOpen` for why the trip discards nothing — and a link that
+            only went one way would leave the drawing behind a button somebody
+            had to guess at. */}
+        <div className="flex items-center gap-1.5 min-w-0 justify-self-start">
+          {(onHome || onBack) && (
+            <button type="button" onClick={onHome ?? onBack}
+              title="Back to your dashboard" aria-label="Dashboard"
+              className="flex-none inline-flex items-center justify-center w-8 h-8
+                rounded border-0 bg-transparent text-muted cursor-pointer
+                transition-colors duration-[120ms] hover:text-ink hover:bg-ink/[0.07]
+                focus-visible:outline-2 focus-visible:outline-accent
+                focus-visible:outline-offset-2">
+              {/* HEROICONS' `home`, OUTLINE, DRAWN RATHER THAN LOADED — the
+                  same decision as the undo/redo pair further along this bar:
+                  a path inline takes the ink colour with it, stays sharp at any
+                  density, and costs nothing at build time. 1.7 and not their
+                  1.5, which is this chrome's own weight. */}
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
+                stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+                strokeLinejoin="round" aria-hidden="true">
+                <path d="M2.25 12 11.2 3.05a1.13 1.13 0 0 1 1.6 0L21.75 12M4.5
+                  9.75v10.13c0 .62.5 1.12 1.13 1.12H9.75v-4.875c0-.62.5-1.125
+                  1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0
+                  1.125-.5 1.125-1.125V9.75" />
+              </svg>
             </button>
-            <span className="w-px h-[15px] bg-border flex-none rotate-[15deg]" aria-hidden="true" />
-            {/* WHITE, NOT `text-ink`. This bar is frosted glass over a black
-                page and ink is #000000 — the name of the plan, which is the one
-                thing this bar exists to say, was reading as a dark smudge on a
-                dark ground. Both the viewer's span and the editor's button take
-                it, because they are the same words in the same place. */}
+          )}
+          {/* ONLY WHERE THERE ARE OUTLINES TO GO BACK TO. On the upload screen
+              and in the viewer there is no stage to step back into, and a link
+              to one would be a control that cannot do what it says. */}
+          {source && !readOnly && (
+            <button type="button"
+              title={showTrace ? 'Back to the layout' : 'Back to the space outlines — nothing is discarded'}
+              aria-pressed={showTrace}
+              onClick={() => (showTrace ? backToDesign() : backToOutlines())}
+              className={'flex-none inline-flex items-center gap-[7px] h-8 px-2 rounded '
+                + 'border-0 bg-transparent text-[12px] leading-none whitespace-nowrap '
+                + 'cursor-pointer transition-colors duration-[120ms] '
+                + 'focus-visible:outline-2 focus-visible:outline-accent '
+                + 'focus-visible:outline-offset-2 '
+                /* ONE BACKGROUND CLASS EITHER WAY — see the rail's cells for
+                   the emission-order trap that makes two of them a bug. */
+                + (showTrace
+                  ? 'text-ink bg-ink/[0.07]'
+                  : 'text-muted hover:text-ink hover:bg-ink/[0.07]')}>
+              <span aria-hidden="true" className="text-[13px]">←</span>
+              Space outlines
+            </button>
+          )}
+        </div>
+
+        {/* --- WHICH PLAN, IN THE MIDDLE OF THE SCREEN --------------------
+            THE ONE FACT THIS BAR EXISTS TO STATE, and it is centred because it
+            is a title rather than a control. It was in the top-left beside a
+            "Back to Projects" link, where it read as the second half of that
+            link's sentence.
+
+            EDITED IN PLACE rather than behind a dialog, because a plan
+            auto-named from a filename is a name nobody chose and this is where
+            anybody who cares about it is looking. WHITE, NOT `text-ink`: this
+            bar is frosted glass over a black page, and ink is #000000. */}
+        {source || onBack ? (
+          <div className="min-w-0 justify-self-center text-center">
             {readOnly ? (
-              /* A SPAN, NOT A DISABLED BUTTON. The name is not a control here and
-                 dressing it as a dead one invites the click that does nothing. */
-              <span className="text-[13px] text-white py-1 overflow-hidden text-ellipsis whitespace-nowrap max-w-[38ch]">{planName || 'Untitled plan'}</span>
+              /* A SPAN, NOT A DISABLED BUTTON. The name is not a control here
+                 and dressing it as a dead one invites the click that does
+                 nothing. */
+              <span className="block text-[14px] tracking-[-0.02em] text-ink py-1
+                overflow-hidden text-ellipsis whitespace-nowrap max-w-[38ch]">
+                {planName || 'Untitled plan'}
+              </span>
             ) : nameDraft == null ? (
-              /* HOVER HINTS AT THE FIELD IT BECOMES. It was `hover:bg-surface-3`
-                 — #F2F2F2, a near-white flash on this dark bar — and it now
-                 warms to the same glass the input below wears, so the hover is a
-                 preview of the edit rather than a different effect. */
+              /* HOVER HINTS AT THE FIELD IT BECOMES — the same glass the input
+                 below wears, so the hover is a preview of the edit rather than a
+                 different effect. */
               <button title="Rename this plan"
-                className="border-0 bg-none text-[13.5px] text-white cursor-text px-1.5 py-[3px] rounded max-w-[34ch] overflow-hidden text-ellipsis whitespace-nowrap transition-colors duration-[120ms] hover:bg-surface hover:backdrop-blur-md"
+                className="border-0 bg-transparent text-[14px] tracking-[-0.02em] text-ink
+                  cursor-text px-2 py-[3px] rounded max-w-[34ch] overflow-hidden
+                  text-ellipsis whitespace-nowrap transition-colors duration-[120ms]
+                  hover:bg-ink/[0.06]"
                 onClick={() => setNameDraft(planName || '')}>
                 {planName || 'Untitled plan'}
               </button>
             ) : (
-              /* --- EDITING: A GLASS FIELD THAT ASKS TO BE TYPED IN -----------
-                  IT WAS RAW OS CHROME, and that is a real bug rather than a
-                  plain omission. styles.css styles text entry through
-                  `input[type=text], input[type=email], …` — an ATTRIBUTE
-                  selector, and this input has no `type` at all, so it matched
-                  none of them. The file's own comment warns about exactly this
-                  trap (it is how the login field ended up unstyled). Rather than
-                  add `type="text"` and inherit a field built for a white panel —
-                  `--input-bg` is #FFFFFF and `--text` is #e1dccd, which is
-                  off-white text on a white box — it states what it is.
-                  `bg-surface` + `backdrop-blur-md` is the panel's own glass, so
-                  the field reads as part of this bar rather than punched through
-                  it, and the border gives the edge a text field needs to invite
-                  the caret. Utilities beat the element rules either way, being
-                  in `@layer utilities`. */
-              <input className="text-[13.5px] w-[26ch] px-2 py-[3px] rounded
-                bg-surface backdrop-blur-md text-white border border-border/20
-                focus:outline-none" autoFocus value={nameDraft}
+              /* --- EDITING: A FIELD THAT ASKS TO BE TYPED IN ---------------
+                  IT STATES WHAT IT IS rather than inheriting from styles.css's
+                  `input[type=text], …` rules — an ATTRIBUTE selector this input
+                  does not match, having no `type` at all. That trap is how the
+                  login field ended up unstyled, and it is worth stating rather
+                  than discovering; what this wants is a light field on a light
+                  bar, which is a wash of ink and the app's own hairline. */
+              <input className="text-[14px] tracking-[-0.02em] w-[26ch] px-2 py-[3px]
+                rounded bg-ink/[0.04] text-ink text-center
+                border border-border-strong focus:outline-none"
+                autoFocus value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)}
                 onBlur={() => { onRename?.(nameDraft); setNameDraft(null); }}
                 onKeyDown={(e) => {
@@ -4670,23 +4955,32 @@ export default function App({
             )}
           </div>
         ) : (
-          <div className="flex items-center gap-2.5 min-w-0 tracking-[-0.025em]">
-            {/* The standalone editor — no project, no route above it.
-                `<Logo>` AND NOT A SECOND COPY OF THE CROP. This was the same
-                four offsets written out again in hard pixels, and the new
-                artwork is what proved why that was a mistake: the numbers are
-                measured off the FILE, so re-exporting it left this copy pointing
-                at a region of a canvas that no longer existed while the shared
-                component was correct. One crop, one place, one measurement.
-                NARROWER THAN THE MARKETING BAR'S 132, because this one is not
-                alone: a divider and the view's name sit beside it in a header
-                that also carries the exports and Share. See `width` there. */}
+          /* The standalone editor — no project, no route above it. `<Logo>` and
+             not a second copy of the crop: the numbers are measured off the
+             FILE, so re-exporting the artwork left a hard-coded copy pointing at
+             a region of a canvas that no longer existed. */
+          <div className="flex items-center gap-2.5 min-w-0 justify-self-center
+            tracking-[-0.025em]">
             <Logo width={116} />
-            <span className="w-px h-[15px] bg-border flex-none rotate-[15deg]" aria-hidden="true" />
-            <span className="text-[12px] text-muted whitespace-nowrap overflow-hidden text-ellipsis">{view === 'boq' ? 'schedule' : 'lighting layout'}</span>
+            {/* THE ARTWORK IS WHITE INK ON AN OPAQUE BLACK PLATE, so on this
+                bar it reads as a black badge rather than as a wordmark set in
+                the bar. That is legible and it is left alone: this branch is the
+                standalone editor — no project, no route above it — which the
+                app's own routes never reach. A light cut of the logo is what
+                would fix it properly. */}
+            <span className="w-px h-[15px] bg-border-strong flex-none rotate-[15deg]"
+              aria-hidden="true" />
+            <span className="text-[12px] text-muted whitespace-nowrap overflow-hidden text-ellipsis">
+              {view === 'boq' ? 'schedule' : 'lighting layout'}
+            </span>
           </div>
         )}
-        <div className="flex-1" />
+
+        {/* --- WHAT HAS HAPPENED, AND WHAT LEAVES ------------------------
+            THE HISTORY AND THE EXPORTS, at the end of the bar. `justify-self-end`
+            with `min-w-0` so a long plan name in the middle track never pushes
+            Share off the screen. */}
+        <div className="flex items-center gap-2 min-w-0 justify-self-end">
         {/* THE STANDING REMINDER. The stage below is pixel-for-pixel the editor,
             so the only thing separating "looking at their plan" from "editing
             mine" is this pill and the banner on the way in. It is magenta for the
@@ -4774,115 +5068,179 @@ export default function App({
             while you use it; up here it was in the row that names the plan and
             says whether it is busy, four hundred pixels from the thing it
             changes. */}
-        {/* THE DESIGN/BOQ PAIR WAS HERE, and it is now the right panel's own
-            three-tab strip — Outlines, Design, BOQ. It left the top bar because
-            two of the three steps it names had their controls in the panel and
-            the third was a pill up here: the same navigation split across two
-            pieces of chrome, in two different idioms, so "where am I" had two
-            answers and neither was complete. See the strip in the panel. */}
+        {/* THE DESIGN/BOQ PAIR WAS HERE, and it is the two scene buttons on the
+            bar over the drawing now — see the StageBar at the end of this file.
+            Where you are is a thing about the SHEET: lighting or electrical, the
+            plan or a schedule. It belongs on the sheet's own bar rather than in
+            the row that names the document. */}
+
+        {/* --- SHARE, AND EVERYTHING THAT LEAVES IS BEHIND IT --------------
+            IT WAS FOUR BUTTONS: DXF, PNG, PDF and then Share, three of them
+            file formats in a row across the head of the panel. They are one act
+            — this drawing, going somewhere else — and a row of formats spends
+            the most valuable position on the page on a question nobody asks
+            until they are finished.
+
+            SO THE ACT IS THE BUTTON AND THE FORMATS ARE INSIDE IT. Share stays
+            the one white button on this screen, for the reason it always was:
+            everything else in this chrome is quiet glass on a dark ground, and
+            this is the one thing here that reaches somebody else.
+
+            THE PANEL HOLDS FOUR ITEMS AND ONE OF THEM IS NOT A FILE. Sending
+            the project to a person is the same act as handing them a PDF of it,
+            and separating the two would put the app's own answer ("a link")
+            behind a different control from the three fallbacks. It is first,
+            under its own rule, because it is the one that does not download.
+
+            THE DXF IS THE ONE GATED ON A LAYOUT, and the other two are not.
+            `!totals.rooms` disables it because a DXF of this app's own work with
+            no work in it is an empty file; a PNG or a PDF of the plan as it
+            stands is the plan, which is a thing somebody may legitimately want
+            on the outlines step. A dead button is a claim that something is
+            available — and so is a hidden one, in reverse. */}
+        {source && !readOnly && !prep && (
+          <>
+            <button type="button" ref={shareRef}
+              onClick={() => setShareMenu((v) => !v)}
+              title="Take this drawing somewhere else"
+              aria-expanded={shareMenu}
+              /* IT INVERTED WITH THE BAR. It was the one WHITE button on a dark
+                 panel, for the reason it is now the one BLACK button on a white
+                 one: everything else in this chrome is deliberately quiet, and
+                 this is the single act on the screen that reaches somebody else.
+                 The rule is "the loudest thing available", not "white". */
+              className="flex-none text-[11.5px] leading-none px-3 py-[7px] rounded
+                border border-cta bg-cta text-white cursor-pointer inline-flex
+                items-center justify-center gap-[6px]
+                transition-colors duration-[120ms]
+                hover:bg-cta-hover hover:border-cta-hover
+                focus-visible:outline-2 focus-visible:outline-accent
+                focus-visible:outline-offset-2">
+              {/* HEROICONS' `share`, OUTLINE, at this chrome's own 1.7 stroke
+                  rather than their 1.5, and at 13px to sit with the smaller
+                  type. Drawn, not loaded — see the house at the other end. */}
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+                strokeLinejoin="round" aria-hidden="true">
+                <path d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283
+                  1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25
+                  2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0
+                  3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
+              </svg>
+              Share
+            </button>
+            <Popover anchor={shareRef} open={shareMenu} side="bottom" align="end"
+              width={252} label="Share and export"
+              onClose={() => setShareMenu(false)}>
+              {onShare && (
+                <>
+                  <button type="button" className={MENU_ITEM}
+                    onClick={() => { setShareMenu(false); onShare(); }}>
+                    <b className="font-normal text-text">Share with people</b>
+                    <span className={MENU_NOTE}>A link, with who may see it</span>
+                  </button>
+                  <div className="h-px bg-border/15 my-1.5 mx-3" aria-hidden="true" />
+                </>
+              )}
+              {/* THE PARAGRAPH THE EXPORT SECTION USED TO CARRY IS THE SECOND
+                  LINE OF EACH ITEM. "Everything on a superluminal_ layer, split
+                  by trade" is read once, by the one person who opens the file in
+                  CAD — it does not need permanent space in a panel, and a menu
+                  has room for it where a row of three chips did not. */}
+              <button type="button" className={MENU_ITEM} disabled={!totals.rooms}
+                onClick={async () => {
+                  setShareMenu(false);
+                  if (!await gateExport()) return;
+                  download(`${exportBase}-lights.dxf`, toSuperluminalDXF({
+                    source, pxPerFt, heightPx: source.h,
+                    rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
+                    objects: obstaclesPx,
+                    accents: accentZonesPx,
+                    spots: taskSpotsPx,
+                  }), 'application/dxf');
+                  milestone.current?.('export');
+                }}>
+                <b className="font-normal text-text">Download DXF</b>
+                <span className={MENU_NOTE}>
+                  One superluminal_ layer, split by trade
+                  {isVector ? ', in the drawing\u2019s own units' : ', in feet'}
+                </span>
+              </button>
+              {/* PNG AND PDF FOLLOW THE VIEW. Night view is a deliverable in its
+                  own right — a dark sheet with the fittings glowing on it is how
+                  a scheme gets presented — so an export that quietly handed back
+                  the day version would be overruling a choice that is visibly on
+                  screen. `layers.invert` decides the plan's polarity AND the
+                  ground together: either alone is the wrong sheet. */}
+              <button type="button" className={MENU_ITEM} disabled={!source}
+                onClick={async () => {
+                  setShareMenu(false);
+                  if (!await gateExport()) return;
+                  download(`${exportBase}-lights.png`,
+                    await svgToPNG(svgRef.current, source.w,
+                      { asScanned: !layers.invert, ground: layers.invert ? '#000000' : '#fff' }));
+                }}>
+                <b className="font-normal text-text">Download PNG</b>
+                <span className={MENU_NOTE}>
+                  The sheet as you see it{layers.invert ? ', night view' : ''}
+                </span>
+              </button>
+              {/* PDF IS PLOTTED FROM THE GEOMETRY, NOT PRINTED FROM THE SCREEN.
+                  It went through the browser's print dialog for one revision and
+                  the output was a photograph of a user interface: haloes, hover
+                  states and selection frames all landed as ink. See pdfPlot.js. */}
+              <button type="button" className={MENU_ITEM} disabled={!source}
+                onClick={async () => {
+                  setShareMenu(false);
+                  if (!await gateExport()) return;
+                  try {
+                    /* THE BASE IS RE-RENDERED FROM THE ORIGINAL FILE at the
+                       sheet's own resolution rather than reusing the editor's
+                       2400px copy; that is the whole reason it is awaited
+                       separately. */
+                    const base = layers.invert
+                      ? await nightBase(openPdf, initialFile, pdfPage).catch(() => null)
+                      : null;
+                    const out = await plotToPDF({
+                      source, pxPerFt, rooms, objects: obstaclesPx,
+                      accents: accentZonesPx, spots: taskSpotsPx, coves: reverseCoves,
+                      file: initialFile, pageNo: pdfPage, title: exportBase,
+                      night: layers.invert, base,
+                    });
+                    download(`${exportBase}-lights.pdf`, out.bytes, 'application/pdf');
+                    milestone.current?.('export');
+                  } catch (err) { console.error('[export] the plot failed', err); }
+                }}>
+                <b className="font-normal text-text">Download PDF</b>
+                <span className={MENU_NOTE}>
+                  {layers.invert
+                    ? 'The presentation sheet, plotted as vector'
+                    : 'The line plot, on its own sheet size'}
+                </span>
+              </button>
+            </Popover>
+          </>
+        )}
+        </div>
       </div>
 
-      {/* --- THE PLAN'S APPEARANCE, OVER THE DRAWING IT CHANGES ------------
-          A TWO-SIDED SWITCH, NOT A BUTTON. Sun is the scan as it arrived, moon
-          inverts it — a white plan with black lines becomes a black plan with
-          white ones. Both sides are always drawn and one is always latched,
-          which is what makes it a switch: you can see which of the two you are
-          in without having to remember what pressing it did.
+      {/* --- THE PLAN'S APPEARANCE MOVED TO THE BOTTOM BAR -----------------
+          IT WAS A WHITE PILL FLOATING OVER THE DRAWING, lower right, and every
+          line of reasoning that put it there was about the two grounds it had to
+          be legible against: the black page and a white scan. That is why it was
+          opaque white with a hairline and a shadow rather than the glass the
+          rest of this chrome wears.
 
-          LOWER RIGHT, OVER THE CANVAS, because that is where the thing it
-          changes is. In the top bar it sat in the row that names the plan and
-          says whether it is busy — a control over the drawing's ink, filed with
-          the drawing's metadata.
+          THERE IS A BAR ALONG THE FOOT OF THE STAGE NOW, and the pill's whole
+          problem is somebody else's: the bar has its own ground, so the switch
+          can be the same two glyphs in the same idiom as the two controls beside
+          it. It also sits with them for a reason — day or night, which layers
+          are drawn, and the model readings are three preferences ABOUT THE
+          PICTURE, and they were in three different corners of the screen.
 
-          A WHITE PILL, NOT GLASS, AND GLASS WAS TRIED FIRST. The panel's own
-          five-percent white works there because the panel is a large surface
-          against a black page with its own grid showing through — the glass IS
-          the read. A 70px control floating on the drawing has no area to build
-          that up: it came out as a barely-there smudge over whatever it happened
-          to be sitting on, which is the opposite of what a switch has to be.
-          Solid white, a hairline and a lift instead.
-
-          THE SHADOW IS DOING REAL WORK, not decoration. This thing floats over
-          two different grounds — the black page around the sheet, and the white
-          paper of a day-mode plan when the drawing is large enough to reach the
-          corner. White-on-black needs nothing; white-on-white needs an edge and
-          a shadow or it disappears. The hairline handles the first case and the
-          shadow the second.
-
-          POSITIONED LIKE THE TOP BAR, which is deliberate rather than copied:
-          `right-[364px]` clears the 340px panel with the same 24px the stage
-          pads by, and the 960px query is where the panel stops being a column
-          and goes underneath. Anchored to whatever the top bar is anchored to,
-          so the two cannot drift apart.
-
-          OUTSIDE THE STAGE ON PURPOSE. The stage is the scroll container; an
-          absolutely-positioned child of it would scroll away with the plan, and
-          a switch you have to scroll back to find is not pinned chrome.
-
-          IT IS OFFERED ON A DXF TOO NOW, AND IT USED NOT TO BE. The old reason
-          was sound and has been dealt with: a DXF has no bitmap to subtract from
-          255, and a CSS filter over one would invert OUR OWN ink rather than the
-          plan, so the switch was hidden rather than left present and inert. What
-          changed is that PlanCanvas no longer needs a filter — it takes the line
-          work's greys from the ground (see the `vector` branch there), so a DXF
-          has a real night mode and the switch has something to do on one. */}
-      {source && !sheetOpen && !showTrace && (
-        <div className="absolute bottom-6 right-[364px] [@media(max-width:960px)]:right-6
-          z-[5] flex gap-0.5 p-1 rounded-lg bg-white border border-border
-          shadow-[0_2px_10px_rgba(0,0,0,0.35)]"
-          role="group" aria-label="Plan appearance">
-          {[[false, 'Show the plan as scanned',
-             /* Heroicons `sun`, outline. */
-             'M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591'
-             + 'M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636'
-             + 'M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z'],
-            [true, 'Invert the plan — black plan, white lines',
-             /* Heroicons `moon`, outline. */
-             'M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75'
-             + ' 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21'
-             + ' 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z']].map(([on, label, d]) => {
-            const live = layers.invert === on;
-            /* INK ON THE LIVE SIDE, GREY ON THE OTHER, and the PILL decides
-               which — this has been round the houses, so the reasoning stays
-               written down. The accent RAMP was tried and read as washed out at
-               17px: its tones are #c2a987 through #fef1dd, which carry as a fill
-               over a large shape and resolve to a pale smudge in 1.7px strokes.
-               There is nothing wrong with the gradient; there is not enough of
-               it in an icon for a gradient to be anything. White was tried while
-               the pill was dark glass and is wrong on a white one.
-               THE PILL IS DELIBERATELY OPAQUE WHITE AND STAYS THAT WAY. It is
-               the one piece of chrome that has to read against BOTH grounds —
-               it is the control that switches between them — so it cannot be
-               glass tinted for either. A white chip with black glyphs is legible
-               over a white scan and over a black one; anything translucent is
-               legible over one of them.
-               NO PAINT SERVER EITHER WAY, AND `currentColor` DOES IT ALL. Both
-               states are a text colour on the button, which is why there is no
-               `<defs>` in here. */
-            return (
-              <button key={String(on)} type="button"
-                className={'appearance-none border-0 bg-transparent cursor-pointer '
-                  + 'px-2 py-1.5 rounded inline-flex items-center justify-center leading-[0] '
-                  + 'transition-colors duration-[120ms] '
-                  + 'focus-visible:outline-2 focus-visible:outline-accent '
-                  + 'focus-visible:outline-offset-1 '
-                  /* GREYED, NOT HIDDEN. The side you are not in still has to be
-                     findable — it is half the switch. #7A7A7A on white is quiet
-                     without being absent, and it goes to ink on hover so the
-                     button reads as live before you press it. */
-                  + (live ? 'text-ink' : 'text-subtle hover:text-ink')}
-                aria-pressed={live} title={label}
-                onClick={() => docActions.setLayer('invert', on)}>
-                <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
-                  stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
-                  strokeLinejoin="round" aria-hidden="true">
-                  <path d={d} />
-                </svg>
-              </button>
-            );
-          })}
-        </div>
-      )}
+          The switch itself is unchanged in every way that matters: both sides
+          always drawn, one always latched, so you can see which of the two you
+          are in without having to remember what pressing it did. See the bar. */}
 
       {/* --- THE ELECTRICAL SWITCH AND THE DOOR BUTTON WERE HERE ------------
           A WHITE PLATE IN THE LOWER LEFT, opposite the appearance switch in the
@@ -4913,21 +5271,32 @@ export default function App({
           it belongs against the drawing, on an edge that never scrolls. See
           ToolRail.
 
-          THE SAME GATES THE PANEL'S OWN TAB STRIP HAS, less one. `doorEdit` and
+          THE SAME GATES THE PANEL'S TAB STRIP USED TO HAVE, less one — the
+          strip is gone (see the note where it was) and these are the rail's own
+          now. `doorEdit` and
           the wall step both take the pointer for a question about the DRAWING
           rather than about the design, and a palette live beside either is six
           ways to answer something else. Every other step — the zone, the board,
           the cove and the spot — keeps the rail, because in all four the rail is
           how you can see what is armed and how you put it away. */}
-      {/* ALWAYS AN ELEMENT IN THIS TRACK, EVEN WITH NOTHING IN IT. The grid has
-          three columns and this is the first of them; a child that simply is not
-          rendered does not leave a gap — it shunts the stage into the rail's
-          track and the panel into the stage's, and the 340px column ends up
-          empty with the panel squeezed into the middle. An empty div in an
+      {/* ALWAYS AN ELEMENT IN THIS TRACK, EVEN WITH NOTHING IN IT. The rail is
+          the grid's first column and this is that column's only child: a child
+          that is simply not rendered does not leave the track empty, it lets
+          auto-placement put the NEXT child in it. The stage and the footer name
+          their tracks explicitly now, which makes this belt and braces rather
+          than the load-bearing thing it used to be — but an empty div in an
           `auto` track is zero wide, which is exactly what "no rail" should look
           like, and the same holds for the `auto` first ROW on a narrow screen. */}
       {!(source && !readOnly && !prep && !sheetOpen && step === 'plan'
-        && !doorEdit && !wallEdit) ? <div aria-hidden="true" /> : (
+        && !doorEdit && !wallEdit) ? (
+        /* THE SAME SPAN AS THE RAIL IT STANDS IN FOR, so the two children below
+           keep the tracks they name whether or not there is a rail. It is zero
+           wide either way — the column is `auto` — so the span costs nothing and
+           saves the next reader working out why one of the two cases places
+           differently from the other. */
+        <div aria-hidden="true" className="row-span-2
+          [@media(max-width:960px)]:row-span-1" />
+      ) : (
         <ToolRail
           tool={addTool} objArmed={armed} boardOn={boardPlace}
           disabled={!pxPerFt || !rooms.length}
@@ -4936,7 +5305,7 @@ export default function App({
              THE CELL OPENS AND THE GESTURES INSIDE IT ARM, which is why this
              is one handler taking four messages rather than the rail's usual
              pair. `open`/`close` are the cell; a mode id or null is the
-             drawer. See CobMenu.
+             drawer. See RailFlyout, and the Spots cell in ToolRail.
              THE ARRAY IS SHOWN AND NOT YET ANSWERED FOR. Its cell is in the
              drawer because the drawer is what says this fitting has two
              gestures, and a menu that grew a second item later would be a
@@ -5050,7 +5419,12 @@ export default function App({
              over is what somebody asking for that means. */
           shapeOn={geometryCommands.toolbar.coveOn}
           onShape={geometryCommands.toolbar.toggleCove}
-          zoneOn={zoneEdit} onZones={openZoneEdit}
+          /* `zoneOn` AND `onZones` WENT WITH THE CELL. The No-Light Zone is
+             retired — see the note at the top of ToolRail — and `openZoneEdit`,
+             `zoneEdit` and the whole step behind them are untouched, so a plan
+             that already carries zones still draws them and still has the layer
+             switch to hide them. There is simply no longer a way to arm a new
+             one. Putting the tool back is putting a cell in that flyout. */
           onPick={(t, arms) => {
             /* TWO MACHINES BEHIND ONE COLUMN. Most of these arm `addTool`, the
                hand-placing tools; the chandelier arms `armed`, the ceiling-object
@@ -5101,11 +5475,33 @@ export default function App({
       )}
 
       <div ref={stageRef}
-        className={'relative overflow-auto '
+        className={'relative overflow-auto col-start-2 row-start-1 '
+          + '[@media(max-width:960px)]:col-start-1 [@media(max-width:960px)]:row-start-2 '
+          /* --- THE DRAWING IS CENTRED IN WHAT THE WINDOW LEAVES ------------
+             THE PLAN WAS CENTRED IN THE VIEWPORT AND THE WINDOW SAT ON TOP OF
+             IT, which is the one thing a floating panel must not do: the corner
+             of the sheet somebody is working on was under the readout about it.
+             The panel used to be a grid TRACK, so the stage was already narrower
+             than the screen by 340px and `safe center` centred inside what was
+             left; taking the track away gave the drawing the whole width and
+             took the allowance with it.
+             SO THE ALLOWANCE COMES BACK AS PADDING. `safe center` centres within
+             the padding box, so a right pad of the window's own width plus its
+             margins puts the middle of the sheet in the middle of the space
+             actually free — and unlike a track, padding costs nothing when the
+             window is not there. 340 + 16 of margin + 18 of the stage's own
+             gutter = 374.
+             ONLY WHILE THE WINDOW IS UP, which is what `windowSpeaks` answers,
+             and never below 960px where the window stops floating and goes
+             underneath. */
           + (sheetOpen || showPicker || showTrace
-            ? 'block pt-[68px] px-[22px] pb-6'
+            ? 'block pt-[68px] pl-[22px] pb-6 '
+              + (windowSpeaks
+                ? 'pr-[374px] [@media(max-width:960px)]:pr-[22px]' : 'pr-[22px]')
             : source
-              ? 'pt-[68px] px-[18px] pb-6 flex [justify-content:safe_center] items-start'
+              ? 'pt-[68px] pl-[18px] pb-6 flex [justify-content:safe_center] items-start '
+                + (windowSpeaks
+                  ? 'pr-[374px] [@media(max-width:960px)]:pr-[18px]' : 'pr-[18px]')
               : 'p-[18px] flex items-center justify-center')
           + (panning
             ? ' cursor-grabbing! [&_*]:cursor-grabbing! select-none [&_*]:select-none' : '')}
@@ -5616,7 +6012,8 @@ export default function App({
                 standing choice, and the chip clears the lot back to the engine's
                 answer. */}
             {!readOnly && addTool === 'cob' && (
-              <CobSpec stage={stageRef} watts={cobShow.watts} beam={cobShow.beam}
+              <CobSpec stage={stageRef} tail={sceneTail}
+                watts={cobShow.watts} beam={cobShow.beam}
                 recommended={!cobDraft && !cobOnce && !cobStanding}
                 dirty={cobDirty}
                 onWatts={(w) => setCobDraft((d) => ({ ...(d ?? cobInForce),
@@ -5673,7 +6070,7 @@ export default function App({
                 the press that selects an array disarms every tool anyway, so
                 this is belt and braces rather than a live case. */}
             {!readOnly && addTool !== 'cob' && selArrayBar && (
-              <CobSpec stage={stageRef}
+              <CobSpec stage={stageRef} tail={sceneTail}
                 watts={selArrayBar.watts} beam={selArrayBar.beam}
                 array={selArrayBar.array}
                 onWatts={(w) => setArraySpec(selArrayId, { watts: w })}
@@ -5682,6 +6079,26 @@ export default function App({
                 onSide={(id) => setArrayShape(selArrayId, { side: id })}
                 onOffset={(ft) => setArrayShape(selArrayId, { offsetFt: ft })}
                 onDeleteArray={() => deleteArray(selArrayId)} />
+            )}
+            {/* --- AND THE BAR ITSELF, WHEN NOTHING IS BEING DONE TO THE PLAN --
+                THE TWO SCENE BUTTONS ARE ALWAYS ON SCREEN, which is what makes
+                them findable: "where do I switch to the wiring" has one answer
+                and it is in the same place whatever else is happening. When a
+                gesture IS running they ride on that gesture's own bar — see
+                `tail` on the three above — because two pills side by side at the
+                foot of the drawing would be two controls competing for the
+                position people have learned.
+
+                SO THIS IS THE SAME BAR WITH NOTHING IN FRONT OF THE TAIL. The
+                condition is exactly the negation of the three: `addTool ===
+                'cob'` renders the specification bar, a selected array renders
+                it in its editing tense, and `geometry.bar.mode` renders the
+                shape bar. `readOnly` is in there because none of those three is
+                drawn on a viewer's sheet — and neither is the tail, which is
+                null there, so this collapses to nothing on its own. */}
+            {!(!readOnly && (addTool === 'cob' || selArrayBar || geometry.bar.mode))
+              && sceneTail && (
+              <StageBar stage={stageRef} tail={sceneTail} label="Drawing" />
             )}
             {/* --- THE CARD THAT EXPLAINS THE OPTIONS PILL --------------------
                 BESIDE THE CANVAS AND NOT INSIDE IT, because it deliberately
@@ -5708,7 +6125,7 @@ export default function App({
                 NOT ON THE READ-ONLY SHEET. Every button on it changes the
                 ceiling. */}
             {!readOnly && geometry.bar.mode && (
-              <ShapeMenu stage={stageRef} mode={geometry.bar.mode}
+              <ShapeMenu stage={stageRef} tail={sceneTail} mode={geometry.bar.mode}
                 tool={geometry.status.tool} sides={geometry.bar.sides}
                 sizeLabel={geometry.bar.mode === 'draw' && geometry.bar.toCommit
                   ? shapeSizeLabel(geometry.bar.toCommit)
@@ -5786,249 +6203,694 @@ export default function App({
           AND THE PADDING SPLIT UP WITH THEM. It was `pt-4 px-4 pb-10` on the
           one box; each part now states its own, because a footer with the
           scroller's 40px foot on it would be a footer with a hole under it. */}
-      <div className="bg-white/5 backdrop-saturate-[1.8] backdrop-blur-[5px]
-        border-l border-border/10 flex flex-col min-h-0 overflow-hidden">
-        {/* --- THE HEADER: THE EXPORTS, THEN SHARE -------------------------
-            TWO ACTS THAT ARE NOT CONTROLS OVER THE DRAWING, in one row above
-            the tabs. Everything below this changes what is on the sheet; these
-            two take the sheet somewhere — to a file, or to somebody else. That
-            is what they have in common, and it is why they read as a masthead
-            rather than as the first and last sections of a list.
+      {/* --- THE BAR ALONG THE FOOT OF THE STAGE ---------------------------
+          WHAT IS TRUE OF THIS DRAWING, AND HOW YOU ARE LOOKING AT IT. Two kinds
+          of thing, at the two ends, and neither of them is a decision about the
+          design:
 
-            EXPORT WAS A SECTION AT THE FOOT OF THE DESIGN TAB, three `BTN`s and
-            a paragraph about DXF layers, below the View disclosure. Nothing was
-            wrong with it except where it was: exporting is not a design
-            decision, so it sat under a fold, after every control that is one,
-            in a panel you had to scroll to the end of to find it. The note went
-            with the section — it is on the DXF button's own `title` now, which
-            is where a sentence about a file format is read anyway.
+            LEFT   the standing readings — how many doors were found, what is on
+                   the sheet, and whether it adds up to enough light. Facts, in
+                   the place facts go.
+            RIGHT  the preferences — which layers are drawn, day or night, and
+                   the model readings. Three controls that were in three
+                   different corners of the screen.
 
-            SHARE STAYS THE ONLY WHITE BUTTON ON THIS PANEL. Everything else in
-            here is glass on a dark ground, deliberately quiet, because the
-            panel is a column of controls and a stack of solid buttons would be
-            a wall. This is the one act on this screen that reaches somebody
-            else, so it gets the treatment "New Project" and "Add a plan" get on
-            the screens above. It is no longer FULL WIDTH, and that reasoning has
-            simply expired: full width was because a small button floated in a
-            340px column has to be aimed at, and there was nothing to sit beside
-            it. There is now.
+          IT REPLACES THE PANEL'S FOOTER AND THREE OF ITS SECTIONS. The readings
+          were pinned to the bottom of a 340px column, the View disclosure was
+          two thirds of the way down its scroller, and Admin was a tab. All four
+          are about the whole plan rather than about the thing you have selected,
+          which is exactly what the floating window is for — so they came out of
+          it, and the window is now only ever about one space or one plate.
 
-            AND IT IS A `<header>`, NOT A `<div>`. `SEC` cancels its own top
-            border with `first-of-type:border-t-0`, and `first-of-type` counts
-            siblings of the SAME TAG — the trap the tab strip's `<nav>` note
-            below tells the whole story of. This row is outside the scroller, so
-            it could not take that slot anyway; it is a `<header>` because that
-            is the honest element.
+          A GRID ROW AND NOT SOMETHING ABSOLUTE OVER THE DRAWING, which is the
+          one structural thing to get right: the stage is a scroll container, and
+          chrome floating in front of its own last inch is chrome you cannot
+          scroll out from under.
 
-            `!prep` AND `!doorEdit` AND `!zoneEdit` FOR ONE REASON, SAID THREE
-            TIMES: each of those is a panel that holds a single question — a
-            wait with one way out, or a gesture being asked for — and a row of
-            file formats and a modal invite over the top of one is an invitation
-            to walk away from a thing that is happening. */}
-        {source && !readOnly && !prep && !doorEdit && !zoneEdit && !boardPlace
-          && !stepTool && !wallEdit && !geometry.panel.coveDraw && !sheetOpen && (
-          <header className="flex-none flex items-center justify-between gap-2
-            pt-4 px-4 pb-3">
-            {/* NOTHING TO EXPORT ON THE TRACER. There is no layout yet, so all
-                three would be dead buttons — and a dead button is a claim that
-                something is available. The empty span holds Share at its end. */}
-            {step !== 'trace' ? (
-              <div className="flex gap-1.5">
-                <button className={BTN_EXPORT} disabled={!totals.rooms}
-                  /* THE PARAGRAPH THIS SECTION USED TO CARRY, AS A TOOLTIP.
-                     "Everything is on a superluminal_ layer, split by trade" is
-                     a sentence about a file format, read once by the one person
-                     who opens the file in CAD — it does not need permanent
-                     space in a panel, and it has none to spend in a header. */
-                  title={'One DXF, everything on a superluminal_ layer, split by'
-                    + ' trade. ' + (isVector
-                      ? 'In this drawing\u2019s own units and origin, so it lands'
-                        + ' straight on top of the original.'
-                      : 'In feet.')}
-                  onClick={async () => {
-                    if (!await gateExport()) return;
-                    download(`${exportBase}-lights.dxf`, toSuperluminalDXF({
-                      source, pxPerFt, heightPx: source.h,
-                      rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                      objects: obstaclesPx,
-                      accents: accentZonesPx,
-                      spots: taskSpotsPx,
-                    }), 'application/dxf');
-                    milestone.current?.('export');
-                  }}>DXF</button>
-                {/* SVG WENT. It was the only export nobody could open in the
-                    thing they were going to open it in: a consultant gets a DXF,
-                    a client gets a PDF or a PNG, and an SVG is a file for a
-                    browser or a designer's editor — neither of which is on the
-                    path this drawing takes. It also carried the whole plan
-                    base64'd into it, so it was the largest file on the row and the
-                    least useful. PDF is the vector export now, which is what the
-                    SVG was really being asked for. */}
-                {/* PNG AND PDF FOLLOW THE VIEW. Night view is a deliverable in its
-                    own right — a dark sheet with the fittings glowing on it is how
-                    a scheme gets presented — so an export that quietly handed back
-                    the day version would be overruling a choice that is visibly
-                    on screen. `layers.invert` is that choice, and it decides the
-                    plan's polarity AND the ground together: either alone is the
-                    wrong sheet. The thumbnail does NOT follow it — see
-                    `getSnapshot` — because a card picture should look the same
-                    whichever view somebody left the plan in. */}
-                <button className={BTN_EXPORT} disabled={!source} onClick={async () => {
-                  if (!await gateExport()) return;
-                  download(`${exportBase}-lights.png`,
-                    await svgToPNG(svgRef.current, source.w,
-                      { asScanned: !layers.invert, ground: layers.invert ? '#000000' : '#fff' }));
-                }}>PNG</button>
-                {/* PDF IS PLOTTED FROM THE GEOMETRY, NOT PRINTED FROM THE SCREEN.
-                    It went through the browser's print dialog for one revision and
-                    the output was a photograph of a user interface: haloes, hover
-                    states and selection frames all landed as ink, up to 1.1mm on
-                    an A4. See pdfPlot.js — same inputs as the DXF, three line
-                    weights, and the imported page embedded as vector so the plan
-                    stays sharp at any zoom on its own sheet size.
-                    AND IT FOLLOWS THE VIEW: day view gives the line plot, night
-                    view the presentation sheet — black paper, the plan inverted,
-                    the fittings glowing as real PDF gradients. */}
-                <button className={BTN_EXPORT} disabled={!source} onClick={async () => {
-                  if (!await gateExport()) return;
-                  try {
-                    /* THE SHEET FOLLOWS THE VIEW. Night view is the
-                       presentation drawing — black paper, the plan inverted
-                       under it, the fittings glowing as the accent ramp — and
-                       day view is the line plot. The base is re-rendered from
-                       the original file at the sheet's own resolution rather
-                       than reusing the editor's 2400px copy; that is the whole
-                       reason it is awaited separately. */
-                    const base = layers.invert
-                      ? await nightBase(openPdf, initialFile, pdfPage).catch(() => null)
-                      : null;
-                    const out = await plotToPDF({
-                      source, pxPerFt, rooms, objects: obstaclesPx,
-                      accents: accentZonesPx, spots: taskSpotsPx, coves: reverseCoves,
-                      file: initialFile, pageNo: pdfPage, title: exportBase,
-                      night: layers.invert, base,
-                    });
-                    download(`${exportBase}-lights.pdf`, out.bytes, 'application/pdf');
-                    milestone.current?.('export');
-                  } catch (err) { console.error('[export] the plot failed', err); }
-                }}>PDF</button>
-              </div>
-            ) : <span />}
-            {/* THE ICON IS DRAWN, not loaded — the same decision as the top
-                bar's undo/redo pair and the rail's house. Heroicons' `share`,
-                outline, at this chrome's own 1.7 stroke rather than their 1.5,
-                and at 13px to sit with the smaller type. */}
-            {onShare && (
-              <button type="button" onClick={onShare}
-                title="Share this project with somebody"
-                className="flex-none text-[11.5px] leading-none px-2.5 py-[6px] rounded
-                  border border-white bg-white text-black cursor-pointer inline-flex
-                  items-center justify-center gap-[6px]
-                  transition-colors duration-[120ms] hover:bg-text hover:border-text
-                  focus-visible:outline-2 focus-visible:outline-accent
-                  focus-visible:outline-offset-2">
-                <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
-                  stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
-                  strokeLinejoin="round" aria-hidden="true">
-                  <path d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283
-                    1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25
-                    2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0
-                    3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
-                </svg>
-                Share
-              </button>
+          BLACK, AND THE RAIL BESIDE IT IS NOT. The rail is `--color-chrome`
+          #2F2F2F and this is the drawing's own black — so the two dark surfaces
+          on this screen are deliberately different, and the hairline along the
+          top is what gives this one its edge where the rail gets one from tone.
+          It is the reading that decides it: the rail is a column of TOOLS, a
+          thing you reach into, and it earns a surface of its own; this bar is
+          facts about the sheet and preferences about the picture, which belong
+          to the sheet and sit on its ground.
+
+          NOT ON THE UPLOAD SCREEN, and not while the pipeline runs. There is no
+          drawing to report on or to set a preference about, and a bar full of
+          controls that cannot do what they claim is worse than no bar. */}
+      {source && !prep && (
+        <div className="col-start-2 row-start-2
+          [@media(max-width:960px)]:col-start-1 [@media(max-width:960px)]:row-start-3
+          h-12 flex-none flex items-center gap-4 px-4 z-[5]
+          bg-black border-t border-border/10">
+
+          {/* --- THE STANDING READINGS -----------------------------------
+              THE SAME 11px AS EACH OTHER, deliberately: these are two readings
+              of one drawing, and a heavier one would claim to be the more
+              important of the two. TABULAR FIGURES, like every number that
+              changes in place — this face's proportional `1` is half the width
+              of its `0`, so a count going 9 → 10 → 11 would shuffle the words
+              after it. */}
+          {/* `text-subtle` DOWN THIS ROW, WHICH THE BLACK GROUND BUYS BACK.
+              #7A7A7A is 4.6:1 on black and about 2.4:1 on the rail's #2F2F2F —
+              so while this bar was that grey the readings had to be lifted a
+              step to #A8A8A8. They are back on the quieter ink, which is the
+              right weight for a standing reading nobody is looking straight
+              at. See the note on the two chrome tones in styles.css. */}
+          <div className="flex items-center gap-4 min-w-0 text-[11px] leading-none">
+            {/* THE DOORS, AND THE WAY BACK INTO THEM. Every switchboard is
+                placed beside a door — see electrical.js — so this count is the
+                one number that says how sound the wiring is, and "Modify doors"
+                is the way to change it. Not in the viewer: an operator reading
+                somebody else's sheet has no door to modify, and a count with no
+                question attached to it is a fact in a corner that carries
+                none. */}
+            {!readOnly && !showTrace && (
+              <span className="flex items-center gap-2 whitespace-nowrap">
+                <span className="text-subtle tabular-nums">
+                  {doors.length} door{doors.length === 1 ? '' : 's'} detected
+                </span>
+                <button type="button"
+                  className={'appearance-none border-0 bg-transparent p-0 cursor-pointer '
+                    + 'text-[11px] leading-none underline underline-offset-2 '
+                    + 'transition-colors duration-[120ms] '
+                    + 'focus-visible:outline-2 focus-visible:outline-accent '
+                    + 'focus-visible:outline-offset-2 '
+                    + (doorEdit
+                      ? 'text-white decoration-white/60'
+                      : 'text-white/70 decoration-white/25 hover:text-white')}
+                  aria-pressed={doorEdit}
+                  title={doorEdit ? 'Done with the doors' : 'Check the doors again'}
+                  onClick={() => (doorEdit ? closeDoorEdit() : openDoorEdit())}>
+                  {doorEdit ? 'Done with doors' : 'Modify doors'}
+                </button>
+              </span>
             )}
-          </header>
-        )}
-        {/* --- WHERE YOU ARE, AND IT IS ABOVE EVERYTHING IT NAVIGATES ------
-            FOUR PLACES, AS FOUR TABS. The spaces on the plan, the design laid
-            out on them, the schedule that falls out of it, and — for role 1 —
-            the model readings behind all three. They used to be navigated three
-            different ways: a button at the foot of the panel, an implicit "you
-            are here", and a pill in the top bar. One strip, one idiom, one
-            answer to "where am I".
+            {/* --- WHAT IS ON THE DRAWING, AND WHAT IT IS OWED ---------------
+                THE WHOLE PLAN'S TARGET, AND IT IS THE SPACE WINDOW'S OWN MODEL.
+                It used to be lm/sqft of FLOOR against `lumenCriteriaFor`, which
+                is what the grid was laid to. That model has a rival now — the
+                window judges each room on its SURFACES, its finishes and its
+                height (see lib/lumens.js) — and two figures on one drawing is
+                not two readings, it is one reading and an argument. So this sums
+                the window: same arithmetic, same constants, every room added up.
+                THERE IS NO VERDICT ANY MORE, and there was one: this line read
+                "N of M lm" with a tick over the target and a dash under it. The
+                achieved half of that comparison is gone from the model (see the
+                note at the end of `analyseSpace`), and a tick with nothing
+                behind it would be the app congratulating itself on a plan it has
+                not measured. What is left is the requirement. */}
+            {rooms.length > 0 && (() => {
+              const want = Math.round(planLumens.required);
+              const n = (v) => v.toLocaleString('en-US');
+              const bits = [
+                // HIDDEN AT ZERO, all three, which was the footer's own rule and
+                // stays it: a line that spends a third of its width saying a
+                // thing is absent is harder to read for nothing.
+                totals.lights > 0
+                  ? `${totals.lights} light${totals.lights === 1 ? '' : 's'}` : null,
+                spotsPlaced > 0 ? `${spotsPlaced} spot${spotsPlaced === 1 ? '' : 's'}` : null,
+                stripRuns > 0 ? `${stripRuns} strip${stripRuns === 1 ? '' : 's'}` : null,
+              ].filter(Boolean);
+              return (
+                <span className="flex items-center gap-3 min-w-0 whitespace-nowrap">
+                  {bits.length > 0 && (
+                    <span className="text-subtle tabular-nums overflow-hidden
+                      text-ellipsis">{bits.join(', ')}</span>
+                  )}
+                  <span className="inline-flex items-baseline gap-1 tabular-nums
+                    text-subtle">
+                    {n(want)} lm required
+                  </span>
+                </span>
+              );
+            })()}
+          </div>
 
-            ABOVE THE PANEL'S OWN BRANCHING, which is what the hoist buys and
-            the reason this is not inside the design branch with the rest of it.
-            The panel swaps its whole contents when the schedule is open — see
-            the note below — so a strip further down would VANISH exactly when
-            you needed it to get back. It is the frame, not one of the views.
+          <div className="flex-1" />
 
-            AND OUTSIDE THE SCROLLER NOW, with the header above it. It was the
-            first thing IN the scroller, which meant the answer to "where am I"
-            scrolled away the moment somebody opened a space — on a plan with
-            twenty of them the strip was several screens behind. See the note on
-            the column.
+          {/* --- ADMIN, AND IT IS A PANEL FOR A DIFFERENT AUDIENCE ---------
+              ROLE 1 IN `profiles` — an owner of this app rather than a user of
+              it. It exposes what the models DECIDED, which is what you need when
+              a spot lands somewhere surprising and what must never appear on a
+              sheet a client sees.
+              IT WAS A TAB, and a tab is a poor answer for two hundred lines of
+              readings nobody else can see: it took a quarter of the panel's
+              navigation to say a thing that is invisible to almost everybody
+              looking at it. Behind a button in the bar it costs one word, and
+              only for the people who have it.
+              FIRST OF THE THREE, which puts the ordinary controls nearest the
+              corner somebody reaches for. */}
+          {isAdmin && (
+            <>
+              <PopoverButton innerRef={adminRef} open={adminMenu} side="top"
+                label="Admin" title="What the models decided"
+                onClick={() => setAdminMenu((v) => !v)} />
+              <Popover anchor={adminRef} open={adminMenu} side="top" align="end"
+                width={320} label="Admin — model readings"
+                onClose={() => setAdminMenu(false)}>
+                <div className="px-3">
+              <>
+            <div className={SEC_ADMIN}>
+              <h3 className={H3_ADMIN}>Admin · model readings</h3>
+              <label className={CHECK}>
+                <input className="lp-check" type="checkbox" checked={audit}
+                  onChange={(e) => setAudit(e.target.checked)} />
+                Show what was identified
+              </label>
+              {/* THE DOORS, SEPARATELY. Every dimension on the sheet hangs off
+                  one of these boxes, so "did it find the doors" is a different
+                  question from "why is the layout like this" and is asked at a
+                  different moment. */}
+              <label className={`${CHECK} mt-2`}>
+                <input className="lp-check" type="checkbox" checked={auditDoors}
+                  onChange={(e) => setAuditDoors(e.target.checked)} />
+                Show the doors it found
+              </label>
+              
+              {/* THE COUNTS STAY WITH THEIR OWN SWITCH rather than joining the
+                  ledger below. That one answers "what did the models see on
+                  this plan"; these four numbers answer "is the scale right",
+                  and they are read while the boxes are on the canvas. */}
+              {auditDoors && (
+                <div className="mt-2 flex flex-col gap-[5px]">
+                  <div className={KV_ADMIN}><span>Doors kept</span><b>{doors.length}</b></div>
+                  <div className={KV_ADMIN}><span>Boxes rejected</span>
+                    <b>{doorState.restored ? '—' : (doorState.rejected?.length ?? 0)}</b></div>
+                  {/* A REOPENED PLAN HAS NO REJECTS TO SHOW. The kept doors are
+                      saved with the plan; the refused boxes are not, so a
+                      restored plan would otherwise report a confident zero and
+                      read as "it refused nothing". */}
+                  {doorState.restored && (
+                    <p className={`${N_ADMIN} mt-1`}>
+                      Restored from the saved plan, which keeps the doors but not
+                      the boxes it turned down. Re-run the detection to see those.
+                    </p>
+                  )}
+                  <div className={KV_ADMIN}><span>Scale</span>
+                    <b>{pxPerFt ? `${pxPerFt.toFixed(2)} px/ft` : 'not set'}</b></div>
+                  {doorPick?.id && (
+                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· from a door called</span>
+                      <b>{doorPick.mm ? `${doorPick.mm}mm` : '—'}</b></div>
+                  )}
+                  {doorState.status === 'error' && (
+                    <p className={`${NE} mt-1`}>
+                      The detector failed: {doorState.error}
+                    </p>
+                  )}
+                  {!doorState.restored && doorState.rejected?.length > 0 && (
+                    <details className={`${DISCLOSE_ADMIN} mt-1`}>
+                      <summary>Why each box was turned down</summary>
+                      {doorState.rejected.map((d, i) => (
+                        <p key={i} className={`${N_ADMIN} mt-1`}>
+                          <b>{(d.cls || 'box')} {(d.conf ?? 0).toFixed(2)}</b>{' — '}{d.reason}
+                        </p>
+                      ))}
+                    </details>
+                  )}
+                  <p className={`${N_ADMIN} mt-1`}>
+                    The gates are <code className={CODE}>DOOR_DEFAULTS</code> in{' '}
+                    <code className={CODE}>doors.js</code>.
+                  </p>
+                </div>
+              )}
 
-            NOT IN THE VIEWER AND NOT WHILE THE PIPELINE RUNS. `readOnly` has no
-            step to move between, and `prep` is a wait with one way out that the
-            panel already offers; tabs during either would be controls that
-            cannot do what they claim.
 
-            BOQ IS GATED ON A LAYOUT rather than on `source`, which is a slight
-            tightening of what the old pill did. The pill appeared as soon as a
-            plan was loaded, on the reasoning that an empty BOQ tab on the drop
-            screen is an invitation to a blank page — but a plan with outlines
-            and no layout is the same blank page, and this strip only exists past
-            `step !== 'trace'`, which is exactly "there is a layout". */}
-        {source && step !== 'trace' && !readOnly && !prep && !doorEdit && !zoneEdit
-          && !boardPlace && !stepTool && !wallEdit && !geometry.panel.coveDraw && (
-          /* NO RULE UNDER THE STRIP. It carried `border-b border-border/10` — a
-             full-width hairline, the convention for a tab strip on a light
-             ground where the tabs are cards sitting on a sheet. These are not
-             cards: they are three words on glass, and the current one is picked
-             out by a white underline of its own. The hairline ran on past that
-             underline to the panel's edge, so the mark that means "you are here"
-             was a two-pixel-thicker segment of a line that was already there —
-             which is exactly as hard to read as it sounds. Without it the white
-             underline is the only horizontal rule in the strip and needs no
-             help being seen.
+              {/* THE BED, AND THEN THE GRID — TWO MORE OVERLAYS, TWO MORE
+                  CHECKBOXES. Every switch in this section is now the same
+                  control: a box you tick to put a reading on the drawing.
+                  THE GRID WAS A BUTTON, and the argument for that was that it
+                  is an ACT — put the scaffolding on, take it off — rather than
+                  a standing preference. It reads better as the odd one out than
+                  it did as a button: four switches over one drawing, three of
+                  them ticked and one of them pressed, with the pressed one
+                  carrying its state in a word that changes under the cursor
+                  while the other three carry theirs in a tick. One idiom. The
+                  label stays put and the tick says which way it is, which is
+                  also what makes the pair readable at a glance — "grid on, beds
+                  off" is a shape, not two sentences to read. */}
+              {/* NO NOTE AND NO TOOLTIP. What the box is for — the rectangle
+                  the planner keeps the downlights off, invisible on the sheet
+                  otherwise — is written above in the bed group in PlanCanvas,
+                  which is where the reasoning belongs. The label is the
+                  control. */}
+              <label className={`${CHECK} mt-2`}>
+                <input className="lp-check" type="checkbox" checked={auditBeds}
+                  onChange={(e) => setAuditBeds(e.target.checked)} />
+                Show the beds it identified
+              </label>
+              {/* THE GRID, ON THE DRAWING. Its own switch and not part of the
+                  overlay above: that one is what the MODELS read off the
+                  plan, this is what our own chunker and planner did with it
+                  afterwards. A light that lands somewhere odd is almost
+                  always a chunk that split somewhere odd, and the split is
+                  the one thing on this drawing with no visible trace at all —
+                  `gridPath` has been in PlanCanvas the whole time with
+                  nothing calling it.
+                  ...AND IT DRAWS WITH THE LIGHTS SWITCHED OFF, which is what it
+                  is mostly for now. `AUTO_GRID` places no fittings, and this
+                  switch drew nothing for as long as the chunks were thrown away
+                  along with them — see `gridChunks` in the `rooms` memo. The
+                  chunker still runs and still has an opinion about how the
+                  ceiling divides, and that opinion is exactly what somebody
+                  laying lamps out by hand wants under the pointer.
+                  DISABLED WITH NOTHING TO DRAW, which the button said by going
+                  grey and a checkbox says the same way. There is no grid until
+                  there is a laid-out space — which is a lower bar than there
+                  being lights, and deliberately so. */}
+              <label className={`${CHECK} mt-2 ${totals.rooms ? '' : 'opacity-40'}`}
+                title="Draw the chunk boxes and cell lines the chunker cut, whether or not any lights were placed">
+                <input className="lp-check" type="checkbox" checked={showGrid}
+                  disabled={!totals.rooms}
+                  onChange={(e) => setShowGrid(e.target.checked)} />
+                Show the planning grid
+              </label>
+              {/* LOOK AGAIN — the manual bedroom pass. Admin-only because it
+                  spends a model call per room and because the person who
+                  wants it is the person tuning the detectors: on a plan where
+                  the first answer was wrong there is otherwise no way to ask
+                  twice without re-running the whole pipeline. */}
+              <div className={`${BTNROW} mt-2.5`}>
+                <button className={BTN_SECOND} disabled={bedLook === 'busy' || !rooms.length}
+                  title={focus
+                    ? `Ask both detectors about ${focus.outline?.name || 'this space'} again`
+                    : 'Ask both detectors about every bedroom again'}
+                  onClick={() => recognitionCommands.lookAgainAtBeds({ rooms, focus })}>
+                  {bedLook === 'busy' ? 'Looking…'
+                    : focus ? `Look again in ${focus.outline?.name || 'this space'}`
+                    : 'Look again at the beds'}
+                </button>
+              </div>
+              {bedLook && bedLook !== 'busy' && (
+                <p className={`${N} mt-1.5`}>{bedLook}</p>
+              )}
 
-             AND IT IS A `<nav>`, NOT A `<div>`, WHICH IS THE OTHER HALF OF
-             REMOVING THAT RULE. `SEC` cancels its own top border with
-             `first-of-type:border-t-0` — the first section in the panel has
-             nothing above it to be separated from. `first-of-type` counts
-             siblings of the SAME TAG, so putting a `<div>` here quietly took
-             that slot: the Spaces section stopped being the first div, its
-             `border-t` started painting, and a hairline appeared a dozen pixels
-             below the tabs that looked exactly like the one I had just removed
-             from the strip. A `<nav>` is a different tag, so the first `<div>`
-             child is the first section again and the rule cancels as it always
-             did — in this branch and in the BOQ and viewer branches alike.
-             It is also the honest element: this is navigation between the three
-             things the app does. `role="tablist"` overrides nav's implicit
-             `navigation` role, which is what we want it announced as. */
-          <nav className="flex px-4 mb-3" role="tablist" aria-label="Plan view">
-            {/* --- FOUR TABS, AND TWO OF THEM ARE NEW WORK -----------------
-                “OUTLINES” IS “SPACES” AND IT IS NO LONGER A TRIP. The old tab
-                did not select a view at all: it called `backToOutlines`, which
-                shows the tracer — so one of the three tabs in a strip about
-                where you are in the panel actually replaced the CANVAS, and it
-                was `aria-selected="false"` for ever because there was no state
-                for it to be selected in. It is an ordinary tab now, holding the
-                list it is named after, and the route to the tracer is a button
-                in that list's heading where it belongs.
+              {/* --- THE LEDGER, CLOSED, AND NO LONGER TIED TO THE OVERLAY.
+                  It was an always-open card that appeared with the checkbox
+                  above, on a #F2F2F2 ground with near-black type — a white
+                  slab two thirds of the way down a dark panel, and fifteen
+                  rows of counts permanently occupying the space between the
+                  switch and the bottom of the panel.
+                  IT IS A DISCLOSURE NOW, and shut: these are numbers you go
+                  and look up when something on the drawing surprises you, not
+                  numbers you read while working. `<details>` rather than a
+                  state flag for the same reason the View section is one — the
+                  browser already owns the open/closed, the keyboard and the
+                  screen reader.
+                  AND IT IS NO LONGER BEHIND `audit`. That checkbox draws
+                  marks on the CANVAS, which is the thing you have to remember
+                  to turn off before exporting; these are counts in a panel,
+                  which cost an export nothing. Tying them together meant the
+                  only way to read the ledger was to first put magenta on a
+                  sheet — so they are two switches now, and each one governs
+                  the surface it actually changes. */}
+              <details className={`${DISCLOSE_ADMIN} mt-3`}>
+                <summary>What was identified</summary>
+                <div className="mt-2 flex flex-col gap-[5px]">
+                  <div className={KV_ADMIN}><span>Task surfaces</span><b>{surfacesPx.length}</b></div>
+                  {/* WHAT THE RENDER PASS READ, and what it turned into. The
+                      cells are the working; the three fittings under them are
+                      the product, and they stay on the drawing whether or not
+                      this box is ticked. Counted here so that "the cells look
+                      wrong" and "the cells are right and the rule did nothing"
+                      are two different readings rather than one shrug. */}
+                  {/* THE RENDER PASS'S WHOLE LEDGER, and this is now the only
+                      place it is written down. `seen` is what PROMPT 01 read
+                      off the photographs; `placed` is how many of those PROMPT
+                      02 could tie to a wall on this drawing. The two differing
+                      is the pass's most useful single fact — "it saw nothing"
+                      and "it saw it and could not place it" are completely
+                      different problems — and it left the render-pass panel
+                      along with the rest of the reporting. */}
+                  <div className={KV_ADMIN}><span>Wall features seen</span>
+                    <b>{Object.values(wallResults)
+                      .reduce((n, w) => n + (w.elements?.length ?? 0), 0)}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· placed on the plan</span>
+                    <b>{wallCellsPx.length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· reverse coves</span>
+                    <b>{reverseCoves.length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· shelf strips</span>
+                    <b>{shelfStrips.length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· art spots</span>
+                    <b>{taskSpotsPx.filter((sp) => sp.art && !sp.rejected).length}
+                      {taskSpotsPx.some((sp) => sp.art && sp.rejected)
+                        ? ` (${taskSpotsPx.filter((sp) => sp.art && sp.rejected)
+                            .reduce((n, sp) => n + (sp.wanted ?? 1), 0)} dropped)` : ''}</b></div>
+                  {/* WHERE EACH ONE CAME FROM. Two sources feed this list and
+                      they can double up — they did, and the count was the only
+                      thing on screen that knew. A split reads as a description
+                      of the pipeline when it is right and as an obvious bug
+                      when it is not. */}
+                  {/* THE FOOT-OF-BED RE-CUT. Its ordinary answer is "no",
+                      so a count alone would be indistinguishable from the
+                      rule being off or broken — the sentence beside each
+                      space is the point. See bedGrid.js. */}
+                  {(() => {
+                    const bedrooms = rooms.filter((r) => r.plan?.ok
+                      && (r.plan.stats?.bedFootApplied || r.plan.stats?.bedFootWhy));
+                    if (!bedrooms.length) return null;
+                    const on = bedrooms.filter((r) => r.plan.stats.bedFootApplied);
+                    return (
+                      <>
+                        <div className={KV_ADMIN}><span>Foot-of-bed re-cut</span>
+                          <b>{on.length} of {bedrooms.length}</b></div>
+                        {bedrooms.filter((r) => r.plan.stats.bedFootWhy).map((r) => (
+                          <p key={r.id} className="text-[11px] text-white leading-[1.5] mt-1">
+                            <b>{r.outline?.name || 'Space'}</b>
+                            {' — '}{r.plan.stats.bedFootWhy}
+                          </p>
+                        ))}
+                      </>
+                    );
+                  })()}
+                  <div className={KV_ADMIN}><span>Bed zones</span><b>{detectedZones.length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· bed-filter, whole plan</span>
+                    <b>{detectedZones.filter((z) => !z.closeUp).length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· GPT, one bedroom crop</span>
+                    <b>{detectedZones.filter((z) => z.judged).length}</b></div>
+                  {/* AN EXCLUSION YOU CAN SEE. This used to be a third
+                      SOURCE of bed geometry and is now none: the accent pass's
+                      bed boxes never reach the chunking or the sconce rule.
+                      Counting them anyway is what stops "bed-filter found
+                      nothing here" and "there is no bed here" looking the
+                      same. */}
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· accent pass (excluded)</span>
+                    <b>{bedsPerRoom.length}</b></div>
+                  {detectState.whyRejected && (
+                    <>
+                      <div className={KV_ADMIN}><span>Bed boxes rejected</span>
+                        <b>{detectState.whyRejected.n}</b></div>
+                      <p className={`${N_ADMIN} border-l-2 border-[#C026D3] pl-[9px] mt-1`}>
+                        Mostly: {detectState.whyRejected.top}
+                        {detectState.whyRejected.topCount < detectState.whyRejected.n
+                          ? ` (${detectState.whyRejected.topCount} of ${detectState.whyRejected.n})` : ''}
+                        . The size gate is <code className={CODE}>BED_FT</code> in{' '}
+                        <code className={CODE}>furniture.js</code>.
+                      </p>
+                    </>
+                  )}
+                  {/* SPACES, NOT BEDS. The labels used to say neither, which
+                      is how "Beds re-asked 3 / Judged 1" read as three beds of
+                      which two were dropped. It was three SPACES. A space is
+                      re-asked only when the classifier called it a bedroom and
+                      the whole-plan pass put no bed in it; the list below says
+                      what came back for each one. */}
+                  <div className={KV_ADMIN}><span>Bedrooms GPT was asked about</span>
+                    <b>{Object.values(bedVerdicts).filter((v) => v?.refound).length}</b></div>
+                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· of those, still empty</span>
+                    <b>{Object.values(bedVerdicts).filter((v) => v?.refound && v.kind === 'none').length}</b></div>
+                  {!!Object.keys(bedVerdicts).length && (
+                    <details className="mt-1 border-t border-border/20 pt-1.5
+                      [&>summary]:cursor-pointer [&>summary]:text-[11.5px]
+                      [&>summary]:text-white [&>summary]:list-none
+                      [&>summary]:select-none [&>summary]:hover:text-[#C026D3]
+                      [&>summary::-webkit-details-marker]:hidden
+                      [&>summary]:before:content-['▸_'] [&>summary]:before:text-[9px]
+                      [&[open]>summary]:before:content-['▾_']">
+                      <summary>What came back for each bedroom</summary>
+                      {Object.entries(bedVerdicts).map(([id, v]) => (
+                        <p key={id} className="text-[11px] text-white leading-[1.5] mt-1.5">
+                          <b>{outlines.find((o) => o.id === id)?.name || id}</b>
+                          {' — '}{judgeNote(v)}
+                        </p>
+                      ))}
+                    </details>
+                  )}
+                </div>
+              </details>
 
-                AND ADMIN IS THE FOURTH, for the audience it is for rather than
-                for the step it is in — see the note over its section. It is the
-                one tab that is not offered to everybody, so it is the one tab
-                whose absence has to leave the other three looking deliberate:
-                three words instead of four, no gap, no disabled stub. */}
-            {/* BOARDS SITS BETWEEN DESIGN AND BOQ, which is where it belongs in
-                the order the work happens: the drawing, then the plates that
-                switch it, then the schedule of everything. It is also a tab and
-                not a modal because "See all switchboards" has to be somewhere
-                you can get BACK from, and the strip is that place. */}
-            {[['spaces', 'Spaces'], ['design', 'Design'], ['boards', 'Boards'],
-              ['boq', 'BOQ'],
-              ...(isAdmin ? [['admin', 'Admin']] : [])].map(([k, label]) => (
-              <button key={k} role="tab" aria-selected={panelView === k}
-                className={panelView === k ? PTAB_ON : PTAB}
-                onClick={() => docActions.setView(k)}>{label}</button>
-            ))}
-          </nav>
-        )}
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-4 pb-10
+              {/* --- THE FILE THEY UPLOADED -------------------------------
+                  LAST IN HERE, AND IT IS THE ONE THING IN THIS SECTION THAT
+                  IS NOT A READING. Everything above exposes what the models
+                  decided; this hands back what they were deciding ABOUT. It
+                  belongs together with them anyway, because it is the same
+                  job: a fitting lands somewhere surprising, the overlays say
+                  what was seen, and the next question is always "what does
+                  the drawing actually look like" — which needs the drawing,
+                  in the application that made it, not a PNG of it with our
+                  fittings on top.
+
+                  THE FILENAME IS THE LABEL. "The original" is a different
+                  file on every plan, and the extension is what says whether
+                  it is worth opening — a DXF opens in CAD, a phone photo of
+                  a printout does not.
+
+                  NOT BEHIND `gateExport`. That gate is the till and it asks
+                  the OWNER to pay for a drawing this app produced. This is
+                  the file they already own, handed to an operator looking at
+                  their plan; charging for it would be charging the wrong
+                  person for the wrong thing.
+
+                  AND NO `milestone`. Every export writes a revision row on
+                  the reasoning that somebody taking a file away is the
+                  strongest signal a design is finished. An operator
+                  downloading somebody else's upload is not that signal, and
+                  the row would put a fictional milestone in the corpus. Same
+                  argument as the read-only panel's copy of this button —
+                  see `onDownloadOriginal` in ViewerPanel. */}
+              <div className={`${BTNROW} mt-2.5`}>
+                <button className={BTN_SECOND} disabled={!initialFile}
+                  title={initialFile
+                    ? `${initialFile.name || 'the uploaded file'} — the file this plan was made from`
+                    : 'This plan was not opened from a stored upload, so there is'
+                      + ' no original to hand back'}
+                  onClick={() => {
+                    if (!initialFile) return;
+                    download(initialFile.name || 'original', initialFile,
+                             initialFile.type || 'application/octet-stream');
+                  }}>
+                  {initialFile
+                    ? `Download the original (${uploadExt || 'file'})`
+                    : 'No original on this plan'}
+                </button>
+              </div>
+            </div>
+          </>
+                </div>
+              </Popover>
+            </>
+          )}
+
+          {/* --- VIEW: WHAT IS DRAWN, AND HOW BIG ------------------------
+              EVERY CONTROL IN HERE IS A PREFERENCE ABOUT THE PICTURE rather
+              than a decision about the design, which is what it always was —
+              the change is that it is no longer two thirds of the way down a
+              scroller, under the controls that ARE decisions.
+              A POPOVER AND NOT A `<details>`, which is the one thing lost in
+              the move: the browser owned that disclosure's open/closed,
+              keyboard and screen-reader behaviour. `Popover` is what took the
+              job over, once, for all four of the chrome's panels — see the note
+              there on why reimplementing it four times is how one gets it
+              wrong. */}
+          <PopoverButton innerRef={viewRef} open={viewMenu} side="top"
+            label="View" title="Which layers are drawn, and how big"
+            onClick={() => setViewMenu((v) => !v)} />
+          <Popover anchor={viewRef} open={viewMenu} side="top" align="end"
+            width={244} label="View" onClose={() => setViewMenu(false)}>
+            {/* THE BUTTONS ZOOM ABOUT THE MIDDLE OF WHAT IS ON SCREEN, not
+                about the drawing's origin. Stepping the number alone kept the
+                top-left corner still, which means the thing you were looking at
+                slid off the bottom-right every time you pressed +. The wheel
+                anchors on the pointer for the same reason; there is no pointer
+                on a button, so the centre of the viewport is the honest
+                substitute. */}
+            <div className="px-3 pb-1">
+              <div className={BTNROW}>
+                <button className={BTN} title="Zoom out (−)"
+                  onClick={() => zoomBy(1 / 1.2, stageCentre())}>−</button>
+                <button className={BTN} title="Actual size (0)"
+                  onClick={() => zoomTo(1, stageCentre())}>{Math.round(zoom * 100)}%</button>
+                <button className={BTN} title="Zoom in (+)"
+                  onClick={() => zoomBy(1.2, stageCentre())}>+</button>
+                <button className={BTN} title="Fit the plan to the window (F)"
+                  onClick={() => zoomTo(fitZoom())}>Fit</button>
+              </div>
+              <p className={`${N} mt-1.5 mb-0`}>
+                Scroll to zoom, middle-drag to pan. <b>F</b> fits, <b>0</b> is
+                actual size.
+              </p>
+            </div>
+            <div className="h-px bg-border/15 my-2 mx-3" aria-hidden="true" />
+            {/* NO TOGGLE FOR A THING THAT IS NO LONGER DRAWN. The ambient grid,
+                the task-surface boxes and the secondary grid came off the
+                canvas, and a checkbox that turns on nothing is worse than no
+                checkbox: it is a promise the drawing does not keep. `zones`
+                stays, because hand-drawn no-light zones are still on the plan
+                and are still worth being able to hide while looking at the
+                layout under one — the tool that made them is retired, the ones
+                already drawn are not. */}
+            <div className="px-3 pb-0.5">
+              {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
+                ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
+                ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
+                ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
+                ['switchboards', 'Switchboards'],
+                ['electrical', 'Electrical lines']].map(([k, l]) => (
+                <label className={CHECK} key={k}>
+                  <input className="lp-check" type="checkbox"
+                    checked={layers[k]} onChange={toggle(k)} />{l}</label>
+              ))}
+            </div>
+          </Popover>
+
+          {/* --- DAY OR NIGHT, AND BOTH SIDES ARE ALWAYS DRAWN -------------
+              A TWO-SIDED SWITCH, NOT A BUTTON. Sun is the scan as it arrived,
+              moon inverts it — a white plan with black lines becomes a black
+              plan with white ones. One side is always latched, which is what
+              makes it a switch rather than a button with a hidden state: you can
+              see which of the two you are in without having to remember what
+              pressing it did.
+              THE OPAQUE WHITE PILL IS GONE AND SO IS ITS REASON. Floating over
+              the drawing this had to be legible against the black page AND
+              against a white scan, which bought it a solid ground, a hairline
+              and a shadow. In the bar it has the bar's ground, so it is the same
+              glass as the two controls beside it, and the live side is picked out
+              in white the way "current" is said everywhere else in this chrome.
+              IT IS OFFERED ON A DXF TOO. The old reason not to was sound and has
+              been dealt with: a DXF has no bitmap to subtract from 255, and a
+              CSS filter over one would invert OUR OWN ink — but PlanCanvas no
+              longer needs a filter, it takes the line work's greys from the
+              ground, so a vector plan has a real night mode now.
+              NOT OVER A SHEET OF PAPER. The schedule and the switchboard sheet
+              are not the drawing, and inverting them is not a thing this switch
+              can do. */}
+          {!sheetOpen && !showTrace && (
+            <div className="flex items-center gap-2 flex-none">
+              <span className="text-[11.5px] leading-none text-faint select-none">Mode</span>
+              {/* QUIETER THAN IT WAS, because the bar under it went black. A
+                  10%-white capsule on 5%-white glass is a chip; on black it is
+                  the brightest object in the corner, which is not what a
+                  preference is worth. */}
+              {/* THE CAPSULE IS BARELY THERE AND THE LIVE SIDE IS NOT. On
+                  black, 6% white is enough to say "these two are one control"
+                  and a solid white chip inside it would be the brightest object
+                  in the corner of the screen — which is not what a preference
+                  about the picture is worth. The step between 6% and 18% is what
+                  says which side you are on. */}
+              <div className="flex gap-0.5 p-[2px] rounded-md bg-white/[0.06]
+                border border-border/15" role="group" aria-label="Plan appearance">
+                {[[true, 'Invert the plan — black plan, white lines',
+                   /* Heroicons `moon`, outline. */
+                   'M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75'
+                   + ' 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21'
+                   + ' 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z'],
+                  [false, 'Show the plan as scanned',
+                   /* Heroicons `sun`, outline. */
+                   'M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591'
+                   + 'M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636'
+                   + 'M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z']].map(([on, label, d]) => {
+                  const live = layers.invert === on;
+                  return (
+                    <button key={String(on)} type="button"
+                      className={'appearance-none border-0 cursor-pointer '
+                        + 'px-2 py-1 rounded inline-flex items-center justify-center '
+                        + 'leading-[0] transition-colors duration-[120ms] '
+                        + 'focus-visible:outline-2 focus-visible:outline-accent '
+                        + 'focus-visible:outline-offset-1 '
+                        /* QUIET, NOT ABSENT. The side you are not in still has
+                           to be findable — it is half the switch — so it is the
+                           bar's own muted ink and goes white on hover. */
+                        /* EXACTLY ONE BACKGROUND CLASS EITHER WAY — see the
+                           note on the rail's cells for the emission-order trap
+                           that makes two a bug rather than a redundancy. */
+                        + (live
+                          ? 'bg-white/[0.18] text-white'
+                          : 'bg-transparent text-subtle hover:text-white')}
+                      aria-pressed={live} title={label}
+                      onClick={() => docActions.setLayer('invert', on)}>
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                        stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+                        strokeLinejoin="round" aria-hidden="true">
+                        <path d={d} />
+                      </svg>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* --- THE FLOATING WINDOW, OVER THE DRAWING'S TOP-RIGHT CORNER -------
+          IT WAS A 340px COLUMN AND IT IS A WINDOW NOW. The column was a grid
+          track: it took a fifth of the width of the one thing this app is for,
+          permanently, on every screen, whether or not anything in it applied.
+          Most of the time nothing did — its four tabs, its header of file
+          formats and its footer of whole-plan readings have all gone somewhere
+          they belong, and what is left is the answer to a gesture: the space you
+          clicked, or the plate you clicked.
+
+          SO IT TAKES NO LAYOUT AT ALL. `absolute` over the stage rather than a
+          track beside it, which means the drawing is the full width of the
+          screen and this sits in the corner of it — and when there is nothing
+          selected there is nothing in the corner.
+
+          IT IS NOT INSIDE THE STAGE, WHICH IS THE ONE THING TO GET RIGHT. The
+          stage is the scroll container; an absolutely positioned child of it
+          would scroll away with the plan, and a window you have to scroll back
+          to find is not pinned chrome. It is a child of the shell, measured off
+          the shell's own edges — the top bar's height and the bottom bar's — so
+          it cannot drift out of the gap between them.
+
+          THE CHROME'S OWN GREY AND A REAL SHADOW, WHICH THE COLUMN DID NOT
+          NEED. Against the page's own graph paper a `border-l` and 5% white were
+          enough, because the column WAS the edge. Floating over a drawing it has
+          to say it is in front of one — so it is opaque, and the shadow is what
+          lifts it off the sheet. `--color-panel` AND NOT `--color-chrome`, which
+          is the one thing here that is arithmetic rather than taste: this window
+          is dense muted type, and that scale is written for a near-black ground.
+          The note on the two tokens carries the figures. No border: the tone
+          against black is the edge, and a hairline on top of that is a line
+          nobody can see.
+
+          ITS HEIGHT IS ITS CONTENT'S, UP TO THE GAP IT HAS. `max-height` and not
+          `height`: a space's readings are six lines and its fitting list is
+          forty, and a window that was always as tall as the tallest thing it
+          might hold would be an empty box over the plan most of the time.
+          IT SURVIVES THE SCHEDULE AND NOT THE SWITCHBOARD SHEET, which is not
+          an inconsistency: the window is about whatever is ON the stage, and a
+          schedule has three things to do with it — Excel, CSV, PDF. It is the
+          only place those live. The switchboard sheet has nothing: every plate
+          on it is edited on the sheet, where its height is a box you type in, so
+          the window would be an empty box over a drawing you cannot act on. */}
+      {windowSpeaks && (
+      <div className={'absolute top-[68px] right-4 w-[340px] z-[4] '
+        + 'max-h-[calc(100%-68px-72px)] '
+        + 'rounded-lg bg-panel '
+        + 'shadow-[0_10px_34px_rgba(0,0,0,0.55)] '
+        + 'flex flex-col min-h-0 overflow-hidden '
+        + '[@media(max-width:960px)]:static [@media(max-width:960px)]:w-auto '
+        + '[@media(max-width:960px)]:max-h-none [@media(max-width:960px)]:rounded-none '
+        }>
+        {/* --- THE HEADER WENT TO THE TOP BAR ---------------------------
+            THREE FILE FORMATS AND A SHARE BUTTON, in a row across the head of
+            this panel. They are one act — this drawing, going somewhere else —
+            and they are about the DOCUMENT rather than about the space in front
+            of you, which is all this window holds now. They are the Share
+            dropdown in the top bar; see the note there on why the formats are
+            inside the act rather than beside it. */}
+        {/* --- THE FOUR TABS ARE GONE, AND NOTHING REPLACED THEM DIRECTLY --
+            SPACES / DESIGN / BOARDS / BOQ / ADMIN was one strip answering two
+            different questions, which is why it could be removed rather than
+            moved. Two of the five were SCENES — the schedule and the switchboard
+            sheet both take the whole stage — and those are the scene buttons on
+            the bar over the drawing, where "which drawing am I looking at"
+            belongs. Admin is a panel in the bottom bar, for the audience it is
+            for. And the remaining two were never a choice: Spaces held the room
+            you had clicked and Design held the controls for the thing you had
+            selected, so which one you wanted was already decided by what was
+            selected on the drawing.
+
+            SO THIS WINDOW IS DRIVEN BY THE SELECTION AND NOT BY A TAB. Click a
+            room and it is that room; click a plate and it is that plate; turn on
+            the electrical scene and it is that room's plates. A tab strip over
+            that would be a control that could disagree with the drawing. */}
+        {/* `pb-4` AND NOT `pb-10`. The column's ten was clearance above a
+            pinned footer that is no longer under it; a window sized to its own
+            content would render the extra as an inch of empty glass. */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4
           flex flex-col gap-1.5">
         {/* --- THE WALKTHROUGH, UNDER IT ------------------------------------
             ONLY ON THE OUTLINES STEP, AND THAT IS THE WHOLE PLACEMENT. On this
@@ -6732,7 +7594,20 @@ export default function App({
               space on its own. It used to be an accordion, and the accordion is
               what had to go; see the note on the detail below. One tab, one
               subject, one room at a time. */}
-          {panelView === 'spaces' && (openRoom ? (
+          {/* --- ONE SPACE, AND THERE IS NO LIST BEHIND IT ANY MORE --------
+              THE LIST OF SPACES WAS THE OTHER HALF OF THIS BRANCH and it is
+              gone. It was a column of every room on the plan with its type, its
+              size and its area — a second way to select a space, in words,
+              beside a drawing that shows all of it: the rooms are ON the plan,
+              they are labelled, and clicking one is how anybody actually picks
+              one. The list's own two extra buttons went with it — "Trace" is
+              the "Space outlines" link in the top bar, and "Take up all N
+              outlines" is what the tracer's own Proceed does on the step that
+              owns that decision.
+              SO THE WINDOW IS ABOUT A SELECTION OR IT IS NOT THERE. With no
+              room picked there is nothing to say about one, and `windowSpeaks`
+              is what stops an empty card floating in the corner of the plan. */}
+          {!elecScene && openRoom && (
             /* --- ONE SPACE, AND IT REPLACES THE LIST ----------------------
                 IT WAS AN ACCORDION and the accordion is what had to go. A
                 room's height, its three finishes and its illuminance are four
@@ -6758,14 +7633,22 @@ export default function App({
               materials={materialsOf(materials, openRoom.id)}
               wallLabel={wallMixLabel(
                 wallMix(openRoom.geo.polygonFt, materialsOf(materials, openRoom.id).walls))}
-              materialsLabel={materialsSummary(
-                materialsOf(materials, openRoom.id), openRoom.geo.polygonFt)}
-              editing={materialsEdit === openRoom.id}
-              onEdit={() => setMaterialsEdit(openRoom.id)}
-              onDone={() => setMaterialsEdit(null)}
+              /* `materialsLabel`, `editing`, `onEdit` AND `onDone` WENT WITH
+                 THE FOLD. The finishes were a one-line summary you pressed to
+                 open, and opening them replaced the analysis; the window shows
+                 both at once now — see the note in SpaceDetail on why. So there
+                 is nothing to summarise and nothing to be done with.
+                 THE SUMMARY WENT WITH THEM — `materialsSummary` in
+                 lib/materials.js has no caller now, and it is left there rather
+                 than deleted because it is the one place that knows how to say
+                 "Default" versus what actually differs. */
               onTone={(surface, tone) => setSurfaceTone(openRoom.id, surface, tone)}
+              /* RENAMING A SPACE MARKS NOTHING DIRTY, which is `updateOutline`'s
+                 own rule and the reason it is safe to offer here: `rectify`
+                 moves corners and costs a relight, a better name does not. */
+              onRename={readOnly ? null
+                : (next) => updateOutline(openRoom.id, { name: next })}
               onConfigureWalls={() => openWallEdit(openRoom.id)}
-              onBack={() => pickSpace(openRoom.id)}
               analysis={spaceAnalysis(openRoom)}
               /* TWO STORES BEHIND ONE CONTROL, AND THE ROW SAYS WHICH. A row
                  with a `wattRange` is a fitting somebody placed by hand and its
@@ -6809,98 +7692,7 @@ export default function App({
               autoplace={lighting.status.autoplaceOn(openRoom.id)}
               onAutoplace={readOnly ? null
                 : (on) => lighting.commands.setAutoplace(openRoom.id, on)} />
-          ) : (
-            <div className={SEC}>
-              {/* --- THE HEADING CARRIES THE WAY BACK TO THE TRACER -------
-                  THE TAB USED TO BE THAT ROUTE. “Outlines” sat where “Spaces”
-                  sits now and its whole job was `backToOutlines` — show the
-                  tracer, keep the lights. Renaming it to the thing this panel
-                  is actually a list OF would have quietly deleted the only way
-                  back to a mis-traced wall, so the route comes with the list:
-                  the list is what you have, and this is how you change it. */}
-              <div className="flex items-baseline justify-between gap-2">
-                <h3 className={H3}>Spaces · {rooms.length}</h3>
-                <button className={`${BTN_TINY} mb-2.5`} onClick={backToOutlines}
-                  title="Go back to the outlines — nothing is discarded">Trace</button>
-              </div>
-              {/* --- NO CAP. THE TAB IS THE CAP NOW ---------------------------
-                  This list was a scroller inside a scroller because it shared
-                  the panel with four other sections. The Spaces tab removed that
-                  reason, and the detail view removed the last of it: nothing
-                  opens inside a row any more, so a row is one line high and the
-                  list is as long as the plan has rooms. */}
-              {rooms.map((r) => {
-                const coved = (r.coves?.length ?? 0) > 0;
-                /* NOTHING FROM THE ELECTRICALS IS READ HERE. The bolt, then
-                   `electric`, then a plate count off `boardResults` — three
-                   revisions of the same mistake, which is that a list of rooms
-                   is a place to report on the wiring. It is not; the wiring has
-                   a layer and a switch of its own. */
-                return (
-                  <div key={r.id} className={`group ${ROW_FLUSH} ${ROW_OFF}`}>
-                    {/* ONE HANDLER FOR THE POINTER AND THE KEYBOARD. They were
-                        two copies of the same expression, which is how they would
-                        have drifted the moment selecting a space did anything more
-                        than set the focus — and it now does. See `pickSpace`. */}
-                    <div role="button" tabIndex={0} className={ROW_PICK}
-                      onClick={() => pickSpace(r.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault(); pickSpace(r.id);
-                        }
-                      }}>
-                      <div className="flex items-center gap-[9px]">
-                        <div className="flex-auto min-w-0">
-                          <div className={PICK}>
-                            <span className={NAME}>{r.outline.name || 'Space'}</span>
-                          </div>
-                          <div className={META}>
-                            <span>
-                              {/* The classification, where it exists. It is the
-                                  reason a room did or did not get accents, so it
-                                  belongs next to the room rather than buried in a
-                                  console log. */}
-                              {roomTypes[r.id] && (
-                                <b className={RTYPE} title={roomTypes[r.id].why}>
-                                  {roomTypeIn(projectId, roomTypes[r.id].type)?.label ?? 'Other'}
-                                </b>
-                              )}
-                              {ftin(r.stats.widthFt)} × {ftin(r.stats.heightFt)}
-                              {' '}· {Math.round(r.stats.areaSqft)} sqft
-                              {coved && <b className={RTYPE}>Cove</b>}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      {r.outline.enclosingPx?.length > 0 && (
-                        <p className={`${NW} mt-0.5`}>
-                          {r.outline.enclosingPx.length} space
-                          {r.outline.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly inside this
-                          one, so {r.outline.enclosingPx.length > 1 ? 'they are' : 'it is'} held out
-                          of the ceiling as a no-light zone. Drag a corner out to a wall and it
-                          will be subtracted properly instead.
-                        </p>
-                      )}
-                      {r.region?.warning && <p className={`${NW} mt-0.5`}>{r.region.warning}</p>}
-                    </div>
-                    {/* THE CHUNKING ICON AND THE OPTIONS DRAWINGS WERE HERE, and
-                        both are readings of a grid that is not being cut — see
-                        AUTO_GRID. A picture of six ways to divide a ceiling, on a
-                        ceiling with nothing on it, is a control over an answer
-                        nobody asked for. `pickingId`, `ChunkOptions` and the
-                        full-screen picker are all still wired; putting them back
-                        is putting the icon back in this row. */}
-                  </div>
-                );
-              })}
-              {outlinesPx.length > rooms.length && (
-                <button className={`${BTN_FULL} mt-1.5`}
-                  onClick={lightWholePlan}>
-                  Take up all {outlinesPx.length} outlines
-                </button>
-              )}
-            </div>
-          ))}
+          )}
 
           {step !== 'chunks' && step !== 'trace' && <>
 
@@ -6927,7 +7719,76 @@ export default function App({
               — the same thing confirming the doors is — so it takes the panel
               over for as long as it lasts, and the button that starts it sits in
               the palette with the fittings. See `zoneEdit`. */}
-          {panelView === 'design' && <>
+          {/* --- THE CONTROLS FOR WHATEVER IS SELECTED -------------------
+              NO LONGER BEHIND A TAB, and the tab was never a choice: every
+              section below is gated on something being armed or selected, so
+              "Design" was a tab you had to be on for the answer to a gesture you
+              had just made to appear. See the note where the strip used to
+              be. */}
+          <>
+          {/* --- EVERY PLATE IN THIS SPACE, WHILE THE WIRING IS ON SCREEN ---
+              THE WINDOW SWAPS WITH THE SCENE. On the lighting drawing this
+              column is a space's lumens and the fittings that make them; on the
+              electrical drawing neither of those means anything, and what you
+              want in front of you is the plates on that room's walls. See
+              `elecScene`.
+              IT IS THE SHEET'S OWN GROUPING, READ FOR ONE ROOM. `boardSheet` is
+              every plate on the job grouped by space and ordered by module count
+              — see buildBoardSheet, which explains why size and not name — and
+              this takes the group for the space in front of you rather than
+              re-deriving it. Two orderings of one list is how the panel and the
+              sheet come to disagree about what SB7 is.
+              A ROW IS A WAY IN AND NOT A READING. Pressing one selects that
+              plate, which is the same act as pressing it on the drawing and
+              raises the same card below — so the two ways of picking a board
+              cannot disagree about which is canonical.
+              AND THE WAY TO ALL OF THEM IS AT THE FOOT. "Show all boards" is the
+              switchboard sheet, which takes the whole stage: the plates of every
+              room at once, which is what an electrician orders from. */}
+          {elecScene && !readOnly && (() => {
+            const mine = openRoom
+              ? boardSheet.find((g) => g.roomId === openRoom.id) : null;
+            return (
+              <div className={SEC}>
+                <h3 className={H3}>
+                  Switchboards{openRoom ? '' : ' · this plan'}
+                </h3>
+                {!openRoom ? (
+                  /* NOTHING IS SELECTED, so there is no room to list the plates
+                     of. Saying which spaces have them would be the sheet, in a
+                     300px window; saying "click a space" is the one useful
+                     thing. */
+                  <p className={`${N} mt-0.5`}>
+                    Click a space to see the boards on its walls.
+                  </p>
+                ) : !mine ? (
+                  <p className={`${N} mt-0.5`}>
+                    No switchboard in this space yet.
+                  </p>
+                ) : mine.plates.map((q) => (
+                  <button key={q.id} type="button"
+                    className={'w-full flex items-baseline justify-between gap-2 '
+                      + 'text-left px-2 -mx-2 py-[5px] rounded border-0 '
+                      + 'cursor-pointer text-[11.5px] leading-[1.4] '
+                      + 'transition-colors duration-[120ms] '
+                      + 'focus-visible:outline-2 focus-visible:outline-accent '
+                      + 'focus-visible:outline-offset-1 '
+                      + (selBoardId === q.id
+                        ? 'bg-white/10 text-white' : 'bg-transparent text-text hover:bg-white/5')}
+                    onClick={() => setSel(select('board', q.id))}>
+                    <span className="truncate">{q.name}</span>
+                    <span className="flex-none text-[10.5px] text-subtle tabular-nums">
+                      {q.modules} mod · {q.heightMm} mm
+                    </span>
+                  </button>
+                ))}
+                <button type="button" className={`${BTN_FULL} mt-2.5`}
+                  onClick={() => docActions.setView('boards')}>
+                  Show all boards →
+                </button>
+              </div>
+            );
+          })()}
           {/* --- THE PLATE YOU CLICKED, ABOVE EVERYTHING ------------------
               FIRST IN THE TAB AND NOT LAST, because it is not a control over
               the drawing — it is the ANSWER to a gesture that has just been
@@ -7079,43 +7940,30 @@ export default function App({
               THE HEADING WENT WITH THE PALETTE. With nothing under it but a
               button that names its own subject, "Lighting" was a title over one
               sentence. */}
-          {(manualCoves.length > 0 || manualAccents.length > 0
-            || manualSurfaces.length > 0 || !rooms.length) && (
-          <div className={SEC}>
-            {/* `coveNote` WAS RENDERED HERE and is now in the cove's step. It
-                is only ever set while the cove tool is armed — and arming it
-                replaces this whole panel — so a copy under the palette could
-                not fire: it would have been a refusal shown on a screen the
-                refusal cannot happen on. */}
-            {/* WHAT HAS BEEN SET OUT BY HAND, with a way back. The detected
-                coves are counted in the Result panel; these are the ones
-                somebody drew, and they are the only ones that can be undone
-                wholesale. */}
-            {manualCoves.length > 0 && (
-              <button className={`${BTN_FULL} mt-2`}
-                onClick={() => { docActions.clearCoves(); disarmAdd(); }}>
-                Clear the {manualCoves.length} reverse cove
-                {manualCoves.length === 1 ? '' : 's'} placed by hand
-              </button>
-            )}
-            {!rooms.length && (
+          {/* --- THE TWO "CLEAR EVERYTHING PLACED BY HAND" BUTTONS ARE GONE --
+              THEY WERE A SECOND WAY TO DELETE, AND A WORSE ONE. Every fitting on
+              this drawing can be pressed and deleted where it sits — that is
+              what the selection and the Backspace key are for, and it is the
+              only way that lets somebody remove the one they meant. A button
+              reading "Clear the 3 placed by hand" removes three things to get rid
+              of one, and it is not even a category anybody thinks in: "placed by
+              hand" is a fact about how a cove came to exist, not about whether it
+              is still wanted.
+              WHAT THEY REALLY WERE is an escape hatch from a build where a
+              hand-placed fitting was hard to find and select on the drawing. It
+              is not any more — a press frames it with handles — so the hatch is
+              a button whose only remaining use is the mistake it makes easy.
+              `docActions.clearCoves`, `clearAccents` AND `clearSurfaces` ARE
+              UNTOUCHED on the document; nothing in the chrome calls them now.
+              WHAT SURVIVES IS THE ONE THING IN HERE THAT WAS NOT A BUTTON: a
+              plan with no lit space cannot take a fitting at all, and that is
+              worth saying before somebody arms a tool and clicks into nothing. */}
+          {!rooms.length && (
+            <div className={SEC}>
               <p className={NOTE_WARN}>
                 Light a space first — a fitting has to belong to one.
               </p>
-            )}
-            {/* NO "ON THE PLAN" COUNT. It said how many strips, sconces and
-                spots the drawing carries, three inches above a Result panel
-                that says it again — two live readouts of one number, which is
-                not twice the information: it is the same information asking
-                to be reconciled. */}
-            {(manualAccents.length > 0 || manualSurfaces.length > 0) && (
-              <button className={`${BTN_FULL} mt-2`}
-                onClick={() => { docActions.clearAccents(); docActions.clearSurfaces();
-                                 disarmAdd(); }}>
-                Clear the {manualAccents.length + manualSurfaces.length} placed by hand
-              </button>
-            )}
-          </div>
+            </div>
           )}
 
           {/* --- THE ELECTRICAL ELEMENTS ---------------------------------
@@ -7249,635 +8097,43 @@ export default function App({
               </p></div>
             )}
 
-            {/* --- VIEW, CLOSED. Every control in here is a preference about the
-                picture rather than a decision about the design, and a preference
-                you set once and forget does not deserve permanent space above the
-                export button. `<details>` and not a state flag: the browser owns
-                the open/closed, keyboard and screen-reader behaviour of a
-                disclosure, and reimplementing it is how one gets it wrong. */}
-            {/* THE CHEVRON IS THE `::after` ON THE SUMMARY, rotated on [open] —
-                the same rule as before, now written as variants. The native marker
-                goes because it is the browser's triangle, not this one. */}
-            <details className={`${SEC} [&>summary]:cursor-pointer [&>summary]:list-none
-              [&>summary]:flex [&>summary]:items-center [&>summary]:gap-1.5
-              [&>summary::-webkit-details-marker]:hidden
-              [&>summary]:after:content-[''] [&>summary]:after:ml-auto
-              [&>summary]:after:w-1.5 [&>summary]:after:h-1.5
-              [&>summary]:after:border-r-[1.5px] [&>summary]:after:border-b-[1.5px]
-              [&>summary]:after:border-subtle [&>summary]:after:transition-transform
-              [&>summary]:after:duration-[120ms]
-              [&>summary]:after:[transform:rotate(45deg)_translate(-2px,-2px)]
-              [&[open]>summary]:mb-2.5
-              [&[open]>summary]:after:[transform:rotate(225deg)_translate(-1px,-1px)]`}>
-              <summary><h3 className={H3_FLUSH}>View</h3></summary>
-              {/* THE BUTTONS ZOOM ABOUT THE MIDDLE OF WHAT IS ON SCREEN, not
-                  about the drawing's origin. Stepping the number alone kept the
-                  top-left corner still, which means the thing you were looking at
-                  slid off the bottom-right every time you pressed +. The wheel
-                  anchors on the pointer for the same reason; there is no pointer
-                  on a button, so the centre of the viewport is the honest
-                  substitute. */}
-              <div className={`${BTNROW} mb-1.5`}>
-                <button className={BTN} title="Zoom out (−)"
-                  onClick={() => zoomBy(1 / 1.2, stageCentre())}>−</button>
-                <button className={BTN} title="Actual size (0)"
-                  onClick={() => zoomTo(1, stageCentre())}>{Math.round(zoom * 100)}%</button>
-                <button className={BTN} title="Zoom in (+)"
-                  onClick={() => zoomBy(1.2, stageCentre())}>+</button>
-                <button className={BTN} title="Fit the plan to the window (F)"
-                  onClick={() => zoomTo(fitZoom())}>Fit</button>
-              </div>
-              <p className={`${N} mt-0 mb-2`}>
-                Scroll to zoom, middle-drag to pan. <b>F</b> fits, <b>0</b> is
-                actual size.
-              </p>
-              {/* NO TOGGLE FOR A THING THAT IS NO LONGER DRAWN. The ambient grid,
-                  the task-surface boxes and the secondary grid came off the
-                  canvas, and a checkbox that turns on nothing is worse than no
-                  checkbox: it is a promise the drawing does not keep. `zones`
-                  stays, because hand-drawn no-light zones are still on the plan
-                  and are still worth being able to hide while looking at the
-                  layout under one. */}
-              {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
-                ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
-                ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
-                ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
-                ['switchboards', 'Switchboards'],
-                ['electrical', 'Electrical lines']].map(([k, l]) => (
-                <label className={CHECK} key={k}>
-                  <input className="lp-check" type="checkbox"
-                    checked={layers[k]} onChange={toggle(k)} />{l}</label>
-              ))}
-            </details>
-          </>}
+          </>
 
-          {/* --- ADMIN, AND IT HAS ITS OWN TAB NOW -------------------------
-              IT USED TO BE THE FOOT OF THE EXPORT SECTION. Role 1 in `profiles`
-              — an owner of this app, not a user of it — so it was filed last,
-              behind a magenta rule, on the reasoning that it is not part of
-              anybody's workflow: it exposes what the models DECIDED, which is
-              what you need when a spot lands somewhere surprising and what must
-              never appear on a sheet a client sees.
-
-              That reasoning is why it is a TAB. Nested at the bottom of a
-              section about file formats, it was two hundred lines of readings
-              standing between the panel's last real control and the end of the
-              scroll — for the admin, who had to scroll past every design
-              control to reach the one thing they came for, and for the panel,
-              which ended on a block most people never see. A tab is what a
-              separate audience gets. It is scoped to `isAdmin` in the strip and
-              again here, and `panelView` falls back to Design for anybody whose
-              role changes underneath a stale tab. */}
-          {panelView === 'admin' && isAdmin && <>
-            <div className={SEC_ADMIN}>
-              <h3 className={H3_ADMIN}>Admin · model readings</h3>
-              <label className={CHECK}>
-                <input className="lp-check" type="checkbox" checked={audit}
-                  onChange={(e) => setAudit(e.target.checked)} />
-                Show what was identified
-              </label>
-              {/* THE DOORS, SEPARATELY. Every dimension on the sheet hangs off
-                  one of these boxes, so "did it find the doors" is a different
-                  question from "why is the layout like this" and is asked at a
-                  different moment. */}
-              <label className={`${CHECK} mt-2`}>
-                <input className="lp-check" type="checkbox" checked={auditDoors}
-                  onChange={(e) => setAuditDoors(e.target.checked)} />
-                Show the doors it found
-              </label>
-              
-              {/* THE COUNTS STAY WITH THEIR OWN SWITCH rather than joining the
-                  ledger below. That one answers "what did the models see on
-                  this plan"; these four numbers answer "is the scale right",
-                  and they are read while the boxes are on the canvas. */}
-              {auditDoors && (
-                <div className="mt-2 flex flex-col gap-[5px]">
-                  <div className={KV_ADMIN}><span>Doors kept</span><b>{doors.length}</b></div>
-                  <div className={KV_ADMIN}><span>Boxes rejected</span>
-                    <b>{doorState.restored ? '—' : (doorState.rejected?.length ?? 0)}</b></div>
-                  {/* A REOPENED PLAN HAS NO REJECTS TO SHOW. The kept doors are
-                      saved with the plan; the refused boxes are not, so a
-                      restored plan would otherwise report a confident zero and
-                      read as "it refused nothing". */}
-                  {doorState.restored && (
-                    <p className={`${N_ADMIN} mt-1`}>
-                      Restored from the saved plan, which keeps the doors but not
-                      the boxes it turned down. Re-run the detection to see those.
-                    </p>
-                  )}
-                  <div className={KV_ADMIN}><span>Scale</span>
-                    <b>{pxPerFt ? `${pxPerFt.toFixed(2)} px/ft` : 'not set'}</b></div>
-                  {doorPick?.id && (
-                    <div className={KV_ADMIN}><span>&nbsp;&nbsp;· from a door called</span>
-                      <b>{doorPick.mm ? `${doorPick.mm}mm` : '—'}</b></div>
-                  )}
-                  {doorState.status === 'error' && (
-                    <p className={`${NE} mt-1`}>
-                      The detector failed: {doorState.error}
-                    </p>
-                  )}
-                  {!doorState.restored && doorState.rejected?.length > 0 && (
-                    <details className={`${DISCLOSE_ADMIN} mt-1`}>
-                      <summary>Why each box was turned down</summary>
-                      {doorState.rejected.map((d, i) => (
-                        <p key={i} className={`${N_ADMIN} mt-1`}>
-                          <b>{(d.cls || 'box')} {(d.conf ?? 0).toFixed(2)}</b>{' — '}{d.reason}
-                        </p>
-                      ))}
-                    </details>
-                  )}
-                  <p className={`${N_ADMIN} mt-1`}>
-                    The gates are <code className={CODE}>DOOR_DEFAULTS</code> in{' '}
-                    <code className={CODE}>doors.js</code>.
-                  </p>
-                </div>
-              )}
-
-
-              {/* THE BED, AND THEN THE GRID — TWO MORE OVERLAYS, TWO MORE
-                  CHECKBOXES. Every switch in this section is now the same
-                  control: a box you tick to put a reading on the drawing.
-                  THE GRID WAS A BUTTON, and the argument for that was that it
-                  is an ACT — put the scaffolding on, take it off — rather than
-                  a standing preference. It reads better as the odd one out than
-                  it did as a button: four switches over one drawing, three of
-                  them ticked and one of them pressed, with the pressed one
-                  carrying its state in a word that changes under the cursor
-                  while the other three carry theirs in a tick. One idiom. The
-                  label stays put and the tick says which way it is, which is
-                  also what makes the pair readable at a glance — "grid on, beds
-                  off" is a shape, not two sentences to read. */}
-              {/* NO NOTE AND NO TOOLTIP. What the box is for — the rectangle
-                  the planner keeps the downlights off, invisible on the sheet
-                  otherwise — is written above in the bed group in PlanCanvas,
-                  which is where the reasoning belongs. The label is the
-                  control. */}
-              <label className={`${CHECK} mt-2`}>
-                <input className="lp-check" type="checkbox" checked={auditBeds}
-                  onChange={(e) => setAuditBeds(e.target.checked)} />
-                Show the beds it identified
-              </label>
-              {/* THE GRID, ON THE DRAWING. Its own switch and not part of the
-                  overlay above: that one is what the MODELS read off the
-                  plan, this is what our own chunker and planner did with it
-                  afterwards. A light that lands somewhere odd is almost
-                  always a chunk that split somewhere odd, and the split is
-                  the one thing on this drawing with no visible trace at all —
-                  `gridPath` has been in PlanCanvas the whole time with
-                  nothing calling it.
-                  ...AND IT DRAWS WITH THE LIGHTS SWITCHED OFF, which is what it
-                  is mostly for now. `AUTO_GRID` places no fittings, and this
-                  switch drew nothing for as long as the chunks were thrown away
-                  along with them — see `gridChunks` in the `rooms` memo. The
-                  chunker still runs and still has an opinion about how the
-                  ceiling divides, and that opinion is exactly what somebody
-                  laying lamps out by hand wants under the pointer.
-                  DISABLED WITH NOTHING TO DRAW, which the button said by going
-                  grey and a checkbox says the same way. There is no grid until
-                  there is a laid-out space — which is a lower bar than there
-                  being lights, and deliberately so. */}
-              <label className={`${CHECK} mt-2 ${totals.rooms ? '' : 'opacity-40'}`}
-                title="Draw the chunk boxes and cell lines the chunker cut, whether or not any lights were placed">
-                <input className="lp-check" type="checkbox" checked={showGrid}
-                  disabled={!totals.rooms}
-                  onChange={(e) => setShowGrid(e.target.checked)} />
-                Show the planning grid
-              </label>
-              {/* LOOK AGAIN — the manual bedroom pass. Admin-only because it
-                  spends a model call per room and because the person who
-                  wants it is the person tuning the detectors: on a plan where
-                  the first answer was wrong there is otherwise no way to ask
-                  twice without re-running the whole pipeline. */}
-              <div className={`${BTNROW} mt-2.5`}>
-                <button className={BTN_SECOND} disabled={bedLook === 'busy' || !rooms.length}
-                  title={focus
-                    ? `Ask both detectors about ${focus.outline?.name || 'this space'} again`
-                    : 'Ask both detectors about every bedroom again'}
-                  onClick={() => recognitionCommands.lookAgainAtBeds({ rooms, focus })}>
-                  {bedLook === 'busy' ? 'Looking…'
-                    : focus ? `Look again in ${focus.outline?.name || 'this space'}`
-                    : 'Look again at the beds'}
-                </button>
-              </div>
-              {bedLook && bedLook !== 'busy' && (
-                <p className={`${N} mt-1.5`}>{bedLook}</p>
-              )}
-
-              {/* --- THE LEDGER, CLOSED, AND NO LONGER TIED TO THE OVERLAY.
-                  It was an always-open card that appeared with the checkbox
-                  above, on a #F2F2F2 ground with near-black type — a white
-                  slab two thirds of the way down a dark panel, and fifteen
-                  rows of counts permanently occupying the space between the
-                  switch and the bottom of the panel.
-                  IT IS A DISCLOSURE NOW, and shut: these are numbers you go
-                  and look up when something on the drawing surprises you, not
-                  numbers you read while working. `<details>` rather than a
-                  state flag for the same reason the View section is one — the
-                  browser already owns the open/closed, the keyboard and the
-                  screen reader.
-                  AND IT IS NO LONGER BEHIND `audit`. That checkbox draws
-                  marks on the CANVAS, which is the thing you have to remember
-                  to turn off before exporting; these are counts in a panel,
-                  which cost an export nothing. Tying them together meant the
-                  only way to read the ledger was to first put magenta on a
-                  sheet — so they are two switches now, and each one governs
-                  the surface it actually changes. */}
-              <details className={`${DISCLOSE_ADMIN} mt-3`}>
-                <summary>What was identified</summary>
-                <div className="mt-2 flex flex-col gap-[5px]">
-                  <div className={KV_ADMIN}><span>Task surfaces</span><b>{surfacesPx.length}</b></div>
-                  {/* WHAT THE RENDER PASS READ, and what it turned into. The
-                      cells are the working; the three fittings under them are
-                      the product, and they stay on the drawing whether or not
-                      this box is ticked. Counted here so that "the cells look
-                      wrong" and "the cells are right and the rule did nothing"
-                      are two different readings rather than one shrug. */}
-                  {/* THE RENDER PASS'S WHOLE LEDGER, and this is now the only
-                      place it is written down. `seen` is what PROMPT 01 read
-                      off the photographs; `placed` is how many of those PROMPT
-                      02 could tie to a wall on this drawing. The two differing
-                      is the pass's most useful single fact — "it saw nothing"
-                      and "it saw it and could not place it" are completely
-                      different problems — and it left the render-pass panel
-                      along with the rest of the reporting. */}
-                  <div className={KV_ADMIN}><span>Wall features seen</span>
-                    <b>{Object.values(wallResults)
-                      .reduce((n, w) => n + (w.elements?.length ?? 0), 0)}</b></div>
-                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· placed on the plan</span>
-                    <b>{wallCellsPx.length}</b></div>
-                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· reverse coves</span>
-                    <b>{reverseCoves.length}</b></div>
-                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· shelf strips</span>
-                    <b>{shelfStrips.length}</b></div>
-                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· art spots</span>
-                    <b>{taskSpotsPx.filter((sp) => sp.art && !sp.rejected).length}
-                      {taskSpotsPx.some((sp) => sp.art && sp.rejected)
-                        ? ` (${taskSpotsPx.filter((sp) => sp.art && sp.rejected)
-                            .reduce((n, sp) => n + (sp.wanted ?? 1), 0)} dropped)` : ''}</b></div>
-                  {/* WHERE EACH ONE CAME FROM. Two sources feed this list and
-                      they can double up — they did, and the count was the only
-                      thing on screen that knew. A split reads as a description
-                      of the pipeline when it is right and as an obvious bug
-                      when it is not. */}
-                  {/* THE FOOT-OF-BED RE-CUT. Its ordinary answer is "no",
-                      so a count alone would be indistinguishable from the
-                      rule being off or broken — the sentence beside each
-                      space is the point. See bedGrid.js. */}
-                  {(() => {
-                    const bedrooms = rooms.filter((r) => r.plan?.ok
-                      && (r.plan.stats?.bedFootApplied || r.plan.stats?.bedFootWhy));
-                    if (!bedrooms.length) return null;
-                    const on = bedrooms.filter((r) => r.plan.stats.bedFootApplied);
-                    return (
-                      <>
-                        <div className={KV_ADMIN}><span>Foot-of-bed re-cut</span>
-                          <b>{on.length} of {bedrooms.length}</b></div>
-                        {bedrooms.filter((r) => r.plan.stats.bedFootWhy).map((r) => (
-                          <p key={r.id} className="text-[11px] text-white leading-[1.5] mt-1">
-                            <b>{r.outline?.name || 'Space'}</b>
-                            {' — '}{r.plan.stats.bedFootWhy}
-                          </p>
-                        ))}
-                      </>
-                    );
-                  })()}
-                  <div className={KV_ADMIN}><span>Bed zones</span><b>{detectedZones.length}</b></div>
-                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· bed-filter, whole plan</span>
-                    <b>{detectedZones.filter((z) => !z.closeUp).length}</b></div>
-                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· GPT, one bedroom crop</span>
-                    <b>{detectedZones.filter((z) => z.judged).length}</b></div>
-                  {/* AN EXCLUSION YOU CAN SEE. This used to be a third
-                      SOURCE of bed geometry and is now none: the accent pass's
-                      bed boxes never reach the chunking or the sconce rule.
-                      Counting them anyway is what stops "bed-filter found
-                      nothing here" and "there is no bed here" looking the
-                      same. */}
-                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· accent pass (excluded)</span>
-                    <b>{bedsPerRoom.length}</b></div>
-                  {detectState.whyRejected && (
-                    <>
-                      <div className={KV_ADMIN}><span>Bed boxes rejected</span>
-                        <b>{detectState.whyRejected.n}</b></div>
-                      <p className={`${N_ADMIN} border-l-2 border-[#C026D3] pl-[9px] mt-1`}>
-                        Mostly: {detectState.whyRejected.top}
-                        {detectState.whyRejected.topCount < detectState.whyRejected.n
-                          ? ` (${detectState.whyRejected.topCount} of ${detectState.whyRejected.n})` : ''}
-                        . The size gate is <code className={CODE}>BED_FT</code> in{' '}
-                        <code className={CODE}>furniture.js</code>.
-                      </p>
-                    </>
-                  )}
-                  {/* SPACES, NOT BEDS. The labels used to say neither, which
-                      is how "Beds re-asked 3 / Judged 1" read as three beds of
-                      which two were dropped. It was three SPACES. A space is
-                      re-asked only when the classifier called it a bedroom and
-                      the whole-plan pass put no bed in it; the list below says
-                      what came back for each one. */}
-                  <div className={KV_ADMIN}><span>Bedrooms GPT was asked about</span>
-                    <b>{Object.values(bedVerdicts).filter((v) => v?.refound).length}</b></div>
-                  <div className={KV_ADMIN}><span>&nbsp;&nbsp;· of those, still empty</span>
-                    <b>{Object.values(bedVerdicts).filter((v) => v?.refound && v.kind === 'none').length}</b></div>
-                  {!!Object.keys(bedVerdicts).length && (
-                    <details className="mt-1 border-t border-border/20 pt-1.5
-                      [&>summary]:cursor-pointer [&>summary]:text-[11.5px]
-                      [&>summary]:text-white [&>summary]:list-none
-                      [&>summary]:select-none [&>summary]:hover:text-[#C026D3]
-                      [&>summary::-webkit-details-marker]:hidden
-                      [&>summary]:before:content-['▸_'] [&>summary]:before:text-[9px]
-                      [&[open]>summary]:before:content-['▾_']">
-                      <summary>What came back for each bedroom</summary>
-                      {Object.entries(bedVerdicts).map(([id, v]) => (
-                        <p key={id} className="text-[11px] text-white leading-[1.5] mt-1.5">
-                          <b>{outlines.find((o) => o.id === id)?.name || id}</b>
-                          {' — '}{judgeNote(v)}
-                        </p>
-                      ))}
-                    </details>
-                  )}
-                </div>
-              </details>
-
-              {/* --- THE FILE THEY UPLOADED -------------------------------
-                  LAST IN HERE, AND IT IS THE ONE THING IN THIS SECTION THAT
-                  IS NOT A READING. Everything above exposes what the models
-                  decided; this hands back what they were deciding ABOUT. It
-                  belongs together with them anyway, because it is the same
-                  job: a fitting lands somewhere surprising, the overlays say
-                  what was seen, and the next question is always "what does
-                  the drawing actually look like" — which needs the drawing,
-                  in the application that made it, not a PNG of it with our
-                  fittings on top.
-
-                  THE FILENAME IS THE LABEL. "The original" is a different
-                  file on every plan, and the extension is what says whether
-                  it is worth opening — a DXF opens in CAD, a phone photo of
-                  a printout does not.
-
-                  NOT BEHIND `gateExport`. That gate is the till and it asks
-                  the OWNER to pay for a drawing this app produced. This is
-                  the file they already own, handed to an operator looking at
-                  their plan; charging for it would be charging the wrong
-                  person for the wrong thing.
-
-                  AND NO `milestone`. Every export writes a revision row on
-                  the reasoning that somebody taking a file away is the
-                  strongest signal a design is finished. An operator
-                  downloading somebody else's upload is not that signal, and
-                  the row would put a fictional milestone in the corpus. Same
-                  argument as the read-only panel's copy of this button —
-                  see `onDownloadOriginal` in ViewerPanel. */}
-              <div className={`${BTNROW} mt-2.5`}>
-                <button className={BTN_SECOND} disabled={!initialFile}
-                  title={initialFile
-                    ? `${initialFile.name || 'the uploaded file'} — the file this plan was made from`
-                    : 'This plan was not opened from a stored upload, so there is'
-                      + ' no original to hand back'}
-                  onClick={() => {
-                    if (!initialFile) return;
-                    download(initialFile.name || 'original', initialFile,
-                             initialFile.type || 'application/octet-stream');
-                  }}>
-                  {initialFile
-                    ? `Download the original (${uploadExt || 'file'})`
-                    : 'No original on this plan'}
-                </button>
-              </div>
-            </div>
-          </>}
+          {/* --- ADMIN IS A PANEL IN THE BOTTOM BAR NOW --------------------
+              ROLE 1 IN `profiles` — an owner of this app rather than a user of
+              it — so it was filed last in this column, behind a tab, on the
+              reasoning that it is not part of anybody's workflow. That was the
+              right instinct and a tab was the wrong answer: two hundred lines
+              of readings, invisible to almost everybody, taking a fifth of this
+              panel's navigation to say so.
+              It also does not belong here for the reason the footer did not.
+              Every reading in it is about the whole plan and the passes that
+              built it, and this window is about one space. See the bottom
+              bar. */}
           </>}
         </>}
         </>
         )}
         </div>
 
-        {/* --- THE ELECTRICALS, PINNED TO THE FOOT OF THE PANEL -------------
-            THE LAST THING ANYBODY DOES WITH A PLAN, and the one control on this
-            panel that is a different TRADE. It was a white plate floating in the
-            bottom-left of the canvas; the note where it used to be says why that
-            corner was wrong. What the footer buys is the pairing:
-
-            THE ACT, AND THEN THE THING IT RESTS ON. Every switchboard on the
-            sheet is placed beside a door — see electrical.js — so this switch is
-            exactly as right as the door boxes it was derived from. The count
-            under it is the one number that says how much was found, and "Modify
-            doors" is the way back into them. Floating on the drawing those two
-            were a diagonal apart.
-
-            OUTSIDE THE SCROLLER, WHICH IS THE WHOLE POINT OF THE FOOTER. On a
-            plan with twenty spaces the panel is several screens of column; a
-            switch you have to scroll to the end of the design to reach is a
-            switch that gets missed. See the note on the column for the `min-h-0`
-            that makes the pinning actually pin.
-
-            A SWITCH, NOT A BUTTON THAT CHANGES ITS OWN NAME. It was a full
-            width outlined button reading "Show Electrical Layout" / "Hide
-            Electrical Layout", latched by a wash of white — which is a control
-            whose LABEL is its state, so the words move under you every time you
-            press it and the only way to read what is on is to read what the
-            button is offering to do next. A switch says both at once: the label
-            names the layer and never moves, and the knob says whether it is on.
-            The outline and the full width stay — this is still the second
-            loudest thing on the panel, under Share.
-
-            IT SURVIVES `doorEdit` AND `zoneEdit` ON PURPOSE, unlike everything
-            above it. Both of those steps empty the panel — and this footer is
-            how you get out of them: "Modify doors" is the door step's own toggle,
-            and the switch above it closes the step and shows the wiring. A footer
-            that vanished with the panel would take the way out with it.
-
-            `!prep` LIKE EVERY OTHER CONTROL ON THIS SCREEN: while the pipeline
-            runs the layout is being replaced under the drawing, so a switch that
-            reveals wiring derived from it cannot do what it claims. And not over
-            the schedule or the tracer, neither of which has wiring to show. */}
-        {source && !sheetOpen && !showTrace && !prep && (
-          <footer className="flex-none border-t border-border/10 px-4 pt-3 pb-4
-            flex flex-col gap-2">
-            <button type="button" role="switch"
-              className={'appearance-none cursor-pointer w-full '
-                + 'inline-flex items-center justify-between gap-2 px-3 py-[9px] '
-                + 'rounded-lg border border-white text-white '
-                + 'text-[12.5px] leading-none tracking-[-0.01em] '
-                + 'transition-colors duration-[120ms] '
-                + 'focus-visible:outline-2 focus-visible:outline-accent '
-                + 'focus-visible:outline-offset-2 '
-                + (layers.electrical && !doorEdit
-                  ? 'bg-white/10' : 'bg-transparent hover:bg-white/10')}
-              aria-checked={layers.electrical && !doorEdit}
-              /* --- THE FIRST PRESS ASKS ABOUT THE DOORS -------------------
-                 A switchboard is placed beside a door, so this switch cannot
-                 honestly turn the wiring on until somebody has said the door
-                 boxes are right — see the note by `doorsOk`. It is the same
-                 control either way rather than a second button that appears once
-                 and then never again: what this button means is "show me the
-                 electricals", and the first time that is asked the honest answer
-                 is a question. */
-              title={!doorsOk && !readOnly
-                ? 'Confirm the doors, then the wiring'
-                : layers.electrical
-                  ? 'Hide the looping and the bay boards'
-                  : 'Loop every fitting back to its switchboard'}
-              onClick={() => {
-                /* IN THE VIEWER IT IS A LAYER SWITCH AND NOTHING MORE. An
-                   operator looking at somebody else's plan is not the person who
-                   can answer whether the doors are right, and this panel writes
-                   nothing — see ViewerPanel. They see the wiring the owner
-                   confirmed. */
-                if (readOnly) { toggleElectricalLayer(); return; }
-                if (zoneEdit) closeZoneEdit();
-                if (doorEdit) { closeDoorEdit(); return; }
-                if (!doorsOk) { openDoorEdit(); return; }
-                toggleElectricalLayer();
-              }}>
-              {/* THE LABEL, AND IT DOES NOT MOVE. The wire itself beside it:
-                  two arcs and a plate, which is exactly what the layer draws.
-                  Live in the board's blue when it is on, so the state is said
-                  twice on one line — at the words and at the knob. */}
-              <span className="inline-flex items-center gap-2 min-w-0">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" className="flex-none"
-                  stroke={layers.electrical && !doorEdit ? SB_COLOUR : 'currentColor'}
-                  strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
-                  aria-hidden="true">
-                  <path d="M3 16c2.5-3 4.5-3 7 0M10 16c2.5-3 4.5-3 7 0" />
-                  <rect x="18.5" y="5" width="3.5" height="6" rx="1" />
-                  <path d="M20.25 11v2c0 1.5-1 2-2.25 2.6" />
-                </svg>
-                Show electrical layout
-              </span>
-              {/* THE KNOB CARRIES THE STATE. The track takes the board's own
-                  blue when the layer is on — the same blue the plates are drawn
-                  in — so the switch and the thing it reveals are one colour.
-                  `aria-hidden`: `role="switch"` on the button already announces
-                  on/off, and a screen reader has no use for the picture of it. */}
-              <span aria-hidden="true"
-                className={'flex-none inline-flex items-center w-[34px] h-[19px] '
-                  + 'rounded-full p-[2px] transition-colors duration-[120ms] '
-                  + (layers.electrical && !doorEdit ? '' : 'bg-white/25')}
-                style={layers.electrical && !doorEdit
-                  ? { backgroundColor: SB_COLOUR } : undefined}>
-                <span className={'block w-[15px] h-[15px] rounded-full bg-white '
-                  + 'transition-transform duration-[120ms] '
-                  + (layers.electrical && !doorEdit
-                    ? 'translate-x-[15px]' : 'translate-x-0')} />
-              </span>
-            </button>
-            {/* THE COUNT AND THE WAY BACK, AND NOT IN THE VIEWER. An operator
-                reading somebody else's sheet has no door to modify, and a count
-                with no question attached to it is a fact in a corner that
-                carries none.
-
-                TABULAR FIGURES, LIKE EVERY NUMBER THAT CHANGES IN PLACE — this
-                face's proportional `1` is half the width of its `0`, so a count
-                going 9 → 10 → 11 would shuffle the words after it.
-
-                A RULED LINK RATHER THAN A SECOND CHIP. The button above is the
-                act this footer is for; this reopens a step, and a second
-                bordered button under it would read as a second layer to turn
-                on. `doorEdit` latches it, so the way in is also the way out. */}
-            {!readOnly && (
-              <div className="flex items-baseline justify-between gap-2
-                text-[11px] leading-none">
-                <span className="text-subtle tabular-nums">
-                  {doors.length} door{doors.length === 1 ? '' : 's'} detected
-                </span>
-                <button type="button"
-                  className={'appearance-none border-0 bg-transparent p-0 cursor-pointer '
-                    + 'text-[11px] leading-none underline underline-offset-2 '
-                    + 'transition-colors duration-[120ms] '
-                    + 'focus-visible:outline-2 focus-visible:outline-accent '
-                    + 'focus-visible:outline-offset-2 '
-                    + (doorEdit
-                      ? 'text-white decoration-white/60'
-                      : 'text-white/70 decoration-white/25 hover:text-white')}
-                  aria-pressed={doorEdit}
-                  title={doorEdit ? 'Done with the doors' : 'Check the doors again'}
-                  onClick={() => (doorEdit ? closeDoorEdit() : openDoorEdit())}>
-                  {doorEdit ? 'Done with doors' : 'Modify doors'}
-                </button>
-              </div>
-            )}
-            {/* --- WHAT IS ON THE DRAWING, AND WHETHER IT IS ENOUGH LIGHT.
-                THE RESULT PANEL, AS ONE LINE. It was a section up in the Design
-                tab: two big tiles, a tick and two sentences of recommendation.
-                Everything in it moves when a fitting is placed on the CANVAS,
-                and a readout you have to scroll a panel to find is a readout
-                nobody watches while they are working. Down here it is beside the
-                door count — the other standing fact about this sheet — and it is
-                on screen whatever tab the panel is on.
-
-                THE SAME 11px AS THE DOORS LINE ABOVE IT, deliberately: these are
-                two readings of one drawing, and a heavier one would claim to be
-                the more important of the two.
-
-                COUNTS ON THE LEFT AND THE VERDICT ON THE RIGHT, because they are
-                different kinds of fact. The left is what you put there. The
-                right is whether it works, and it is the half with a threshold
-                attached — so it is the half that gets the tick.
-
-                THE VERDICT IS COMPUTED AND NOT ASSERTED, which is the one thing
-                carried over verbatim from the panel this replaces. A tick
-                printed unconditionally would be the app congratulating itself on
-                plans that are short. Over the target it ticks; under it, the
-                dash — the same mark the schedule uses for "not specified",
-                because a plan under its criterion may be exactly what the
-                designer wants and is not an error.
-
-                JUDGED ON THE ROUNDED FIGURE, so the tick can never contradict
-                the number printed beside it: a raw `got >= target` reads 19.9 as
-                short and then prints it as "20". */}
-            {/* --- THE WHOLE PLAN'S LEVEL, AND IT IS THE PANEL'S OWN MODEL ---
-                IT USED TO BE lm/sqft OF FLOOR against `lumenCriteriaFor`, which
-                is what the grid was laid to. That model has a rival now — the
-                space panel judges each room on its SURFACES, its finishes and
-                its height (see lib/lumens.js) — and two verdicts on one drawing
-                is not two readings, it is one reading and an argument. A footer
-                saying a plan was short while the room open beside it ticked would
-                be the app disagreeing with itself in two places you can see at
-                once.
-                SO THE FOOTER SUMS THE PANEL. Same arithmetic, same constants,
-                every room added up: what the plan is owed, and what is on it.
-                `lumenCriteriaFor` is untouched and still drives the grid — it is
-                an input to the LAYOUT, and this was only ever a readout. */}
-            {rooms.length > 0 && (() => {
-              const got = Math.round(planLumens.achieved);
-              const want = Math.round(planLumens.required);
-              const n = (v) => v.toLocaleString('en-US');
-              const bits = [
-                // HIDDEN AT ZERO, all three, which was this panel's own rule and
-                // stays it: a line that spends a third of its width saying a
-                // thing is absent is a line that is harder to read for nothing.
-                // `lights` joined the other two when the grid was suppressed —
-                // "0 lights" on every plan is the case it was written to avoid.
-                totals.lights > 0
-                  ? `${totals.lights} light${totals.lights === 1 ? '' : 's'}` : null,
-                spotsPlaced > 0 ? `${spotsPlaced} spot${spotsPlaced === 1 ? '' : 's'}` : null,
-                stripRuns > 0 ? `${stripRuns} strip${stripRuns === 1 ? '' : 's'}` : null,
-              ].filter(Boolean);
-              return (
-                <div className="flex items-baseline justify-between gap-2
-                  text-[11px] leading-none">
-                  <span className="text-subtle tabular-nums">{bits.join(', ')}</span>
-                  <span className="inline-flex items-baseline gap-1 tabular-nums
-                    text-subtle whitespace-nowrap">
-                    {/* JUDGED ON THE ROUNDED FIGURES, so the tick can never
-                        contradict the numbers printed beside it. */}
-                    {got >= want ? (
-                      <svg viewBox="0 0 24 24" width="10" height="10" fill="none"
-                        stroke="#FFFFFF" strokeWidth="3.2" strokeLinecap="round"
-                        strokeLinejoin="round" className="flex-none
-                          self-center translate-y-[0.5px]"
-                        aria-hidden="true"><path d="M4.5 12.75l5.25 5.25L19.5 6" /></svg>
-                    ) : (
-                      <span className="flex-none text-subtle leading-none"
-                        aria-hidden="true">—</span>
-                    )}
-                    {n(got)} of {n(want)} lm
-                  </span>
-                </div>
-              );
-            })()}
-          </footer>
-        )}
+        {/* --- THE FOOTER IS THE BAR ALONG THE FOOT OF THE STAGE NOW ------
+            IT HELD THREE THINGS AND ALL THREE WERE ABOUT THE WHOLE PLAN: the
+            "Show electrical layout" switch, the door count with its way back
+            into the door step, and the plan's own lumen reading. This window is
+            about ONE THING — the space you clicked, or the plate you clicked —
+            and it appears and disappears with that thing, so a footer pinned
+            under it was three whole-plan facts hanging off a panel about a
+            room.
+            THE SWITCH IS THE SCENE BUTTON ON THE BAR OVER THE DRAWING. "Show
+            electrical layout" is not a layer you tick on top of a lighting
+            drawing, it is the other drawing — so it is one of the two scene
+            buttons in the StageBar, beside the schedule. Its first press still
+            asks about the doors, for the reason it always did: a switchboard is
+            placed beside one. See the tail on that bar.
+            THE OTHER TWO ARE IN THE BOTTOM BAR, on the left, where the standing
+            readings go. */}
       </div>
+      )}
     </div>
   );
 }

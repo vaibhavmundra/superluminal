@@ -567,6 +567,15 @@ export default function Planner() {
          being given one — so the question belongs there as much as here. */
       onBeforeExport={onBeforeExport}
       onBack={() => nav(plan.project_id ? `/projects/${plan.project_id}` : '/dashboard')}
+      /* THE HOUSE IN THE TOP-LEFT, AND IT GOES ALL THE WAY OUT. `onBack` above
+         goes up one level, to the project this plan belongs to, and it was a
+         worded link in that corner; the corner is a mark now, and a house means
+         the dashboard everywhere else in this app. The project page is one press
+         on from there.
+         BOTH ARE PASSED. The editor reads `onHome` for the button and `onBack`
+         for "is there a route above this plan at all", which is what decides
+         whether the bar names the plan or shows the standalone lockup. */
+      onHome={() => nav('/dashboard')}
     />
     </>
   );

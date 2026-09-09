@@ -107,20 +107,21 @@ export default function useLightingAnalysis({
   }), [ceilingMmFor, materials, projectId, country, groupsFor, fixtureWatts]);
 
   /**
-   * THE SAME READING FOR THE WHOLE PLAN — what the footer prints.
+   * THE SAME FIGURE FOR THE WHOLE PLAN — what the footer prints.
    *
-   * A SUM OF THE ROOMS AND NOT A SECOND MODEL. Every figure here comes out of
-   * `spaceAnalysis`, one room at a time, so the line at the bottom of the screen
-   * and the panel beside it cannot come to disagree — which they would within a
-   * week if this recomputed anything.
+   * A SUM OF THE ROOMS AND NOT A SECOND MODEL. It comes out of `spaceAnalysis`,
+   * one room at a time, so the line at the bottom of the screen and the panel
+   * beside it cannot come to disagree — which they would within a week if this
+   * recomputed anything.
+   *
+   * IT SUMMED `achieved` TOO, and the footer compared the two. That figure is no
+   * longer on the analysis (see the end of `analyseSpace`), so what the plan
+   * reports is what it is owed.
    */
   const planLumens = useMemo(() => {
-    let required = 0, achieved = 0;
-    for (const r of rooms) {
-      const a = spaceAnalysis(r);
-      required += a.required; achieved += a.achieved;
-    }
-    return { required, achieved };
+    let required = 0;
+    for (const r of rooms) required += spaceAnalysis(r).required;
+    return { required };
   }, [rooms, spaceAnalysis]);
 
   /** WHICH ANALYSIS ROWS THE CURRENT SELECTION IS — see `highlightRows`, which
@@ -143,13 +144,21 @@ export default function useLightingAnalysis({
    *
    * IT FIRES ON THE SELECTION CHANGING AND NOT ON EVERY RENDER, so somebody who
    * selects a lamp and then goes to read the BOQ is not dragged back to the
-   * Spaces tab a moment later. `keys` is the dependency; re-selecting the same
+   * drawing a moment later. `keys` is the dependency; re-selecting the same
    * fitting is not a change and does nothing.
    *
-   * OPENING THE ROW AND SCROLLING TO IT IS SpaceAnalysis's HALF. This gets the
-   * right space in front of you; that panel gets the right row in front of you.
-   * The split is the same one this feature makes everywhere: which space the
-   * panel is about is the editor's business, how the panel reads is the panel's.
+   * GETTING TO THE RIGHT VIEW AND THE RIGHT ROW IS THE WINDOW'S HALF. This gets
+   * the right space in front of you; SpaceDetail swaps itself over to the
+   * fitting list, and SpaceAnalysis opens that row and scrolls to it. The split
+   * is the same one this feature makes everywhere: which space the window is
+   * about is the editor's business, how the window reads is the window's.
+   *
+   * `setView('spaces')` MEANS "GET BACK ONTO THE DRAWING" AND NOT "the Spaces
+   * tab". There are no tabs any more — see the note where the strip used to be
+   * in App.jsx — and the only thing `view` still decides is which SCENE has the
+   * stage: 'boq' and 'boards' are the two sheets, and every other value is the
+   * plan. This line is a press on a fitting getting the schedule out of the way,
+   * which is what it always was.
    *
    * `setOptionPick` IS HANDED IN, because the pill it puts away is App's — one
    * chunk's options, over the drawing, owned by the canvas rather than by any

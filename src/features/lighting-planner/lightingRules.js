@@ -200,7 +200,10 @@ export function fixtureGroups(r, {
     bump(a.id, 'cob', n, 0);
     const row = g.get(a.id);
     row.label = 'Spot array';
-    row.layer = 'ambient';
+    /* NO `layer` OVERRIDE. It said 'ambient', which was consistent with the COB
+       family at the time and is wrong for the same reason that was: a ring of
+       downlights is a ring of downlights. The family says task now — see the
+       note on `cob` in lumens.js — and an array is the family. */
     row.watts = clampWatts(a.watts);
     row.wattRange = COB_WATT_RANGE;
     row.beam = nearestBeam(a.beam);
@@ -267,10 +270,12 @@ export function fixtureGroups(r, {
     bump(c.id, 'cob', 1, 0);
     const row = g.get(c.id);
     row.label = 'Placed COB';
-    /* AMBIENT, like the grid it stands in. A downlight placed by hand is doing
-       the ambient layer's job in a cell the ambient grid cut — where it came
-       from is a fact about who decided, not about what it is for. */
-    row.layer = 'ambient';
+    /* NO `layer` OVERRIDE, AND THE OLD ONE'S REASONING STILL HOLDS — it has
+       simply changed answer. It said "ambient, like the grid it stands in",
+       because where a lamp came from is a fact about who decided rather than
+       about what it is for. Exactly so: the grid is TASK light now (see the note
+       on `cob` in lumens.js), and a downlight placed by hand is doing the same
+       job in a cell that grid cut. The family is the answer either way. */
     row.watts = clampWatts(c.watts);
     row.wattRange = COB_WATT_RANGE;
     row.beam = nearestBeam(c.beam);

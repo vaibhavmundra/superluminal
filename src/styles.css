@@ -55,6 +55,41 @@
   --color-faint:#A8A8A8;
 
   --color-bg:#FAFAFA;
+
+  /* --- THE FOUR SURFACES OF THE EDITOR, AND EACH HAS EXACTLY ONE TONE ------
+     THE DRAWING IS BLACK. Everything else is chrome, and it was four different
+     darks arrived at separately — `bg-black`, 5% white over the page, #0b0b0b
+     and #141414 — which is four tones for what a reader takes to be four
+     different things. There are two greys here and a white, and which surface
+     gets which is decided by what the surface IS:
+
+       TOP BAR — WHITE. Everything on it is about the DOCUMENT: what the plan is
+       called, what has happened to it, and where it goes next. Nothing in it
+       changes a line on the drawing. See the note on it in App.jsx.
+
+       THE RAIL — `--color-chrome`, and it is the only thing wearing it. A
+       column of TOOLS is a thing you reach INTO, which is what earns it a
+       surface of its own; the flyouts hinged off it take the same grey, because
+       a flyout is that rail opened out and painting it anything else would make
+       two cells cut from one strip look like two controls.
+
+       THE BAR ALONG THE FOOT — BLACK, with a hairline for its edge. It holds
+       facts about the sheet and preferences about the picture, both of which
+       belong to the drawing, so it sits on the drawing's own ground. It wore
+       #2F2F2F for one revision and read as a second rail.
+
+       THE FLOATING PANELS — `--color-panel`, near-black, and THIS ONE IS
+       ARITHMETIC RATHER THAN TASTE. The window over the plan and the panels the
+       bars open carry dense type: twelve layer checkboxes, two hundred lines of
+       admin readings, a room's finishes and its lumen figures, all of it written
+       in `--color-muted` (#525252) and `--color-subtle` (#7A7A7A). #525252 on
+       #2F2F2F is a contrast ratio of about 1.5:1 — not "quiet", gone. So they
+       keep a dark ground and lift off the drawing by tone and a shadow instead
+       of by being pale. Raising the muted scale was the other option and is
+       worse: those two tokens are also the body copy on every WHITE screen in
+       this app, where #525252 is a correct 7.4:1. */
+  --color-chrome:#2F2F2F;
+  --color-panel:#171717;
   --color-surface:rgba(255,255,255,0.05);
   --color-surface-2:#FAFAFA;
   --color-surface-3:#F2F2F2;
@@ -116,8 +151,11 @@
      count is an instrument reading, and this is what an instrument's digits
      look like. Monospace behind it because the fallback for a digit face has
      to hold its columns — a proportional stand-in would make the readout jump
-     a pixel on every recount while the font loads. */
-  --font-lcd:'Overtime',ui-monospace,'SFMono-Regular',monospace;
+     a pixel on every recount while the font loads.
+     IT WAS OVERTIME. Digital-7 is the same kind of face — an LCD seven-segment
+     alphabet — and it is the ITALIC cut, so the readout leans. Nothing else in
+     the app reads it: see `--font-lcd`'s one consumer in Lumens.jsx. */
+  --font-lcd:'Digital-7',ui-monospace,'SFMono-Regular',monospace;
 
   --radius:6px;
   --radius-lg:10px;
@@ -248,14 +286,24 @@
   src:url('./fonts/Lunar-400.woff2') format('woff2');
   font-weight:400; font-style:normal; font-display:block
 }
-/* OVERTIME, and only for the lumens readout. Digits, a comma and nothing this
-   app asks it for beyond them — see `--font-lcd` for why it is here at all.
-   `swap` rather than `block`: a figure held blank until a 59KB file arrives is
-   a readout that is missing at the moment somebody places a light, and the
+/* DIGITAL-7, and only for the lumens readout. Digits, a comma and nothing this
+   app asks it for beyond them — see `--font-lcd` for why it is here at all. It
+   is a display alphabet with a display face's coverage, which is the reason
+   that restriction is a rule rather than a habit: ask it for a label and you
+   get whatever it happens to have.
+   REGISTERED AS `normal` THOUGH THE FILE IS THE ITALIC CUT. The slant is baked
+   into the glyphs and there is no upright to pair it with, so declaring
+   `font-style:italic` here would mean the readout had to ASK for italic to get
+   the only face there is — and a browser asked for italic against a face
+   registered as italic-only still risks a synthesised oblique on top of a slant
+   that is already there. Declared normal, the glyphs arrive leaning and nothing
+   slants them twice.
+   `swap` rather than `block`: a figure held blank until the file arrives is a
+   readout that is missing at the moment somebody places a light, and the
    monospace fallback keeps the columns until it lands. */
 @font-face{
-  font-family:'Overtime';
-  src:url('./fonts/overtime.ttf') format('truetype');
+  font-family:'Digital-7';
+  src:url('./fonts/digital-7 (italic).ttf') format('truetype');
   font-weight:400; font-style:normal; font-display:swap
 }
 

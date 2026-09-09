@@ -1,40 +1,78 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { TONES, TONE_LABEL, CEILING_MM_MIN, CEILING_MM_MAX } from '../lib/materials.js';
 import SpaceAnalysis from './SpaceAnalysis.jsx';
+import Lumens from './Lumens.jsx';
 
 /* ---------------------------------------------------------------------------
-   ONE SPACE, OPENED.
+   ONE SPACE, OPENED — AND IT IS WHAT THE FLOATING WINDOW IS FOR.
 
    The spaces list is a list and this is the room. Clicking a row REPLACES the
-   list rather than expanding inside it, which is the one change that makes the
+   list rather than expanding inside it, which is the one change that made the
    panel readable: a room's height, its finishes and its illuminance are four
    decisions deep, and an accordion row holding them puts every other room on the
    plan between this one and the bottom of the screen.
 
-   THE WAY BACK IS AT THE TOP AND IT IS THE FIRST THING. A view that replaces a
-   list has to say what it replaced before it says anything about itself.
+   --- TWO VIEWS NOW, AND THE SECOND ONE IS THE FITTINGS ---------------------
+   THE READING IS WHAT SOMEBODY COMES BACK FOR. What the room is owed, what it
+   has, and how that splits between the ambient layer and the task layer: four
+   figures and a verdict, and the window is sized to hold exactly that (see
+   Lumens). Under it, one line saying what the settings came to.
 
-   --- WHAT IS ON SCREEN AT REST IS THE ANALYSIS -----------------------------
-   THE HEIGHT AND THE FINISHES ARE SETTINGS: answered once, when a room is first
-   looked at, and read many times after. The analysis is the opposite — it moves
-   every time a fitting is placed, and it is what somebody comes back to this
-   panel for. They had equal billing, three sections of similar height, and the
-   thing that changes was below the fold on the two that do not.
+   THE FITTINGS ARE A LIST, AND A LIST DOES NOT BELONG IN A READOUT. A bedroom
+   with a cove and nine placed COBs is a dozen rows, each of which opens four
+   more lines of wattage chips and beam angles — so it was pushing the figures it
+   explains off the top of a column somebody had to scroll. "Show all lights"
+   swaps the window over to it, and the way back is the first thing in it.
 
-   So the settings collapse to two lines and the analysis gets the column.
+   IT SWAPS RATHER THAN OPENING A SHEET, which is the whole reason it is worth
+   having: the wattage chips move the number, and the number is on the other
+   view. A sheet over the drawing would put the fitting you are specifying and
+   the plan you are specifying it against on two different screens.
 
-   THE MATERIALS ROW IS ITS OWN SUMMARY — "Default", or what differs; see
-   `materialsSummary`. Under a dotted rule in the text's own colour, which is the
-   oldest affordance there is for "this is a thing you can change" and costs no
-   height at all, where a button would cost a whole row.
+   ...AND CLICKING A FITTING ON THE DRAWING IS THE OTHER WAY IN. A press on a
+   lamp is a question — "what is this, and what is it doing to the room" — and
+   the answer is a row in that list. With the list behind a button the answer was
+   being given on a view nobody was looking at: the row opened itself and
+   scrolled into place under a readout. So a `highlight` arriving swaps the
+   window over on its own, and the button is for the times nothing is selected.
 
-   AND OPENING IT REPLACES THE ANALYSIS RATHER THAN PUSHING IT DOWN. Setting the
-   finishes is a job you finish; reading the level is a job you return to. Two
-   jobs, one column, one at a time — the same trade the spaces list itself makes,
-   and the reason this has a Done button rather than a disclosure triangle.
+   AND IT SWAPS BOTH WAYS, WHICH IS THE WHOLE OF THE RULE: THE VIEW FOLLOWS THE
+   SELECTION. A fitting selected is a question about that fitting, so the window
+   is the list with that row picked out. NOTHING selected is a question about the
+   SPACE — which is what clicking a room is, and what clicking an empty patch of
+   its ceiling is — and the answer to that is the figures. So the readout is not
+   a place you have to navigate back to; it is where the window sits whenever
+   nothing smaller than the room is in hand.
+
+   IT WAS ONE-WAY FOR A REVISION, on the reasoning that deselecting is not a
+   request to be sent anywhere and a window that jumped back would be taking
+   something away. That is the right instinct about a ROW — see SpaceAnalysis,
+   which still never closes one it did not open — and wrong about the view: a
+   list of every fitting in the room, with none of them selected, is not an
+   answer to anything, and the link back was a step you had to take to get to
+   the figures you had asked for by clicking the room.
+
+   --- AND THE SETTINGS ARE OPEN RATHER THAN BEHIND A DONE BUTTON -----------
+   THEY WERE A SUMMARY LINE UNDER A DOTTED RULE, and opening them replaced the
+   analysis — two jobs, one column, one at a time. That trade was made when this
+   was a 340px track holding four tabs and a footer. It is a window now: the
+   height and the three finishes are four short rows, they fit above the readout
+   without pushing it anywhere, and every one of them MOVES that readout. Setting
+   a ceiling to dark and watching the achieved figure drop is the argument for
+   both being on screen at once, and it is the argument this file's own header
+   used to make for putting the finishes first.
+
+   THE NAME IS EDITED IN PLACE, for the reason the plan's name in the top bar is:
+   a space auto-named "Space 6" is a name nobody chose, and this is where anybody
+   who cares about it is looking.
    --------------------------------------------------------------------------- */
 
-const SEC = 'border-t border-border/10 pt-3.5 mt-3.5';
+/* ONE CARD IN THIS VIEW AND IT IS THE READOUT'S. The settings were in a card
+   of their own for a while, which gave the window three nested grounds — its
+   own, the settings', and the readout's — for two subjects. The settings sit on
+   the window's ground now and the readout is the only thing lifted off it, which
+   is the right emphasis: the four rows are what you set, and the card is what
+   they come to. See Lumens for its ground. */
 /* THE SETTINGS ROWS ARE TIGHTER THAN THE PANEL'S USUAL, and deliberately: they
    are two lines standing between the room's name and the thing the panel is for.
    `min-h` rather than padding, so a row is the height of the control in it
@@ -43,21 +81,20 @@ const ROW = 'flex items-center justify-between gap-2 min-h-[24px]';
 const LBL = 'text-[11.5px] text-muted leading-[1.4]';
 const VAL = 'text-[11.5px] text-text leading-[1.4] tabular-nums';
 
-const BTN_SHAPE = 'leading-[1.5] rounded border cursor-pointer '
-  + 'transition-colors duration-[120ms] disabled:opacity-[.45] '
-  + 'disabled:cursor-not-allowed focus-visible:outline-2 '
-  + 'focus-visible:outline-accent focus-visible:outline-offset-2';
-const BTN_QUIET = 'bg-surface backdrop-blur-md text-white border-border/10 '
-  + 'enabled:hover:bg-surface-2 enabled:hover:text-black enabled:hover:border-border-strong';
-const BTN_FULL = `w-full text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_QUIET}`;
-/* THE WAY OUT OF THE FINISHES, IN THE WHITE EVERY OTHER Done ON THIS SCREEN
-   WEARS — the door step's, the zone step's, the wall step's. One idiom for "this
-   job is finished". */
-const BTN_DONE = `w-full text-[12px] px-3 py-[7px] ${BTN_SHAPE} `
-  + 'bg-white text-black border-white hover:bg-text hover:border-text';
+/* A `BTN_DONE` WAS HERE, in the white every other Done on this screen wears. It
+   closed the finishes and put the analysis back, and there is nothing to close:
+   the finishes and the analysis are both on screen now. */
 const BTN_BACK = 'border-0 bg-none text-[11.5px] text-subtle cursor-pointer p-0 '
   + 'inline-flex items-center gap-[6px] transition-colors duration-[120ms] '
   + 'hover:text-white';
+/* THE WAY ON, AS TYPE. Same weight as the back link above — they are the two
+   ends of one trip — and no ground, because this window already has one card in
+   it and does not need a second block competing with it. */
+const BTN_GO = 'border-0 bg-transparent text-[11.5px] text-faint cursor-pointer '
+  + 'px-1 py-[3px] -mr-1 rounded inline-flex items-center gap-[5px] '
+  + 'transition-colors duration-[120ms] hover:text-white '
+  + 'focus-visible:outline-2 focus-visible:outline-accent '
+  + 'focus-visible:outline-offset-1';
 
 /* A TONE CHIP. The same tile the property chips elsewhere in the panel wear —
    no ground at rest, the panel's own glass when it is the answer. */
@@ -123,82 +160,189 @@ function HeightRow({ ceilingMm, onCeilingMm, disabled }) {
 }
 
 export default function SpaceDetail({
-  name, meta, ceilingMm, onCeilingMm, materials, materialsLabel, wallLabel,
-  onTone, onConfigureWalls, onBack, analysis, onWatts, onBeam = null,
+  name, meta, ceilingMm, onCeilingMm, materials, wallLabel,
+  onTone, onConfigureWalls, onRename = null,
+  analysis, onWatts, onBeam = null,
   highlight = [], autoplace = null, onAutoplace = null,
-  editing = false, onEdit, onDone, disabled = false,
+  disabled = false,
 }) {
-  return (
-    /* NO PADDING OF ITS OWN. The panel's scroller already sets the column's
-       gutters; a second set here would indent this view a further 16px from
-       every other thing the panel shows. */
-    <div className="flex flex-col">
-      <button type="button" className={`${BTN_BACK} self-start mb-3`} onClick={onBack}>
-        <span aria-hidden="true">←</span> Back to Spaces
-      </button>
+  /* WHICH OF THE TWO VIEWS, AND IT IS LOCAL. Whether somebody is looking at the
+     figures or at the fittings is a fact about the next few seconds — it must
+     not be saved, must not be undoable, and must not survive clicking a
+     different room. Keyed by nothing, because the window is remounted per space
+     (`key={openRoom.id}` at the call site), which is what makes "a different
+     room opens on its readout" true without an effect to enforce it.
 
-      <div className="mb-3">
-        <h2 className="m-0 text-[15px] leading-[1.3] tracking-[-0.02em] text-white
-          overflow-hidden text-ellipsis">{name}</h2>
-        {meta && <p className="m-0 mt-1 text-[10.5px] text-subtle tabular-nums">{meta}</p>}
+     ITS INITIAL VALUE IS THE SELECTION, not `false`, and that is the mount case
+     rather than a nicety: clicking a fitting in a room that is not open selects
+     the room AND the fitting, so this component mounts with a `highlight`
+     already in hand. Starting closed and letting the effect below open it would
+     paint the readout for one frame and then replace it. */
+  const answer = (highlight ?? []).join('|');
+  const [lights, setLights] = useState(!!answer);
+
+  /* --- AND THE VIEW FOLLOWS THE SELECTION FROM THEN ON -------------------
+     A FITTING SELECTED IS THE LIST; NOTHING SELECTED IS THE FIGURES. One line
+     each way, which is what makes it a rule rather than two behaviours.
+
+     IT FIRES ON THE SELECTION CHANGING AND NOT ON EVERY RENDER, which is the
+     one thing to be careful of: the rows re-render on every keystroke of a
+     wattage slider, and `setLights` with the value it already holds is a no-op
+     React still has to reconcile. Seeded with the mount value, so the state set
+     above is not immediately set again.
+
+     THE BUTTON IS STILL WORTH HAVING. It is how you read the list with nothing
+     selected — every fitting in the room at once, which is a different question
+     from "what is this one" — and pressing it does not select anything, so this
+     effect leaves it alone until the next press on the drawing. */
+  const answered = useRef(answer);
+  useEffect(() => {
+    if (answer === answered.current) return;
+    answered.current = answer;
+    setLights(!!answer);
+  }, [answer]);
+
+  /* THE NAME BEING TYPED, OR NULL. Held as a draft for the reason the height
+     field holds one: the stored name is normalised — an empty string falls back
+     to the old one — so a controlled input reading straight off it could not be
+     cleared to retype. */
+  const [draft, setDraft] = useState(null);
+  const commit = () => {
+    const next = (draft ?? '').trim();
+    if (next && next !== name) onRename?.(next);
+    setDraft(null);
+  };
+
+  return (
+    /* NO PADDING OF ITS OWN. The window's scroller already sets the gutters; a
+       second set here would indent this view a further 16px from everything else
+       the window shows. */
+    <div className="flex flex-col">
+      {/* --- WHICH SPACE, AND HOW BIG IT IS ------------------------------
+          THE NAME AND THE MEASUREMENTS ON ONE LINE, because they are one
+          subject: "Space 6, a 22 by 25 living room" is how anybody would say
+          it. The name is the only thing here that can be changed, so it is the
+          only thing that looks like a control.
+
+          THERE IS NO WAY BACK, BECAUSE THERE IS NOWHERE TO GO BACK TO. It had a
+          ← to the list of spaces, and the list is gone: the rooms are on the
+          drawing, labelled, and clicking one is how you pick one. Clicking off
+          it is how you close this — the same gesture, in the same place, on the
+          thing itself.
+
+          THE NAME WEARS ITS CHIP AT REST rather than only on hover. Hover is
+          not an affordance on a control somebody has to know is there before
+          they point at it, and this one is worth knowing: a space auto-named
+          "Space 6" is a name nobody chose. */}
+      <div className="flex items-baseline justify-between gap-2 mb-3">
+        {draft == null ? (
+          <span className="flex items-baseline gap-1.5 min-w-0">
+            {onRename && !disabled ? (
+              <button type="button" title="Rename this space"
+                className="border-0 text-[14px] leading-[1.3] tracking-[-0.02em]
+                  text-white cursor-text px-2 py-[3px] rounded-md min-w-0
+                  overflow-hidden text-ellipsis whitespace-nowrap
+                  bg-white/[0.08] transition-colors duration-[120ms]
+                  hover:bg-white/[0.14]
+                  focus-visible:outline-2 focus-visible:outline-accent
+                  focus-visible:outline-offset-1"
+                onClick={() => setDraft(name)}>{name}</button>
+            ) : (
+              <h2 className="m-0 text-[14px] leading-[1.3] tracking-[-0.02em] text-white
+                px-2 py-[3px] rounded-md bg-white/[0.08] min-w-0
+                overflow-hidden text-ellipsis whitespace-nowrap">{name}</h2>
+            )}
+          </span>
+        ) : (
+          <input className="text-[15px] leading-[1.3] tracking-[-0.02em] min-w-0 flex-1
+            px-1.5 py-[2px] rounded bg-surface backdrop-blur-md text-white
+            border border-border/20 focus:outline-none"
+            autoFocus value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') setDraft(null);
+            }} />
+        )}
+        {meta && (
+          <p className="m-0 flex-none text-[10.5px] text-subtle tabular-nums
+            whitespace-nowrap">{meta}</p>
+        )}
       </div>
 
-      {/* NO RULE BETWEEN THE NAME AND THE HEIGHT. A hairline there would be a
-          separator between a thing and its own properties — the room's name and
-          the room's height are one subject. The first rule in this column
-          belongs where the subject actually changes, which is above the
-          analysis. */}
-      <HeightRow ceilingMm={ceilingMm} onCeilingMm={onCeilingMm} disabled={disabled} />
-
-      {editing ? (
+      {lights ? (
+        /* --- THE FITTINGS, AND THE WAY BACK IS THE FIRST THING -----------
+            A view that replaced a readout has to say what it replaced before it
+            says anything about itself. */
         <>
-          <div className={`${ROW} mt-1 mb-1.5`}>
-            <span className={LBL}>Materials</span>
-          </div>
-          <ToneRow label="Ceiling" value={materials.ceiling} disabled={disabled}
-            onPick={(t) => onTone('ceiling', t)} />
-          <ToneRow label="Floor" value={materials.floor} disabled={disabled}
-            onPick={(t) => onTone('floor', t)} />
-          {/* THE WALLS ARE A READING, NOT A CHOICE — there are four to a dozen of
-              them and they are chosen on the drawing, one at a time. What sits
-              here is what those choices came to. */}
-          <div className={`${ROW} mb-1.5`}>
-            <span className={LBL}>Walls</span>
-            <span className={VAL}>{wallLabel}</span>
-          </div>
-          <button type="button" className={`${BTN_FULL} mt-2`} disabled={disabled}
-            onClick={onConfigureWalls}>Configure walls</button>
-          <button type="button" className={`${BTN_DONE} mt-1.5`}
-            onClick={onDone}>Done</button>
+          <button type="button" className={`${BTN_BACK} self-start mb-3`}
+            onClick={() => setLights(false)}>
+            <span aria-hidden="true">←</span> Analysis
+          </button>
+          <SpaceAnalysis analysis={analysis} onWatts={onWatts} onBeam={onBeam}
+            highlight={highlight} autoplace={autoplace} onAutoplace={onAutoplace}
+            disabled={disabled} />
         </>
       ) : (
         <>
-          <div className={`${ROW} mt-0.5`}>
-            <span className={LBL}>Materials</span>
-            {/* THE DOTTED RULE IS THE AFFORDANCE, and `border-current` is what
-                keeps it the text's own colour rather than a second one to keep
-                in step. It costs no height, which is the whole reason this is a
-                summary under a rule rather than a button on a row of its own. */}
-            <button type="button" disabled={disabled}
-              className="border-0 border-b border-dotted border-current bg-transparent
-                p-0 pb-px text-[11.5px] leading-[1.4] text-muted cursor-pointer
-                max-w-[62%] overflow-hidden text-ellipsis whitespace-nowrap
-                transition-colors duration-[120ms] enabled:hover:text-white
-                disabled:cursor-not-allowed
-                focus-visible:outline-2 focus-visible:outline-accent
-                focus-visible:outline-offset-2"
-              title="Set what this space is finished in"
-              onClick={onEdit}>{materialsLabel}</button>
+          {/* --- WHAT THIS SPACE IS, AND EVERY ROW OF IT MOVES THE READOUT ---
+              THE HEIGHT FIRST, because it is a measurement rather than a
+              choice: a room is 3000mm whatever anybody wants, and the three
+              finishes under it are decisions. It is also the one that changes
+              the arithmetic most — halve the height and the walls halve with
+              it. See surfaceAreas in lib/lumens.js.
+              THE WALLS ARE A READING AND NOT A CHOICE. There are four to a
+              dozen of them and they are picked on the DRAWING, one at a time,
+              because this window cannot say WHICH wall — see WallTonePopup.
+              What sits here is what those choices came to, and the way in. */}
+          <div>
+            <HeightRow ceilingMm={ceilingMm} onCeilingMm={onCeilingMm}
+              disabled={disabled} />
+            <ToneRow label="Ceiling material" value={materials.ceiling}
+              disabled={disabled} onPick={(t) => onTone('ceiling', t)} />
+            <ToneRow label="Floor material" value={materials.floor}
+              disabled={disabled} onPick={(t) => onTone('floor', t)} />
+            <div className={`${ROW} mb-0`}>
+              <span className={LBL}>Wall material</span>
+              <span className="flex items-baseline gap-2 flex-none">
+                <span className={VAL}>{wallLabel}</span>
+                {/* THE DOTTED RULE IS THE AFFORDANCE, and `border-current` is
+                    what keeps it the text's own colour rather than a second one
+                    to keep in step. It costs no height, which is why this is a
+                    link on the row rather than a button under it. */}
+                <button type="button" disabled={disabled}
+                  className="border-0 border-b border-dotted border-current
+                    bg-transparent p-0 pb-px text-[10.5px] leading-[1.4] text-subtle
+                    cursor-pointer transition-colors duration-[120ms]
+                    enabled:hover:text-white disabled:cursor-not-allowed
+                    focus-visible:outline-2 focus-visible:outline-accent
+                    focus-visible:outline-offset-2"
+                  title="Set the tone of each wall, on the drawing"
+                  onClick={onConfigureWalls}>Modify walls</button>
+              </span>
+            </div>
           </div>
 
-          {/* THE SECOND HALF READS THE FIRST. Every tone set above moves the
-              number below it — that is the whole reason the finishes come first,
-              and the reason both live on one screen rather than in two tabs. */}
-          <div className={SEC}>
-            <SpaceAnalysis analysis={analysis} onWatts={onWatts} onBeam={onBeam}
-              highlight={highlight} autoplace={autoplace} onAutoplace={onAutoplace}
-              disabled={disabled} />
+          {/* THE SECOND CARD READS THE FIRST. Every tone set above moves the
+              figure below it — that is the whole reason the finishes come first
+              and the reason both are on one screen rather than in two views. */}
+          <div className="mt-2.5">
+            <Lumens analysis={analysis} />
           </div>
+
+          {/* --- AND THE FITTINGS THAT MADE THAT FIGURE ------------------
+              A LINK AND NOT A BUTTON, RIGHT-ALIGNED UNDER THE CARD. A
+              full-width outlined slab is the weight of a decision, and this is
+              navigation: the readout above it is the loud thing in this window
+              and a second block under it competed with it.
+              THE ARROW SAYS IT GOES SOMEWHERE, which is the honest mark — this
+              is not a disclosure that grows the window, it swaps what the
+              window is showing. */}
+          <button type="button" className={`${BTN_GO} self-end mt-2.5`}
+            onClick={() => setLights(true)}>
+            Show all lights <span aria-hidden="true">→</span>
+          </button>
         </>
       )}
     </div>

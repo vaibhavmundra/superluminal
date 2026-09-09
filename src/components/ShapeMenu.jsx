@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
 import { SHAPE_TOOLS, SHAPE_BY_ID, POLY_SIDES } from '../lib/ceilingShapes.js';
+import StageBar from './StageBar.jsx';
 
 // ---------------------------------------------------------------------------
 // ShapeMenu — the floating white bar the cove shapes are drawn from.
@@ -35,10 +35,13 @@ import { SHAPE_TOOLS, SHAPE_BY_ID, POLY_SIDES } from '../lib/ceilingShapes.js';
 // the stage is a scroll container, so an absolutely positioned child scrolls
 // away with the drawing; and this must not be inside the <svg>, where the zoom
 // would scale it.
+//
+// ...AND THE PILL ITSELF IS StageBar's NOW. The white ground, the measuring, the
+// centring and the pointer guard were written here and copied into CobSpec, and
+// there is a third caller: the two scene buttons are on this bar whatever else
+// is in it, and a plan with no gesture running still has a bar. `tail` is where
+// they go — see StageBar, and the note on `tail` below.
 // ---------------------------------------------------------------------------
-
-/** Its clearance from the foot of the stage. */
-const BOTTOM = 26;
 
 /**
  * THE MARKS. Black outline, white fill, 20 units square — the shapes drawn as
@@ -143,37 +146,6 @@ const SEP = <span className="w-px h-5 bg-black/10 mx-0.5" aria-hidden="true" />;
 const CAP = 'text-[10.5px] leading-none tracking-[0.02em] text-black/55 px-1.5 select-none';
 
 /**
- * WHERE THE BAR SITS. Centred over the stage, near its foot — the position
- * every drawing tool in every editor has trained people to look at, and the one
- * place on this screen that is neither the sheet's middle nor the panel.
- *
- * `null` while the stage has not been measured, which is one frame on mount.
- */
-function useStageRect(stage) {
-  const [box, setBox] = useState(null);
-  const measure = useCallback(() => {
-    const el = stage?.current;
-    setBox(el ? el.getBoundingClientRect() : null);
-  }, [stage]);
-  useEffect(() => {
-    measure();
-    const el = stage?.current;
-    window.addEventListener('resize', measure);
-    el?.addEventListener('scroll', measure);
-    // The stage changes width when the panel does, and neither of the two
-    // listeners above fires for that.
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
-    if (el && ro) ro.observe(el);
-    return () => {
-      window.removeEventListener('resize', measure);
-      el?.removeEventListener('scroll', measure);
-      ro?.disconnect();
-    };
-  }, [measure, stage]);
-  return box;
-}
-
-/**
  * `mode` is which of the four states the bar is in, and the caller owns it —
  * this component decides nothing. It is a row of buttons that reports presses.
  *
@@ -197,24 +169,17 @@ export default function ShapeMenu({
      vocabulary for it — "inset/offset", a signed number — would be two ways to
      say one thing in two bars on the same drawing. */
   offset = null,
+  /* THE TWO SCENE BUTTONS, PASSED IN AND DRAWN AT THE FAR END. They belong to
+     neither this bar nor any other — they say which DRAWING you are looking at —
+     and they are on whichever contextual bar happens to be up so that there is
+     never a second pill beside this one saying it. The caller owns them because
+     the caller is the only thing that knows what scenes there are. */
+  tail = null,
   onTool, onSides, onCommit, onCancel, onRadius, onDuplicate, onDelete,
   onOffsetSide, onOffsetFt,
 }) {
-  const box = useStageRect(stage);
-  if (!box) return null;
-
   return (
-    <div
-      className="fixed z-30 flex items-center gap-0.5 rounded-[11px] bg-white
-        border border-black/[0.10] shadow-[0_6px_24px_rgba(0,0,0,0.22)] px-1.5 py-1.5"
-      style={{ left: (box.left + box.right) / 2, bottom: Math.max(12, window.innerHeight - box.bottom + BOTTOM),
-               transform: 'translateX(-50%)' }}
-      /* THE BAR MUST NOT START A GESTURE ON THE PLAN. The stage's own pointer
-         handlers are on the SVG, so a press here never reaches them — but the
-         canvas-wide click that clears the selection is on the document, and a
-         press that both pressed a button and deselected the shape the button
-         acts on is a press with two meanings. */
-      onPointerDown={(e) => e.stopPropagation()}>
+    <StageBar stage={stage} tail={tail} label="Ceiling shapes">
 
       {mode === 'pick' && SHAPE_TOOLS.map((t) => (
         <button key={t.id} type="button" title={t.label} aria-pressed={tool === t.id}
@@ -340,7 +305,7 @@ export default function ShapeMenu({
           </svg>
         </button>
       </>)}
-    </div>
+    </StageBar>
   );
 }
 

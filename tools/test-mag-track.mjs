@@ -451,8 +451,17 @@ say('-- and the catalogue --');
   ok(FAMILY_BY_ID.track_spot.borrowed === 'cob'
     && FAMILY_BY_ID.track_spot.split.floor === FAMILY_BY_ID.cob.split.floor,
     "...on the COB's distribution, and saying so with `borrowed`");
-  ok(FAMILY_BY_ID.track_spot.layer === 'task' && FAMILY_BY_ID.cob.layer === 'ambient',
-    'and it is the task layer where the grid downlight is ambient — a spot is aimed');
+  /* BOTH ARE TASK, AND THIS ASSERTION USED TO SAY THE OPPOSITE. It read
+     "the task layer where the grid downlight is ambient", which was true of the
+     table and wrong about the light: a recessed COB puts 80% of its output at
+     the floor, and the line above this one is the assertion that a track spot
+     shares exactly that distribution. Two fittings with one cone cannot be in
+     two different layers. See the note on `cob` in lumens.js for what the
+     mis-filing was doing to the ambient figure. */
+  ok(FAMILY_BY_ID.track_spot.layer === 'task' && FAMILY_BY_ID.cob.layer === 'task',
+    'and both are task light — they share the cone, so they share the layer');
+  ok(FAMILY_BY_ID.track_diffuser.layer === 'ambient',
+    '...where the diffuser on the same rail is ambient, which is why both exist');
   /* THE SAME FIVE WATTAGES IN A SEPARATE ARRAY. Not an alias: a catalogue loader
      replacing one must not silently replace the other, which is the whole point
      of the split. */

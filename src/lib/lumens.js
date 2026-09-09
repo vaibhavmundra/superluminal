@@ -179,8 +179,22 @@ export const STRIP_WATTS_PER_M = [5, 6.6, 9, 11];
  * PER FAMILY AND NOT GLOBAL, which is what makes it editable in the useful
  * direction: a family with no `loss` loses nothing, so a fitting that needs a
  * different figure — or none — is one field on its own row.
+ *
+ * --- IT WAS 0.1, AGAINST EVERY WORD OF THE NOTE ABOVE ----------------------
+ * THE VALUE AND ITS OWN SPECIFICATION DISAGREED FROM THE DAY BOTH WERE WRITTEN
+ * — they arrived in the same commit. The prose says 20%, says "a fifth", and
+ * works the figure through as "100 lm/W less a fifth is 80 delivered"; the
+ * constant said 0.1. There was no comment anywhere arguing for 10%, and the
+ * derivation above is specific about where the fifth goes: driver efficiency,
+ * voltage drop down a long run, and the diffuser or the lip of the cove.
+ * SO THE SPECIFICATION WINS, which is this file's standing rule — see the head
+ * of the test file, which says the table IS the specification.
+ * EVERY LENGTH OF TAPE ON EVERY PLAN NOW READS 11% LOWER than it did, and that
+ * is the point rather than a side effect: a cove was being credited with light
+ * the pocket eats. Nothing else in the model moves — no COB, panel, lamp or
+ * sconce carries a `loss` at all.
  */
-export const STRIP_LOSS = 0.1;
+export const STRIP_LOSS = 0.2;
 
 /** A recessed COB, per piece. */
 export const COB_WATTS = [3, 5, 7, 9, 12];
@@ -364,7 +378,24 @@ export const FIXTURE_FAMILIES = [
     watts: TRACK_DIFFUSER_WATTS, defaultWatts: 10, lumens: null,
   },
   {
-    id: 'cob', label: 'Recessed COB', unit: 'nos', layer: 'ambient',
+    /* --- TASK, AND IT USED TO SAY AMBIENT -----------------------------------
+       THIS IS THE ONE THAT WAS WRONG, and it was wrong in the way that matters
+       most: it is the fitting a plan is mostly made of, so its layer decided
+       almost the whole of the ambient figure. A room with a twelve-lamp grid and
+       a single cove reported about 4,500 lm of "ambient" of which the cove was
+       1,000 — which is not a reading anybody can act on, and it was the reason a
+       room lit entirely by downlights never showed as short of ambient light.
+       THE SPLIT ABOVE IS THE ARGUMENT. 80% of a recessed COB's output goes at
+       the FLOOR and none of it at the ceiling: it puts a cone on the work
+       surface, which is the definition of task light. What washes a room is what
+       throws at the ceiling and the walls — the coves, the strips, the panels,
+       the sconces and the pendants — and every one of those is filed as ambient.
+       WHICH MAKES THE TWO FIGURES MEAN SOMETHING. A low ambient figure beside a
+       met total now says a room is reaching its number on downlights and has
+       nothing lifting the surfaces, which is a real fault a designer fixes with
+       a cove. Before this it could only show on a room with no lamps in it at
+       all. */
+    id: 'cob', label: 'Recessed COB', unit: 'nos', layer: 'task',
     split: { ceiling: 0.0, walls: 0.2, floor: 0.8 },
     watts: COB_WATTS, defaultWatts: 7, lumens: null,
   },
@@ -792,8 +823,25 @@ export function analyseSpace({
   const byLayer = { ambient: 0, task: 0, accent: 0 };
   for (const r of rows) byLayer[r.layer] = (byLayer[r.layer] ?? 0) + r.netLumens;
 
+  /* --- ...AND THE TWO FIGURES THE READOUT PRINTS, WHICH ARE NOT THE THREE ---
+     ACCENT LIGHT IS AMBIENT LIGHT AS FAR AS A ROOM'S LEVEL GOES. A sconce
+     washes a wall, a pendant throws in every direction, a shelf strip lifts a
+     recess — none of them is aimed at a work surface, and all of that light ends
+     up in the room the same way a cove's does. The THREE layers are still what a
+     scheme is designed in, and the fixture list groups by them; the READING is
+     "how much of this room is being washed, and how much is being pointed at
+     something", which is two figures.
+     SO THE GROUPING AND THE ACCOUNTING ARE BOTH HERE, and neither is derived in
+     a component. A panel adding two of the three together would be a second
+     place that decides what ambient means. */
+  const contributions = {
+    ambient: byLayer.ambient + byLayer.accent,
+    task: byLayer.task,
+  };
+
   return {
-    ref, areas, luReq, required, lumensPerWatt, rows, achieved, byLayer,
+    ref, areas, luReq, required, lumensPerWatt, rows, achieved,
+    byLayer, contributions,
     shortfall: Math.max(0, required - achieved),
     ok: achieved >= required,
   };

@@ -1,27 +1,33 @@
 import React from 'react';
 
 // ---------------------------------------------------------------------------
-// PaletteButton — one cell of one of this panel's palettes.
+// PaletteButton — one cell of one of the rail's five flyouts.
 //
-// IT EXISTS BECAUSE THE CELL IS NOW IN FOUR PLACES AND WAS DRIFTING. The
-// electrical row, the lighting row, the no-light-zone cell and the cove button
-// hand-written in App.jsx were four copies of the same twelve lines of Tailwind,
-// kept in step by hand — and the last restyle proved they would not be: the
+// IT EXISTS BECAUSE THE CELL WAS IN FOUR PLACES AND WAS DRIFTING. The electrical
+// row, the lighting row, the no-light-zone cell and the cove button hand-written
+// in App.jsx were four copies of the same twelve lines of Tailwind, kept in step
+// by hand — and the restyle that prompted this proved they would not be: the
 // cove button sat in the old frosted-glass style beside three black ones until
-// somebody noticed. The cells are not merely similar, they are the same
-// control: the same square, the same symbol-above-caps-below, the same armed
-// ring. One component, and a change to the look happens once.
+// somebody noticed. The cells are not merely similar, they are the same control:
+// the same square, the same symbol-above-caps-below, the same armed ring. One
+// component, and a change to the look happens once — which is what let the whole
+// rail change tone in one line when the chrome went grey.
+//
+// ITS CALLERS ARE NOW THE FIVE FLYOUTS AND NOTHING ELSE. The rail's own five
+// cells are not these: a category has no object to photograph, so it gets a line
+// mark at its own size, and `RailCell` in ToolRail draws it. See the note there
+// on why that is a separate component rather than a flag on this one.
 //
 // WHAT IT IS NOT is a palette. It knows nothing about tools, catalogue ids or
 // which machine a press arms — the rows own all of that, which is why three
 // quite different palettes can share it.
 //
-// THE BLACK IS THE GROUND, EDGE TO EDGE, AND NOW SO IS THE PICTURE. The icon
-// used to be a stamp floating inside a padded, bordered, rounded cell — so every
-// button drew its own box, the rail was a column of boxes on a second ground,
-// and the artwork was two thirds the width it had to play with. There is one
-// black field now: the rail's, the button's and the image's are the same black
-// and no edge separates them, so what you see down the column is the symbols.
+// ONE GROUND, EDGE TO EDGE, AND THE CELL DOES NOT PAINT IT. The icon used to be
+// a stamp floating inside a padded, bordered, rounded cell — so every button
+// drew its own box, the rail was a column of boxes on a second ground, and the
+// artwork was two thirds the width it had to play with. There is one field now
+// and it belongs to whatever this cell is put on, so no edge separates them and
+// what you see down the column is the symbols.
 //
 // NO PADDING AND NO RADIUS ON THE CELL. Both existed to keep the picture off the
 // border, and there is no border. The caption keeps a few pixels under it,
@@ -53,7 +59,7 @@ import React from 'react';
  * A FLAG AND NOT A CHANGE TO THE DEFAULT, because the default is right for
  * eleven cells and wrong for three. Padding every cell to suit the three would
  * lengthen a column whose positions people learn, for no reason on any of the
- * others. See TrackMenu, which is the only caller that sets it.
+ * others. The Tracks flyout in ToolRail is the only caller that sets it.
  */
 export default function PaletteButton({ icon, label, on = false, disabled = false,
                                         airy = false,
@@ -61,7 +67,14 @@ export default function PaletteButton({ icon, label, on = false, disabled = fals
   return (
     <button type="button" disabled={disabled} onClick={onClick}
       title={title ?? label} aria-pressed={on}
-      className={'flex flex-col items-center p-0 bg-black '
+      /* `bg-transparent` AND NOT `bg-black`, WHICH IS THE WHOLE OF THE NOTE
+         ABOVE MADE LITERAL. The cell used to paint its own black, which was the
+         same black the rail was, so nothing showed — and then the rail went
+         grey (see `--color-chrome`) and a black cell on a grey flyout was the
+         box this component exists to have removed, drawn again. A cell takes
+         whatever surface it is put on; only the hover and the armed ring are
+         the cell's own. */
+      className={'flex flex-col items-center p-0 bg-transparent '
         + (airy ? 'gap-[5px] pb-[8px] ' : 'gap-[1px] pb-[5px] ')
         + 'border-0 cursor-pointer transition-colors duration-[120ms] '
         + 'disabled:opacity-[.45] disabled:cursor-not-allowed '
@@ -92,10 +105,14 @@ export default function PaletteButton({ icon, label, on = false, disabled = fals
       {/* WHITE WHEN ARMED — `text-ink` was the bug it replaced. Ink is #000000,
           which is right on paper and invisible here: arming a fan made its name
           DISAPPEAR, the opposite of what a latched control should do.
-          `text-subtle` and not `text-muted` at rest: the label is a caption
-          under a picture that already names the thing. */}
+          `text-faint` AND NOT `text-subtle` AT REST, AND THE CHROME'S TONE IS
+          WHY IT MOVED. The caption is deliberately quiet — it sits under a
+          picture that already names the thing — but #7A7A7A on the flyout's
+          #2F2F2F is about 2.4:1, which is quiet to the point of absent. #A8A8A8
+          is 4.2:1 and is the ink the rail's own five labels wear, so a category
+          and the cells inside it read at one weight. */}
       <span className={'text-[8.5px] leading-[1.15] text-center uppercase tracking-[0.07em] '
-        + (on ? 'text-white' : 'text-subtle')}>{label}</span>
+        + (on ? 'text-white' : 'text-faint')}>{label}</span>
     </button>
   );
 }

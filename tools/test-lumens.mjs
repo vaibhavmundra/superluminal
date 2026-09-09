@@ -4,7 +4,7 @@ import { SURFACE_REFLECTANCE, LUMENS_PER_SQFT, LUMENS_PER_SQFT_DEFAULT,
          STRIP_LUMENS_PER_WATT,
          FIXTURE_FAMILIES, FAMILY_BY_ID,
          reflectanceOf, surfaceAreas, lumensPerSqftFor, lumensPerWattFor,
-         lumensRequired, bounceOf, unitOutput, wattsFor, analyseSpace }
+         lumensRequired, bounceOf, unitOutput, wattsFor, analyseSpace, ftToM }
   from '../src/lib/lumens.js';
 
 /* --- THE TABLE IS THE SPECIFICATION, SO THE TEST READS IT ------------------
@@ -388,12 +388,16 @@ sec('the total is split into the layers a scheme is designed in');
   ok('the ambient row is the ambient figure', at(three.byLayer.ambient, netOf('cove')));
   ok('...the task row the task figure', at(three.byLayer.task, netOf('spot')));
   ok('...and the accent row the accent figure', at(three.byLayer.accent, netOf('lamp')));
-  /* THE ONE PROPERTY THE READOUT DEPENDS ON: it prints the three under the
-     total, so three figures that did not add back to it would be a card
-     contradicting its own arithmetic. */
+  /* THE ONE PROPERTY THE GROUPING DEPENDS ON: the fixture list draws a section
+     per layer, so three figures that did not add back to the total would be a
+     panel whose sections do not account for their own room. */
   ok('the three add back up to achieved',
     at(three.byLayer.ambient + three.byLayer.task + three.byLayer.accent,
       three.achieved));
+  /* AND EVERY ROW IS IN EXACTLY ONE OF THEM, which is what stops a fitting
+     going missing from a panel that claims to list the room. */
+  ok('every row is in one of the three layers',
+    three.rows.every((r) => ['ambient', 'task', 'accent'].includes(r.layer)));
 
   /* ALL THREE KEYS EXIST WHATEVER IS IN THE ROOM, so a caller can print a layer
      without first asking whether the room has one — a missing key would print
@@ -403,6 +407,145 @@ sec('the total is split into the layers a scheme is designed in');
   ok('an empty room still answers for all three layers',
     bare.byLayer.ambient === 0 && bare.byLayer.task === 0
       && bare.byLayer.accent === 0);
+  ok('...and for both contributions',
+    bare.contributions.ambient === 0 && bare.contributions.task === 0);
+}
+
+sec('...and the readout reads it as two figures, not three');
+{
+  /* WHAT WASHES THE ROOM AND WHAT IS POINTED AT SOMETHING. A downlight is task
+     light — 80% of its output goes at the floor — and a sconce is not, however a
+     scheme files it. These are the two figures the readout prints, so the
+     grouping being right is not enough: the FOLD has to be right too. */
+  const room = analyseSpace({
+    polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+    projectId: 'residential', country: 'India',
+    groups: [{ key: 'cove', familyId: 'cove', count: 1, lengthFt: 20 },
+             { key: 'cob', familyId: 'cob', count: 12 },
+             { key: 'lamp', familyId: 'lamp', count: 2 }],
+  });
+  const netOf = (k) => room.rows.find((r) => r.key === k).netLumens;
+  /* THE ONE THAT WAS WRONG AND IS THE REASON THIS SECTION EXISTS. `cob` was
+     filed as ambient, so a twelve-lamp grid and one cove reported the grid's
+     output as the room's ambient level — and a room lit entirely by downlights
+     could never read as short of ambient light. */
+  ok('a recessed COB is task light', at(room.contributions.task, netOf('cob')));
+  ok('...and not part of the ambient figure',
+    room.contributions.ambient < netOf('cob'));
+  /* ACCENT FOLDS INTO AMBIENT, which is the other half of the fold: a floor
+     lamp throws in every direction and that light is in the room. */
+  ok('accent light counts as ambient',
+    at(room.contributions.ambient, netOf('cove') + netOf('lamp')));
+  ok('the two add back up to achieved',
+    at(room.contributions.ambient + room.contributions.task, room.achieved));
+
+  /* AND A 10 ft REVERSE COVE AT 5 W/m IS ABOUT A THOUSAND LUMENS. The figure is
+     asserted as a RANGE rather than a literal because every constant behind it
+     is meant to be edited — 100 lm/W off the reel, a fifth lost in the pocket,
+     and the room's own surfaces. What is being pinned is the ORDER: a metre of
+     tape is hundreds of lumens, not thousands, so an arithmetic slip anywhere in
+     that chain (a feet-for-metres, a percent-for-fraction) shows up here. */
+  const cove = analyseSpace({
+    polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+    projectId: 'residential', country: 'India',
+    groups: [{ key: 'rc', familyId: 'reverse_cove', count: 1, lengthFt: 10 }],
+  });
+  ok('a 10 ft cove at 5 W/m is hundreds of lumens, not thousands',
+    cove.achieved > 500 && cove.achieved < 1500,
+    `got ${Math.round(cove.achieved)}`);
+  ok('...and every one of them is ambient',
+    at(cove.contributions.ambient, cove.achieved) && cove.contributions.task === 0);
+}
+
+sec('a length of tape, derived end to end from the five constants');
+{
+  /* --- THE WHOLE CHAIN, ONE LINK AT A TIME -------------------------------
+     THE FIGURE WAS DISPUTED, so what is asserted here is not the answer but the
+     DERIVATION: five constants, four multiplications, and a re-derivation of
+     each step from the exported pieces rather than from a literal. If any one
+     link is edited on purpose these still pass; if one is edited by accident, or
+     a unit is mixed up, exactly one of them fails and names the link. */
+  const L_FT = 10, W_PER_M = 5;
+  const fam = FAMILY_BY_ID.reverse_cove;
+
+  const metres = ftToM(L_FT);
+  ok('a. 10 ft is 3.048 m', at(metres, 3.048, 1e-9));
+  ok('   ...and NOT 32.8 — the conversion is not inverted', metres < L_FT);
+
+  const perM = unitOutput(fam, W_PER_M, lumensPerWattFor('India'));
+  ok('b. tape ignores the country figure',
+    at(perM, W_PER_M * STRIP_LUMENS_PER_WATT * (1 - STRIP_LOSS)));
+  ok('   ...so a 5 W/m metre leaves the reel at 500 lm',
+    at(W_PER_M * STRIP_LUMENS_PER_WATT, 500));
+  ok('   ...and the pocket takes a fifth of it', at(STRIP_LOSS, 0.2));
+  ok('   ...leaving 400 lm to the metre', at(perM, 400));
+
+  const output = perM * metres;
+  ok('c. ten feet of it is 1,219 lm out of the detail',
+    Math.round(output) === 1219, `got ${Math.round(output)}`);
+
+  const ref = reflectanceOf(LIGHT, ROOM);
+  const b = bounceOf(fam.split, ref);
+  ok('d. a reverse cove throws at the WALLS, not the ceiling',
+    fam.split.walls === 0.8 && fam.split.ceiling === 0);
+  ok('   ...so the bounce is 0.8 of the wall plus 0.2 of the floor',
+    at(b, 0.8 * ref.wall + 0.2 * ref.floor));
+
+  const net = output * b;
+  const a = analyseSpace({
+    polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+    projectId: 'residential', country: 'India',
+    groups: [{ key: 'rc', familyId: 'reverse_cove', count: 1, lengthFt: L_FT }],
+  });
+  ok('e. and the model agrees with the four steps above',
+    at(a.achieved, net), `${Math.round(a.achieved)} vs ${Math.round(net)}`);
+  /* THE ONE THAT WOULD HAVE CAUGHT A STRAY CONSTANT. Nothing is added to a room
+     beyond the rows it was handed — no floor, no minimum, no allowance. */
+  ok('f. nothing is added that was not handed in',
+    at(a.achieved, a.rows[0].netLumens) && a.rows.length === 1);
+
+  /* AND IT IS LINEAR IN THE WATTAGE, chip for chip. A per-watt figure that
+     drifts between chips is the shape every "a stray N is being added" report
+     takes, so it is pinned rather than argued about. */
+  const perWatt = STRIP_WATTS_PER_M.map((w) => {
+    const r = analyseSpace({
+      polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+      projectId: 'residential', country: 'India',
+      groups: [{ key: 'rc', familyId: 'reverse_cove', count: 1, lengthFt: L_FT }],
+      watts: { rc: w },
+    });
+    return r.achieved / w;
+  });
+  ok('g. every catalogue wattage gives the same lumens per watt',
+    perWatt.every((v) => at(v, perWatt[0], 1e-9)),
+    perWatt.map((v) => v.toFixed(2)).join(' / '));
+
+  /* --- AND WHICH FINISH ACTUALLY MOVES IT, WHICH IS WORTH ASSERTING -------
+     THE CEILING TONE CANNOT MOVE A REVERSE COVE, and that surprises people
+     enough to be worth stating as a property rather than left to be discovered
+     from a panel that looks broken: the fitting throws nothing at the ceiling,
+     so a ceiling reflectance has nothing of its light to hand back. The WALLS
+     are 80% of it. Both directions are asserted, because the day a reverse cove
+     is given a ceiling share this test is the one that has to be updated. */
+  const withDarkCeiling = analyseSpace({
+    polygonFt: ROOM, ceilingMm: 2700,
+    materials: { ceiling: 'dark', floor: 'light', walls: {} },
+    projectId: 'residential', country: 'India',
+    groups: [{ key: 'rc', familyId: 'reverse_cove', count: 1, lengthFt: L_FT }],
+  });
+  ok('h. a dark ceiling does not change a reverse cove at all',
+    at(withDarkCeiling.achieved, a.achieved));
+  ok('   ...though it does raise what the room is owed',
+    withDarkCeiling.required > a.required);
+  const withDarkWalls = analyseSpace({
+    polygonFt: ROOM, ceilingMm: 2700,
+    materials: { ceiling: 'light', floor: 'light',
+                 walls: { 0: 'dark', 1: 'dark', 2: 'dark', 3: 'dark' } },
+    projectId: 'residential', country: 'India',
+    groups: [{ key: 'rc', familyId: 'reverse_cove', count: 1, lengthFt: L_FT }],
+  });
+  ok('   ...and dark walls cut it by most of itself',
+    withDarkWalls.achieved < a.achieved * 0.45);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -97,7 +97,8 @@ import { FAMILY_BY_ID } from './lumens.js';
  *
  * --- THE WALL WASHER IS DECLARED AND NOT BUILT -----------------------------
  *
- * `soon: true`, and it is in the list rather than absent for CobMenu's reason:
+ * `soon: true`, and it is in the list rather than absent for the reason the
+ * COB's unbuilt gesture is in its own flyout (see RailFlyout):
  * a drawer that grew a third item later would be a menu somebody had already
  * learned the shape of. It is out of reach rather than missing, which is the
  * honest picture of a module this build does not answer for. It has no `family`

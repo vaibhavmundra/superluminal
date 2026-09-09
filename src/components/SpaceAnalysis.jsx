@@ -1,15 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AUTOPLACE_AT_FRACTION, BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.js';
-import Lumens from './Lumens.jsx';
 
 /* ---------------------------------------------------------------------------
    IS THIS SPACE BRIGHT ENOUGH, AND WHAT IS MAKING IT SO.
 
-   THE READOUT AND THEN THE WORKING. The answer — required, achieved, the layers
-   it is made of and the verdict on their balance — is Lumens.jsx, at the top;
-   the fittings under it are why. It moved out because it stopped being two lines
-   of type and became an instrument, and because the threshold its verdict turns
-   on wanted one obvious place to live.
+   THE READOUT AND THEN THE WORKING. The answer — required, achieved and the two
+   figures it is made of — is Lumens.jsx, at the top; the fittings under it are
+   why. It moved out because it stopped being two lines of type and became an
+   instrument.
 
    WHAT A ROW IS DEPENDS ON WHAT THE FITTING IS, and lib/lumens.js decides it —
    this file draws whatever it is handed. Anything sold by the METRE gets a row
@@ -41,8 +39,10 @@ import Lumens from './Lumens.jsx';
 
    WHICH LAYER A ROW IS IN IS NOT THIS FILE'S TO DECIDE — `row.layer` arrives
    with it, and lib/lumens.js says why a family has one and how a row overrides
-   it. Worth knowing here: the two coves are AMBIENT, both of them, and a
-   directional spot and an art spot are the same FAMILY in two different layers.
+   it. Worth knowing here: the two coves are AMBIENT, both of them; the recessed
+   COB is TASK, grid and hand-placed alike, because it is a downlight; and a
+   directional spot and an art spot are the same FAMILY in two different
+   layers.
 
    A SECTION WITH NOTHING IN IT IS NOT DRAWN, with one exception. An empty
    heading is a promise of rows that are not there — except Ambient, which
@@ -50,13 +50,17 @@ import Lumens from './Lumens.jsx';
    GETS some, so hiding it until there are some would be hiding the control
    behind its own effect.
 
-   AND THE SPLIT AT THE TOP IS THESE SAME SECTIONS. The readout prints an ambient
-   and a task figure; they are the rows of these headings added up, and
-   `analysis.byLayer` is where both this file and that one get the grouping from.
-   The total still counts everything: a room lit largely by its spots is a lit
-   room, and an achieved figure that ignored them would report a shortfall
-   nobody could act on. What the readout says about it is that the BALANCE is
-   wrong, which is the part somebody can act on.
+   THESE THREE SECTIONS ARE THE SCHEME; THE READOUT'S TWO FIGURES ARE THE
+   READING. Both come off the same `layer` on the same rows, and they are not the
+   same split: the readout folds ACCENT in with AMBIENT, because a sconce washing
+   a wall puts its light in the room exactly as a cove does, where a downlight
+   puts eighty percent of it at the floor. So this file groups by what a fitting
+   is FOR and Lumens.jsx reads by where the light GOES. See `contributions` in
+   lib/lumens.js, which is the one place that fold happens.
+   THE TOTAL STILL COUNTS EVERYTHING. A room lit largely by its downlights is a
+   lit room, and an achieved figure that ignored them would report a shortfall
+   nobody could act on. What such a room shows is a low AMBIENT figure beside a
+   met total, which is the part somebody can act on.
 
    --- AND A ROW IS CLOSED UNTIL IT IS ASKED ABOUT ----------------------------
    EACH FIXTURE IS ITS NAME UNTIL YOU CLICK IT. The controls under a row — a
@@ -212,13 +216,14 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
     <>
       <h3 className={H3}>Analysis</h3>
 
-      {/* THE ANSWER, AND IT IS ITS OWN INSTRUMENT NOW. Required, achieved, the
-          layers that make it up and the verdict on their balance were four grey
-          lines in the same voice as the wattage rows below them; they are one
-          readout, and Lumens.jsx is it — including the threshold the verdict
-          turns on. What stays here is the WORKING: the rows, the sections and
-          the one control that moves the figure. */}
-      <Lumens analysis={analysis} />
+      {/* THE READOUT IS NOT IN THIS VIEW AT ALL NOW. Required, achieved and the
+          two figures that make it up are Lumens.jsx, and it is on the window's
+          OTHER view — the one this list is reached from. A readout above a list
+          of forty rows is a readout you scroll away from; see the note in
+          SpaceDetail on why the two swap rather than stack.
+          WHAT IS HERE IS THE WORKING, which is what this file was always for:
+          the rows, the three sections, and the one control that moves the
+          figure. */}
 
       {/* --- WHAT IS MAKING IT SO, LAYER BY LAYER AND ROW BY ROW ------------
           A rule above each row rather than a card round each: these are readings
@@ -368,11 +373,11 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
             </div>
           </>)}
           {/* --- THE TWO READINGS, AND THEY ARE DIFFERENT KINDS OF NUMBER ---
-              CONTRIBUTION TO AMBIENT is what this row gives the ROOM: its whole
-              output, times how much of that the surfaces hand back. It is the
-              figure the two lines at the top of this panel are made of, and
-              naming the layer it feeds is what stops "Contribution" reading as
-              "contribution to something on this row".
+              THE CONTRIBUTION is what this row gives the ROOM: its whole output,
+              times how much of that the surfaces hand back. It is what the two
+              figures on the readout are made of, and naming the one it feeds is
+              what stops "Contribution" reading as "contribution to something on
+              this row".
               ILLUMINATION ON FLOOR is what ONE of them puts under itself, in
               lux — a local intensity, not a share of a budget. It earns its
               place beside the first because the two move independently: tighten
@@ -383,8 +388,21 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
               times brighter, they make twelve pools — so on a row that counts
               more than one, the figure is qualified rather than left to be read
               as a total. See `floorLuxOf` in lumens.js. */}
+          {/* --- AND IT NAMES THE FIGURE THIS ROW FEEDS ---------------------
+              IT SAID "Contribution to ambient" ON EVERY ROW, and that became a
+              flat contradiction the day the recessed COB was filed as task light
+              (see the note on `cob` in lumens.js): a downlight's row claimed to
+              contribute to ambient while its lumens went into the task total
+              above it. A reader adding the rows up to check the card would find
+              the card wrong — and would be right, about the labels.
+              THE SAME FOLD THE READOUT USES, and it is read off `contributions`
+              rather than reimplemented: ambient and accent rows feed the ambient
+              figure, task rows feed the task one. Two places deciding what
+              ambient means is how they come to disagree. */}
           <div className={KV}>
-            <span className={LBL}>Contribution to ambient</span>
+            <span className={LBL}>
+              Contribution to {row.layer === 'task' ? 'task' : 'ambient'}
+            </span>
             <span className="text-text">{lm(row.netLumens)} lm</span>
           </div>
           {row.floorLux != null && (
