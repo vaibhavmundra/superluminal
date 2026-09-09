@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useEscapeClaim } from '../hooks/useEscapeHatch.js';
 
 // ---------------------------------------------------------------------------
 // "LEARN HOW TO USE" — the walkthrough, one line under the thing it explains.
@@ -113,11 +114,10 @@ export default function HowToLink({ className = '' }) {
      page the scrim has taken away. */
   useEffect(() => {
     if (!open) return;
-    const key = (e) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('keydown', key);
     closeRef.current?.focus();
-    return () => document.removeEventListener('keydown', key);
   }, [open]);
+  /* A MODAL: Escape closes the card and stops there. src/lib/escapeHatch.js. */
+  useEscapeClaim(open, () => setOpen(false), 'how-to');
 
   return (
     <>

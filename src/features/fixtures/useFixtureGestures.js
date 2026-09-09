@@ -63,7 +63,7 @@ export default function useFixtureGestures({
     armed, setArmed, ghost, setGhost, fanSweepMm,
     cobOnce, setCobOnce, cobStanding, setCobRun, cobLock, setCobLock,
     setCobAt, cobDraftArray, setCobDraftArray,
-    arrayDrag, setArrayDrag, trackMode, setTrackMode, moduleSpec,
+    arrayDrag, setArrayDrag, trackMode, moduleSpec,
     moduleDrag, setModuleDrag,
   } = state;
   const basisFor = fixtures.cob.basisFor;
@@ -206,20 +206,24 @@ export default function useFixtureGestures({
    * also be changed, so the two have to be looking at the same room.
    */
   const openArray = useCallback((id) => {
+    /* STAND DOWN FIRST, SELECT SECOND — and the order is the whole of it.
+       `standDown` clears the selection along with everything else, which is what
+       the SHAPE BAR needs: selecting a shape is what puts that bar into its
+       `edit` state (see `shapeMode`), so closing the tool is not enough on its
+       own and the selection has to go too, or the bar comes straight back up
+       over the array's. Selecting first meant the clear landed on the array we
+       had just picked.
+       IT ALSO PUTS THE TRACK MODULE AND THE CEILING-OBJECT ONE-SHOT AWAY. Those
+       were three more lines here; they are in the list now, where every other
+       opener on this screen reads them from. */
+    standDown();
     // ONE SELECTION ON THIS CANVAS. Two things picked would be two things Delete
     // could mean, and taking the register is how this one stops being a list of
     // ten clears that had to be kept in step with the ten selections.
     setSel(select('array', id));
-    /* THE SHAPE BAR GOES WITH THE SHAPE. Selecting a shape is what puts the bar
-       into its `edit` state — see `shapeMode` — so clearing the tool is not
-       enough on its own; the selection has to go too, which the line above now
-       does, or the bar comes straight back up over the array's. */
-    standDown();
-    setTrackMode(null);
-    setArmed(null); setGhost(null);
     const roomId = cobArrays.find((a) => a.id === id)?.roomId ?? null;
     if (roomId) { docActions.setFocusId(roomId); docActions.setView('spaces'); }
-  }, [docActions, standDown, cobArrays, setSel, setTrackMode, setArmed, setGhost]);
+  }, [docActions, standDown, cobArrays, setSel]);
 
   /**
    * Snap a point, publish the guides for it, and hand back where it landed.

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useEscapeClaim } from '../hooks/useEscapeHatch.js';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
 import { useBilling } from '../lib/billing.jsx';
@@ -22,9 +23,10 @@ import { fmtRemaining } from '../lib/plans.js';
 // is the only genuinely interactive object in the chrome. A grey circle in a grey
 // rail reads as a label; a blue one reads as a control.
 //
-// THE MENU IS A POPOVER, dismissed by Escape, by a click anywhere else, and by
-// choosing something. All three, because a menu that only closes on its own
-// button is a menu that gets left open behind a dialog.
+// THE MENU IS A POPOVER, dismissed by Escape — claimed from the hatch, see
+// src/lib/escapeHatch.js — by a click anywhere else, and by choosing something.
+// All three, because a menu that only closes on its own button is a menu that
+// gets left open behind a dialog.
 // ---------------------------------------------------------------------------
 export default function ProfileRail() {
   const { initial, displayName, user, signOut, isAdmin } = useAuth();
@@ -36,14 +38,10 @@ export default function ProfileRail() {
   useEffect(() => {
     if (!open) return;
     const away = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false); };
-    const key = (e) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('pointerdown', away);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('pointerdown', away);
-      document.removeEventListener('keydown', key);
-    };
+    return () => document.removeEventListener('pointerdown', away);
   }, [open]);
+  useEscapeClaim(open, () => setOpen(false), 'profile-menu');
 
   // THE RAIL IS FROSTED AND THE MENU BLURS, AND THEY HAVE TO BE SIBLINGS FOR
   // BOTH TO BE TRUE. This is worth the paragraph, because the obvious structure

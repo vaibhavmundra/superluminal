@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Stage, Layer, Path, Line, Circle, Rect, RegularPolygon, Text, Group,
          Image as KImage } from 'react-konva';
+import { useEscapeClaim } from '../hooks/useEscapeHatch.js';
 import Konva from 'konva';
 
 // THE MIDDLE BUTTON DRAGS NOTHING BUT THE VIEW.
@@ -697,12 +698,20 @@ export default function OutlineTracer({
   // rebind three window listeners on every corner clicked.
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  /* --- ESCAPE THROWS THE TRACE AWAY AND KEEPS THE SCREEN --------------------
+     ONE OF THE THREE FLOWS THAT REFUSE TO EXIT. Everywhere else in the app
+     Escape stands the whole editor down; here it clears the corners placed so
+     far and leaves you on the tracer, because the way OFF this screen is the
+     button in the chrome and losing the stage to a mis-hit key would be losing
+     the plan you were working over.
+     CLAIMED FROM THE HATCH rather than listened for below, so the exemption
+     lives next to the state it is about. See src/lib/escapeHatch.js. */
+  useEscapeClaim(true, () => { setDraft([]); setProblem(''); }, 'tracer');
   useEffect(() => {
     const down = (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
       if (e.key === 'Shift') setShift(true);
       if (e.code === 'Space') { setSpace(true); e.preventDefault(); }
-      if (e.key === 'Escape') { setDraft([]); setProblem(''); }
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault();
         // TWO MEANINGS, SETTLED BY WHETHER A TRACE IS IN PROGRESS — and that is
@@ -1441,7 +1450,17 @@ export default function OutlineTracer({
                         <input autoFocus defaultValue={o.name || ''}
                           onClick={(e) => e.stopPropagation()}
                           onBlur={(e) => { onUpdateOutline(o.id, { name: e.target.value.trim() || o.name }); setRenaming(null); }}
-                          onKeyDown={(e) => { e.stopPropagation();
+                          onKeyDown={(e) => {
+                            /* THE CHORDS GO THROUGH, EVERYTHING ELSE STOPS HERE.
+                               The stop is for the ROW behind this field, which
+                               answers Enter and Space, and for the window
+                               listener above, where Backspace removes the
+                               selected outline — neither may hear a character
+                               being typed into a name. But it was unconditional,
+                               and ⌘Z is not a character: it fell to Safari,
+                               which reopened a tab instead of undoing an edit.
+                               See App's keydown handler, which owns undo. */
+                            if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
                             if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setRenaming(null); }}
                           style={{ fontSize: 11, padding: '1px 4px' }} />
                       ) : (

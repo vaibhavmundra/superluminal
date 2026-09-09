@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useEscapeClaim } from '../hooks/useEscapeHatch.js';
 import { listShares, addShare, setShareRole, removeShare, looksLikeEmail,
          getShareLink, createShareLink, revokeShareLink, shareUrl } from '../lib/sharing.js';
 
@@ -113,15 +114,13 @@ export default function ShareDialog({ projectId, projectName = '', onClose }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // ESCAPE CLOSES IT, and this is the only keyboard the dialog owns. The editor
-  // underneath has a dozen shortcuts and every one of them would be wrong to
-  // fire at a form — but the listener is on the document because the focus could
-  // legitimately be on any of six controls in here.
-  useEffect(() => {
-    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose?.(); } };
-    document.addEventListener('keydown', key, true);
-    return () => document.removeEventListener('keydown', key, true);
-  }, [onClose]);
+  /* ESCAPE CLOSES IT, and this is the only keyboard the dialog owns. The editor
+     underneath has a dozen shortcuts and every one of them would be wrong to
+     fire at a form — which is exactly what a CLAIM says: the key is this
+     dialog's while it is up, and nothing behind it stands down. It used to be a
+     capture-phase listener with a `stopPropagation`, which is the same idea
+     spelt as a race. See src/lib/escapeHatch.js. */
+  useEscapeClaim(true, () => onClose?.(), 'share-dialog');
 
   const invite = async (e) => {
     e?.preventDefault();

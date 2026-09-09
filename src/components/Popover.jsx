@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useEscapeClaim } from '../hooks/useEscapeHatch.js';
 
 /* ---------------------------------------------------------------------------
    Popover — A PANEL HUNG OFF A BUTTON, AND FOUR THINGS NOW HANG OFF ONE.
@@ -10,7 +11,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
    neither has room to hold a list. So each one is a button that opens.
 
    ALL FOUR ARE THE SAME OBJECT, WHICH IS THE ONLY REASON THIS EXISTS. A
-   measured panel, a click-outside, an Escape and a latch on the button that
+   measured panel, a click-outside, an Escape claim and a latch on the button that
    opened it: four copies of that would be four things to keep in step, and the
    rail's own drawers are the standing proof of what happens when a floating
    panel is written twice — there were two of them, byte-identical, until they
@@ -95,14 +96,14 @@ export default function Popover({ anchor, open, onClose, side = 'top',
       if (anchor?.current?.contains(e.target)) return;
       onClose?.();
     };
-    const key = (e) => { if (e.key === 'Escape') onClose?.(); };
     document.addEventListener('pointerdown', away, true);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('pointerdown', away, true);
-      document.removeEventListener('keydown', key);
-    };
+    return () => document.removeEventListener('pointerdown', away, true);
   }, [open, onClose, anchor]);
+  /* AND ESCAPE, CLAIMED RATHER THAN LISTENED FOR — a thing that opened over the
+     drawing has to be dismissable from the keyboard by anybody who cannot see
+     where to click, and it must not ALSO stand the editor down behind itself.
+     See src/lib/escapeHatch.js. */
+  useEscapeClaim(open, () => onClose?.(), 'popover');
 
   if (!open || !box) return null;
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEscapeClaim } from '../hooks/useEscapeHatch.js';
 import { TONES, TONE_LABEL, WALL_TONE_BLURB } from '../lib/materials.js';
 
 /* ---------------------------------------------------------------------------
@@ -40,11 +41,12 @@ export default function WallTonePopup({ at, tone, onPick, onClose }) {
     setPos({ left, top });
   }, [at.x, at.y]);
 
+  /* A MODAL, SO IT CLAIMS THE KEY: closing the popup cannot also close the wall
+     step behind it. This was a capture-phase listener with a `stopPropagation`
+     — the same idea, spelt as a race against App's own handler, and the race is
+     what the hatch removes. See src/lib/escapeHatch.js. */
+  useEscapeClaim(true, () => onClose(), 'wall-tone');
   useEffect(() => {
-    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
-    // CAPTURE, so this closes before the editor's own Escape handler reads the
-    // key and starts closing the step behind it.
-    window.addEventListener('keydown', key, true);
     /* --- CLOSING ON A PRESS ELSEWHERE, WITHOUT A BACKDROP -------------------
        A transparent sheet over the page is the usual way to do this and it is
        the wrong way HERE, because the thing most likely to be pressed next is
@@ -58,10 +60,7 @@ export default function WallTonePopup({ at, tone, onPick, onClose }) {
        card before the answer reached it. */
     const down = (e) => { if (!box.current?.contains(e.target)) onClose(); };
     window.addEventListener('pointerdown', down, true);
-    return () => {
-      window.removeEventListener('keydown', key, true);
-      window.removeEventListener('pointerdown', down, true);
-    };
+    return () => window.removeEventListener('pointerdown', down, true);
   }, [onClose]);
 
   return (

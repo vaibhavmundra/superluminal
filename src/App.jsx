@@ -21,6 +21,8 @@ import { PLAN_OPTIONS,
    in features/lighting-planner/lightingRules.js. */
 import { COVE_GAP_FT } from './lib/cove.js';
 import { useDrag } from './hooks/useDrag.js';
+import { useEscapeHatch, useEscapeClaim } from './hooks/useEscapeHatch.js';
+import { isTextEntry, isFormControl } from './lib/escapeHatch.js';
 import useViewPrefs from './hooks/useViewPrefs.js';
 import useScale from './hooks/useScale.js';
 import usePlanSource from './hooks/usePlanSource.js';
@@ -805,7 +807,7 @@ export default function App({
      naming IT there would re-bind the window listener on every frame. See the
      note at the foot of usePen. A setter's identity is stable for the life of
      the component. */
-  const { setShapeEditId, setSelTrackPt, setShapeTool,
+  const { setShapeEditId, setShapeTool,
           setShapeSides, setShapeAskSides } = geomState;
   /* WHICH SHAPE IS PICKED. With the other nine reads of the register and not in
      the feature, because the magnetic-track domain asks for it four hundred
@@ -2451,23 +2453,37 @@ export default function App({
   }, [trackPen, setGeomHover, fixtureReset]);
 
 
-  /* --- ARMING THE GEOMETRY TOOL: THE HALF THAT IS APP'S ---------------------
-     ONE POINTER PIPELINE, ONE OWNER — the same clearing `openZoneEdit` and
-     `openBoardPlace` do. A press with two tools armed is a press with two
-     meanings, and the geometry tool draws across the whole ceiling rather than
-     at a point, so it is the least forgiving of the three about sharing.
+  /* --- STANDING EVERY MACHINE DOWN: ONE FUNCTION, AND IT WAS FIVE ----------
+     ONE POINTER PIPELINE, ONE OWNER. Every step and every tool on this screen
+     has to put the other six away on the way in, and the block that did it was
+     COPIED BY HAND into all five openers in variants that differed only by
+     which terms each one remembered — `openDoorEdit` cleared the selection and
+     `openBoardPlace` did not, `geometryStandDown` forgot the wall step, and no
+     two of them agreed about the track editor.
 
-     IT IS HERE AND NOT IN THE FEATURE because the list is the interesting part
-     and App is the only place that knows all seven owners. `openShapeTool` calls
-     it exactly where the block stood, below its `!arm` return — see that
-     command. Same split `openBoardPlace` already has. */
-  const geometryStandDown = useCallback(() => {
-    setZoneEdit(false); setZoneMode(false); setDraftZone(null);
-    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
-    closeBoardPlace();
-    setArmed(null); setGhost(null); setGuides([]);
-    disarmAdd();
-  }, [disarmAdd, closeBoardPlace, setArmed, setGhost]);
+     That is the disease pressOwner.js was written to cure on the READ side —
+     see the note at the head of that file, which is about the very same five
+     call sites. This is the cure on the WRITE side, and it is also what the
+     Escape key means: see src/lib/escapeHatch.js.
+
+     `except` IS THE ONE ARGUMENT AND IT EXISTS FOR `openShapeTool`. That opener
+     stands the others down AFTER raising its own bar (it is in the geometry
+     feature and the order is its own), so a plain stand-down would close the
+     tool it had just opened. Every other caller runs this FIRST and then opens,
+     which needs no exemption — React batches the pair and the opener wins.
+
+     --- WHY THE BODY IS ASSIGNED AND NOT DECLARED ---------------------------
+     It has to be callable from `openShapeTool`, which is built by
+     `useGeometryCommands` two dozen lines below this — and it has to CALL
+     `closeShapeTool`, which is one of that hook's results. A `useCallback` here
+     could not name it. So the handle is declared here, stable and safe to hand
+     out, and the body is written once every command exists. Same
+     ref-during-render pattern OutlineTracer's `draftRef` uses. */
+  const standDownRef = useRef(null);
+  const standDown = useCallback((except) => standDownRef.current?.(except), []);
+  /* THE GEOMETRY FEATURE'S VIEW OF IT — stable, so the hook below is not handed
+     a fresh function every render. */
+  const geometryStandDown = useCallback(() => standDown('shape'), [standDown]);
 
   /* SPANNING A TRACK ALSO FILLS IT — the diffuser allocator, and it is the
      module domain's. What a run is filled WITH reads the space analysis, the
@@ -2541,14 +2557,9 @@ export default function App({
    * competing with them.
    */
   const openDoorEdit = useCallback(() => {
+    standDown();
     setDoorEdit(true);
-    setSel(clear());
-    setZoneEdit(false); closeBoardPlace(); closeShapeTool();
-    setDoorDraft(null); setDoorDrag(null);
-    setZoneMode(false); setDraftZone(null);
-    setArmed(null); setGhost(null); setGuides([]);
-    disarmAdd();
-  }, [disarmAdd, closeShapeTool, closeBoardPlace, setArmed, setGhost]);
+  }, [standDown]);
 
   /* --- THE ELECTRICALS -------------------------------------------------------
 
@@ -2635,14 +2646,9 @@ export default function App({
      is worse than a whole one nobody is currently pressing. */
   // eslint-disable-next-line no-unused-vars
   const openZoneEdit = useCallback(() => {
-    setZoneEdit(true);
-    setSel(clear());
-    closeBoardPlace(); closeShapeTool();
-    setZoneMode(true); setDraftZone(null);
-    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
-    setArmed(null); setGhost(null); setGuides([]);
-    disarmAdd();
-  }, [disarmAdd, closeShapeTool, closeBoardPlace, setArmed, setGhost]);
+    standDown();
+    setZoneEdit(true); setZoneMode(true);
+  }, [standDown]);
 
   const closeZoneEdit = useCallback(() => {
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
@@ -2656,15 +2662,10 @@ export default function App({
      not in the feature. The order is the order it always was: the step opens
      and the space is focused, and then everything else goes away. */
   const openWallEdit = useCallback((roomId) => {
+    standDown();
     enterWallEdit(roomId);
-    docActions.setFocusId(roomId); setSel(clear());
-    setZoneEdit(false); setZoneMode(false); setDraftZone(null);
-    closeBoardPlace(); closeShapeTool();
-    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
-    setArmed(null); setGhost(null); setGuides([]);
-    disarmAdd();
-  }, [disarmAdd, closeShapeTool, docActions, enterWallEdit, closeBoardPlace,
-      setArmed, setGhost]);
+    docActions.setFocusId(roomId);
+  }, [standDown, docActions, enterWallEdit]);
 
   /* --- PUTTING SWITCHBOARDS ON WALLS BY HAND --------------------------------
      THE STEP IS features/electrical/useBoardStep.js. WHAT IS LEFT HERE IS THE
@@ -2674,15 +2675,50 @@ export default function App({
      is not in the feature. The order is the order it always was: the step
      opens, and then everything else goes away. */
   const openBoardPlace = useCallback(() => {
+    standDown();
     enterBoardPlace();
-    closeShapeTool();
+  }, [standDown, enterBoardPlace]);
+
+  /* --- THE STAND-DOWN ITSELF ------------------------------------------------
+     THE BODY OF THE HANDLE DECLARED ABOVE, written here because this is the
+     first line at which every command it calls exists. See that declaration for
+     why it is split; what follows is THE LIST, and the list is the interesting
+     part — App is the only place that knows every machine on this screen.
+
+     ASSIGNED DURING RENDER rather than in an effect, so a press landing on the
+     very first paint finds a body rather than a no-op.
+
+     IT IS EVERY TRANSIENT THING AND NOTHING THE DOCUMENT OWNS. The fittings,
+     the rooms and the geometry are the drawing and are untouched; what goes is
+     which drawer is open, what is armed, what is selected and which step has
+     the panel. The test of a line belonging here is simple: would a page reload
+     have cleared it?
+
+     `focusId` IS IN THE LIST, and it is the one judgement call. It is not a
+     command — it is which space the panel is describing — so it survived every
+     earlier draft of this. It is here because the brief was "back to how it
+     would be if refreshed", and a reload has no space in the panel. */
+  standDownRef.current = (except) => {
+    setSel(clear());
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
     setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
+    closeWallEdit();
+    closeTrackEdit();
+    if (except !== 'board') closeBoardPlace();
+    /* THE ONE EXEMPTION, AND IT IS `openShapeTool`'S. See the handle's note:
+       that opener raises its bar and THEN stands the others down, so closing
+       the tool here would undo the press that got us here. */
+    if (except !== 'shape') { closeShapeTool(); clearShapeEdit(); }
     setArmed(null); setGhost(null); setGuides([]);
+    setCobOpen(false); setCobMode(null);
+    setTrackMode(null);
+    setObjMode(false);
+    setOptionPick(null); setTip(null); hideCoach();
+    docActions.setFocusId(null);
+    // LAST, because it is the biggest of them: the add tool, the half-made
+    // gesture under it, the module armed on a run and the track pen's path.
     disarmAdd();
-  }, [disarmAdd, closeShapeTool, enterBoardPlace, setArmed, setGhost]);
-
-
+  };
 
 
   /**
@@ -2730,19 +2766,12 @@ export default function App({
      rows of buttons in one place: the second draws over the first, and half the
      controls somebody can see belong to an object they are not looking at.
 
-     SO OPENING ONE IS ALSO AN ACT OF CLOSING, and the LIST is here rather than
-     in the feature because the list is the interesting part and App is the only
-     place that knows all seven owners. `openArray` calls it exactly where the
-     block stood — see features/fixtures/useFixtureGestures.js. Same split
-     `openShapeTool` and `openBoardPlace` already have. */
-  const arrayStandDown = useCallback(() => {
-    closeShapeTool(); clearShapeEdit();
-    closeTrackEdit(); closeBoardPlace();
-    setZoneEdit(false); setZoneMode(false); setDraftZone(null);
-    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
-    setGuides([]);
-    disarmAdd();
-  }, [closeShapeTool, clearShapeEdit, closeTrackEdit, closeBoardPlace, disarmAdd]);
+     SO OPENING ONE IS ALSO AN ACT OF CLOSING — and it is `standDown`, the same
+     one every other opener on this screen calls. This was the SIXTH hand-copied
+     variant of that block; it differed from the other five by not clearing the
+     selection, which was not a decision but an accident of `openArray` selecting
+     the array BEFORE standing the rest down. That order is now the other way
+     round, like every other opener's, and the copy is gone. */
 
 
 
@@ -2993,7 +3022,7 @@ export default function App({
     svgPoint, svgRef, pressState,
     roomAt, insideAnyRoom, snapTargets, snapTol,
     arrayOutline, shapeAtPointer, geomUnder, geomHover, setGeomHover,
-    clearShapeEdit, standDown: arrayStandDown,
+    clearShapeEdit, standDown,
     docActions, setSel, guides, setGuides, setOverRoom, setAddAt, setOptionPick,
   });
   /* THE NAMES THIS FILE ALREADY USED. The canvas props, the pointer router's
@@ -3004,7 +3033,55 @@ export default function App({
           onModulePointerDown: modulePointerDown } = fixtureGestures.canvas;
   const fixtureDrag = fixtureGestures.drag;
 
-  /** Escape backs out, Delete removes. The two keys every editor answers to. */
+  /* --- THE ESCAPE HATCH ------------------------------------------------------
+     ONE KEY, ONE MEANING, EVERYWHERE: get me out of whatever I started. Somebody
+     presses a rail cell to place a fitting, thinks better of it before the
+     click, and presses Escape — and that has to work whether the tool they
+     armed was written last year or this morning.
+
+     THE WHOLE RULE IS `standDown` UNLESS SOMETHING CLAIMED THE KEY, and it
+     replaces two hundred lines of branch chain that used to live in the handler
+     below. The chain had to be re-read and re-ordered every time a tool was
+     added, and it was wrong in two ways nobody could see by reading it: a press
+     with a tool armed AND a spot selected did both (the `addTool` branch had no
+     `return`), and half the selections backed out at one rung while the other
+     half backed out at another. A single stand-down cannot have either bug.
+
+     See src/lib/escapeHatch.js for the mechanism and for why the browser never
+     sees this key. What is here is the THREE FLOWS THAT REFUSE TO EXIT.
+
+     --- 1. THE PEN, EITHER OF THEM ------------------------------------------
+     A half-drawn path is work. Escape throws the PATH away and keeps the tool,
+     because the alternative — one press that drops the path and puts the pen
+     down — means somebody who wanted to redraw one leg has to go back to the
+     rail for the tool as well. With nothing drawn it does nothing at all: you
+     leave the pen by pressing its cell again, not by pressing Escape. */
+  const penInHand = addTool === 'track'
+    || (geometry.status.menuOn && geometry.status.tool === 'pen');
+  useEscapeClaim(penInHand, () => {
+    if (!trackPen.isEmpty) trackPen.reset();
+    else abandonShape();
+  }, 'pen');
+
+  /* --- 2. CLIPPING A LIGHT ONTO A TRACK -------------------------------------
+     The module is armed, the bar at the foot of the drawing is showing the watts
+     and the optic the next press will spend, and the run is waiting. That is a
+     flow somebody is halfway through rather than a tool they picked up by
+     mistake, and Escape does not end it — the drawer's own latched cell does.
+     NOTHING TO CLEAR, so the claim carries no handler; what it does is stop the
+     stand-down, which is the whole point of claiming. */
+  const placingTrackLight = addTool === 'module' && !!trackMode;
+  useEscapeClaim(placingTrackLight, () => {}, 'track-module');
+
+  /* --- 3. TRACING THE SPACE OUTLINES ---------------------------------------
+     Claimed by OutlineTracer itself, because the draft it throws away is that
+     component's own state. Same hook, and it is the reason the hook exists
+     rather than a list of flags here: a flow declares its own exemption, next to
+     the state the exemption is about. */
+
+  useEscapeHatch(standDown);
+
+  /** Delete removes, Ctrl+Z steps back. Escape is the hatch above. */
   useEffect(() => {
     // NO GUARD ANY MORE, AND THAT IS BECAUSE OF CTRL+Z. This bound the listener
     // only when something was selected or armed, which is right for keys that
@@ -3015,16 +3092,29 @@ export default function App({
     // nothing it did not do before — and the read-only guard further down is
     // still the one that decides whether to listen at all.
     const onKey = (e) => {
-      const t = e.target;
-      if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
-      // UNDO, BEFORE EVERY OTHER BRANCH. Not because the order matters to the
-      // keys — nothing else here answers to Ctrl+Z — but because this is the one
-      // branch that is about the editor as a whole rather than about whatever
-      // happens to be selected, and reading it first says so.
-      //
-      // BOTH MODIFIERS, because this app runs on both kinds of keyboard and
-      // neither audience should have to learn the other's shortcut. Shift+Z and
-      // Ctrl+Y are both redo for the same reason.
+      /* --- UNDO COMES BEFORE THE FOCUS GUARDS, AND THAT IS THE WHOLE FIX ------
+         IT USED TO COME AFTER, and that is how ⌘Z went missing. The guard stood
+         the handler down whenever anything focusable had focus — and the spec
+         bars put a wattage slider, a count spinner and a height field ON THE
+         DRAWING, exactly where somebody works. Click one, and from then on every
+         ⌘Z fell past this handler to SAFARI, where ⌘Z is Undo Close Tab: it
+         reopened a browser tab instead of undoing an edit. The undo BUTTON went
+         on working the whole time, because a click is not a keypress, which is
+         what made it read as a keyboard fault rather than a focus one.
+
+         SO THE EDITOR OWNS ⌘Z EVERYWHERE, and the cost is named rather than
+         discovered: you no longer get the browser's own per-field text undo
+         inside our inputs. That is the right trade for THIS app. The fields here
+         hold a name, a wattage, a height — a few characters, retyped in seconds
+         — and the document holds a ceiling somebody has been laying out for an
+         hour. Losing a keystroke of typing is an inconvenience; losing the
+         ability to take back the last thing you did to the drawing, because the
+         pointer happened to be over a slider, is the bug you are reading about.
+         Every CAD tool makes the same call.
+
+         BOTH MODIFIERS, because this app runs on both kinds of keyboard and
+         neither audience should have to learn the other's shortcut. Shift+Z and
+         Ctrl+Y are both redo for the same reason. */
       if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
         if (e.shiftKey) undoRef.current?.redo(); else undoRef.current?.undo();
@@ -3035,65 +3125,29 @@ export default function App({
         undoRef.current?.redo();
         return;
       }
-      /* --- THE DOOR EDITOR ANSWERS BOTH KEYS FIRST, AND IT RETURNS --------
-         It is a modal step: the panel beside it holds one question, and Delete
-         while it is open means "that is not a door" — it cannot be allowed to
-         also mean "take the space I had selected before I opened this out of the
-         layout", which is what the branch at the foot of this handler would do
-         with the very same keypress. Escape drops the selection if there is one
-         and closes the editor if there is not, which is the two-stage back-out
-         every other selection on this canvas has. */
-      /* THE ZONE STEP ANSWERS ESCAPE FIRST, AND IT RETURNS. Same argument as
-         the door editor below it: the panel holds one question, and Escape means
-         “I am done drawing zones” — it cannot also be allowed to mean “drop
-         whatever was selected before I got here”, which is what the branch at
-         the foot of this handler would do with the same keypress. Delete is
-         deliberately NOT answered: a zone is removed from its own row in the
-         panel, and there is no zone selection on this canvas for a key to act
-         on. */
-      if (zoneEdit) {
-        if (e.key === 'Escape') { e.preventDefault(); closeZoneEdit(); return; }
-        return;
-      }
-      /* THE WALL STEP ANSWERS ESCAPE FIRST AND RETURNS, on the zone step's
-         argument exactly: the panel holds one question and Escape means "I am
-         done with the walls". A tone popup standing open answers its own Escape
-         and stops the key here (see WallTonePopup, which listens in capture),
-         so the two-stage back-out falls out of the two listeners rather than
-         needing a stage flag. Delete is deliberately not answered: there is no
-         wall selection to delete, and the branch at the foot of this handler
-         would take the SPACE out of the layout with it. */
-      if (wallEdit) {
-        if (e.key === 'Escape') { e.preventDefault(); closeWallEdit(); return; }
-        return;
-      }
-      /* --- THE TRACK PEN ANSWERS THREE KEYS AND RETURNS ---------------------
-         The same argument the zone step makes above it: while the step is open
-         the panel holds one question, and these keys mean things about the path
-         in flight — they cannot also be allowed to mean "drop the selection I
-         had before I got here", which is what the branch at the foot of this
-         handler does with Escape and Delete.
-
-         ENTER FINISHES, which is what Enter does at the end of a path in every
-         drawing tool there is. BACKSPACE TAKES THE LAST POINT BACK, likewise —
-         and it is why a mis-clicked corner is not a reason to start again.
-
-         ESCAPE THROWS THE PATH AWAY BUT KEEPS THE PEN, and that two-stage
-         back-out is deliberate: it is the same shape as the door editor's
-         below, and the alternative — one Escape that both drops the path and
-         disarms — means a person who wanted to redraw one leg loses the tool as
-         well. With nothing drawn, Escape falls through to the ordinary way out.
-
-         `addTool` AND NOT `stepTool`, because the keys are about the pen rather
-         than about the panel: the step is what `stepTool` describes, and it
-         happens to be open whenever this tool is armed. */
-      /* --- THE POINT EDITOR ANSWERS BOTH KEYS FIRST, AND IT RETURNS ---------
-         The same argument every step above it makes: while a path is open the
+      /* AND NOW THE GUARDS, for every key BELOW this line. Text being typed owns
+         the text-editing keys; any other control owns the unmodified ones, so a
+         focused spinner does not let ⌫ delete a room. See `isTextEntry`. */
+      if (isTextEntry(e.target)) return;
+      if (isFormControl(e.target) && !(e.metaKey || e.ctrlKey)) return;
+      /* THE TWO MODAL STEPS SWALLOW DELETE, AND THAT IS ALL THEY DO HERE NOW.
+         Each one's panel holds a single question, and Delete while it is open
+         cannot be allowed to mean "take the space I had selected before I got
+         here out of the layout" — which is exactly what the branch at the foot
+         of this handler would do with the same keypress. Neither has a selection
+         of its own for the key to act on: a zone is removed from its own row in
+         the panel, and a wall from the tone popup.
+         THEIR ESCAPE IS THE HATCH'S. Both used to answer it here, ahead of
+         everything, so that closing a step could not also drop a selection —
+         which is a problem a single stand-down does not have. */
+      if (zoneEdit) return;
+      if (wallEdit) return;
+      /* --- THE POINT EDITOR ANSWERS DELETE FIRST, AND IT RETURNS ------------
+         The same argument the two steps above make: while a path is open the
          canvas is about that path, and Delete has to mean "this corner" rather
          than "the space I had selected before I opened it", which is what the
          branch at the foot of this handler would do with the same keypress.
-         Escape drops the point if one is picked and closes the editor if not —
-         the two-stage back-out the door editor has. */
+         ITS ESCAPE IS THE HATCH'S, like everything else's. */
       if (geometry.tracks.editId) {
         /* DELETE MEANS THE POINT IF ONE IS PICKED AND THE WHOLE RUN IF NOT, and
            it RETURNS either way. That last part is the bug this fixes: the
@@ -3114,28 +3168,29 @@ export default function App({
           else deleteTrack(geometry.tracks.editId);
           return;
         }
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          if (geometry.tracks.selPt != null) setSelTrackPt(null); else closeTrackEdit();
-          return;
-        }
       }
+      /* --- THE TRACK PEN'S TWO REMAINING KEYS -------------------------------
+         ENTER FINISHES, which is what Enter does at the end of a path in every
+         drawing tool there is. BACKSPACE TAKES THE LAST POINT BACK, which is why
+         a mis-clicked corner is not a reason to start again. Escape used to be
+         the third; the pen CLAIMS it now — see the hatch above — and throwing
+         the path away while keeping the tool is what that claim does.
+
+         `addTool` AND NOT `stepTool`, because the keys are about the pen rather
+         than about the panel: the step is what `stepTool` describes, and it
+         happens to be open whenever this tool is armed. */
       if (addTool === 'track') {
         if (e.key === 'Enter') { e.preventDefault(); finishTrack(); return; }
         if (e.key === 'Backspace' && !trackPen.isEmpty) {
           e.preventDefault(); trackPen.undo(); return;
         }
-        if (e.key === 'Escape' && !trackPen.isEmpty) {
-          e.preventDefault(); trackPen.reset(); return;
-        }
       }
-      /* THE COVE PEN ANSWERS THE SAME THREE KEYS, and it is the same pen — see
-         usePen. Enter is the one that is new and it is the L-shaped cove: a path
+      /* THE COVE PEN ANSWERS THE SAME TWO, and it is the same pen — see usePen.
+         Enter is the one that is different and it is the L-shaped cove: a path
          that lands on a wall at both ends can be finished OPEN, where clicking
          the first point closes it into a pocket. Two endings, two details.
-         BACKSPACE TAKES THE LAST POINT BACK and Escape throws the path away but
-         keeps the tool, exactly as the track pen's do — the same two-stage
-         back-out, so a mis-clicked corner is not a reason to start again. */
+         BACKSPACE TAKES THE LAST POINT BACK. Escape is the pen's claim on the
+         hatch above, exactly as the track pen's is. */
       if (geometry.status.menuOn && geometry.status.tool === 'pen' && !covePen.isEmpty) {
         if (e.key === 'Enter' && geometry.panel.canFinishOpen) {
           e.preventDefault(); finishOpenCove(); return;
@@ -3143,11 +3198,6 @@ export default function App({
         if (e.key === 'Backspace') { e.preventDefault(); covePen.undo(); return; }
       }
       if (doorEdit) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          if (selDoorId) setSel(clear()); else closeDoorEdit();
-          return;
-        }
         if ((e.key === 'Delete' || e.key === 'Backspace') && selDoorId && !doorDrag) {
           e.preventDefault();
           deleteDoor(selDoorId);
@@ -3156,60 +3206,6 @@ export default function App({
         // Ctrl+Z is handled above this and stays handled: it is about the
         // document rather than about whatever is selected.
         return;
-      }
-      if (e.key === 'Escape') {
-        // THE STEP FIRST AND ON ITS OWN. A step has taken the panel over, so
-        // Escape means "close it" and cannot also mean "drop the selection".
-        if (boardPlace) { closeBoardPlace(); return; }
-        /* THE SHAPE TOOL TAKES TWO ESCAPES WHERE THERE IS SOMETHING TO THROW
-           AWAY, and that is deliberate rather than an oversight. A half-drawn
-           pen path is work; closing the whole tool on the first press would take
-           it away along with the bar, and the second press would then have
-           nothing to do. First Escape abandons the draft, second puts the pen
-           down — which is what the cross in the bar and the cove button in the
-           panel do, in that order. */
-        if (geometry.status.menuOn) {
-          if (geometry.status.draft || !covePen.isEmpty || geometry.status.span) abandonShape();
-          else closeShapeTool();
-          return;
-        }
-        /* THE GRIPS COME OFF BEFORE THE SELECTION, which is the same
-           innermost-first order the whole of this handler follows: Escape
-           undoes the last thing you asked for, and asking for dimensions was
-           the last thing. */
-        if (geometry.shapes.editId) { setShapeEditId(null); return; }
-        if (selShapeId) { setSel(clear()); return; }
-        /* THE ARRAY'S BAR IS A CONTEXTUAL MENU AND CLOSES LIKE ONE, ahead of the
-           plain selections below: it is the innermost thing open, and Escape
-           undoes the last thing you asked for. */
-        if (selArrayId) { setSel(clear()); return; }
-        if (selModuleId) { setSel(clear()); return; }
-        if (selLightId) { setSel(clear()); return; }
-        /* THE COB DRAWER CLOSES WITH THE TOOL IT ARMED. `disarmAdd` puts the
-           gesture away; leaving the drawer hanging open with neither cell
-           latched would be a menu still claiming to be the live thing. */
-        if (addTool) {
-          disarmAdd();
-          if (cobOpen) { setCobOpen(false); setCobMode(null); }
-          /* THE TRACK DRAWER CLOSES WITH THE MODULE IT ARMED, exactly as the COB
-             drawer does: a menu left hanging open with no cell latched is a menu
-             still claiming to be the live thing. The GEOMETRY BAR goes too —
-             opening the drawer raised it (see `onTrack`), so one Escape has to
-             put away everything one press put up. */
-          /* THE TRACK'S MODULE GOES WITH ITS TOOL, and the geometry bar with
-             it: one press put both up (the rail cell raises the bar, a selected
-             run raises the drawer), so one Escape has to put both away. */
-          if (trackMode) { setTrackMode(null); closeShapeTool(); }
-        }
-        if (armed) { setArmed(null); setGhost(null); setGuides([]); }
-        else if (selSpotId) setSel(clear());
-        else if (selCobId) setSel(clear());
-        else if (selAccId) setSel(clear());
-        else if (selBoardId) setSel(clear());
-        else if (selFlowId) setSel(clear());
-        else if (selObjId) setSel(clear());
-        else if (focusId) docActions.setFocusId(null);
-        else setObjMode(false);
       }
       /* A SELECTED LIGHT, AND DELETE MEANS "PUT IT BACK WHERE THE RULES HAD IT".
          A light cannot be deleted — it is one cell's share of the ambient level
@@ -3359,28 +3355,33 @@ export default function App({
     if (readOnly) return undefined;
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [objMode, armed, selObjId, selObjIds, objDrag, selAccId, accDrag, addTool, disarmAdd,
-      finishTrack, trackPen, geometry.tracks.editId, geometry.tracks.selPt, geometry.tracks.grip,
-      deleteTrackPoint, deleteTrack, closeTrackEdit,
-      deleteAccent, focusId, readOnly, selSpotId, deleteSpot,
-      docActions,
-      selBoardId, deleteBoard, selFlowId, flowDrag, boardPlace, closeBoardPlace,
-      doorEdit, selDoorId, doorDrag, deleteDoor, closeDoorEdit,
-      zoneEdit, closeZoneEdit, wallEdit, closeWallEdit,
-      geometry.status.menuOn, geometry.status.tool, geometry.status.draft, covePen,
-      geometry.status.span, abandonShape, closeShapeTool,
+  }, [readOnly, docActions,
+      // the two modal steps, which swallow the key and nothing more
+      zoneEdit, wallEdit,
+      // the track point editor and the two pens
+      geometry.tracks.editId, geometry.tracks.selPt, geometry.tracks.grip,
+      deleteTrackPoint, deleteTrack, addTool, finishTrack, trackPen,
+      geometry.status.menuOn, geometry.status.tool, covePen,
       geometry.panel.canFinishOpen, finishOpenCove,
-      selShapeId, geometry.shapes.dragging, deleteShape, geometry.shapes.editId,
-      /* THE SETTERS THE GEOMETRY AND FITTING BRANCHES CALL. In the array
-         because the scanner asks for them; a setter's identity is stable for the
-         life of the component, so the listener is not re-bound on their
-         account. */
-      setShapeEditId, setSelTrackPt,
-      setArmed, setGhost, setObjMode, setCobOpen, setCobMode, setTrackMode,
-      selLightId, lightDrag, resetLightMove, selCobId, fixtureDrag.cob, cobOpen,
-      deleteCob, deleteObjects,
-      selArrayId, arrayDrag, deleteArray, trackMode,
-      selModuleId, moduleDrag, deleteModule]);
+      // the door editor
+      doorEdit, selDoorId, doorDrag, deleteDoor,
+      // one branch per kind of thing Delete can be about, in the order they read
+      selLightId, lightDrag, resetLightMove,
+      selModuleId, moduleDrag, deleteModule,
+      selArrayId, arrayDrag, deleteArray,
+      selShapeId, geometry.shapes.dragging, deleteShape,
+      selSpotId, deleteSpot,
+      selCobId, fixtureDrag.cob, deleteCob,
+      selAccId, accDrag, deleteAccent,
+      selBoardId, deleteBoard,
+      selFlowId, flowDrag,
+      selObjIds, objDrag, deleteObjects,
+      // and the space, which is last and is guarded on the two armed machines
+      focusId, armed, boardPlace]);
+  /* TWENTY-EIGHT NAMES CAME OUT OF THIS ARRAY when Escape left the handler, and
+     every one of them was a chance to be wrong: a dependency this list forgot
+     was a stale closure, and a stale closure here is a key that quietly does
+     last render's thing. The hatch has no array at all — see useEscapeHatch. */
 
   /**
    * OPEN A CHUNK'S OPTIONS. Called by a click on any ambient light — the light
@@ -3815,8 +3816,7 @@ export default function App({
   useEffect(() => {
     const onKey = (e) => {
       if (!source || sheetOpen) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement
-          || e.target instanceof HTMLTextAreaElement) return;
+      if (isFormControl(e.target)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'f' || e.key === 'F') { zoomTo(fitZoom()); }
       else if (e.key === '0') { zoomTo(1); }

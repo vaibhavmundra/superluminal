@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { useEscapeClaim } from '../hooks/useEscapeHatch.js';
 import { useAuth } from '../lib/auth.jsx';
 import { OCCUPATIONS, normalisePhone, occupationOf, profileComplete, toE164 } from '../lib/profile.js';
 import { DIAL_CODES, DEFAULT_ISO, splitDial, countryForDial, countryForIso, flagOf }
@@ -103,10 +104,16 @@ export function ContactDialog({ onSaved, onCancel }) {
     }
   };
 
+  /* ESCAPE CANCELS, UNLESS THE SAVE IS ALREADY IN FLIGHT. It was an `onKeyDown`
+     on the backdrop, which only fired when focus happened to be inside the
+     dialog — and the hatch takes the key in capture now, so it would never have
+     fired at all. A CLAIM is what it always meant: the key is this dialog's, and
+     the editor behind it does not stand down. See src/lib/escapeHatch.js. */
+  useEscapeClaim(!busy, () => onCancel?.(), 'contact-gate');
+
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]"
-      onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel?.(); }}
-      onKeyDown={(e) => { if (e.key === 'Escape' && !busy) { e.stopPropagation(); onCancel?.(); } }}>
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel?.(); }}>
       <form className="w-[min(480px,94vw)] bg-black/80 backdrop-blur-lg backdrop-saturate-[1.8]
         border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop"
         onSubmit={submit}>

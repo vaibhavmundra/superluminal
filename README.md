@@ -4942,6 +4942,95 @@ registry still exposes:
   segments. A site plan or a fully furnished drawing will hit that and say so;
   narrowing the wall layers is the fix.
 
+## Writing code in this repo: DRY, and it is not a style preference
+
+**Do not repeat yourself.** The same functionality written out a second time in
+a second function is the single most expensive habit in this codebase, and every
+model or person writing code here is expected to look for the existing one
+before adding another.
+
+This is not an aesthetic rule. It is written down because of what it has
+actually cost, twice, in ways that took days to find:
+
+**The press guard.** `if (addTool || zoneMode || armed) return` was copied by
+hand into every handler on the canvas that had to obey it, in variants that
+differed only by which terms each copy remembered. A variant missing one term is
+indistinguishable from a correct one by reading — and the track diffuser and the
+track spot were completely unplaceable for weeks because one copy did not test
+`addTool`. It was found by reading eight hundred lines of branch ordering, which
+is the wrong tool for the job. The rule is now one function with a truth table:
+`src/lib/pressOwner.js`, `tools/test-press-owner.mjs`.
+
+**The stand-down.** "Put every other machine away on the way in" was copied into
+all six openers on the editor screen. No two agreed: `openDoorEdit` cleared the
+selection and `openBoardPlace` did not, `geometryStandDown` forgot the wall step,
+and `arrayStandDown` selected before it cleared, so it wiped the very thing it
+had just picked. One function now: `standDown` in `src/App.jsx`.
+
+Both had the same shape — a rule that existed only in the heads of the people
+who wrote it, obeyed by remembering rather than by asking. Both were found from
+a bug report, not from a review, because **a wrong copy reads exactly like a
+right one.**
+
+So, concretely, when writing code here:
+
+- **Before writing a guard, a reset, or a "close everything" block, search for
+  the one that already exists.** If two call sites need the same rule, the rule
+  is a function that both of them call — never a block that both of them
+  contain.
+- **If a rule is duplicated, that is the bug**, even while every copy still
+  agrees. They agree today because somebody just fixed them all; they will
+  disagree the next time only one is updated.
+- **Extract it as a pure function where the rule is about state**, put it in
+  `src/lib/`, and give it a truth-table test in `tools/`. `pressOwner.js` and
+  `escapeHatch.js` are the two worked examples.
+- **A hand-copied variant is not a "small duplication".** It is a second answer
+  to a question that must have one.
+
+The comments in this repo are long on purpose and that is not an exception to
+the above: prose explains *why*, and it is the copied *logic* that is the
+problem. A function called from six places with one paragraph over it is the
+goal. Six paragraphs over six copies is the disease.
+
+## Escape: one key, one meaning
+
+Escape gets you out of whatever you started — an armed fitting, a half-open
+step, a drawer, a selection — and it is one function rather than a chain of
+special cases. `src/lib/escapeHatch.js` carries the whole argument; the short
+version:
+
+- **One listener**, bound in **capture** on `window`, and the key is
+  `preventDefault`ed unconditionally so the browser never sees it. Safari does
+  things with a bare Escape that have nothing to do with this app — leaving full
+  screen, dismissing a native dialog — and the capture phase is also what lets
+  one listener replace the eight that used to race each other.
+- **Nothing claimed it → `standDown()`**: every step closed, every tool
+  disarmed, every selection dropped, every drawer shut. Back to how a reload
+  would leave you, with the drawing itself untouched.
+- **A modal claims it** (`useEscapeClaim`) — a dialog or popover. Escape closes
+  it and stops there, because dismissing a dialog must not also stand the editor
+  down behind it.
+- **Chrome sweeps with it** (`useEscapeSweep`) — a rail flyout, a drawer, a
+  menu. One press closes the panel *and* disarms the tool.
+- **Text fields answer their own Escape.** A press aimed at a place where text
+  is being typed never reaches the hatch; reverting the field is that input's
+  business. **A slider, checkbox or select is not a text field** — Escape and
+  the ⌘-shortcuts still reach the editor when one has focus. Conflating those
+  two questions is what once sent ⌘Z to Safari's *Undo Close Tab* whenever the
+  wattage slider had been clicked: see `isTextEntry` vs `isFormControl`.
+
+**Three flows refuse to exit**, because in each of them a press would destroy
+work rather than undo an accident:
+
+| Flow | What Escape does instead |
+|---|---|
+| **Either pen** (cove, track) | throws the *path* away, keeps the pen — so redrawing one leg does not cost you the tool |
+| **The space outline stage** | clears the trace in progress, keeps the screen |
+| **Placing a track light** | nothing; the drawer's own latched cell is the way out |
+
+Adding a fourth is one `useEscapeClaim` next to the state it is about — not a
+branch in a chain somebody has to re-read.
+
 ## Test scripts
 
 `tools/` needs `npm i -D playwright` to run the image-generating and

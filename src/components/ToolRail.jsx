@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import PaletteButton from './PaletteButton.jsx';
 import RailFlyout from './RailFlyout.jsx';
+import { useEscapeSweep } from '../hooks/useEscapeHatch.js';
 import { TRACK_MODULES } from '../lib/magTrack.js';
 import { LIGHT_TOOLS, LIGHT_ICON } from './LightPalette.jsx';
 import { CEILING_GROUPS } from './CeilingPalette.jsx';
@@ -214,6 +215,15 @@ export default function ToolRail({
      other three open nothing but a panel, so the panel's own visibility is the
      whole of what there is to remember. */
   const [openId, setOpenId] = React.useState(null);
+
+  /* --- ESCAPE CLOSES THE FLYOUT, AND IT DOES NOT STOP THERE ------------------
+     A flyout is CHROME rather than a modal — it hangs off the rail, the drawing
+     is live behind it, and it is very often standing open with the tool it armed
+     still in hand. So it registers a SWEEP and not a claim: one press closes the
+     panel AND disarms the tool AND drops the selection, which is what "get me
+     out of everything" has to mean for a menu somebody opened by mistake.
+     See src/lib/escapeHatch.js for the line between the two. */
+  useEscapeSweep(openId != null, () => setOpenId(null));
 
   /* --- ONE PANEL AT A TIME, AND IT IS ONE RULE NOW RATHER THAN FIVE ---------
      TWO PANELS STANDING OVER THE DRAWING IS TWO ANSWERS TO "WHAT DID I JUST
