@@ -22,7 +22,8 @@ import { PLAN_OPTIONS,
 import { COVE_GAP_FT } from './lib/cove.js';
 import { useDrag } from './hooks/useDrag.js';
 import { useEscapeHatch, useEscapeClaim } from './hooks/useEscapeHatch.js';
-import { isTextEntry, isFormControl } from './lib/escapeHatch.js';
+import { useUndoKeys } from './hooks/useUndoKeys.js';
+import { isFormControl } from './lib/escapeHatch.js';
 import useViewPrefs from './hooks/useViewPrefs.js';
 import useScale from './hooks/useScale.js';
 import usePlanSource from './hooks/usePlanSource.js';
@@ -3081,55 +3082,45 @@ export default function App({
 
   useEscapeHatch(standDown);
 
-  /** Delete removes, Ctrl+Z steps back. Escape is the hatch above. */
+  /* --- UNDO IS ITS OWN LISTENER NOW, AND THAT IS THE FIX --------------------
+     IT USED TO BE TWO BRANCHES OF THE HANDLER BELOW, and it broke twice from
+     living there: once behind a focus guard that stood the whole handler down
+     for any focused `<input>` — and the redesign put spec fields ON the drawing
+     — and once, with that fixed, to a `stopPropagation` between the pressed
+     element and `window`, because bubble-phase-last is the weakest position in
+     the DOM. Both times the press fell through to Safari, where ⌘Z is Undo
+     Close Tab: the editor reopened a browser tab instead of taking back an edit.
+
+     Undo is about the DOCUMENT, not about what is selected, so sharing a
+     listener with forty branches that are all about a selection was the error.
+     It is bound like Escape now — capture, once, ungated. See
+     src/lib/undoKeys.js for which press means what.
+
+     READ-ONLY GATES THE ACT AND NOT THE BINDING: a viewer's ⌘Z does nothing,
+     rather than reaching Safari. */
+  useUndoKeys({
+    enabled: !readOnly,
+    undo: () => undoRef.current?.undo(),
+    redo: () => undoRef.current?.redo(),
+  });
+
+  /** Delete removes. Escape is the hatch above it, and undo the one above that. */
   useEffect(() => {
-    // NO GUARD ANY MORE, AND THAT IS BECAUSE OF CTRL+Z. This bound the listener
-    // only when something was selected or armed, which is right for keys that
-    // act on a selection and wrong for one that acts on the document: undo has
-    // to answer when nothing is picked, which is exactly the state somebody is
-    // in immediately after deleting the thing they had selected. Every branch
-    // below already checks its own condition, so an always-bound listener does
-    // nothing it did not do before — and the read-only guard further down is
-    // still the one that decides whether to listen at all.
+    // NO SELECTION GUARD ON THE BINDING. This used to bind only while something
+    // was selected or armed. Every branch below already checks its own
+    // condition, so the guard bought nothing and cost a listener that went
+    // missing whenever the state binding it was a render behind. The read-only
+    // guard at the foot is the one that decides whether to listen at all.
     const onKey = (e) => {
-      /* --- UNDO COMES BEFORE THE FOCUS GUARDS, AND THAT IS THE WHOLE FIX ------
-         IT USED TO COME AFTER, and that is how ⌘Z went missing. The guard stood
-         the handler down whenever anything focusable had focus — and the spec
-         bars put a wattage slider, a count spinner and a height field ON THE
-         DRAWING, exactly where somebody works. Click one, and from then on every
-         ⌘Z fell past this handler to SAFARI, where ⌘Z is Undo Close Tab: it
-         reopened a browser tab instead of undoing an edit. The undo BUTTON went
-         on working the whole time, because a click is not a keypress, which is
-         what made it read as a keyboard fault rather than a focus one.
-
-         SO THE EDITOR OWNS ⌘Z EVERYWHERE, and the cost is named rather than
-         discovered: you no longer get the browser's own per-field text undo
-         inside our inputs. That is the right trade for THIS app. The fields here
-         hold a name, a wattage, a height — a few characters, retyped in seconds
-         — and the document holds a ceiling somebody has been laying out for an
-         hour. Losing a keystroke of typing is an inconvenience; losing the
-         ability to take back the last thing you did to the drawing, because the
-         pointer happened to be over a slider, is the bug you are reading about.
-         Every CAD tool makes the same call.
-
-         BOTH MODIFIERS, because this app runs on both kinds of keyboard and
-         neither audience should have to learn the other's shortcut. Shift+Z and
-         Ctrl+Y are both redo for the same reason. */
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
-        e.preventDefault();
-        if (e.shiftKey) undoRef.current?.redo(); else undoRef.current?.undo();
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || e.key === 'Y')) {
-        e.preventDefault();
-        undoRef.current?.redo();
-        return;
-      }
-      /* AND NOW THE GUARDS, for every key BELOW this line. Text being typed owns
-         the text-editing keys; any other control owns the unmodified ones, so a
-         focused spinner does not let ⌫ delete a room. See `isTextEntry`. */
-      if (isTextEntry(e.target)) return;
-      if (isFormControl(e.target) && !(e.metaKey || e.ctrlKey)) return;
+      /* A FOCUSED CONTROL OWNS ITS OWN KEYS — ALL OF THEM, and that is why this
+         is one line where it used to be two with an exemption carved through
+         them. Every branch below is an unmodified key acting on a selection:
+         Delete on a fitting, Enter to finish a run, `f` to fit. None of them may
+         fire while somebody is typing a name or nudging a wattage spinner.
+         UNDO WAS THE ONE BRANCH THAT HAD TO ANSWER WITH A FIELD FOCUSED, and it
+         is not here any more — it is bound in capture above, where neither this
+         guard nor anything else can reach it. See src/hooks/useUndoKeys.js. */
+      if (isFormControl(e.target)) return;
       /* THE TWO MODAL STEPS SWALLOW DELETE, AND THAT IS ALL THEY DO HERE NOW.
          Each one's panel holds a single question, and Delete while it is open
          cannot be allowed to mean "take the space I had selected before I got
