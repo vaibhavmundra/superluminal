@@ -5766,6 +5766,43 @@ export default function App({
                  outline must show only what somebody actually picked, and
                  nothing when they have picked nothing. */
               selectedId={focusId}
+              /* --- AND THE REST OF THE SHEET GOES OUT BEHIND IT --------------
+                 THE SAME RAW `focusId` THE BLUE OUTLINE TAKES, and it is the
+                 same answer to the same question — which space did somebody
+                 actually click — said at two strengths. The outline names it;
+                 this puts everything else out so the named one is the only
+                 thing left to read.
+
+                 IT IS THE RAW ONE FOR THE REASON THE OUTLINE ABOVE IS. `focus`
+                 falls back to `rooms[0]` so the details panel always has
+                 something to describe, and a mask keyed on THAT would black out
+                 seven eighths of every plan the moment it opened, with nobody
+                 having clicked anything.
+
+                 AND IT IS ALREADY THE WHOLE OF "WHEREVER THE CLICK CAME FROM",
+                 which is why no new state was invented for it. `onCanvasClick`
+                 writes the room under the press and null for the margin; the
+                 first lamp of a COB run writes its space (see `cobLock`); the
+                 first module of a run writes the run's room; `pickSpace` writes
+                 the row that was clicked in the panel; and `standDown` writes
+                 null, so Escape puts the sheet back. Every one of those is
+                 already "the space this gesture is about", so a second flag
+                 beside them could only ever disagree with them.
+
+                 THE TWO STEPS THAT ALREADY DIM THE SHEET KEEP THEIR OWN
+                 TREATMENT. `wash` is a designed pass with a reason of its own —
+                 a scrim of the GROUND's colour, under our line work, so a cove
+                 or a wall can be aimed at somebody else's scan — and stacking a
+                 55% blackout on top of it would be two dimmers fighting over
+                 one drawing. The condition is exactly the `wash` one below.
+
+                 OFF FOR A VIEWER. The shared sheet is a drawing rather than an
+                 editor: there is no rail and no Escape out there, so a stray
+                 click that blacked out seven rooms would be a state with no
+                 door. Same rule the pill and its two handlers take one screen
+                 above. */
+              isolateId={readOnly || stepTool?.id === 'cove' || wallEdit
+                ? null : focusId}
               fansPx={obstaclesPx} pxPerFt={pxPerFt} layers={canvasLayers} zoom={zoom}
               /* THE PLAN GOES QUIET WHILE A COVE IS BEING AIMED. Not a layer:
                  it is a property of the gesture in flight, it is never

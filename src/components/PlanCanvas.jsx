@@ -172,6 +172,37 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        reverse cove is being aimed and at no other time — see the scrim below,
        and `canvasLayers` in App.jsx for why the cove and nothing else. */
     wash = false,
+    /* --- ONE SPACE LEFT LIT, AND THE REST OF THE SHEET PUT OUT --------------
+       THE ID OF THE SPACE SOMEBODY CLICKED, or null for the ordinary drawing.
+
+       IT IS NOT `wash` WITH A HOLE IN IT, AND THE DIFFERENCE IS THE WHOLE
+       POINT OF HAVING BOTH. `wash` is a scrim of THE GROUND'S OWN COLOUR laid
+       over the scan and UNDER our line work: it makes somebody else's drawing
+       recede so ours can be aimed at, and by construction it cannot touch a
+       mark we make. This is the opposite instrument — the ground's colour is
+       not involved, it goes OVER everything including our own fittings, and
+       what it is dimming is the whole sheet rather than the scan.
+
+       BLACK ON BOTH GROUNDS, WHICH IS WHY IT TAKES NO COLOUR FROM `layers
+       .invert` the way every other decision on this canvas does. A scrim that
+       RECEDES has to be the ground's colour, so it has to know the ground. A
+       scrim that DARKENS is black on white paper and black on the negative
+       alike: on the page it drops the paper towards grey, and on the negative
+       our light ink is what dims. One literal, both modes, and the mode
+       question genuinely does not arise.
+
+       DRAWN AS ONE `evenodd` PATH AND NOT AS AN SVG `<mask>`. A mask is a
+       second offscreen render of a full-sheet rectangle every frame; a rect
+       with the room's polygon appended as a second subpath is one element, one
+       fill rule, and no compositing pass at all. The hole is exactly the
+       polygon that was traced, so what stays lit is the space AS DRAWN rather
+       than a bounding box around it — an L-shaped room keeps its notch.
+
+       IT IS THE LAST THING IN THE PAINT ORDER BUT ONE. Everything above it is
+       the drawing and goes under; the wall step below it is a modal step in
+       front of the sheet and stays on top of this the way it stays on top of
+       everything else. */
+    isolateId = null,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [], switchboards = [],
     /* WHICH PLATE IS PICKED, AND HOW ONE GETS PICKED. Optional, like every
@@ -4925,6 +4956,33 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           </>}
         </g>
       )}
+
+      {/* --- THE SPACE SOMEBODY CLICKED, AND THE SHEET PUT OUT AROUND IT ----
+          See `isolateId` in the props for what this is and why it is a path
+          rather than a mask. What is here is the geometry.
+
+          THE OUTER SUBPATH IS THE WHOLE CANVAS AND THE INNER ONE IS THE ROOM,
+          and `evenodd` is what turns the second into a hole in the first. It
+          has to be a `<path>` for that: a `<polygon>` holds one ring, so the
+          two-ring shape this needs cannot be spelled any other way without
+          reaching for a mask.
+
+          `pointerEvents="none"` IS NOT DECORATION HERE. This rect covers every
+          fitting on the sheet, and a scrim that took presses would make the
+          neighbouring rooms unclickable — which would turn a visual emphasis
+          into a modal step nobody asked for. The one way out of this state is
+          a click on a room, and that click has to reach the room. */}
+      {(() => {
+        const room = laid.find((r) => r.id === isolateId);
+        const poly = room?.plan?.polygonPx;
+        if (!poly || poly.length < 3) return null;
+        const hole = poly.map((p, k) => `${k ? 'L' : 'M'}${p.x},${p.y}`).join(' ');
+        return (
+          <path d={`M0,0 H${width} V${height} H0 Z ${hole} Z`}
+            fillRule="evenodd" fill="#000000" opacity="0.4"
+            pointerEvents="none" />
+        );
+      })()}
 
       {/* --- CONFIGURING THE WALLS, AND IT SITS OVER EVERYTHING -------------
           THE DOOR STEP'S SHAPE, FOR THE DOOR STEP'S REASON. It is a modal step
