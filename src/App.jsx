@@ -23,6 +23,8 @@ import { COVE_GAP_FT } from './lib/cove.js';
 import { useDrag } from './hooks/useDrag.js';
 import { useEscapeHatch, useEscapeClaim } from './hooks/useEscapeHatch.js';
 import { useUndoKeys } from './hooks/useUndoKeys.js';
+import usePanelDrag from './hooks/usePanelDrag.js';
+import useExitHold from './hooks/useExitHold.js';
 import { isFormControl } from './lib/escapeHatch.js';
 import useViewPrefs from './hooks/useViewPrefs.js';
 import useScale from './hooks/useScale.js';
@@ -4705,6 +4707,34 @@ export default function App({
     || troubles.length > 0 || !rooms.length
   );
 
+  /* --- AND WHERE SOMEBODY HAS PUT IT ---------------------------------------
+     AN OFFSET FROM WHERE CSS PUTS IT, AND NOTHING MORE. See
+     hooks/usePanelDrag.js for why this is not `useDrag`, and styles.css
+     `.lp-window` for how the two transforms compose.
+
+     TRANSIENT, LIKE EVERY OTHER GESTURE STATE ON THIS SCREEN. It is not the
+     document's — a plan reopened on another machine with the readings window
+     parked over somebody else's second monitor would be a plan carrying a fact
+     about a session that ended. It survives the window SHUTTING, though, which
+     is the half that matters in use: the window comes and goes on every click
+     that changes what is selected, and one that jumped back to the corner each
+     time would be one nobody could move at all. */
+  const panelDrag = usePanelDrag();
+
+  /* --- AND WHAT IT SHOWS ON THE WAY OUT ------------------------------------
+     THE WINDOW'S CONTENTS ARE A FUNCTION OF WHAT IS SELECTED, and it closes
+     BECAUSE the selection went away — so at the moment it starts sliding there
+     is, by construction, nothing left to draw in it. Without this the slide
+     would carry an empty box off the screen, which reads worse than no
+     animation: the content still vanishes on the frame and only the frame is
+     animated. See hooks/useExitHold.js.
+
+     260 AGAINST THE STYLESHEET'S 220. Slack, deliberately: the hold has to
+     outlast the transition rather than race it, and a body released one frame
+     early is a blink of empty panel at the very end of the slide — the exact
+     artefact this exists to remove. */
+  const holdPanelBody = useExitHold(windowSpeaks, 260);
+
   /* --- IS THE WIRING SHOWING, ON THE BAR OVER THE DRAWING -----------------
      ONE SWITCH THAT IS ALWAYS THERE, whatever else the bar happens to be
      carrying. It was a latched switch at the foot of the panel reading "Show
@@ -4795,7 +4825,7 @@ export default function App({
        grid row rather than something absolute over the drawing: a scroll
        container with chrome floating in front of its own last inch is a
        container whose bottom edge you cannot reach. */
-    <div className="relative grid grid-cols-[auto_1fr] grid-rows-[1fr_auto] h-full gap-0
+    <div className="lp-shell relative grid grid-cols-[auto_1fr] grid-rows-[1fr_auto] h-full gap-0
       [@media(max-width:960px)]:grid-cols-1
       [@media(max-width:960px)]:grid-rows-[auto_1fr_auto]
       [@media(max-width:960px)]:overflow-auto">
@@ -5588,6 +5618,27 @@ export default function App({
       <div ref={stageRef}
         className={'relative overflow-auto col-start-2 row-start-1 '
           + '[@media(max-width:960px)]:col-start-1 [@media(max-width:960px)]:row-start-2 '
+          /* --- AND THE RE-CENTRING IS A GLIDE RATHER THAN A CUT -------------
+             THIS IS THE JUMP. The right pad below swings between 18px and
+             374px as the window opens and shuts, and the drawing is centred
+             with `safe center` INSIDE the padding box — so every appearance of
+             the window shunted the plan 178px sideways on a single frame.
+             Nobody reads that as "a panel opened"; they read it as the drawing
+             moving under them.
+             SO IT IS TRANSITIONED, on the window's own curve and duration —
+             see `.lp-window` — which is what makes the two read as ONE
+             movement: the window comes in from the right and the sheet slides
+             over to make room for it, together.
+             PADDING AND NOT `transform`, which is the usual advice and is wrong
+             here. The stage is the scroll container; transforming it would move
+             its scrollbars and its clipping edge along with the plan. Padding
+             is a relayout, but of ONE box — the SVG inside carries its own
+             width and height, so nothing within it reflows and the cost is a
+             composite of an already-painted layer.
+             ...AND IT IS OFF FOR ANYBODY WHO ASKED FOR LESS MOVEMENT, the same
+             answer the window gives. */
+          + 'transition-[padding] duration-[220ms] ease-[cubic-bezier(.22,.61,.36,1)] '
+          + 'motion-reduce:transition-none '
           /* --- THE DRAWING IS CENTRED IN WHAT THE WINDOW LEAVES ------------
              THE PLAN WAS CENTRED IN THE VIEWPORT AND THE WINDOW SAT ON TOP OF
              IT, which is the one thing a floating panel must not do: the corner
@@ -7028,8 +7079,55 @@ export default function App({
           only place those live. The switchboard sheet has nothing: every plate
           on it is edited on the sheet, where its height is a box you type in, so
           the window would be an empty box over a drawing you cannot act on. */}
-      {windowSpeaks && (
-      <div className={'absolute top-[68px] right-4 w-[340px] z-[4] '
+      {/* --- IT IS ALWAYS MOUNTED NOW, AND THAT IS THE FIX FOR THE JUMP ------
+          THIS WAS `{windowSpeaks && <div>}`, and a thing that is not in the DOM
+          cannot animate out of it: the window appeared and vanished on the
+          frame, which is half of what somebody means by "the screen jumps". So
+          the state is an ATTRIBUTE and CSS moves it — see `.lp-window`.
+
+          THE OTHER HALF OF THE JUMP WAS NOT THIS ELEMENT AT ALL, and it is
+          worth saying plainly because it is the surprising one: the STAGE
+          carries `pr-[374px]` while the window is up, and the drawing is
+          centred with `safe center` INSIDE that padding. So opening the window
+          re-centred the plan by 178px on the frame it appeared. The padding
+          still changes — the allowance is the whole reason the sheet is not
+          under the window — but it is transitioned now, on the same curve and
+          the same 220ms as the slide, so the drawing glides across instead of
+          cutting. See the stage's own note.
+
+          THE ALLOWANCE FOLLOWS OPEN AND SHUT, NEVER THE DRAG. Once this window
+          has been carried somewhere the reserved gutter is in the wrong place,
+          and the honest fix looks worse than the dishonest one: re-computing it
+          from the window's position would slide the entire drawing sideways
+          under the hand that is dragging, forty times a second. A gutter that
+          is briefly reserved for nothing is a cosmetic cost; a plan that swims
+          while you move a panel is not. */}
+      <div ref={panelDrag.ref}
+        data-open={windowSpeaks ? 'true' : 'false'}
+        data-carry={panelDrag.dragging ? 'true' : 'false'}
+        /* WHERE IT WAS CARRIED TO, HANDED TO CSS AS TWO NUMBERS. The shut state
+           needs to compose its own `translateX` on top of these, and a
+           `transform` written here would overwrite that one outright — so the
+           offset arrives as custom properties and `.lp-window` owns the
+           declaration. */
+        style={{ '--lp-win-x': `${panelDrag.offset.x}px`,
+                 '--lp-win-y': `${panelDrag.offset.y}px` }}
+        /* NOT FOCUSABLE AND NOT A DIALOG. It is a readout that follows the
+           selection, not something you are answering — so while it is shut it
+           has to be out of reach as well as out of sight. It is parked off the
+           side of the screen and still in the document, and a window like that
+           is exactly the one somebody Tabs into and cannot see.
+           BOTH ATTRIBUTES, AND THEY ARE NOT THE SAME PROMISE. `aria-hidden`
+           takes it out of the accessibility tree; `inert` takes its controls
+           out of the tab order and stops them being clicked. `aria-hidden`
+           alone over focusable content is the classic version of this bug.
+           AN EMPTY STRING AND NOT `true`, because this is React 18: `inert` is
+           not in its known-boolean list, so a boolean renders as the string
+           "true" with a console warning, while "" renders the bare attribute.
+           `undefined` removes it. */
+        aria-hidden={windowSpeaks ? undefined : true}
+        inert={windowSpeaks ? undefined : ''}
+        className={'lp-window absolute top-[68px] right-4 w-[340px] z-[4] '
         + 'max-h-[calc(100%-68px-72px)] '
         + 'rounded-lg bg-panel '
         + 'shadow-[0_10px_34px_rgba(0,0,0,0.55)] '
@@ -7037,6 +7135,37 @@ export default function App({
         + '[@media(max-width:960px)]:static [@media(max-width:960px)]:w-auto '
         + '[@media(max-width:960px)]:max-h-none [@media(max-width:960px)]:rounded-none '
         }>
+        {/* --- THE GRIP, AND IT IS THE ONLY PART THAT PICKS THE WINDOW UP ---
+            A WINDOW YOU CAN DRAG BY ITS BODY IS A WINDOW THAT MOVES WHEN
+            SOMEBODY MEANT TO SELECT A READING IN IT. Forty rows of analysis,
+            a wattage slider, a list of fittings — every one of those is a
+            press target, and a body-drag would fight all of them. So the
+            gesture lives on a strip of its own, and the strip does nothing
+            else.
+
+            THE DOTS ARE THE WHOLE LABEL. Six of them in two rows is the one
+            mark that reads as "carry this" without a word next to it, which is
+            the point: a caption saying so would be chrome explaining chrome.
+
+            DOUBLE-CLICK PUTS IT BACK. The clamp in usePanelDrag already
+            guarantees the window cannot be lost off an edge, but "reachable"
+            and "where it belongs" are different promises, and the second one
+            costs one handler. Only offered once it has actually been moved. */}
+        <div {...panelDrag.grip}
+          onDoubleClick={panelDrag.moved ? panelDrag.home : undefined}
+          className={'flex-none flex items-center justify-center h-6 '
+            + 'select-none touch-none '
+            + '[@media(max-width:960px)]:hidden '
+            + (panelDrag.dragging ? 'cursor-grabbing' : 'cursor-grab')}>
+          <svg width="26" height="8" viewBox="0 0 26 8" aria-hidden="true"
+            className={'transition-opacity duration-150 '
+              + (panelDrag.dragging ? 'opacity-70' : 'opacity-35')}>
+            {[0, 1].map((row) => [0, 1, 2].map((col) => (
+              <circle key={`${row}-${col}`} r="1.4" fill="var(--color-text)"
+                cx={4 + col * 9} cy={2.6 + row * 3.4} />
+            )))}
+          </svg>
+        </div>
         {/* --- THE HEADER WENT TO THE TOP BAR ---------------------------
             THREE FILE FORMATS AND A SHARE BUTTON, in a row across the head of
             this panel. They are one act — this drawing, going somewhere else —
@@ -7063,6 +7192,7 @@ export default function App({
         {/* `pb-4` AND NOT `pb-10`. The column's ten was clearance above a
             pinned footer that is no longer under it; a window sized to its own
             content would render the extra as an inch of empty glass. */}
+        {holdPanelBody(() => (
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4
           flex flex-col gap-1.5">
         {/* --- THE WALKTHROUGH, UNDER IT ------------------------------------
@@ -8289,6 +8419,7 @@ export default function App({
         </>
         )}
         </div>
+        ))}
 
         {/* --- THE FOOTER IS THE BAR ALONG THE FOOT OF THE STAGE NOW ------
             IT HELD THREE THINGS AND ALL THREE WERE ABOUT THE WHOLE PLAN: the
@@ -8309,7 +8440,6 @@ export default function App({
             THE OTHER TWO ARE IN THE BOTTOM BAR, on the left, where the standing
             readings go. */}
       </div>
-      )}
     </div>
   );
 }

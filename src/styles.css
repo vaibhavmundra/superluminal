@@ -904,6 +904,91 @@ input:focus,select:focus,textarea:focus{
 .lp-scroll::-webkit-scrollbar-thumb{background:rgba(225,220,205,.26);border-radius:4px}
 .lp-scroll:hover::-webkit-scrollbar-thumb{background:rgba(225,220,205,.4)}
 
+/* --- THE FLOATING WINDOW: HOW IT ARRIVES, AND HOW IT IS CARRIED -----------
+   THE WINDOW IS ALWAYS MOUNTED NOW, and that is the whole reason this class
+   exists. It used to be `{windowSpeaks && <div>}` — mounted on the click that
+   opened a space and thrown away on the click that closed it — and a thing
+   that is not in the DOM cannot animate out of it. So the open/shut state is
+   an attribute rather than a mount, and CSS moves it.
+
+   TRANSFORM AND OPACITY, AND DELIBERATELY NOTHING ELSE. Both are composited:
+   the browser moves an already-painted layer instead of re-running layout, so
+   the slide costs nothing even with forty rows of analysis inside it. Animating
+   `right` or `width` would relayout the window's whole subtree every frame.
+
+   THE OFFSET IS A CUSTOM PROPERTY BECAUSE TWO THINGS WRITE THIS TRANSFORM.
+   `--lp-win-x`/`y` is where somebody dragged it (see hooks/usePanelDrag.js);
+   the `translateX` after it is the shut state. They compose in one declaration,
+   which is what keeps a dragged window sliding out along its own axis instead
+   of snapping home first. A dragged window that shut to the wrong place would
+   arrive back from the wrong place.
+
+   `calc(100% + 1.5rem)` CLEARS ITS OWN RIGHT MARGIN TOO — the window sits at
+   `right-4`, so 100% of its width leaves it still a finger's width on screen.
+
+   IT TRACKS THE HAND 1:1 WHILE IT IS BEING CARRIED. A transition on transform
+   is exactly wrong during a drag: every pointer frame would be eased towards,
+   so the window would lag the cursor by the length of the transition and feel
+   like it was being towed. `data-carry` turns it off for the gesture. */
+.lp-window{
+  transform:translate(var(--lp-win-x,0px),var(--lp-win-y,0px));
+  transition:transform 220ms cubic-bezier(.22,.61,.36,1),opacity 150ms linear;
+  will-change:transform
+}
+.lp-window[data-open="false"]{
+  transform:translate(var(--lp-win-x,0px),var(--lp-win-y,0px))
+            translateX(calc(100% + 1.5rem));
+  opacity:0;
+  pointer-events:none
+}
+.lp-window[data-carry="true"]{transition:none}
+
+/* --- AND THE SHELL HAS TO CLIP IT, WHICH IS THE BILL FOR PARKING IT OUTSIDE
+   A SHUT WINDOW SITS 364px PAST THE RIGHT EDGE OF THE SCREEN — its own width
+   plus its margin — and an absolutely positioned box out there is scrollable
+   overflow like any other. `html`, `body` and `#root` set only a height, so
+   the document would grow a horizontal scrollbar the first time the window
+   closed: a scrollbar onto 364px of nothing.
+
+   `clip` AND NOT `hidden`, WHICH IS THE WHOLE OF THE DECLARATION.
+   `overflow-x:hidden` is not a clip: it computes `overflow-y` to `auto` and
+   turns the shell into a scroll container — a real change to a grid that is
+   sized `h-full` and already holds a scroll container of its own. `clip` clips
+   and leaves the other axis alone.
+
+   THERE IS NO `hidden` FALLBACK UNDER IT, and that is deliberate rather than an
+   omission. It was written twice — as a second rule, then as a second
+   declaration in this block — and the minifier removed it both times, which is
+   correct of it: an overridden declaration is dead weight. `@supports` would
+   survive, and it is not worth it. `overflow-x:clip` has been in every engine
+   since Safari 16, what an engine older than that gets is a horizontal
+   scrollbar onto blank space, and the alternative was handing that same engine
+   a surprise scroll container instead.
+
+   ONLY ABOVE 960, because below it the window stops floating, goes into the
+   flow underneath the stage, and never leaves the box in the first place —
+   and down there the shell is deliberately scrollable. */
+@media (min-width:961px){
+  .lp-shell{overflow-x:clip}
+}
+
+/* BELOW 960 THE WINDOW STOPS FLOATING and becomes a block underneath the
+   stage — see the `static` variants at its call site. Sliding a thing that is
+   in the document flow would drag it sideways out of a column somebody is
+   scrolling, so the whole mechanism is switched off and shut goes back to
+   meaning gone. */
+@media (max-width:960px){
+  .lp-window{transform:none;transition:none}
+  .lp-window[data-open="false"]{display:none}
+}
+
+/* THE FADE STAYS FOR ANYBODY WHO ASKED FOR LESS MOVEMENT, and the travel goes.
+   Opacity is not motion; a 340px slide across the screen is. Same treatment
+   every other animated thing in this file gets. */
+@media (prefers-reduced-motion:reduce){
+  .lp-window{transition:opacity 150ms linear}
+}
+
 /* --- THE CHUNKING ICON, LIT ON HOVER --------------------------------------
    The icon strokes in `currentColor` so it inherits the row's state, and on
    hover it takes the accent RAMP instead. A gradient is not a colour, so it
