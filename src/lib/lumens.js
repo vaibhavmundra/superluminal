@@ -779,8 +779,21 @@ export function analyseSpace({
   }
 
   const achieved = rows.reduce((s, r) => s + r.netLumens, 0);
+
+  /* --- AND THE SAME TOTAL, SPLIT THE WAY THE SCHEME IS DESIGNED -------------
+     WHAT LIGHTS THE ROOM AND WHAT LIGHTS THE WORK ARE TWO FIGURES, and a
+     readout that only gives their sum cannot say the one thing a lighting
+     designer wants said: that a room reaching its number on spots is not a lit
+     room. `achieved` is these three added up, always — the split groups the
+     rows, it does not change the arithmetic.
+     ALL THREE KEYS ARE PRESENT AT 0, so a caller can print a layer without
+     first asking whether the room has one. See `layer` on the rows above for
+     which fitting is in which. */
+  const byLayer = { ambient: 0, task: 0, accent: 0 };
+  for (const r of rows) byLayer[r.layer] = (byLayer[r.layer] ?? 0) + r.netLumens;
+
   return {
-    ref, areas, luReq, required, lumensPerWatt, rows, achieved,
+    ref, areas, luReq, required, lumensPerWatt, rows, achieved, byLayer,
     shortfall: Math.max(0, required - achieved),
     ok: achieved >= required,
   };

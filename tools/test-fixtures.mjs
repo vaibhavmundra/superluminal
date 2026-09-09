@@ -97,7 +97,7 @@ console.log('a new track resolves its room and the grid fallback');
     ],
     tracks: [{ id: 'track-1', roomId: 'r1', closed: false,
       pts: [{ x: 0, y: 0 }, { x: 300, y: 0 }] }],
-    fixtures: [{ id: 'd1', trackId: 'track-1', kind: 'diffuser', u: 0.2, watts: 10 }],
+    fixtures: [{ id: 'd1', on: 'track-1', kind: 'diffuser', u: 0.2, watts: 10 }],
     pxPerFt: PPF, roomId: 'r1', absorbFt: 3,
   });
   assert.equal(absorbed.modules.length, 1);

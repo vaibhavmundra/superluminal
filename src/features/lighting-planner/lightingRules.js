@@ -251,7 +251,7 @@ export function fixtureGroups(r, {
   for (const t of magTracksPx) {
     if (t.roomId !== r.id) continue;
     for (const q of trackModulesPx) {
-      if (q.trackId !== t.id) continue;
+      if (q.on !== t.id) continue;
       const m = MODULE_BY_ID[q.kind];
       if (!m?.family) continue;    // the wall washer, which has no numbers yet
       bump(q.id, m.family, 1, 0);

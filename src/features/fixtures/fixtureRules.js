@@ -15,7 +15,14 @@
 import { placeCob, chunkSpec, wallClearance, bedUnder,
          clampWatts, nearestBeam,
          arrayAsks, arrayQuanta, quantiseCount } from '../../lib/cob.js';
-import { moduleAt, uAt, placeableU } from '../../lib/magTrack.js';
+import { placeableU } from '../../lib/magTrack.js';
+/* THE RUN IS A PATH AND A MODULE IS A POINT HELD ON IT. Everything about WHERE
+   on a run something sits comes from the two primitives — lib/path.js for the
+   parameter space and lib/point.js for the point — and `placeableU` above is
+   the one thing that is genuinely a fact about the PRODUCT: two bodies cannot
+   share a foot of extrusion. That is the domain's veto and it stays here. */
+import { asPathHost, pathU, pathAt, pathLengthOf, makePath } from '../../lib/path.js';
+import { pointsOn, uAt } from '../../lib/point.js';
 import { ABSORB_FT, DODGE_FT } from '../../lib/track.js';
 import { nearestOnSegment, pathLength, pointAt, pointInPolygon }
   from '../../lib/geometry.js';
@@ -79,6 +86,9 @@ export function gridSpotsOnTrack(pts, gridSpots, { closed = false, watts = [] } 
       ? catalogue.reduce((best, w) => (
         Math.abs(w - asked) < Math.abs(best - asked) ? w : best), catalogue[0])
       : null;
+    /* THE SAME TWO STEPS `moduleU` TAKES — the primitive's projection, then the
+       product's clearance. This one is handed bare points rather than a run, so
+       it asks `uAt` directly instead of through a host. */
     const u = placeableU(pts, uAt(pts, p, { closed }), out, 'spot',
       { closed, watts: moduleW });
     if (u != null) out.push({ u, kind: 'spot', watts: moduleW,
@@ -149,22 +159,29 @@ export function absorbAutoplaceSpots({ spots, tracks, fixtures, pxPerFt,
   }
   const eligible = (tracks ?? []).filter((track) =>
     (!roomId || track.roomId === roomId)
-    && (fixtures ?? []).some((f) => f.trackId === track.id && f.kind === 'diffuser'))
+    && pointsOn(fixtures, track.id).some((f) => f.kind === 'diffuser'))
     .map((track) => ({
       ...track,
-      ptsFt: (track.pts ?? []).map((p) => ({ x: p.x / pxPerFt, y: p.y / pxPerFt })),
-    })).filter((track) => track.ptsFt.length >= 2);
+      /* THE RUN AS A PATH HOST, IN FEET. `asPathHost` is the three fields
+         lib/point.js asks of anything a point can be held on, and building it
+         here means every question below — the fraction, the position, the
+         length — is asked of one object rather than of a loose pair of `pts`
+         and `closed` that could drift apart. */
+      host: asPathHost(makePath(
+        (track.pts ?? []).map((p) => ({ x: p.x / pxPerFt, y: p.y / pxPerFt })),
+        { closed: track.closed, id: track.id })),
+    })).filter((track) => track.host);
   if (!eligible.length) return { spots, modules: [] };
 
   const taken = new Map(eligible.map((track) => [track.id,
-    (fixtures ?? []).filter((f) => f.trackId === track.id)
+    pointsOn(fixtures, track.id)
       .map((f) => ({ u: f.u, kind: f.kind, watts: f.watts }))]));
   const modules = [], keep = [];
   for (const spot of spots) {
     const p = { x: Number(spot?.xFt), y: Number(spot?.yFt) };
     const bids = eligible.map((track) => {
-      const want = uAt(track.ptsFt, p, { closed: track.closed });
-      const at = moduleAt(track.ptsFt, want, { closed: track.closed });
+      const want = pathU(track.host, p);
+      const at = pathAt(track.host, want);
       return { track, want, dist: at ? Math.hypot(p.x - at.x, p.y - at.y) : Infinity };
     }).filter((bid) => bid.dist <= absorbFt + 1e-9)
       .sort((a, b) => a.dist - b.dist);
@@ -172,14 +189,14 @@ export function absorbAutoplaceSpots({ spots, tracks, fixtures, pxPerFt,
     let seated = null;
     for (const bid of bids) {
       const { track, want } = bid;
-      const u = placeableU(track.ptsFt, want, taken.get(track.id), 'spot',
-        { closed: track.closed, watts: spot.watts });
+      const u = placeableU(track.host.pts, want, taken.get(track.id), 'spot',
+        { closed: track.host.closed, watts: spot.watts });
       if (u == null) continue;
-      const total = pathLength(track.ptsFt, { closed: track.closed });
+      const total = pathLengthOf(track.host);
       const rawMove = Math.abs(u - want) * total;
       const move = track.closed ? Math.min(rawMove, Math.max(0, total - rawMove)) : rawMove;
       if (move > dodgeFt + 1e-9) continue;
-      seated = { trackId: track.id, u, watts: spot.watts, beam: spot.beam,
+      seated = { on: track.id, u, watts: spot.watts, beam: spot.beam,
         gridCells: spot.gridCell ? [spot.gridCell] : [] };
       taken.get(track.id).push({ u, kind: 'spot', watts: spot.watts });
       break;
@@ -637,7 +654,15 @@ export function draftCount(d, geo, n) {
  * `null` MEANS THE RUN IS FULL — leave the module where it is.
  */
 export function moduleU({ run, p, taken, kind, watts }) {
-  if (!run) return null;
-  return placeableU(run.pts, uAt(run.pts, p, { closed: run.closed }),
-                    taken, kind, { closed: run.closed, watts });
+  const host = asPathHost(run);
+  if (!host) return null;
+  /* TWO STEPS AND THEY ARE DIFFERENT KINDS OF THING. `pathU` is the PRIMITIVE:
+     where on this path does the pointer project to, which is the same division
+     every constrained point on the canvas goes through. `placeableU` is the
+     PRODUCT: the nearest fraction at which this body actually fits, or null
+     when the run is full. Keeping them apart is what lets the module's drag
+     hand the second one to `usePointDrag` as its `clamp` and inherit the
+     first. */
+  return placeableU(host.pts, pathU(host, p), taken, kind,
+                    { closed: host.closed, watts });
 }

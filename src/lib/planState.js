@@ -645,6 +645,14 @@ export function applyEditor(p, set) {
   set.setManualCobs?.(p.manualCobs ?? []);
   set.setAutoSpots?.(p.autoSpots ?? []);
   set.setCobArrays?.(p.cobArrays ?? []);
+  /* A MODULE'S HOST FIELD IS `on` AND NOTHING READS `trackId` ANY MORE. A
+     module is a point held on a path — see `placeModule` in lib/magTrack.js —
+     and no renaming happens on the way in: this was a deliberate decision not
+     to carry the old shape. A module saved under the old name has no host, so
+     `projectTrackModulesPx` drops it exactly as it drops one whose run was
+     deleted, which is the failure mode that file already documents — nothing
+     is drawn at the origin and nothing crashes. The RUN itself is a ceiling
+     shape and is unaffected; it reopens, draws and resizes as before. */
   set.setTrackFixtures?.(p.trackFixtures ?? []);
   set.setCeilingShapes?.(p.ceilingShapes ?? []);
   set.setLightMoves?.(p.lightMoves ?? {});

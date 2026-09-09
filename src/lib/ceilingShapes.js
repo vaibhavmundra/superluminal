@@ -114,6 +114,11 @@ import { axisLock } from './pen.js';
    on it, what it looks like set in or out. See the header of geometry.js for the
    line between the two files. */
 import { pathLength, sub, len } from './geometry.js';
+/* THE GEOMETRY PRIMITIVES. A shape is one of two things — a point list, which
+   IS a path, or a box with a derived outline — and its edits come from those two
+   files rather than from arithmetic written here. See `editablePath`. */
+import { asPathHost, makePath, moveVertex } from './path.js';
+import { toLocal } from './box.js';
 
 // --- small vector helpers ---------------------------------------------------
 
@@ -295,6 +300,21 @@ export const roundable = (shape) => shape?.kind !== 'circle' && !isOpen(shape);
  */
 export const isOpen = (shape) =>
   shape?.kind === 'line' || (shape?.kind === 'pen' && !!shape.open);
+
+/**
+ * IS THIS SHAPE'S GEOMETRY A POINT LIST?
+ *
+ * THE ONE DIVISION THAT DECIDES HOW A SHAPE IS EDITED. A `line` and a `pen`
+ * STORE their points (see `lineShape` and `penShape`), so their geometry is a
+ * PATH and the path primitive's verbs apply: a vertex moves. Every other kind
+ * is a BOX — `wFt` x `hFt`, or an `rFt` and a side count — whose outline is
+ * derived by `outlineFt`, and whose edit is a resize of that box.
+ *
+ * Read by `handlesFor` and by `editablePath`, so the two cannot disagree about
+ * which of the two a shape is.
+ */
+export const hasVertices = (shape) =>
+  shape?.kind === 'pen' || shape?.kind === 'line';
 
 export function outlineFt(shape, grow = 0) {
   if (!shape) return [];
@@ -655,12 +675,38 @@ export function resizeShape(shape, handle, pointerFt, { uniform = false } = {}) 
  * a grip that silently does the same thing as the corner beside it.
  */
 export function handlesFor(shape) {
-  /* A SLOT HAS NO GRIPS AT ALL, and that is not an omission. Its ends are pinned
-     to the walls — see `spanOnOutline` — so a corner drag on its bounding box
-     would pull them off the plaster, and a slot floating in the middle of a room
-     is a detail nobody can build. It is moved and deleted; to change where it
-     goes, draw it again. */
-  if (isOpen(shape)) return [];
+  /* A COVE SLOT HAS NO GRIPS AT ALL, and that is not an omission. Its ends are
+     pinned to the walls — see `spanOnOutline` — so a corner drag on its bounding
+     box would pull them off the plaster, and a slot floating in the middle of a
+     room is a detail nobody can build. It is moved and deleted; to change where
+     it goes, draw it again.
+
+     AND THE TEST IS THE ROLE AND NOT `isOpen` ALONE, which is the same mistake
+     `shapeCanTranslate` was already corrected for — see its note. A straight
+     magnetic track and an open guide are ceiling-mounted RUNS whose ends are
+     pinned to nothing, and testing openness alone gave a single-run track no
+     grips at all while a rectangular track resized normally. That is the bug
+     this rule kept producing one function at a time: the slot's constraint is a
+     fact about a COVE. */
+  if (isOpen(shape) && roleOf(shape) === 'cove') return [];
+
+  /* --- AND A PATH SHAPE'S HANDLES ARE ITS VERTICES, NOT ITS BOX -------------
+     A `line` or a `pen` stores its points, so what there is to grab on one is
+     the points — `editablePath` hands them out and the canvas draws a grip per
+     vertex. Offering box handles as WELL is not a second convenience, it is a
+     collision: a straight run's bounding box is degenerate, so all four corner
+     grips land exactly on its two ends, on top of the vertex grips, painted
+     later and taking every press. What you got was a resize cursor on the one
+     thing that should have said "drag this point".
+
+     SO THE BOX IS NOT OFFERED AT ALL on a shape whose geometry is a point
+     list, which is the same division `hasVertices` states: a path is edited by
+     its vertices and a box by its box, and nothing is edited by both.
+
+     WHAT THIS TAKES AWAY, SAID PLAINLY: a pen shape can no longer be scaled by
+     dragging a corner. Scaling a path is a verb lib/path.js does not have yet;
+     when it does, it belongs there and not in a box handle. */
+  if (hasVertices(shape)) return [];
   const corners = [{ sx: -1, sy: -1 }, { sx: 1, sy: -1 },
                    { sx: 1, sy: 1 }, { sx: -1, sy: 1 }];
   if (!stretchy(shape)) return corners;
@@ -670,6 +716,61 @@ export function handlesFor(shape) {
 
 /** The frame the handles sit on: the shape's own box, radius excluded. */
 export const frameFt = (shape) => baseBox(shape);
+
+/**
+ * THE SHAPE'S OWN PATH, WHEN IT HAS ONE — as the host contract lib/point.js and
+ * lib/path.js ask for, in FEET and in world space.
+ *
+ * TWO KINDS OF SHAPE AND ONLY ONE OF THEM HAS VERTICES. A `line` and a `pen`
+ * store a point list (see `lineShape` and `penShape`), so their geometry IS a
+ * path and the path primitive's verbs apply to it: a vertex moves, a vertex goes
+ * in, a vertex comes out. Everything else here is BOX-PARAMETERISED — a rect is
+ * `wFt` x `hFt`, a circle is `rFt`, an n-gon is `rFt` and a side count — and its
+ * outline is DERIVED by `outlineFt`. There are no vertices to edit on one of
+ * those, because the vertices are not the record; the box is. That is the box
+ * primitive's territory and its edit is `resizeShape`.
+ *
+ * `null` FOR A SHAPE WITH NO PATH, which is what a caller reads as "this one
+ * resizes rather than being re-pointed". Answering with the derived outline
+ * instead would offer seventy-two draggable grips on a circle, every one of
+ * which would be written to a field the shape does not have.
+ */
+export function editablePath(shape) {
+  if (!hasVertices(shape)) return null;
+  const pts = place(shape.pts ?? [], shape.x ?? 0, shape.y ?? 0, shape.rot ?? 0);
+  return asPathHost(makePath(pts, { closed: !isOpen(shape), id: shape.id ?? null }));
+}
+
+/**
+ * ONE VERTEX OF A SHAPE'S PATH, MOVED — and every part of it comes from a
+ * primitive.
+ *
+ * THE FRAME IS THE BOX PRIMITIVE'S. A shape's `pts` are stored in its OWN
+ * frame, about its centre and turned by its `rot` — that is what `place` undoes
+ * on the way out — so a world point has to come back in through `toLocal`
+ * before it can be stored. Doing that arithmetic here by hand is how the two
+ * transforms drift apart.
+ *
+ * THE EDIT IS THE PATH PRIMITIVE'S. `moveVertex` is the verb, and `lock` is the
+ * path's own property rather than a modifier: a track profile is orthogonal
+ * because a track can only be built that way, and a cove outline traced off a
+ * plan is not. See the note on `moveVertex`.
+ *
+ * THE CENTRE IS NOT RE-DERIVED, deliberately. Moving a vertex changes the
+ * shape's bounding box, and re-centring it on the new box would slide every
+ * OTHER vertex under the hand — the drawing would crawl away from the grip
+ * being dragged. `resizeShape` re-anchors because a resize is about the box;
+ * this is about one point.
+ */
+export function moveShapeVertex(shape, i, atFt, { lock = false } = {}) {
+  const host = editablePath(shape);
+  if (!host || i < 0 || i >= host.pts.length) return shape;
+  const centre = { x: shape.x ?? 0, y: shape.y ?? 0 };
+  const world = moveVertex(makePath(host.pts, { closed: host.closed }), i, atFt,
+    { lock });
+  return { ...shape,
+    pts: world.pts.map((p) => toLocal(p, centre, shape.rot ?? 0)) };
+}
 
 /**
  * THE SHAPE A DRAG HAS MADE SO FAR.

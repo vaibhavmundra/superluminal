@@ -48,7 +48,10 @@
 // what a run of them is worth in lumens.
 // ---------------------------------------------------------------------------
 
-import { pathLength, pointAt, arcLengthAt, legs } from './geometry.js';
+import { pathLength, legs } from './geometry.js';
+/* THE PATH PARAMETER IS THE POINT PRIMITIVE'S. See the note above `clampU`
+   below: a module on a run is a point held on another geometry. */
+import { clampU, uAt, atU } from './point.js';
 /* NO WATTAGE LIST IS IMPORTED HERE, AND THAT IS THE POINT — see the note on
    `watts` in `chooseDiffusers`. What a diffuser is sold at is a fact about a
    BRAND's catalogue, not about how many of them a room wants, and this file has
@@ -281,16 +284,15 @@ export const moduleLenFt = (kind, watts = null) => (moduleLenIn(kind, watts) / 1
  * SO THE FRACTION IS THE RECORD AND THE FEET ARE THE READOUT. The schedule bills
  * the modules it can see and the profile by its length; nothing downstream reads
  * `u` except this file.
+ *
+ * AND THE ARGUMENT ABOVE OUTGREW THE MODULE. A module clipped to a run is a
+ * POINT HELD ON ANOTHER GEOMETRY, and it was the first one on this canvas; the
+ * primitive is now lib/point.js and the three functions that were here are
+ * there, under names about a point rather than about a track. They are
+ * re-exported under the names forty call sites already use, for `penLengthFt`'s
+ * reason: renaming them everywhere would be a change about nothing.
  */
-export const clampU = (u) => Math.min(1, Math.max(0, Number(u) || 0));
-
-/** The fraction of the path nearest a point — what a click on a run resolves
- *  to. `arcLengthAt` does the projection; this is only the division. */
-export function uAt(pts, p, { closed = false } = {}) {
-  const total = pathLength(pts, { closed });
-  if (!(total > 0)) return 0;
-  return clampU(arcLengthAt(pts, p, { closed }) / total);
-}
+export { clampU, uAt };
 
 /**
  * A MODULE RESOLVED ONTO ITS RUN: where it is, and which way it lies.
@@ -306,12 +308,7 @@ export function uAt(pts, p, { closed = false } = {}) {
  * `null` where there is no path to sit on, which the caller reads as "not on
  * the drawing" rather than as a module at the origin.
  */
-export function moduleAt(pts, u, { closed = false } = {}) {
-  const total = pathLength(pts, { closed });
-  if (!(total > 0)) return null;
-  const q = pointAt(pts, clampU(u) * total, { closed });
-  return q ? { x: q.x, y: q.y, ux: q.ux, uy: q.uy } : null;
-}
+export const moduleAt = atU;
 
 /**
  * HOW MANY MODULES OF THIS KIND A RUN WILL TAKE.
@@ -707,12 +704,19 @@ export function planDiffusers(pts, { closed = false, needW = 0, watts,
  * what makes them survive the catalogue being retuned under a finished plan —
  * the same rule `placeCob` follows. The default comes from the module.
  */
-export function placeModule({ trackId, kind, u, watts = null, beam = null,
+export function placeModule({ on, kind, u, watts = null, beam = null,
                               gridCells = null, seq = 0 }) {
   const m = MODULE_BY_ID[kind] ?? MODULE_BY_ID.spot;
   return {
     id: newModuleId(seq),
-    trackId, kind: m.id, u: clampU(u),
+    /* `on` AND NOT `trackId`, BECAUSE A MODULE IS A CONSTRAINED POINT. The run
+       is a path — see lib/path.js — and this is a point held on it at a
+       fraction, which is the primitive lib/point.js states. The field is that
+       primitive's, so `isConstrained`, `resolvePoint` and the whole point
+       gesture answer for a module without being told it is one. Plans saved
+       under the old name are renamed on the way in — see `applyEditor` in
+       lib/planState.js, which is where the optional-key defaulting lives. */
+    on, kind: m.id, u: clampU(u),
     watts: watts ?? moduleWatts(m.id), beam: beam ?? m.beam,
     ...(gridCells?.length ? { gridCells: [...gridCells] } : {}),
   };

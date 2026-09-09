@@ -429,7 +429,7 @@ function randomAction(r) {
     { type: 'LIST_REMOVED', field: 'ceilingShapes', id: shapeId },
     { type: 'TRACK_MODULES_DROPPED', trackId: shapeId },
     { type: 'LIST_ADDED_MANY', field: 'trackFixtures',
-      items: [{ id: `md${1 + Math.floor(r() * 3)}`, trackId: shapeId, kind: 'diffuser', u: 0.4, watts: 5 }] },
+      items: [{ id: `md${1 + Math.floor(r() * 3)}`, on: shapeId, kind: 'diffuser', u: 0.4, watts: 5 }] },
   ]);
 
   /* --- domain 4, SPLIT ACROSS TWO PICKS so each of its two dozen actions is
@@ -1643,8 +1643,8 @@ section('the list ops: identity, and the rules that are not shapes');
   /* A RUN'S MODULES GO WITH THE RUN, by the track id and not by their own. */
   let mods = initialDoc();
   mods = docReducer(mods, { type: 'LIST_ADDED_MANY', field: 'trackFixtures',
-    items: [{ id: 'm1', trackId: 'sh2' }, { id: 'm2', trackId: 'sh2' },
-            { id: 'm3', trackId: 'sh9' }] });
+    items: [{ id: 'm1', on: 'sh2' }, { id: 'm2', on: 'sh2' },
+            { id: 'm3', on: 'sh9' }] });
   const gone = docReducer(mods, { type: 'TRACK_MODULES_DROPPED', trackId: 'sh2' });
   ok('deleting a run takes its modules and no others',
     same(gone.trackFixtures.map((f) => f.id), ['m3']),

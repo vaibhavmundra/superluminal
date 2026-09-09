@@ -32,7 +32,14 @@ import { snapPoint } from '../../lib/snapGuides.js';
 import { clampLightMove } from '../../lib/planner.js';
 import { newCobId, placeCob, recommendCob } from '../../lib/cob.js';
 import { isTrack as shapeIsTrack } from '../../lib/ceilingShapes.js';
-import { moduleWatts, placeModule } from '../../lib/magTrack.js';
+import { moduleWatts, placeModule, placeableU, newModuleId }
+  from '../../lib/magTrack.js';
+/* A MODULE IS A POINT HELD ON A PATH — see the header of lib/point.js and the
+   note on `mod` below. The run comes from the geometry feature already shaped
+   as a host; `pointsOn` is "which modules are on this run". */
+import { pointsOn } from '../../lib/point.js';
+import { asPathHost } from '../../lib/path.js';
+import { usePointDrag } from '../../hooks/usePoint.js';
 import {
   makeCeilingObject, resizeFromCorner, rotateTo, halfExtents, isUniform,
   applyResize, withSweep, newCeilingObjectId,
@@ -578,28 +585,63 @@ export default function useFixtureGestures({
      meant to select does not nudge a fitting three pixels — rule 1 in
      lib/dragMove.js.
 
-     NO STORE IS HANDED TO THE HOOK, AND THAT IS THE POINT OF THIS ONE. What a
-     module has is not a position but a FRACTION of a path, so there is no `at`
-     and no `to`: the hook resolves the pointer, and `onMove` turns it into a `u`
-     the same way the placing press does. The constraint stays in the caller
-     because the constraint is the whole of what a module is. */
-  const mod = useDrag({
+     IT IS THE POINT PRIMITIVE'S GESTURE AND NOT A HAND-WRITTEN ONE. What a
+     module has is not a position but a FRACTION of a path, and that IS
+     lib/point.js's constrained point: the run is the host, `u` is the record,
+     and `hostFor` plus `clamp` are the whole of what this drag has to say.
+     Everything that used to be written out here — resolving the pointer,
+     projecting it onto the run, refusing to write a `u` the body does not fit
+     at — is `pointAdapters` and the three gates in hooks/usePoint.js.
+
+     WHAT THE PRIMITIVE BRINGS THAT THIS DID NOT HAVE:
+       the shift lock REFUSED rather than absent, because a point already held
+       to a run must not also be held to a row through the press — see
+       `orthoFor`;
+       the snap refused for the same reason, so no guide claims an alignment
+       the projection then leaves;
+       a press on a module whose run has gone declined outright, instead of
+       anchoring the gesture on a fallback origin;
+       and ALT-COPY, which a module never had: a second diffuser along the run
+       without a trip back to the rail. */
+  const mod = usePointDrag({
     state: [moduleDrag, setModuleDrag],
     point: svgPoint,
     capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
     zoom,
-    onMove: (p, { drag }) => {
-      const f = trackFixtures.find((q) => q.id === drag.id);
-      const run = f ? magTrackById[f.trackId] : null;
-      if (!run) return;
-      /* EXCLUDED RATHER THAN INCLUDED, because a module always clashes with
-         itself. */
-      const taken = trackFixtures.filter(
-        (q) => q.trackId === f.trackId && q.id !== f.id);
-      const u = moduleU({ run, p, taken, kind: f.kind, watts: f.watts });
-      if (u == null) return;   // the rest of the run is full — leave it where it is
-      docActions.patchTrackFixture(f.id, { u });
+    /* THE RUN, AS THE THREE FIELDS A HOST IS. `magTrackById` is the geometry
+       feature's projection and already carries `id`, `pts` and `closed`. */
+    hostFor: (f) => asPathHost(magTrackById[f?.on]) ?? null,
+    /* THE PRODUCT'S VETO, AND IT IS THE ONLY DOMAIN RULE LEFT IN THIS DRAG.
+       Two bodies cannot share a foot of extrusion, so the wanted fraction is
+       moved to the nearest one this body actually fits at — and `null` when
+       the rest of the run is full, which leaves the module where it was rather
+       than sliding it somewhere free. See `placeableU`.
+       EXCLUDED RATHER THAN INCLUDED, because a module always clashes with
+       itself. AND EACH BODY IS MEASURED AT ITS OWN WATTAGE: a 5 W diffuser is
+       a 200 mm stub and an 18 W one a 400 mm bar. */
+    clamp: (u, f, host) => placeableU(host.pts, u,
+      pointsOn(trackFixtures, f.on).filter((q) => q.id !== f.id),
+      f.kind, { closed: host.closed, watts: f.watts }),
+    /* ONE PATCH PER FRAME, AND THE FRACTION IS THE ONLY THING WRITTEN. The
+       hook hands back the whole updated list; what the document takes is the
+       one field that changed, through the action it already had. A twin from an
+       alt-copy is not in the store yet, so it is ADDED rather than patched. */
+    setList: (fn) => {
+      const next = fn(trackFixtures);
+      const known = new Map(trackFixtures.map((q) => [q.id, q]));
+      const fresh = next.filter((q) => !known.has(q.id));
+      if (fresh.length) docActions.addTrackFixtures(fresh);
+      for (const q of next) {
+        const was = known.get(q.id);
+        if (was && was.u !== q.u) docActions.patchTrackFixture(q.id, { u: q.u });
+      }
     },
+    copy: true,
+    mintId: (n) => newModuleId(`c${trackFixtures.length + n}`),
+    /* AND THE TWIN IS SELECTED, so the bar is showing the module the gesture is
+       now carrying rather than the one it was picked up from — the same thing
+       the cove shape's copy does. */
+    onCopy: ({ ids }) => setSel(select('module', ids[0])),
   });
 
   const modulePointerDown = (e, id) => {
@@ -623,10 +665,16 @@ export default function useFixtureGestures({
     if (!canGrab(pressState) || !pxPerFt) return;
     const f = trackFixtures.find((q) => q.id === id);
     if (!f) return;
+    /* THE MEMBER IS NAMED NOW, AND IT HAS TO BE. The point gesture reads the
+       record to know its kind and its host — a bare id tells it neither — and
+       it DECLINES a press it cannot anchor, which is the third gate in
+       hooks/usePoint.js. So the event is only swallowed if the press was
+       actually taken; a module whose run has gone falls through instead of
+       starting a drag that would throw it at the origin. */
+    if (!mod.down(e, { id, members: [f] })) return;
     e.stopPropagation();
     e.preventDefault();
     setSel(select('module', id));
-    mod.down(e, { id });
   };
 
   const modulePointerMove = (e) => { if (pxPerFt) mod.move(e); };
@@ -657,7 +705,7 @@ export default function useFixtureGestures({
     const run = hit && shapeIsTrack(hit) ? magTrackById[hit.id] : null;
     if (!run || !trackMode) return true;
     e.preventDefault();
-    const taken = trackFixtures.filter((f) => f.trackId === run.id);
+    const taken = pointsOn(trackFixtures, run.id);
     /* CLEARED AT THE BODY THIS MODULE WILL ACTUALLY BE, and every module
        already on the run at its own — a 5 W diffuser is a 200 mm stub and an
        18 W one a 400 mm bar, so one clearance figure for the lot would refuse
@@ -667,13 +715,13 @@ export default function useFixtureGestures({
                         watts: moduleWatts(trackMode) });
     if (u == null) return true;   // the run is full — see `placeableU`
     docActions.addTrackFixtures([
-      placeModule({ trackId: run.id, kind: trackMode, u, seq: trackFixtures.length })]);
+      placeModule({ on: run.id, kind: trackMode, u, seq: trackFixtures.length })]);
     /* AND THE PANEL GOES TO THE SPACE IT LANDED IN, on the first module of
        a run, for the reason the first COB of a run opens its space: a
        diffuser is an ambient source and the two figures at the top of the
        Analysis move as you clip them on, which is the only reason watching
        them is worth anything. */
-    if (run.roomId && !trackFixtures.some((f) => f.trackId === run.id)) {
+    if (run.roomId && !pointsOn(trackFixtures, run.id).length) {
       docActions.setFocusId(run.roomId); setOptionPick(null); docActions.setView('spaces');
     }
     return true;

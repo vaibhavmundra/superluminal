@@ -88,6 +88,12 @@
   --color-danger-line:#F7CFD0;
   --color-danger-ink:#C62A2F;
 
+  /* THE READOUT'S GREEN, AND IT IS NOT `--color-ok`. That one is a badge
+     colour, sized for a word on a light ground; this is a 56px digit glowing
+     on black, where #16A34A reads as dark green rather than as lit. One hue,
+     one job: the lumens readout. */
+  --color-lcd:#7DE85F;
+
   --color-ok:#16A34A;
   --color-ok-soft:#EDFAF1;
   --color-ok-line:#BBE8C9;
@@ -106,6 +112,12 @@
 
   --font-sans:'The Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
   --font-display:'Lunar',sans-serif;
+  /* THE SEVEN-SEGMENT FACE, AND IT IS FOR FIGURES AND NOTHING ELSE. A lumen
+     count is an instrument reading, and this is what an instrument's digits
+     look like. Monospace behind it because the fallback for a digit face has
+     to hold its columns — a proportional stand-in would make the readout jump
+     a pixel on every recount while the font loads. */
+  --font-lcd:'Overtime',ui-monospace,'SFMono-Regular',monospace;
 
   --radius:6px;
   --radius-lg:10px;
@@ -235,6 +247,16 @@
   font-family:'Lunar';
   src:url('./fonts/Lunar-400.woff2') format('woff2');
   font-weight:400; font-style:normal; font-display:block
+}
+/* OVERTIME, and only for the lumens readout. Digits, a comma and nothing this
+   app asks it for beyond them — see `--font-lcd` for why it is here at all.
+   `swap` rather than `block`: a figure held blank until a 59KB file arrives is
+   a readout that is missing at the moment somebody places a light, and the
+   monospace fallback keeps the columns until it lands. */
+@font-face{
+  font-family:'Overtime';
+  src:url('./fonts/overtime.ttf') format('truetype');
+  font-weight:400; font-style:normal; font-display:swap
 }
 
 :root{

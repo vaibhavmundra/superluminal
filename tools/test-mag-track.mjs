@@ -22,7 +22,8 @@
 // ---------------------------------------------------------------------------
 
 import { outlineFt, sealShape, roleOf, isTrack, isBuilt, isGuide, isOpen,
-         hitShape, canTakeGeometry, insetShape,
+         hitShape, canTakeGeometry, insetShape, handlesFor, lineShape, penShape,
+         editablePath, moveShapeVertex,
          MIN_SPAN_FT } from '../src/lib/ceilingShapes.js';
 import { TRACK_MODULES, MODULE_BY_ID, MODULE_SOON, moduleLenFt, moduleCapacity,
          moduleAt, moduleWatts, uAt, placeableU, placeModule, planDiffusers,
@@ -31,6 +32,12 @@ import { TRACK_MODULES, MODULE_BY_ID, MODULE_SOON, moduleLenFt, moduleCapacity,
 import { netPerUnit, analyseSpace, FAMILY_BY_ID, PANEL_WATTS, COB_WATTS,
          TRACK_DIFFUSER_WATTS, TRACK_SPOT_WATTS } from '../src/lib/lumens.js';
 import { pathLength } from '../src/lib/geometry.js';
+import { asPathHost, makePath, pathU, pathAt, pathLengthOf } from '../src/lib/path.js';
+import { projectShapeEditPx } from '../src/lib/fixtureProjection.js';
+import { orthoLock } from '../src/lib/dragMove.js';
+import { isConstrained, resolvePoint, pointsOn, pointAdapters }
+  from '../src/lib/point.js';
+import { moduleU } from '../src/features/fixtures/fixtureRules.js';
 import { takeableGeometry } from '../src/features/ceiling-geometry/geometryRules.js';
 
 let fail = 0;
@@ -394,12 +401,12 @@ say('-- 7. a press on a track actually places a module --');
       const u = placeableU(pts, want, taken, kind,
                            { closed, watts: moduleWatts(kind) });
       ok(u != null, `${kind}: press ${i + 1} resolves to a place on the run`);
-      const mod = placeModule({ trackId: TRACK.id, kind, u, seq: i });
+      const mod = placeModule({ on: TRACK.id, kind, u, seq: i });
       taken.push({ u, kind, watts: mod.watts });
       placed.push(mod);
     }
     ok(placed.length === 3, `three ${kind}s placed`);
-    ok(placed.every((m) => m.trackId === TRACK.id && m.kind === kind),
+    ok(placed.every((m) => m.on === TRACK.id && m.kind === kind),
       '...each on that run, of that kind');
     ok(new Set(placed.map((m) => m.id)).size === 3, '...with three distinct ids');
     ok(new Set(placed.map((m) => m.u)).size === 3,
@@ -459,8 +466,8 @@ say('-- and the catalogue --');
     'and the wall washer is declared, out of reach, and has no invented numbers');
   ok(moduleLenFt('diffuser') > moduleLenFt('spot'),
     'a diffuser is the long body and a spot the short one');
-  const m = placeModule({ trackId: 't1', kind: 'diffuser', u: 1.4 });
-  ok(m.u === 1 && m.trackId === 't1', 'a placed module clamps its fraction');
+  const m = placeModule({ on: 't1', kind: 'diffuser', u: 1.4 });
+  ok(m.u === 1 && m.on === 't1', 'a placed module clamps its fraction');
   /* THE DEFAULT COMES OFF THE FAMILY AND IS NOT A THIRD COPY OF 18. The module
      states no wattage, so `moduleWatts` reads `panel`'s own default — the same
      figure the panel calls the default — and a catalogue that changes it is
@@ -468,7 +475,7 @@ say('-- and the catalogue --');
   ok(m.watts === FAMILY_BY_ID.track_diffuser.defaultWatts
     && moduleWatts('diffuser') === FAMILY_BY_ID.track_diffuser.defaultWatts,
     `a hand-placed diffuser opens at its family's default (${moduleWatts('diffuser')} W)`);
-  const owned = placeModule({ trackId: 't1', kind: 'spot', u: 0.5,
+  const owned = placeModule({ on: 't1', kind: 'spot', u: 0.5,
                               gridCells: ['room|cell-1', 'room|cell-2'] });
   ok(owned.gridCells.join() === 'room|cell-1,room|cell-2',
     'a grid-derived track spot remembers every grid cell it replaces');
@@ -480,6 +487,215 @@ say('-- and the catalogue --');
     && moduleAt([], 0.5, { closed: true }) === null,
     'a module on no path is nothing rather than a module at the origin');
   ok(MIN_SPAN_FT > 0, 'and the shape library still has a minimum span to refuse against');
+}
+
+// ---------------------------------------------------------------------------
+say('THE RUN IS A PATH AND A MODULE IS A POINT HELD ON IT');
+// The two primitives, doing the job this file used to do by hand. What is
+// asserted is that they are the SAME answers — not that they exist.
+{
+  const pts = outlineFt(LINE(10));            // a straight 10 ft run
+  const run = { id: 'r1', pts, closed: false, roomId: 'room-1' };
+  const host = asPathHost(run);
+  ok(host && host.id === 'r1' && host.closed === false && host.pts === pts,
+    'a run IS a path host — the three fields, straight off the projection');
+  ok(asPathHost(makePath(pts, { closed: false, id: 'r1' })).pts.length === pts.length,
+    'and a path built from its points is the same host');
+
+  const m = placeModule({ on: 'r1', kind: 'diffuser', u: 0.25, seq: 0 });
+  ok(isConstrained(m),
+    'a placed module reads as a CONSTRAINED POINT — it names its host in `on`');
+  ok(m.x === undefined || m.x === null,
+    'and carries no coordinate to disagree with its fraction');
+
+  const at = resolvePoint(m, host);
+  const legacy = moduleAt(pts, m.u, { closed: run.closed });
+  ok(at && near(at.x, legacy.x) && near(at.y, legacy.y),
+    '`resolvePoint` puts it exactly where `moduleAt` did — same arithmetic, one name');
+  ok(near(at.ux, legacy.ux) && near(at.uy, legacy.uy),
+    'direction included, which is what makes a diffuser lie ALONG the profile');
+  ok(resolvePoint(m, null) === null,
+    'and a module whose run has gone resolves to nothing, not to the origin');
+
+  const list = [m, placeModule({ on: 'r1', kind: 'spot', u: 0.8, seq: 1 }),
+    placeModule({ on: 'r2', kind: 'spot', u: 0.5, seq: 2 })];
+  ok(pointsOn(list, 'r1').length === 2 && pointsOn(list, 'r2').length === 1,
+    '"which modules are on this run" is the point primitive\'s own query');
+}
+
+// ---------------------------------------------------------------------------
+say('THE DRAG: THE PRIMITIVE PROJECTS, `placeableU` VETOES');
+// The module's drag is `usePointDrag` now, and the only domain rule left in it
+// is the clearance. These are the two halves asserted separately, and then
+// asserted to agree with the PLACING press — which is the whole point of
+// splitting them: a click and a drag must land a module in the same place.
+{
+  const pts = outlineFt(LINE(10));
+  const run = { id: 'r1', pts, closed: false };
+  const host = asPathHost(run);
+  const p = { x: 2.5, y: 0 };
+
+  ok(near(pathU(host, p), 0.25), 'the primitive projects the pointer onto the run');
+  ok(near(pathAt(host, 0.25).x, 2.5), 'and back again');
+
+  /* `clamp` AS THE DRAG BUILDS IT — the product's veto, nothing else. */
+  const clamp = (u, f, h) => placeableU(h.pts, u,
+    pointsOn([], f.on).filter((q) => q.id !== f.id),
+    f.kind, { closed: h.closed, watts: f.watts });
+  const m = placeModule({ on: 'r1', kind: 'diffuser', u: 0.9, seq: 0 });
+  const unit = pointAdapters(() => host, { clamp });
+  const moved = unit.to(m, p);
+  ok(near(moved.u, 0.25), 'so a drag to (2.5, 0) writes u = 0.25 and only u');
+  ok(moved.on === 'r1', 'still on the same run');
+  ok(near(moduleU({ run, p, taken: [], kind: m.kind, watts: m.watts }), moved.u),
+    'and the PLACING press lands on the identical fraction — one answer, two gestures');
+
+  /* A FULL RUN REFUSES, AND A REFUSAL LEAVES THE MODULE PUT. */
+  const full = Array.from({ length: 40 }, (_, i) =>
+    ({ id: `f${i}`, on: 'r1', kind: 'diffuser', u: i / 40, watts: 36 }));
+  const busy = (u, f, h) => placeableU(h.pts, u,
+    full.filter((q) => q.id !== f.id), f.kind, { closed: h.closed, watts: f.watts });
+  const stuck = pointAdapters(() => host, { clamp: busy }).to(m, p);
+  ok(near(stuck.u, 0.9),
+    'a run with nowhere left leaves it exactly where it was, rather than sliding it free');
+
+  /* A LOOKUP THAT ANSWERS BY `on`, which is what the drag's `hostFor` is. */
+  const byHost = pointAdapters((f) => (f.on === 'r1' ? host : null), { clamp });
+  ok(byHost.to({ ...m, on: 'gone' }, p).u === 0.9,
+    'and a module whose run is missing is refused, not turned into a free point');
+  ok(byHost.to({ ...m, on: 'gone' }, p).on === 'gone',
+    'it keeps naming the run it lost rather than being quietly set free');
+}
+
+// ---------------------------------------------------------------------------
+say('A SINGLE RUN CAN BE EDITED — the grip refusal was a COVE rule');
+// A straight run had no grips at all, because `handlesFor` tested `isOpen`
+// alone: a cove SLOT has its ends pinned to the plaster and must not be
+// stretched, and a track's ends are pinned to nothing. `shapeCanTranslate` was
+// already corrected for exactly this — the same mistake, one function over.
+{
+  const line = lineShape({ x: 0, y: 0 }, { x: 10, y: 0 });
+  const run = { ...line, id: 'r1', role: 'track' };
+  const guide = { ...line, id: 'g1', role: 'guide' };
+  const slot = { ...line, id: 'c1' };                 // role defaults to cove
+
+  ok(handlesFor(slot).length === 0,
+    'a COVE slot still has no grips — its ends are on the plaster');
+  /* AND A RUN GETS NO BOX GRIPS EITHER, WHICH IS THE POINT. A line's bounding
+     box is degenerate, so its four corner grips land exactly on its two ends —
+     on top of the vertex grips, painted later, taking every press. That is what
+     put a resize cursor on the control that should have said "drag this
+     point". A path is edited by its VERTICES; the box is not offered. */
+  ok(handlesFor(run).length === 0,
+    'a straight TRACK run offers no box grips — its handles are its two ends');
+  ok(handlesFor(guide).length === 0, 'and neither does an open guide');
+  ok(projectShapeEditPx(12, 'r1', [run]).pts.length === 2,
+    '...it gets a vertex grip per end instead, which is what it never had');
+  ok(handlesFor({ kind: 'rect', x: 0, y: 0, wFt: 4, hFt: 2 }).length === 8,
+    'a BOX-parameterised rect is unchanged — four corners and four edges');
+}
+
+// ---------------------------------------------------------------------------
+say('AND ITS VERTICES ARE THE PATH PRIMITIVE\'S POINTS');
+{
+  const run = { ...lineShape({ x: 0, y: 0 }, { x: 10, y: 0 }), id: 'r1', role: 'track' };
+
+  const host = editablePath(run);
+  ok(host && host.id === 'r1' && host.pts.length === 2,
+    'a run whose geometry is a point list hands over an editable path host');
+  ok(near(host.pts[0].x, 0) && near(host.pts[1].x, 10),
+    'in WORLD feet — the stored points are in the shape\'s own frame');
+  ok(near(pathLengthOf(host), 10), 'and the path primitive measures it');
+  ok(editablePath({ kind: 'rect', x: 0, y: 0, wFt: 4, hFt: 2 }) === null,
+    'a BOX-parameterised shape has no vertices to edit — a rect resizes instead');
+  ok(editablePath({ kind: 'circle', x: 0, y: 0, rFt: 3 }) === null,
+    'and a circle does not offer its seventy-two derived outline points as grips');
+
+  const moved = moveShapeVertex(run, 1, { x: 14, y: 3 });
+  const after = editablePath(moved);
+  ok(near(after.pts[1].x, 14) && near(after.pts[1].y, 3),
+    'a vertex lands exactly where the pointer asked, in world feet');
+  ok(near(after.pts[0].x, 0) && near(after.pts[0].y, 0),
+    'and the other end does not budge — the centre is NOT re-derived, or the '
+    + 'drawing would crawl away from the grip');
+  ok(moveShapeVertex(run, 9, { x: 1, y: 1 }) === run, 'an index off the end changes nothing');
+  /* ONE POINT PRESSED, ONE POINT MOVED — the default, and what the canvas asks
+     for. A track may be ANGULAR, so nothing is re-squared: the run goes diagonal
+     and its other end stays exactly where it was. */
+  const angled = editablePath(moveShapeVertex(run, 1, { x: 14, y: 6 })).pts;
+  ok(near(angled[1].x, 14) && near(angled[1].y, 6), 'the pressed point goes where it is asked');
+  ok(near(angled[0].x, 0) && near(angled[0].y, 0),
+    'and the OTHER point does not move — a track run may be angular');
+  ok(!near(angled[0].y, angled[1].y), 'so the run really is diagonal afterwards');
+  ok(moveShapeVertex({ kind: 'rect', x: 0, y: 0, wFt: 4, hFt: 2 }, 0, { x: 1, y: 1 }).wFt === 4,
+    'and a box-parameterised shape is returned untouched rather than half-edited');
+
+  /* THE LOCK, WHICH IS THE PATH'S OWN PROPERTY AND NOT A MODIFIER. */
+  const bent = { ...penShape([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }],
+    { open: true }), id: 'p1', role: 'track', x: 0, y: 0, rot: 0 };
+  /* `penShape` RE-CENTRES ITS POINTS ABOUT THE SHAPE'S OWN CENTRE, so the world
+     coordinates are not the ones it was given. What matters is what MOVED. */
+  const was = editablePath(bent).pts;
+  const sq = editablePath(moveShapeVertex(bent, 1, { x: 12, y: 3 }, { lock: true })).pts;
+  ok(near(sq[1].x, 12) && near(sq[1].y, 3), 'the dragged vertex goes where it is asked');
+  ok(near(sq[0].y, 3) && near(sq[2].x, 12),
+    'and a LOCKED move carries both neighbouring legs with it — path.moveVertex, '
+    + 'which is penMovePoint, not a second copy of it');
+
+  const free = editablePath(moveShapeVertex(bent, 1, { x: 12, y: 3 })).pts;
+  ok(near(free[1].x, 12) && near(free[1].y, 3), 'unlocked, the same vertex moves...');
+  ok(near(free[0].x, was[0].x) && near(free[0].y, was[0].y)
+    && near(free[2].x, was[2].x) && near(free[2].y, was[2].y),
+    '...and its neighbours are left exactly where they were');
+}
+
+// ---------------------------------------------------------------------------
+say('SHIFT HOLDS A PATH POINT TO A STRAIGHT LINE');
+// The two steps `trackGripMove` takes, in order: `orthoLock` decides where the
+// pointer is ALLOWED to be, measured from where the vertex was at the PRESS,
+// and `moveShapeVertex` then writes it. The order is load-bearing — the other
+// way round, the path's own relock would move the point off the line the
+// modifier had just held it to.
+{
+  const run = { ...lineShape({ x: 0, y: 0 }, { x: 10, y: 0 }), id: 'r1', role: 'track' };
+  const anchor = editablePath(run).pts[1];            // the end being dragged: (10, 0)
+
+  /* HELD SIDEWAYS: 6 across beats 3 down, so `y` is frozen at the press value
+     and the end travels along the row it started on. */
+  const across = orthoLock({ x: 16, y: 3 }, anchor, true);
+  ok(near(across.at.x, 16) && near(across.at.y, 0), 'the wanted point is put back on the row...');
+  ok(across.axis === 'y', '...and the frozen axis is NAMED, so nothing draws a guide for it');
+  const pulled = editablePath(moveShapeVertex(run, 1, across.at)).pts;
+  ok(near(pulled[1].x, 16) && near(pulled[1].y, 0),
+    'so a shift-drag on a straight run changes its LENGTH and nothing else');
+  ok(near(pulled[0].x, 0) && near(pulled[0].y, 0), 'and the far end does not move');
+
+  /* HELD DOWNWARDS: 9 down beats 4 across, so `x` freezes instead. */
+  const down = orthoLock({ x: 14, y: 9 }, anchor, true);
+  ok(near(down.at.x, 10) && near(down.at.y, 9) && down.axis === 'x',
+    'and the other axis wins when it has travelled further — re-decided, not latched');
+
+  const free = orthoLock({ x: 16, y: 3 }, anchor, false);
+  ok(near(free.at.x, 16) && near(free.at.y, 3) && free.axis === null,
+    'without the key the point goes where the pointer is');
+}
+
+// ---------------------------------------------------------------------------
+say('...AND THE CANVAS IS GIVEN THE SAME POINT EDITOR A DRAWN TRACK GETS');
+{
+  const run = { ...lineShape({ x: 0, y: 0 }, { x: 10, y: 0 }), id: 'r1', role: 'track' };
+  const rect = { kind: 'rect', id: 'r2', x: 0, y: 0, wFt: 4, hFt: 2 };
+
+  const ed = projectShapeEditPx(12, 'r1', [run, rect]);
+  ok(ed && ed.of === 'shape' && ed.id === 'r1',
+    'the editor record says WHICH STORE the vertex belongs to');
+  ok(ed.pts.length === 2 && near(ed.pts[1].x, 120),
+    'and carries its points in plan PIXELS, like the drawn track\'s');
+  ok(ed.closed === false, 'an open run is open');
+  ok(projectShapeEditPx(12, 'r2', [run, rect]) === null,
+    'a rect gets no point editor — nothing to write a moved vertex back to');
+  ok(projectShapeEditPx(12, null, [run]) === null && projectShapeEditPx(0, 'r1', [run]) === null,
+    'and none with nothing selected or no scale');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

@@ -717,10 +717,17 @@ export default function App({
      off the end of a run somebody shortened. Stored as a fraction the
      arrangement survives the edit.
 
-     ONE FLAT LIST KEYED BY `trackId` rather than a list per track, for the
+     ONE FLAT LIST KEYED BY `on` rather than a list per track, for the
      reason `manualCobs` is flat: every reader wants "the modules on this run",
-     which is a filter, and a map of arrays is a second structure to keep in step
-     with a store of shapes that can be deleted from anywhere.
+     which is a filter — `pointsOn` in lib/point.js — and a map of arrays is a
+     second structure to keep in step with a store of shapes that can be deleted
+     from anywhere.
+
+     AND `on` IS NOT A LOCAL NAME. A module clipped to a run is a POINT HELD ON
+     A PATH: the run is the path (lib/path.js) and the module is the constrained
+     point (lib/point.js), so the field is the primitive's and every reader of
+     it — the projection, the drag, the delete, the schedule — asks the
+     primitive rather than knowing anything about tracks.
 
      SAVED, because it is a decision somebody made about a drawing and nothing
      re-derives it. IN THE DOCUMENT REDUCER.

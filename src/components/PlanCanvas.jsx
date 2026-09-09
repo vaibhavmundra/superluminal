@@ -1469,49 +1469,6 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         </g>
       ))}
 
-      {/* --- THE POINTS OF A DRAWN TRACK ------------------------------------
-          THE SAME GRIPS A DRAWN COVE'S FRAME USES — white squares with a dark
-          edge — and deliberately not the accent, for the reason given there:
-          the accent on this canvas means "this emits light", and a handle does
-          not.
-
-          ABOVE THE ROOMS AND OUTSIDE THEM. A path belongs to no room (see
-          `trackEdit`), and a grip drawn inside a room's group would be clipped
-          to it and painted under the next room's fittings.
-
-          THE PATH IS REDRAWN UNDER THEM, dashed and faint. The rail itself is
-          on the sheet already — in as many pieces as there are rooms it crosses
-          — and this is the one mark that shows the whole run as one object,
-          which is what is being edited. It is what makes a leg that fell
-          outside every room visible at all.
-
-          THE SELECTED POINT IS FILLED, because Delete acts on it and a key with
-          no visible target is a key that deletes something at random. */}
-      {trackEdit && trackEdit.pts.length > 0 && (() => {
-        const R = Math.max(lw * 3, 3);
-        const d = trackEdit.pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
-          + (trackEdit.closed ? ' Z' : '');
-        return (
-          <g>
-            {trackEdit.pts.length > 1 && (
-              <path d={d} fill="none" stroke={C.lit} strokeWidth={lw}
-                strokeDasharray={`${lw * 4} ${lw * 3}`} opacity="0.75"
-                pointerEvents="none" />
-            )}
-            {trackEdit.pts.map((q, i) => (
-              <rect key={i} className={onTrackPointDown ? 'hit' : undefined}
-                x={q.x - R} y={q.y - R} width={R * 2} height={R * 2}
-                fill={selTrackPt === i ? C.lit : '#fff'}
-                stroke={C.lit} strokeWidth={lw * 1.4}
-                style={onTrackPointDown ? { cursor: 'move' } : undefined}
-                onPointerDown={onTrackPointDown
-                  ? (e) => onTrackPointDown(e, trackEdit.id, i) : undefined}
-                onClick={(e) => e.stopPropagation()} />
-            ))}
-          </g>
-        );
-      })()}
-
       {layers.zones && (
         <g>
           {zones.map((z) => (
@@ -4366,6 +4323,63 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 </g>
               );
             })()}
+          </g>
+        );
+      })()}
+
+      {/* --- AND THE VERTEX GRIPS ARE PAINTED AFTER THE SHAPES LAYER --------
+          FOR THE REASON THE BLOCK ABOVE GIVES, WORD FOR WORD. A magnetic track
+          IS a ceiling shape, so the shapes layer draws a transparent grab band
+          along its outline — eight line-weights wide, the thing that selects it
+          and drags it — and that band runs straight through both ends of the
+          run. Painted after these grips it took every press aimed at one:
+          pressing a point to move it picked up the WHOLE TRACK instead, which
+          reads as the point editor not existing.
+          LATER PAINT TAKES THE PRESS, so the fix is the order and not a
+          `pointer-events` fiddle — the same rule the modules were moved down
+          here for, and the same rule the shape grips are painted last for.
+          THESE STAY ABOVE THE SHAPES AND BELOW THE MODULES. A module body has
+          its own press and is a different object; a grip that swallowed one
+          would be this same failure pointing the other way. */}
+      {/* --- THE POINTS OF A DRAWN TRACK ------------------------------------
+          THE SAME GRIPS A DRAWN COVE'S FRAME USES — white squares with a dark
+          edge — and deliberately not the accent, for the reason given there:
+          the accent on this canvas means "this emits light", and a handle does
+          not.
+
+          ABOVE THE ROOMS AND OUTSIDE THEM. A path belongs to no room (see
+          `trackEdit`), and a grip drawn inside a room's group would be clipped
+          to it and painted under the next room's fittings.
+
+          THE PATH IS REDRAWN UNDER THEM, dashed and faint. The rail itself is
+          on the sheet already — in as many pieces as there are rooms it crosses
+          — and this is the one mark that shows the whole run as one object,
+          which is what is being edited. It is what makes a leg that fell
+          outside every room visible at all.
+
+          THE SELECTED POINT IS FILLED, because Delete acts on it and a key with
+          no visible target is a key that deletes something at random. */}
+      {trackEdit && trackEdit.pts.length > 0 && (() => {
+        const R = Math.max(lw * 3, 3);
+        const d = trackEdit.pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
+          + (trackEdit.closed ? ' Z' : '');
+        return (
+          <g>
+            {trackEdit.pts.length > 1 && (
+              <path d={d} fill="none" stroke={C.lit} strokeWidth={lw}
+                strokeDasharray={`${lw * 4} ${lw * 3}`} opacity="0.75"
+                pointerEvents="none" />
+            )}
+            {trackEdit.pts.map((q, i) => (
+              <rect key={i} className={onTrackPointDown ? 'hit' : undefined}
+                x={q.x - R} y={q.y - R} width={R * 2} height={R * 2}
+                fill={selTrackPt === i ? C.lit : '#fff'}
+                stroke={C.lit} strokeWidth={lw * 1.4}
+                style={onTrackPointDown ? { cursor: 'move' } : undefined}
+                onPointerDown={onTrackPointDown
+                  ? (e) => onTrackPointDown(e, trackEdit.id, i, trackEdit.of) : undefined}
+                onClick={(e) => e.stopPropagation()} />
+            ))}
           </g>
         );
       })()}

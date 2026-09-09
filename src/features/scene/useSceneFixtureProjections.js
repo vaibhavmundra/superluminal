@@ -3,7 +3,7 @@ import {
   projectMagTracksPx, projectTrackModulesPx, projectArrayCobsPx,
   projectDraftArrayPx, projectSelectedArrayPathPx, projectManualCobsPx,
   projectCoveShapesPx, projectDraftShapePx, projectTrackDraftPx,
-  projectTrackEditPx, projectPenDraftPx,
+  projectTrackEditPx, projectShapeEditPx, projectPenDraftPx,
 } from '../../lib/fixtureProjection.js';
 import { outlineFt as shapeOutlineFt } from '../../lib/ceilingShapes.js';
 
@@ -40,7 +40,7 @@ export function useSceneManualProjections({ manualCobs, pxPerFt, ceilingMmFor })
 
 export function useSceneShapeProjections({
   ceilingShapes, rooms, pxPerFt, shapeDraft, addTool, trackPen, trackEditId, manualTracks,
-  shapeMenuOn, shapeTool, covePen
+  shapeMenuOn, shapeTool, covePen, shapeEditId
 }) {
   const litShapeIds = useMemo(() => new Set(
     rooms.flatMap((r) => (r.coves ?? []).map((c) => c.shapeId).filter(Boolean))),
@@ -58,6 +58,12 @@ export function useSceneShapeProjections({
 
   const trackEditPx = useMemo(() => projectTrackEditPx(pxPerFt, trackEditId, manualTracks), [pxPerFt, trackEditId, manualTracks]);
 
+  /* THE SHAPE'S OWN POINT EDITOR. It takes precedence over the drawn track's
+     when both are live, because pressing a shape closes the track editor
+     anyway — see `shapePointerDown` — so the two cannot both be what the hand
+     is on. */
+  const shapeEditPx = useMemo(() => projectShapeEditPx(pxPerFt, shapeEditId, ceilingShapes), [pxPerFt, shapeEditId, ceilingShapes]);
+
   const penDraftPx = useMemo(() => projectPenDraftPx(pxPerFt, shapeMenuOn, shapeTool, covePen.pts, covePen.at, covePen.isEmpty), [pxPerFt, shapeMenuOn, shapeTool, covePen.pts, covePen.at, covePen.isEmpty]);
-  return { projections: { coveShapesPx, draftShapePx, trackDraftPx, trackEditPx, penDraftPx } };
+  return { projections: { coveShapesPx, draftShapePx, trackDraftPx, trackEditPx, shapeEditPx, penDraftPx } };
 }

@@ -358,8 +358,20 @@ say('...and each shape stretches only as far as it can be that shape');
   const pf = frameFt(resizeShape(pen, BR, { x: 16, y: 4 }));
   ok(stretchy(pen) && near(pf.x1 - pf.x0, 16) && near(pf.y1 - pf.y0, 4),
     'a traced path squashes on both axes — it has as many dimensions as points');
-  ok(handlesFor(pen).length === 8,
-    '...and offers edge grips as well, because its axes really do move apart');
+  /* AND IT NOW OFFERS NO BOX GRIPS AT ALL, which is a DELIBERATE change of
+     contract and not a regression. A pen stores its points, so its geometry is
+     a path and what there is to grab on it is the points — see `hasVertices`.
+     Offering the box as well was a collision: on a path whose bounding box
+     touches its own vertices the corner grips land on top of the vertex grips,
+     are painted later, and take every press — which is how a straight track
+     run came to show a resize cursor on the one control that should have said
+     "drag this point".
+     `resizeShape` ITSELF IS UNTOUCHED and is still asserted above: the
+     arithmetic works, nothing on the canvas reaches it for a path any more.
+     Scaling a path is a verb lib/path.js does not have yet. */
+  ok(handlesFor(pen).length === 0,
+    '...and offers NO box grips, because a path is edited by its vertices');
+  ok(stretchy(pen), 'though it is still stretchy — resizeShape can scale it when asked');
 }
 
 say('...and a resized cove is still the cove the engine reads');

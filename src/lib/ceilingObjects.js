@@ -31,6 +31,9 @@
 // size when the scale is corrected underneath it.
 // ---------------------------------------------------------------------------
 
+import { SIZE_LIMITS, clampFt, toLocal, toWorld, resizeFromCorner,
+         ROTATE_SNAP, rotateTo } from './box.js';
+
 const MM = 1 / 304.8;
 
 /**
@@ -177,110 +180,23 @@ export function sizeLabel(o) {
 }
 
 /** Clamp a hand-dragged dimension to something buildable. */
-export const SIZE_LIMITS = { minFt: 0.5, maxFt: 12 };
-export const clampFt = (v) =>
-  Math.max(SIZE_LIMITS.minFt, Math.min(SIZE_LIMITS.maxFt, v));
+/* --- THE ORIENTED BOX IS lib/box.js's NOW ---------------------------------
+   WHAT MOVED AND WHY. Seven of the things that stood here were facts about a
+   box with a centre, two extents and an angle, and about nothing on a ceiling:
+   the anchor being the opposite corner, Shift locking the aspect, Alt resizing
+   about the centre, rotation measured from the grab and snapped only while
+   Shift is held. A fan, a chandelier, an air-conditioner, a door box and the
+   centred kinds the geometry bar draws are all one primitive, so the primitive
+   holds the arithmetic — see the header of lib/box.js.
 
-// --- direct manipulation ----------------------------------------------------
-//
-// The gesture maths, kept here and kept PURE so it can be tested without a
-// pointer. What "feels right" about dragging a handle is almost entirely
-// arithmetic — which point stays still, what the modifier key does — and none
-// of it is anything React should be deciding inline.
-//
-// THE ANCHOR IS THE OPPOSITE CORNER. That is the whole of why a resize feels
-// direct rather than slippery: grab the bottom-right and the top-left does not
-// move, so the object grows under your hand instead of sliding around beneath
-// it. Resizing about the CENTRE — which is the easier thing to write, and what
-// this did first — makes the object appear to run away from the pointer at half
-// speed in the opposite direction. Alt is the modifier that asks for that
-// behaviour deliberately.
+   WHAT STAYED IS THE KIND-AWARE HALF, below. `isRect`, `isUniform`,
+   `halfExtents`, `applyResize` and `radiusFt` all read this file's catalogue,
+   and they answer differently for a fan and an air-conditioner.
 
-const cosSin = (r) => ({ c: Math.cos(r || 0), s: Math.sin(r || 0) });
-
-/** Local (object-frame) coordinates of a world point, about a centre. */
-export function toLocal(p, centre, rot) {
-  const { c, s } = cosSin(rot);
-  const dx = p.x - centre.x, dy = p.y - centre.y;
-  return { x: dx * c + dy * s, y: -dx * s + dy * c };
-}
-
-/** ...and back out again. */
-export function toWorld(p, centre, rot) {
-  const { c, s } = cosSin(rot);
-  return { x: centre.x + p.x * c - p.y * s, y: centre.y + p.x * s + p.y * c };
-}
-
-/**
- * A corner drag.
- *
- * `corner` is a sign pair — {sx: 1, sy: -1} is the top-right — and the corner
- * diagonally opposite it is what stays nailed down.
- *
- * `uniform` locks the aspect ratio, which is Shift, and is FORCED for anything
- * round: a chandelier has one dimension, so a corner drag can only mean "bigger
- * or smaller" and offering to squash it into an ellipse would be offering
- * something the object cannot be.
- *
- * `fromCentre` is Alt: the centre stays and both sides grow.
- */
-export function resizeFromCorner({ wFt, hFt, x, y, rot = 0 }, corner, pointerFt,
-                                 { uniform = false, fromCentre = false } = {}) {
-  const { c, s } = cosSin(rot);
-  const u = { x: c, y: s }, v = { x: -s, y: c };
-  const centre = { x, y };
-
-  if (fromCentre) {
-    const l = toLocal(pointerFt, centre, rot);
-    let w = clampFt(Math.abs(l.x) * 2), h = clampFt(Math.abs(l.y) * 2);
-    if (uniform) {
-      const k = Math.max(w / wFt, h / hFt);
-      w = clampFt(wFt * k); h = clampFt(hFt * k);
-    }
-    return { x, y, wFt: w, hFt: h };
-  }
-
-  // The corner that must not move, in world space.
-  const anchor = {
-    x: centre.x + u.x * (-corner.sx * wFt / 2) + v.x * (-corner.sy * hFt / 2),
-    y: centre.y + u.y * (-corner.sx * wFt / 2) + v.y * (-corner.sy * hFt / 2),
-  };
-  const d = { x: pointerFt.x - anchor.x, y: pointerFt.y - anchor.y };
-  let w = clampFt((d.x * u.x + d.y * u.y) * corner.sx);
-  let h = clampFt((d.x * v.x + d.y * v.y) * corner.sy);
-  if (uniform) {
-    const k = Math.max(w / wFt, h / hFt);
-    w = clampFt(wFt * k); h = clampFt(hFt * k);
-  }
-  return {
-    wFt: w, hFt: h,
-    x: anchor.x + u.x * (corner.sx * w / 2) + v.x * (corner.sy * h / 2),
-    y: anchor.y + u.y * (corner.sx * w / 2) + v.y * (corner.sy * h / 2),
-  };
-}
-
-/** Shift-snap increment while rotating, in radians. 15 degrees, as everywhere. */
-export const ROTATE_SNAP = (15 * Math.PI) / 180;
-
-/**
- * A rotate drag. FREE by default and snapped only while Shift is held, which
- * is the convention every editor shares — and the opposite of what this did
- * first, which quantised everything to 5 degrees and made fine adjustment
- * impossible for no benefit.
- *
- * The delta is measured from where the grab STARTED rather than from the
- * object's own axis, so the handle stays under the pointer instead of jumping
- * to it on the first move.
- */
-export function rotateTo({ x, y }, pointerFt, { startRot = 0, startAngle = 0, snap = false } = {}) {
-  const a = Math.atan2(pointerFt.y - y, pointerFt.x - x);
-  let r = startRot + (a - startAngle);
-  if (snap) r = Math.round(r / ROTATE_SNAP) * ROTATE_SNAP;
-  // Normalised to (-PI, PI] so the readout never says 725 degrees.
-  while (r > Math.PI) r -= 2 * Math.PI;
-  while (r <= -Math.PI) r += 2 * Math.PI;
-  return r;
-}
+   RE-EXPORTED UNDER THE NAMES THE CALL SITES ALREADY USE, for `penLengthFt`'s
+   reason: renaming them at forty of them would be a change about nothing. */
+export { SIZE_LIMITS, clampFt, toLocal, toWorld, resizeFromCorner,
+         ROTATE_SNAP, rotateTo };
 
 /** The half-extents of an object's selection box, in feet. */
 export function halfExtents(o) {

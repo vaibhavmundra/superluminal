@@ -1,11 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AUTOPLACE_AT_FRACTION, BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.js';
+import Lumens from './Lumens.jsx';
 
 /* ---------------------------------------------------------------------------
    IS THIS SPACE BRIGHT ENOUGH, AND WHAT IS MAKING IT SO.
 
-   TWO NUMBERS AND THEN THE WORKING. Required and achieved are the answer and go
-   first; the fittings under them are why.
+   THE READOUT AND THEN THE WORKING. The answer — required, achieved, the layers
+   it is made of and the verdict on their balance — is Lumens.jsx, at the top;
+   the fittings under it are why. It moved out because it stopped being two lines
+   of type and became an instrument, and because the threshold its verdict turns
+   on wanted one obvious place to live.
 
    WHAT A ROW IS DEPENDS ON WHAT THE FITTING IS, and lib/lumens.js decides it —
    this file draws whatever it is handed. Anything sold by the METRE gets a row
@@ -46,10 +50,13 @@ import { AUTOPLACE_AT_FRACTION, BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.j
    GETS some, so hiding it until there are some would be hiding the control
    behind its own effect.
 
-   THE VERDICT AT THE TOP STILL JUDGES EVERYTHING. The sections group the rows;
-   they do not split the arithmetic. A room lit largely by its spots is a lit
-   room, and a required/achieved pair that ignored them would be reporting a
-   shortfall nobody could act on.
+   AND THE SPLIT AT THE TOP IS THESE SAME SECTIONS. The readout prints an ambient
+   and a task figure; they are the rows of these headings added up, and
+   `analysis.byLayer` is where both this file and that one get the grouping from.
+   The total still counts everything: a room lit largely by its spots is a lit
+   room, and an achieved figure that ignored them would report a shortfall
+   nobody could act on. What the readout says about it is that the BALANCE is
+   wrong, which is the part somebody can act on.
 
    --- AND A ROW IS CLOSED UNTIL IT IS ASKED ABOUT ----------------------------
    EACH FIXTURE IS ITS NAME UNTIL YOU CLICK IT. The controls under a row — a
@@ -84,7 +91,6 @@ const H3 = 'mt-0 mx-0 mb-2.5 text-[10px] tracking-[0.11em] uppercase text-subtle
 const KV = 'flex justify-between items-baseline gap-2 text-[11.5px] py-[3px] '
   + 'tabular-nums [font-variant-numeric:tabular-nums]';
 const LBL = 'text-muted';
-const N = 'text-[11.5px] text-muted leading-[1.5]';
 
 const CHIP = 'px-[6px] py-[2px] font-sans text-[10px] rounded border cursor-pointer '
   + 'tabular-nums transition-colors duration-[120ms] disabled:opacity-[.45] '
@@ -137,7 +143,7 @@ const Caret = ({ open }) => (
 export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
                                         highlight = [], autoplace = null,
                                         onAutoplace = null, disabled = false }) {
-  const { required, achieved, rows, ok, shortfall } = analysis;
+  const { required, achieved, rows } = analysis;
   const lit = new Set(highlight ?? []);
 
   /* WHICH ROWS ARE OPEN. Local, because it is a fact about how somebody is
@@ -206,28 +212,13 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
     <>
       <h3 className={H3}>Analysis</h3>
 
-      <div className={KV}>
-        <span className={LBL}>Ambient lumens required</span>
-        <span className="text-text">{lm(required)}</span>
-      </div>
-      <div className={KV}>
-        <span className={LBL}>Ambient lumens achieved</span>
-        <span className="text-text">{lm(achieved)}</span>
-      </div>
-
-      {/* THE VERDICT IS COMPUTED AND NOT ASSERTED, and it is judged on the
-          ROUNDED figures so it can never contradict the two lines above it — the
-          same rule the whole-plan readout in the footer follows. */}
-      {rows.length === 0 ? (
-        <p className={`${N} mt-2`}>No lights placed in the room.</p>
-      ) : ok ? (
-        <p className={`${N} mt-2`}>The space has sufficient ambient illumination.</p>
-      ) : (
-        <p className="text-[11.5px] leading-[1.5] text-muted border-l-2
-          border-border-strong pl-[9px] mt-2">
-          {lm(shortfall)} lumens short.
-        </p>
-      )}
+      {/* THE ANSWER, AND IT IS ITS OWN INSTRUMENT NOW. Required, achieved, the
+          layers that make it up and the verdict on their balance were four grey
+          lines in the same voice as the wattage rows below them; they are one
+          readout, and Lumens.jsx is it — including the threshold the verdict
+          turns on. What stays here is the WORKING: the rows, the sections and
+          the one control that moves the figure. */}
+      <Lumens analysis={analysis} />
 
       {/* --- WHAT IS MAKING IT SO, LAYER BY LAYER AND ROW BY ROW ------------
           A rule above each row rather than a card round each: these are readings

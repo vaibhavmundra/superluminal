@@ -82,10 +82,11 @@ export function useCeilingGeometry({
     trackNotes, trackNoteLines,
   } = derivations;
 
-  const { projections: { coveShapesPx, draftShapePx, trackDraftPx, trackEditPx, penDraftPx } } =
+  const { projections: { coveShapesPx, draftShapePx, trackDraftPx, trackEditPx,
+                         shapeEditPx, penDraftPx } } =
     useSceneShapeProjections({
       ceilingShapes, rooms, pxPerFt, shapeDraft, addTool, trackPen, trackEditId, manualTracks,
-      shapeMenuOn, shapeTool, covePen
+      shapeMenuOn, shapeTool, covePen, shapeEditId
     });
 
   return {
@@ -120,7 +121,12 @@ export function useCeilingGeometry({
       draftShape: draftShapePx,
       penDraft: penDraftPx,
       trackDraft: trackDraftPx,
-      trackEdit: trackEditPx,
+      /* ONE POINT EDITOR, TWO STORES. A drawn track and a `pen` or `line`
+         ceiling shape are both a PATH, and a path's vertices are points — so
+         they get the same polyline and the same grip per vertex rather than two
+         renderings of one idea. The record says which store it came from and
+         `trackPointDown` writes back accordingly. */
+      trackEdit: shapeEditPx ?? trackEditPx,
       hoverId: geomHover,
       /* THE FITTINGS STAND DOWN AND THE GUIDES COME UP WHILE A PRIMITIVE IS
          ARMED. `shapeMenuOn` alone is not the condition: the bar also arrives

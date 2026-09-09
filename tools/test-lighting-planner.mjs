@@ -135,10 +135,10 @@ const lists = (over = {}) => ({
     ],
     magTracksPx: [{ id: 't1', roomId: 'r1' }, { id: 't2', roomId: 'r2' }],
     trackModulesPx: [
-      { id: 'm1', trackId: 't1', kind: 'diffuser', watts: 18 },
-      { id: 'm2', trackId: 't1', kind: 'diffuser', watts: 5 },
-      { id: 'm3', trackId: 't1', kind: 'washer' },
-      { id: 'm4', trackId: 't2', kind: 'diffuser' },
+      { id: 'm1', on: 't1', kind: 'diffuser', watts: 18 },
+      { id: 'm2', on: 't1', kind: 'diffuser', watts: 5 },
+      { id: 'm3', on: 't1', kind: 'washer' },
+      { id: 'm4', on: 't2', kind: 'diffuser' },
     ],
   }));
   const by = new Map(rows.map((q) => [q.key, q]));

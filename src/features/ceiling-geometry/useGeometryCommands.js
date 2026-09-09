@@ -28,11 +28,20 @@
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useRef } from 'react';
 import { select, clear, idOf } from '../../lib/selection.js';
-import { penSegments, penLengthFt, penRelock, penMovePoint, MIN_SEG_FT } from '../../lib/pen.js';
+import { penSegments, penLengthFt, MIN_SEG_FT } from '../../lib/pen.js';
 import { newModuleId } from '../../lib/magTrack.js';
+/* A MODULE ON A RUN IS A POINT HELD ON A PATH, so "which modules are on this
+   shape" is the point primitive's own query rather than a filter written here.
+   See lib/point.js. */
+import { pointsOn } from '../../lib/point.js';
+/* THE PATH PRIMITIVE OWNS THE VERTEX EDITS. `moveVertex` is the verb for both
+   point editors on this canvas, and `moveShapeVertex` is that verb plus the
+   box primitive's frame transform — see its note in lib/ceilingShapes.js. */
+import { makePath, moveVertex, removeVertex, canRemoveVertex }
+  from '../../lib/path.js';
 import {
   SHAPE_BY_ID, sealShape, insetShape, newShapeId, penShape, bigEnough,
-  roleOf as shapeRoleOf,
+  roleOf as shapeRoleOf, moveShapeVertex,
 } from '../../lib/ceilingShapes.js';
 import { offsetGapFt, trackPtsFromSegments } from './geometryRules.js';
 
@@ -258,10 +267,10 @@ export function useGeometryCommands({
        right until it was resized and then quietly shed its far modules.
        NOTHING HAPPENS FOR A COVE OR A GUIDE, because neither carries a module —
        the filter is empty and the write is skipped. */
-    const mods = trackFixtures.filter((f) => f.trackId === id);
+    const mods = pointsOn(trackFixtures, id);
     if (mods.length) {
       docActions.addTrackFixtures(mods.map((f, i) => ({
-        ...f, id: newModuleId(`d${i}`), trackId: copy.id,
+        ...f, id: newModuleId(`d${i}`), on: copy.id,
       })));
     }
   }, [docActions, ceilingShapes, trackFixtures, setSel]);
@@ -348,10 +357,16 @@ export function useGeometryCommands({
     /* A CIRCUIT NEEDS THREE POINTS AND A RUN NEEDS TWO. Below that there is no
        path left to have, so the whole track goes rather than being left as a
        line doubled back on itself — which is what a two-point closed loop is —
-       and the editor closes with it, because there is nothing to keep open. */
-    if (t.ptsFt.length <= (t.closed ? 3 : 2)) { deleteTrack(id); return; }
-    const cut = [...t.ptsFt.slice(0, i), ...t.ptsFt.slice(i + 1)];
-    const pts = penRelock(cut, Math.max(1, i));
+       and the editor closes with it, because there is nothing to keep open.
+       THE RULE IS `canRemoveVertex`'S NOW — the path primitive states both
+       minima, and it was this guard lifted into lib/path.js. */
+    const whole = makePath(t.ptsFt, { closed: !!t.closed });
+    if (!canRemoveVertex(whole)) { deleteTrack(id); return; }
+    /* AND NO RELOCK ON THE WAY OUT EITHER. This re-squared the tail from the
+       cut, which is right only if the path has to be orthogonal — and a track
+       may be angular. A delete that straightened three legs nobody touched
+       would be the same surprise a move that dragged two neighbours was. */
+    const pts = removeVertex(whole, i).pts;
     docActions.patchTrack(id, { ptsFt: pts,
       lengthFt: penLengthFt(pts, { closed: !!t.closed }) });
     setSelTrackPt(null);
@@ -377,11 +392,37 @@ export function useGeometryCommands({
    *  so a path that was square stays square without the far end of the run
    *  swinging about behind the hand. */
   const moveTrackPoint = useCallback((grip, at) => {
+    /* WHICH STORE THIS VERTEX BELONGS TO, off the grip. One point editor serves
+       a drawn track and a `pen` or `line` ceiling shape — see
+       `projectShapeEditPx` — and BOTH edits are the path primitive's
+       `moveVertex`. The only difference is where the result is written and, for
+       a shape, that its points are held in its own frame: `moveShapeVertex`
+       carries that half. */
+    if (grip.of === 'shape') {
+      const sh = ceilingShapes.find((q) => q.id === grip.id);
+      if (!sh) return;
+      /* NO RELOCK, AND THAT IS THE WHOLE OF WHAT A POINT EDIT MEANS. This
+         passed `lock: isTrack(sh)`, on the assumption that a magnetic profile
+         can only be built in orthogonal pieces. It can be angular, so the
+         assumption was wrong — and the lock was doing something worse than
+         constraining the shape: `penMovePoint` carries the two NEIGHBOURING
+         vertices onto the dragged one's axes, so dragging one point moved two
+         others. Editing one point of a path moves ONE point. The outline tracer
+         behaves this way and it is the behaviour anybody expects.
+         `moveVertex` still takes the lock and `penMovePoint` still implements
+         it — see lib/path.js. Nothing on this canvas asks for it now. */
+      const next = moveShapeVertex(sh, grip.i, at);
+      docActions.updateShapes((l) => l.map((q) => (q.id === grip.id ? next : q)));
+      return;
+    }
     const held = manualTracks.find((t) => t.id === grip.id);
     if (!held) return;
-    const pts = penMovePoint(held.ptsFt, grip.i, at);
+    /* AND THE SAME FOR A DRAWN TRACK, for the same reason: one point pressed,
+       one point moved. */
+    const pts = moveVertex(makePath(held.ptsFt, { closed: !!held.closed }),
+      grip.i, at).pts;
     docActions.patchTrack(grip.id, { ptsFt: pts, lengthFt: penLengthFt(pts) });
-  }, [docActions, manualTracks]);
+  }, [docActions, manualTracks, ceilingShapes]);
 
   /** Shut the point editor. One place, because three keys and a press reach it. */
   const closeTrackEdit = useCallback(() => {

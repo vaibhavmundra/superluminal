@@ -372,5 +372,38 @@ sec('the whole reading for one space');
   ok('...and nothing is outstanding', enough.shortfall === 0);
 }
 
+sec('the total is split into the layers a scheme is designed in');
+{
+  /* AMBIENT, TASK AND ACCENT ARE ONE FITTING EACH, so a figure landing in the
+     wrong bucket cannot hide inside another row's contribution. A track spot
+     borrows the COB and is the task layer; a floor lamp is accent. */
+  const three = analyseSpace({
+    polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+    projectId: 'residential', country: 'India',
+    groups: [{ key: 'cove', familyId: 'cove', count: 1, lengthFt: 20 },
+             { key: 'spot', familyId: 'track_spot', count: 3 },
+             { key: 'lamp', familyId: 'lamp', count: 2 }],
+  });
+  const netOf = (k) => three.rows.find((r) => r.key === k).netLumens;
+  ok('the ambient row is the ambient figure', at(three.byLayer.ambient, netOf('cove')));
+  ok('...the task row the task figure', at(three.byLayer.task, netOf('spot')));
+  ok('...and the accent row the accent figure', at(three.byLayer.accent, netOf('lamp')));
+  /* THE ONE PROPERTY THE READOUT DEPENDS ON: it prints the three under the
+     total, so three figures that did not add back to it would be a card
+     contradicting its own arithmetic. */
+  ok('the three add back up to achieved',
+    at(three.byLayer.ambient + three.byLayer.task + three.byLayer.accent,
+      three.achieved));
+
+  /* ALL THREE KEYS EXIST WHATEVER IS IN THE ROOM, so a caller can print a layer
+     without first asking whether the room has one — a missing key would print
+     as an empty figure rather than as a zero. */
+  const bare = analyseSpace({ polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+                              projectId: 'residential', country: 'India' });
+  ok('an empty room still answers for all three layers',
+    bare.byLayer.ambient === 0 && bare.byLayer.task === 0
+      && bare.byLayer.accent === 0);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

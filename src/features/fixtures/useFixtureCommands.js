@@ -410,7 +410,7 @@ export default function useFixtureCommands({
        profile. The Analysis panel groups by wattage for the same reason — see
        `fixtureGroups`. */
     docActions.addTrackFixtures(plan.map((mod, i) => placeModule({
-      trackId: shape.id, kind: needsAmbient ? 'diffuser' : 'spot',
+      on: shape.id, kind: needsAmbient ? 'diffuser' : 'spot',
       u: mod.u, watts: mod.watts, gridCells: mod.gridCells,
       seq: `a${i}` })));
     /* AND THE PANEL GOES TO THE SPACE, because the two figures at the top of it

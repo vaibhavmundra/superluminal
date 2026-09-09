@@ -22,6 +22,11 @@
 // ---------------------------------------------------------------------------
 import { useRef } from 'react';
 import { useDrag } from '../../hooks/useDrag.js';
+/* THE SHIFT LOCK, FROM THE ONE PLACE IT LIVES. `useDrag` reaches the same
+   function for the nine drags it runs; the vertex editor is not one of those —
+   it writes per frame with no slop, deliberately — so it calls it directly
+   rather than growing a second copy of the rule. See lib/dragMove.js. */
+import { orthoLock } from '../../lib/dragMove.js';
 import { select } from '../../lib/selection.js';
 import { canGrab } from '../../lib/pressOwner.js';
 import { penAim } from '../../lib/pen.js';
@@ -52,6 +57,12 @@ export function useGeometryGestures({
   const { at: shapeAtPointer, forTool: geomUnder, roomForSlot } = geometry.lookup;
   const { draft: shapeDraft } = geometry.status;
   const { canFinishOpen } = geometry.panel;
+  /* THE POINT EDITOR THE CANVAS WAS GIVEN — a drawn track's vertices or a
+     shape's, whichever is live. Read here for ONE thing: where a vertex was at
+     the press, which is the anchor the shift lock is measured from. Taking it
+     from the same record the canvas drew the grip from is what stops the
+     anchor and the grip disagreeing about which point is being held. */
+  const { trackEdit } = geometry.canvas;
 
   /* THE CLICK A CAPTURED POINTER RETARGETS IS NOT THIS FILE'S PROBLEM ANY MORE.
      Every press below stops the event, and that is the whole of what any of
@@ -346,12 +357,27 @@ export function useGeometryGestures({
      where the pointer is and the two neighbours follow it onto their own axes,
      so a path that was square stays square without the far end of the run
      swinging about behind the hand. */
-  const trackPointDown = (e, id, i) => {
+  /* `of` RIDES ALONG FROM THE RECORD THE CANVAS WAS GIVEN, and it has to: one
+     editor draws the vertices of a drawn track and of a `pen` or `line` ceiling
+     shape, and the ids come from two different stores. Without it a vertex
+     dragged on a track RUN would be looked up in `manualTracks`, found to be
+     nothing, and silently do nothing at all — which is the failure this whole
+     branch exists to end.
+     AND THE DRAWN-TRACK EDITOR IS NOT OPENED FOR A SHAPE'S VERTEX.
+     `setTrackEditId` would put a second editor up over the first. */
+  const trackPointDown = (e, id, i, of = 'track') => {
     if (e.button != null && e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
-    setTrackEditId(id); setSelTrackPt(i);
+    if (of === 'track') { setTrackEditId(id); setSelTrackPt(i); }
     svgRef.current?.setPointerCapture?.(e.pointerId);
-    setTrackGrip({ id, i });
+    /* WHERE THE VERTEX WAS AT THE PRESS, in feet — rule 2 in lib/dragMove.js
+       said about a single point. The shift lock is measured from HERE and not
+       from the last frame, so a locked drag stays on one line however long it
+       goes on; an anchor taken per frame would let the line creep. */
+    const from = (trackEdit?.id === id && trackEdit.pts?.[i] && pxPerFt)
+      ? { x: trackEdit.pts[i].x / pxPerFt, y: trackEdit.pts[i].y / pxPerFt }
+      : null;
+    setTrackGrip({ id, i, of, from });
   };
 
   /** ...and dragged. Written straight into the list on every move, exactly as a
@@ -359,7 +385,26 @@ export function useGeometryGestures({
   const trackGripMove = (e) => {
     if (!trackGrip || !pxPerFt) return;
     const p = svgPoint(e);
-    const at = { x: p.x / pxPerFt, y: p.y / pxPerFt };
+    const want = { x: p.x / pxPerFt, y: p.y / pxPerFt };
+    /* SHIFT HOLDS THE POINT TO A STRAIGHT LINE, and it is `orthoLock` from
+       lib/dragMove.js — the same function every other shift-drag on this canvas
+       goes through, not a second implementation of the same idea. Whichever
+       axis has travelled further wins and it is RE-DECIDED EVERY FRAME rather
+       than latched, so a drag that sets off sideways and turns vertical
+       switches over as it crosses the diagonal.
+       A VERTEX IS A FREE POINT — see `vertexPoints` in lib/path.js — and a free
+       point honours the lock. That is `orthoFor`'s rule in lib/point.js, and it
+       is why this is the one drag on a path where shift means something: the
+       CONSTRAINED points on this canvas refuse it, because their host already
+       decides where they can go.
+       NO GUIDE IS DRAWN FOR THE HELD AXIS, and there is none to suppress: this
+       drag has no snap, so nothing is claiming an alignment the modifier made.
+       AND IT IS APPLIED BEFORE THE PATH'S OWN RELOCK, which `moveTrackPoint`
+       does: the lock decides where the pointer is ALLOWED to be, and the relock
+       then keeps the legs square to it. The other order would let the relock
+       move the point off the line the modifier had just held it to. */
+    const anchor = trackGrip.from ?? want;
+    const { at } = orthoLock(want, anchor, !!e.shiftKey);
     commands.moveTrackPoint(trackGrip, at);
   };
 

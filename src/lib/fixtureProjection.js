@@ -1,8 +1,11 @@
 import { pointInPolygon } from './geometry.js';
 import { SHAPE_BY_ID, outlineFt as shapeOutlineFt, cornersFt as shapeCornersFt,
          pathLengthFt, isOpen as shapeIsOpen, isTrack as shapeIsTrack,
-         isBuilt as shapeIsBuilt, frameFt as shapeFrameFt, handlesFor } from './ceilingShapes.js';
-import { MODULE_BY_ID, moduleAt, moduleLenIn } from './magTrack.js';
+         isBuilt as shapeIsBuilt, frameFt as shapeFrameFt, handlesFor,
+         editablePath as shapeEditablePath } from './ceilingShapes.js';
+import { MODULE_BY_ID, moduleLenIn } from './magTrack.js';
+import { resolvePoint } from './point.js';
+import { asPathHost } from './path.js';
 import { arraySpots, arrayPath, throwDiameterFt, DEFAULT_DROP_FT } from './cob.js';
 import { STRIP_OFFSET_FT } from './cove.js';
 
@@ -192,13 +195,18 @@ export function projectTrackModulesPx(trackFixtures, magTrackById, pxPerFt) {
     if (!(pxPerFt > 0)) return [];
     const out = [];
     for (const f of trackFixtures) {
-      const t = magTrackById[f.trackId];
+      const t = magTrackById[f.on];
       if (!t) continue;
-      const at = moduleAt(t.pts, f.u, { closed: t.closed });
+      /* THE RUN AS A PATH, THE MODULE AS A POINT HELD ON IT. `resolvePoint` is
+         lib/point.js's one reader of a constrained point's position, so a
+         module is placed by exactly the arithmetic every other point on this
+         canvas is — and `null` still means "not on the drawing" rather than a
+         fitting at the origin, which is the note above. */
+      const at = resolvePoint(f, asPathHost(t));
       if (!at) continue;
       const m = MODULE_BY_ID[f.kind] ?? MODULE_BY_ID.spot;
       out.push({
-        id: f.id, trackId: f.trackId, kind: f.kind, roomId: t.roomId,
+        id: f.id, on: f.on, kind: f.kind, roomId: t.roomId,
         x: at.x, y: at.y, ux: at.ux, uy: at.uy,
         /* INCHES, BECAUSE THAT IS WHAT THE PRODUCT IS AND WHAT THE CANVAS DRAWS
            FROM. `inch()` there turns them into drawing units at the live scale,
@@ -294,9 +302,36 @@ export function projectTrackEditPx(pxPerFt, trackEditId, manualTracks) {
     if (!pxPerFt || !trackEditId) return null;
     const t = manualTracks.find((q) => q.id === trackEditId);
     if (!t) return null;
-    return { id: t.id, closed: !!t.closed,
+    /* `of` SAYS WHICH STORE THE VERTEX BELONGS TO. Two things on this canvas
+       have an editable path — a drawn track in `manualTracks` and a `pen` or
+       `line` ceiling shape — and they are the SAME editor: a polyline and a
+       grip per vertex. One canvas block draws both, so the record has to say
+       where a moved vertex is written back. See `projectShapeEditPx`. */
+    return { of: 'track', id: t.id, closed: !!t.closed,
              pts: t.ptsFt.map((q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt })) };
 
+}
+
+/**
+ * THE SHAPE BEING EDITED, AS THE SAME POINT EDITOR A DRAWN TRACK GETS.
+ *
+ * WHY THIS EXISTS AT ALL: a magnetic track run IS a ceiling shape, and a single
+ * straight run had no way to be edited. `handlesFor` refused it grips under a
+ * rule written for a cove slot, and nothing else offered its two ends. A run is
+ * a PATH — `editablePath` is the host — and a path's vertices are points, so the
+ * editor a drawn track already had is the editor this wants.
+ *
+ * ONLY WHERE THERE ARE VERTICES TO EDIT. `editablePath` answers `null` for
+ * every box-parameterised kind, because a circle's seventy-two outline points
+ * are derived and there is no field to write one back to. Those resize.
+ */
+export function projectShapeEditPx(pxPerFt, shapeEditId, ceilingShapes) {
+    if (!pxPerFt || !shapeEditId) return null;
+    const sh = (ceilingShapes ?? []).find((q) => q.id === shapeEditId);
+    const host = sh ? shapeEditablePath(sh) : null;
+    if (!host) return null;
+    return { of: 'shape', id: sh.id, closed: !!host.closed,
+             pts: host.pts.map((q) => ({ x: q.x * pxPerFt, y: q.y * pxPerFt })) };
 }
 
 export function projectPenDraftPx(pxPerFt, shapeMenuOn, shapeTool, pts, at, isEmpty) {

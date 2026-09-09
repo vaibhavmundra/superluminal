@@ -50,12 +50,22 @@
 // Those are real differences in how much travel means "I meant to move this",
 // so they stay the caller's to state rather than being averaged here.
 //
+// `ortho` — DOES THIS OBJECT HONOUR THE SHIFT LOCK. A boolean for the nine
+// drags where the answer is a property of the KIND of thing, and a predicate
+// `(drag) -> bool` for a gesture whose members do not all agree: a point held
+// on another geometry takes its alignment from that geometry and must not also
+// be held to a row through the press. See `orthoFor` in lib/point.js.
+//
 // WHERE AN OBJECT'S DRAG IS DELIBERATELY CONSTRAINED, THE CONSTRAINT STAYS IN
 // THE CALLER. A slot does not move at all; a light is clamped to its own cell;
 // a plate slides only along walls; a module only along its rail. Those are
 // facts about the object and they belong next to it — expressed either in `to`,
 // which sees the resolved point and may put the member anywhere it likes, or by
 // the caller's own handler declining to call `move` at all.
+//
+// AND FOR THE POINT PRIMITIVE, `to` IS WHERE IT LIVES: `pointAdapters` in
+// lib/point.js is the pair, and hooks/usePoint.js is this hook already wired to
+// them, so an element standing on a point writes no gesture code at all.
 //
 // NO STORE IS REQUIRED. Give the hook `setList` and it applies one delta to the
 // press-time snapshots — rule 2, said about a group. Give it none and it writes
@@ -107,7 +117,7 @@ export function makeDrag({
   at, to, setList,
   // --- the four rules
   grab = true,          // subtract where inside the thing it was grabbed
-  ortho = false,        // does this object honour the shift lock
+  ortho = false,        // does this object honour the shift lock — or a predicate
   snap,                 // (p, lockedAxis, ctx) -> p
   copy = false,         // does this object support Option-copy
   mintId,               // (n, base) -> id for a twin
@@ -143,7 +153,14 @@ export function makeDrag({
     // No anchor means no line to hold to and no delta to take: the resolved
     // point is the pointer, and the frame is entirely the caller's.
     if (!d.start) return { target: want, axis: null };
-    const lock = orthoLock(want, d.start, ortho && !!e?.shiftKey);
+    /* `ortho` MAY BE ASKED PER FRAME, for the reason `moves` and `moved` are:
+       one gesture can carry members that do not all honour the lock. A
+       constrained point takes its alignment from the geometry it is held on and
+       from nothing else — see the header of lib/point.js — so a lock applied to
+       it would hold a WANTED position on a line the point then leaves, and
+       claim an alignment the drawing does not have. */
+    const held = typeof ortho === 'function' ? ortho(d) : ortho;
+    const lock = orthoLock(want, d.start, held && !!e?.shiftKey);
     const ctx = { ids, drag: d, event: e, pointer: p };
     return { target: snap ? snap(lock.at, lock.axis, ctx) : lock.at, axis: lock.axis };
   };

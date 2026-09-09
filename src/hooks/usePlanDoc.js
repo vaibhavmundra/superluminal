@@ -827,7 +827,7 @@ export function docReducer(state, action) {
        longer exists — which draws nothing and counts in the schedule for ever. */
     case 'TRACK_MODULES_DROPPED':
       return put(state, 'trackFixtures',
-        dropFrom(state.trackFixtures, (f) => f.trackId === action.trackId));
+        dropFrom(state.trackFixtures, (f) => f.on === action.trackId));
 
     /* RE-SPECIFYING A HAND-PLACED LAMP. The clamps are in here because they are
        what a legal specification IS — a typed figure, a held arrow key and a
