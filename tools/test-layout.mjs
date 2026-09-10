@@ -121,6 +121,48 @@ say('1. EVERY ROOM COMES BACK ANSWERED');
   }
   ok(rect.plan.ok && ell.plan.ok, 'both of these rooms are big enough to lay out');
 
+  /* --- HOW THE CEILING IS CUT SURVIVES THE SUGGESTIONS BEING OFF ----------
+     `INPUT` PASSES NO `autoLights`, SO EVERY ROOM IN THIS FILE IS LAID OUT WITH
+     THE GRID OFF — which makes it exactly the case this guards. `designChunksPx`
+     is the option pill's list and is rightly empty then: a pill offers to re-cut
+     a piece of ceiling and there is nothing on it for the re-cut to move.
+     `bayChunksPx` IS THE SAME CUT AND MUST NOT BE, because the electrical pass
+     asks a different question of it — which pieces this ceiling divides into,
+     since a piece over 25 sqft is switched from its own wall. One list answering
+     both meant that with the grid off a room came out as a single bay, adopted
+     the plate beside its door, and a living-dining room cut in two got one
+     switchboard. See `baysOfRoom` in features/electrical/boardRules.js. */
+  ok(rect.designChunksPx.length === 0 && ell.designChunksPx.length === 0,
+    'with the grid off there are no option pills');
+  ok(rect.bayChunksPx.length > 0 && ell.bayChunksPx.length > 0,
+    `...and the cut is still there to switch from (${rect.bayChunksPx.length}`
+    + ` and ${ell.bayChunksPx.length} pieces)`);
+  ok(rect.bayChunksPx.every((c) => c.key != null && c.rect
+      && Number.isFinite(c.rect.x0) && c.rect.x1 > c.rect.x0),
+    'each piece carries a key and a real rectangle in plan pixels');
+
+  /* --- TWO OBJECT LISTS PER ROOM, AND ONLY THE SHORTER ONE MOVES A LIGHT ----
+     `fansInRoom` IS WHAT THE LAYOUT KEPT CLEAR OF and `objectsInRoom` is what
+     is actually standing there. They differ by exactly the off-ceiling entries
+     - a split unit on a wall, a geyser over a door, a lamp on the floor - which
+     obstruct no downlight and must not punch a hole in a grid, but which the
+     schedule has to count and the heatmap has to light from. See `obstaclesPx`
+     in layoutRooms.
+     THE FULL LIST IS OPTIONAL, so a caller handing in only the obstacles - every
+     other test in this file - gets an empty one rather than a throw. */
+  const withLamp = layoutRooms({ ...INPUT,
+    obstaclesPx: [FAN, { id: 'sl1', kind: 'standing_lamp', offCeiling: true,
+                         x: 4 * PX, y: 4 * PX, r: 0.74 * PX }] });
+  const wl = withLamp.find((r) => r.id === 'rect-room');
+  ok(wl.geo.objectsInRoom.length === 2,
+    `both objects are in the room's own list (got ${wl.geo.objectsInRoom.length})`);
+  ok(wl.geo.fansInRoom.length === 1,
+    'but only the fan is an obstacle the layout had to work around');
+  ok(wl.plan.lightsPx.length === rect.plan.lightsPx.length,
+    'so the lamp changed no light: the two layouts have the same count');
+  ok(rect.geo.objectsInRoom.length === 0,
+    'and a caller that hands in no full list gets an empty one, not a throw');
+
   // AND A ROOM THAT CANNOT BE LAID OUT SAYS SO rather than coming back empty.
   // This is the other half of the claim and the half that is easy to lose: a
   // refusal that arrives as `{ ok: false }` with nothing on it reaches the

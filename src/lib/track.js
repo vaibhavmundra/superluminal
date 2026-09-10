@@ -87,6 +87,7 @@
 // ---------------------------------------------------------------------------
 
 import { distanceToBoundary, pointInPolygon } from './geometry.js';
+import { pointInZone } from './chunking.js';
 
 /**
  * THE PRODUCT'S OWN DIMENSIONS, IN INCHES.
@@ -371,6 +372,7 @@ const EDGE_TOL = 0.05;          // ft — "this edge is on that boundary"
 
 /** Is p within EDGE_TOL of the boundary of this rectangle? */
 function onRectEdge(p, z) {
+  if (z.polygon?.length >= 3) return distanceToBoundary(p, z.polygon) <= EDGE_TOL;
   const inside = p.x > z.x0 - EDGE_TOL && p.x < z.x1 + EDGE_TOL
               && p.y > z.y0 - EDGE_TOL && p.y < z.y1 + EDGE_TOL;
   if (!inside) return false;
@@ -876,13 +878,7 @@ export function trackGeometry(chunk, arrangementId, lights = [], site = null,
 
 /** Is this landing point inside a zone no fitting may sit in? */
 function inKeepOff(p, zones) {
-  for (const z of zones || []) {
-    const x0 = Math.min(z.x0, z.x1), x1 = Math.max(z.x0, z.x1);
-    const y0 = Math.min(z.y0, z.y1), y1 = Math.max(z.y0, z.y1);
-    if (p.x > x0 + 1e-9 && p.x < x1 - 1e-9
-        && p.y > y0 + 1e-9 && p.y < y1 - 1e-9) return true;
-  }
-  return false;
+  return (zones || []).some((z) => pointInZone(p, z));
 }
 
 /**

@@ -27,6 +27,7 @@ import { ABSORB_FT, DODGE_FT } from '../../lib/track.js';
 import { nearestOnSegment, pathLength, pointAt, pointInPolygon }
   from '../../lib/geometry.js';
 import { surfaceDistance } from '../../lib/planner.js';
+import { pointInZone } from '../../lib/chunking.js';
 
 /* WHICH LIGHT IS PICKED, as `${outlineId}|${cellKey}` — the same pairing the
    store is keyed on, flattened, because a selection is one value. */
@@ -434,8 +435,7 @@ export function autoplaceCobs({ room, list, pxPerFt, basis, ownedCells = [] }) {
     if (owned.has(lightKey(room.id, cell.id))) continue;
     if (chunksPx[cell.chunk]?.dark) continue;
     const mid = { x: (cell.x0 + cell.x1) / 2, y: (cell.y0 + cell.y1) / 2 };
-    if (zones.some((z) => mid.x >= z.x0 && mid.x <= z.x1
-                       && mid.y >= z.y0 && mid.y <= z.y1)) continue;
+    if (zones.some((z) => pointInZone(mid, z))) continue;
     const held = basis.inForce?.(cell);
     const spec = held ?? specFor(cell.chunk);
     if (!spec) continue;

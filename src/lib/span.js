@@ -1,5 +1,15 @@
 // ---------------------------------------------------------------------------
 // span.js — A STRETCH OF A PATH, AS A PRIMITIVE. Two points on one host, with
+//
+// ===========================================================================
+// INHERITING FROM THIS PRIMITIVE MEANS INHERITING THE WHOLE GESTURE — move,
+// Option-copy, delete, the Shift ortho lock, the snap, the slop, the group
+// move, the snap-back and the refusal — ALL OF IT, ALWAYS, unless the user
+// says otherwise about that element in words. Migrating the arithmetic and
+// leaving the verbs is not a migration. THE FULL CONTRACT AND THE CHECKLIST
+// ARE AT THE TOP OF lib/point.js. Read it before migrating anything onto this.
+// ===========================================================================
+//
 // the rule that keeps them a stretch.
 //
 // WHAT IT IS FOR. The app hand-rolls this four times and calls it something

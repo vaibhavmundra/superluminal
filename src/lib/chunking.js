@@ -59,6 +59,13 @@ export function normalizeZone(z) {
 }
 
 export function pointInZone(p, z, pad = 0) {
+  /* AN ORIENTED KEEP-OUT IS TESTED AS THE SHAPE IT IS. `rect` remains on the
+     object as a quick bound and for old callers, but using that bound as the
+     zone would make a long diagonal reverse cove exclude the triangular areas
+     on both sides of its actual eight-inch band. Padding is still rectangular
+     for now; every current polygonal zone is a built slot and is queried with
+     zero padding. */
+  if (z.polygon?.length >= 3 && pad === 0) return pointInPolygon(p, z.polygon);
   return p.x > z.x0 - pad && p.x < z.x1 + pad && p.y > z.y0 - pad && p.y < z.y1 + pad;
 }
 
@@ -88,6 +95,23 @@ export function elementaryGrid(polygon, zones = []) {
   for (const z of zones) {
     for (const v of [z.x0, z.x1]) if (v > box.minX + EPS && v < box.maxX - EPS) xs.add(R6(v));
     for (const v of [z.y0, z.y1]) if (v > box.minY + EPS && v < box.maxY - EPS) ys.add(R6(v));
+    const poly = z.polygon ?? [];
+    /* Rectangular decomposition cannot reproduce a diagonal boundary exactly,
+       but it must not turn one long narrow band into its entire bounding box.
+       Sample each sloping edge at one-foot intervals so the carved ceiling is a
+       close staircase around the real polygon. Cardinal zones add no extra
+       lines, and the cap prevents a pathological imported polygon from
+       exploding the grid. */
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const steps = Math.min(64, Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y))));
+      for (let k = 0; k <= steps; k++) {
+        const f = k / steps;
+        const x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f;
+        if (x > box.minX + EPS && x < box.maxX - EPS) xs.add(R6(x));
+        if (y > box.minY + EPS && y < box.maxY - EPS) ys.add(R6(y));
+      }
+    }
   }
   const X = [...xs].sort((a, b) => a - b);
   const Y = [...ys].sort((a, b) => a - b);
@@ -600,7 +624,12 @@ export function chunkingPayload(options, ctx = {}) {
     units: 'feet',
     room: {
       outline: polygon.map((p) => ({ x: round(p.x), y: round(p.y) })),
-      noLightZones: zones.map((z) => ({ x0: round(z.x0), y0: round(z.y0), x1: round(z.x1), y1: round(z.y1) })),
+      noLightZones: zones.map((z) => ({
+        x0: round(z.x0), y0: round(z.y0), x1: round(z.x1), y1: round(z.y1),
+        ...(z.polygon?.length ? { polygon: z.polygon.map((p) => ({
+          x: round(p.x), y: round(p.y),
+        })) } : {}),
+      })),
       fans: fans.map((f) => ({ x: round(f.x), y: round(f.y), bladeRadius: round(f.r || 0) })),
     },
     intent: {

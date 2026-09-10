@@ -19,7 +19,8 @@ import { planFlows, loopPath, loopLegs, pathOf, cluster, flowSummary, FLOW_DEFAU
   from '../src/lib/flows.js';
 import { COUNTRIES, pointsFromFlows } from '../src/lib/switchboards.js';
 import { planSwitchboards, planChunkBoards, bayWalls, wallRuns, asDrawn,
-         px, SB_MM, servesBay, CHUNK_BOARD } from '../src/lib/electrical.js';
+         px, SB_MM, servesBay, CHUNK_BOARD,
+         LAMP_SOCKET_FT } from '../src/lib/electrical.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
@@ -84,8 +85,14 @@ console.log('-- a long room is rows down its length --');
 
 console.log('\n-- one row is not called "Row 1 of 1" --');
 {
-  // 12 x 10 ft: one chunk, one row of two.
-  const g = lay([{ x: 0, y: 0 }, { x: 12, y: 0 }, { x: 12, y: 10 }, { x: 0, y: 10 }]);
+  /* 12 x 6 ft: one chunk, one row of two — and the SHAPE is the assertion's
+     precondition rather than decoration. It was 12 x 10, which the planner
+     lays 2 x 2 in, so the claim under test — that a lone row is labelled
+     "Downlights" and not "Row 1 of 1" — was never reached: there were two rows
+     and both were correctly numbered. A test whose setup no longer produces the
+     case it is about passes or fails for reasons that have nothing to do with
+     it. Halving the depth puts one row back. */
+  const g = lay([{ x: 0, y: 0 }, { x: 12, y: 0 }, { x: 12, y: 6 }, { x: 0, y: 6 }]);
   const { flows } = wire(g);
   const rows = flows.filter((f) => f.kind === 'row');
   ok(rows.length === 1 && rows[0].label === 'Downlights',
@@ -144,12 +151,17 @@ console.log('\n-- the bedroom: either side of the bed, then its foot --');
   const footY = ft(foot.nodes[0].y);
   ok(footY > 7 && footY < 16, `immediately past the bed and not across the room (y=${footY.toFixed(1)})`);
 
-  // THE REST OF THE ROOM IS ROWS, and the rows run parallel to the foot of the
-  // bed — NOT along the foot region's own long axis, which on a 14x17 remainder
-  // would say "down the room" and give three switches of one lamp each.
+  /* THE REST OF THE ROOM IS ROWS, and the rows run parallel to the foot of the
+     bed — NOT along the remainder's own long axis, which on a 16 x 17 region
+     would say "down the room" and give three switches of one lamp each. THAT is
+     the claim, and it is what the width of each row checks.
+     TWO ROWS AND NOT ONE. The count was written when the planner laid two rows
+     below the bed and it lays three: the foot takes the first and two remain.
+     The number is the planner's and moves with it; what must not move is that
+     every one of them is a row ACROSS the room. */
   const rest = flows.filter((f) => f.kind === 'row');
-  ok(rest.length === 1 && rest[0].count === 3,
-    `the rest of the room is one further row of three (got ${rest.map((f) => f.count).join()})`);
+  ok(rest.length === 2 && rest.every((f) => f.count === 3),
+    `the rest of the room is two further rows of three (got ${rest.map((f) => f.count).join()})`);
   ok(rest.every((f) => new Set(f.nodes.map((n) => n.y.toFixed(3))).size === 1),
     'and it too runs parallel to the foot of the bed');
   ok(flows.filter((f) => f.kind === 'row' || f.kind === 'bedfoot' || f.kind === 'bedsides')
@@ -366,6 +378,188 @@ console.log('\n-- the bedsides, and the plate under each of them --');
   ok(!!pd, 'a pendant is on the lighting circuit, because the gate is the kind');
   ok(pd?.label === 'Pendant', `and it is called a pendant, not a chandelier (got ${pd?.label})`);
   ok(/^pendant —/.test(pd?.what ?? ''), 'the sentence under it follows the label');
+}
+
+console.log('\n-- an array of spots is one switch, whatever it is spaced at --');
+{
+  const ROOM = [{ x: 0, y: 0 }, { x: 24 * PPF, y: 0 },
+                { x: 24 * PPF, y: 16 * PPF }, { x: 0, y: 16 * PPF }];
+  const room = { id: 'r1', polygonPx: ROOM };
+  const board = { id: 'bd', roomId: 'r1', role: 'door', servesShort: 'Door',
+    heightsMm: [1200], point: { x: 12 * PPF, y: 0 }, wall: { index: 0 } };
+  /** An array's lamps as `arrayLampsPx` leaves them: an id per lamp, all
+   *  carrying the run's own id, in the order they were set out along it. */
+  const run = (aid, gapFt, yFt, n = 4) => Array.from({ length: n }, (_, i) => ({
+    id: `${aid}#${i}`, arrayId: aid, roomId: 'r1',
+    x: (3 + i * gapFt) * PPF, y: yFt * PPF }));
+  const wireUp = (lamps) => planFlows({ room, lamps, boards: [board], pxPerFt: PPF }).flows;
+
+  /* --- THE PITCH MUST NOT DECIDE THE SWITCHING ---------------------------
+     THIS IS THE BUG. An array went into the downlight section as loose
+     hand-placed COBs and, with no grid under them, fell to the proximity
+     fallback — which groups at `spotGroupFt`, six feet, and a run of downlights
+     is spaced wider than that. Four lamps at eight feet came out as four
+     clusters: four flows, four modules and four wires fanning out of one plate.
+     Six feet is the right reach for RECOVERING a formation nobody recorded; an
+     array has an id, so its membership is a fact and no distance may argue. */
+  for (const gap of [2, 5.5, 8, 14]) {
+    const flows = wireUp(run('a1', gap, 9));
+    const arr = flows.filter((f) => f.kind === 'array');
+    ok(arr.length === 1 && arr[0].count === 4,
+      `at ${gap} ft pitch the array is one flow of four `
+      + `(got ${arr.length} flow(s) of ${arr.map((f) => f.count).join()})`);
+  }
+  // ...AND IT IS NOT ALSO A ROW OR A STRAY. Left in `lamps`, the same fittings
+  // would have been switched twice — once as the run and once by whatever cell
+  // or cluster they fell into.
+  const one = wireUp(run('a1', 8, 9));
+  ok(one.length === 1, `and nothing else is switching them (got ${one.length} flows)`);
+  ok(one[0].label === 'Spot array',
+    `named as the schedule names it (got ${one[0].label})`);
+  ok(one[0].arrayId === 'a1', 'and it names the run it is');
+
+  // TWO RUNS ARE TWO SWITCHES, because they are two decisions — even overlapping,
+  // which is what makes the id and not the distance the answer.
+  const two = wireUp([...run('a1', 8, 5), ...run('a2', 8, 5.5)]);
+  ok(two.filter((f) => f.kind === 'array').length === 2,
+    `two runs laid over each other are still two switches (got ${two.length})`);
+
+  /* ONE MODULE ON THE PLATE, which is what "one switch" has to mean by the time
+     it reaches the schedule. Four before this fix. */
+  const pts = pointsFromFlows(COUNTRIES.IN, one, 'bd');
+  ok(pts.length === 1 && pts[0].kind === 'switch',
+    `an array is one switch module (got ${pts.map((q) => q.kind).join()})`);
+
+  /* THE LOOP TRACES THE RUN, in the order the lamps were set out, and comes in
+     at the end nearest the plate — the same rule every other loop follows. */
+  const walk = one[0].nodes.map((q) => Math.round(q.x / PPF));
+  ok(walk.length === 4 && walk.every((v, i, a) => i === 0 || v > a[i - 1]),
+    `the wire walks the run end to end rather than jumping about (${walk.join()})`);
+}
+
+console.log('\n-- a standing lamp is plugged in, not wired --');
+{
+  const ROOM = [{ x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 360 }, { x: 0, y: 360 }];
+  const room = { id: 'r1', polygonPx: ROOM };
+  /* THE DOOR BOARD IS AT SWITCH HEIGHT AND A LAMP MAY NOT USE IT — see
+     LAMP_SOCKET_MAX_MM. It is here as the plate the lamp must NOT be wired to,
+     and as the one a hand assignment can still name. */
+  const board = { id: 'bd', roomId: 'r1', role: 'door', servesShort: 'Door',
+    heightsMm: [1200],
+    point: { x: 300, y: 0 }, rulePoint: { x: 300, y: 0 },
+    wall: { a: { x: 0, y: 0 }, b: { x: 600, y: 0 }, index: 0 } };
+  /* ...and a lamp's own plate, at socket height, which is what one may use. */
+  const sock = (y) => ({ id: 'sb-lamp', roomId: 'r1', role: 'lamp',
+    servesShort: 'Lamp', heightsMm: [300], point: { x: 300, y } });
+  const REACH = LAMP_SOCKET_FT * PPF;                      // 91.44px
+  const lamp = (dy, id = 'sl1') => ({ id, kind: 'standing_lamp',
+                                      typeId: 'standing_lamp', x: 300, y: dy });
+  const run = (objects, { outlets = [], handPlates = [] } = {}) => planFlows({
+    room, objects, outlets, handPlates, boards: [board], pxPerFt: PPF }).flows;
+
+  /* --- THE LAMP NAMES ITS PLATE OUTRIGHT ---------------------------------
+     NOT THROUGH `boardFor`, which is what every other fitting goes through. A
+     ceiling's flow runs to whichever plate the rules say switches that ceiling;
+     a lamp's runs to the plate it can actually plug into, which is a question
+     about height and reach rather than about what switches what. */
+  const inReach = run([lamp(30)], { handPlates: [sock(0)] });
+  const fl = inReach.find((f) => f.kind === 'lamp');
+  ok(!!fl, 'a lamp with a socket-height plate on the wall gets a flow');
+  ok(fl?.boardId === 'sb-lamp', `...and it runs to that plate (got ${fl?.boardId})`);
+  ok(fl?.label === 'Standing lamp',
+    `named off the catalogue like the pendant is (got ${fl?.label})`);
+  ok(fl?.objectId === 'sl1', 'and it names the object it is for');
+
+  /* --- THE DOOR BOARD IS THE RIGHT DISTANCE AND THE WRONG PLATE -----------
+     A LAMP THREE FEET FROM IT WAS BEING WIRED TO IT, and 1200mm is hand height
+     for a switch — a flex up the wall to shoulder level. Only the distance was
+     ever tested; the height is the other half. */
+  ok(run([lamp(REACH - 5)]).find((f) => f.kind === 'lamp')?.boardId == null,
+    'a lamp beside the door board is not wired to it — 1200mm is too high');
+
+  /* --- NO PLATE AT ALL: A FLOW WITH NO BOARD, AND NOT NO FLOW -------------
+     IT USED TO BE SKIPPED, and that quietly refused the manual case as well as
+     the automatic one: a hand assignment is stored against a FLOW ID and is
+     dragged from the WIRE, so a lamp with no flow can never be connected by
+     hand at all. It gets a flow, with nothing on the other end, and says so. */
+  const stranded = run([lamp(300)]).filter((f) => f.kind === 'lamp');
+  ok(stranded.length === 1, 'a lamp with no usable plate still gets a flow');
+  ok(stranded[0].boardId === null,
+    `...and it names no board rather than the nearest one (got ${stranded[0].boardId})`);
+
+  /* --- AND THREE FEET IS THE AUTOMATIC RULE ONLY --------------------------
+     DRAG A LAMP'S WIRE ONTO A PLATE FIFTY FEET AWAY AND IT GOES THERE. The cap
+     governs what the app does BY ITSELF — whether a socket has to go up, and
+     which plate it picks unaided. An assignment is somebody saying outright
+     which plate they mean, and it is resolved against every plate on the
+     drawing, at any distance and at any height. */
+  const far = run([lamp(300)]).find((f) => f.kind === 'lamp');
+  const byHand = planFlows({ room, objects: [lamp(300)], boards: [board],
+    boardPool: [board], assign: { [far.id]: 'bd' }, pxPerFt: PPF })
+    .flows.find((f) => f.kind === 'lamp');
+  ok(byHand?.boardId === 'bd',
+    `a hand assignment reaches a plate the rule would not (got ${byHand?.boardId})`);
+  ok(byHand?.assigned === true, '...and the wire is marked as somebody\'s own');
+
+  /* --- A BARE SOCKET OUTLET IS NOT SOMETHING A LAMP MAY USE ---------------
+     AND THIS ASSERTION IS THE REVERSE OF WHAT IT ONCE WAS. The rule briefly
+     said an outlet in reach was the lamp's socket and the lamp therefore needed
+     no wire of its own — which left the fitting with no mark, no module and no
+     switch within three feet of it. An outlet is by definition the one plate
+     with no switch ON it, and a socket a lamp cannot switch is not a socket a
+     lamp can use. So it is skipped and the lamp is left wanting a plate, which
+     is what makes the placement seat one. */
+  const withSocket = run([lamp(300)],
+    { outlets: [{ id: 'so1', x: 300, y: 300 + REACH / 2, amps: 6 }] });
+  ok(withSocket.some((f) => f.kind === 'socket'),
+    'the outlet still draws its own wire, as any outlet does');
+  ok(withSocket.find((f) => f.kind === 'lamp')?.boardId == null,
+    '...and the lamp is not served by it — an outlet has no switch to offer');
+
+  /* --- THE PLATE A LAMP SEATS FOR ITSELF IS A `handPlate` -----------------
+     AND IT IS A THIRD LIST FOR A REASON. `boards` is what a CEILING may fall
+     back to and a hand-placed plate has never been in it; the outlets are
+     handed in separately; and a lamp's plate is neither of those — it is a
+     switchboard somebody's placement put on a wall. Without this input it fell
+     through every list and the lamp could not find the very plate that had just
+     been seated for it, which is exactly the bug this covers. */
+  const mine = sock(360);
+  const onMine = run([lamp(360 - REACH / 2)], { handPlates: [mine] });
+  const ml = onMine.find((f) => f.kind === 'lamp');
+  ok(!!ml, 'a lamp finds the plate its own placement seated');
+  ok(ml?.boardId === 'sb-lamp', `...and its wire runs to it (got ${ml?.boardId})`);
+  ok((ml?.legs?.length ?? 0) > 0 && !ml?.coincident,
+    'and there is an actual wire drawn between the two');
+
+  /* --- TWO LAMPS BESIDE EACH OTHER ARE TWO WIRES AND TWO PAIRS ------------
+     ONE FLOW PER LAMP, WHICH IS THE WHOLE OF IT. A second lamp within reach of
+     the same plate does not share the first one's socket — it needs its own,
+     and it gets it as two more modules on that plate rather than as a second
+     frame on the wall. A shared flow would have been one socket for two lamps,
+     and a second plate would have been a frame nobody would build. */
+  const pair = run([lamp(360 - REACH / 2, 'sl1'), lamp(360 - REACH / 3, 'sl2')],
+    { handPlates: [mine] });
+  const both = pair.filter((f) => f.kind === 'lamp');
+  ok(both.length === 2, `two lamps are two flows (got ${both.length})`);
+  ok(both.every((f) => f.boardId === 'sb-lamp'), '...both onto the one plate');
+  const pairPts = pointsFromFlows(COUNTRIES.IN, both, 'sb-lamp');
+  ok(pairPts.filter((q) => q.kind === 'socket').length === 2
+     && pairPts.filter((q) => q.kind === 'switch').length === 2,
+    `and that plate carries two sockets and two switches (got ${pairPts.length} points)`);
+
+  /* --- WHAT THE PLATE OWES IT: A SOCKET AND ITS SWITCH -------------------
+     THE ONLY FLOW THAT BRINGS ITS OWN SOCKET. Every other fitting is wired and
+     needs a switch; a lamp is plugged in, so what it asks of the plate is
+     somewhere to plug into. And NOT the board's spare socket, which is
+     explicitly the one nobody has claimed — see the note in switchboards.js. */
+  const pts = pointsFromFlows(COUNTRIES.IN, inReach.filter((f) => f.kind === 'lamp')
+    .map((f) => ({ ...f, boardId: 'bd' })), 'bd');
+  ok(pts.length === 2, `a lamp is two points on the plate (got ${pts.length})`);
+  ok(pts.filter((q) => q.kind === 'switch').length === 1
+     && pts.filter((q) => q.kind === 'socket').length === 1,
+    'and they are a switch and a socket, in that order');
+  ok(pts.every((q) => q.flowId === fl.id),
+    'both carry the wire they are on, so picking either lights it');
 }
 
 console.log('\n-- a bay plate steps clear of a dedicated one --');

@@ -42,7 +42,8 @@ import { asPathHost } from '../../lib/path.js';
 import { usePointDrag } from '../../hooks/usePoint.js';
 import {
   makeCeilingObject, resizeFromCorner, rotateTo, halfExtents, isUniform,
-  applyResize, withSweep, newCeilingObjectId,
+  applyResize, withSweep, newCeilingObjectId, CEILING_BY_ID,
+  boxAdapters, boxOrtho, boxMoves,
 } from '../../lib/ceilingObjects.js';
 import { clampContext, lightKey, moduleU, nextArrayDraft,
          rollbackCobs, arrayLanded, cobObstacleBlocked } from './fixtureRules.js';
@@ -55,6 +56,19 @@ export default function useFixtureGestures({
   roomAt, insideAnyRoom, snapTargets, snapTol,
   arrayOutline, shapeAtPointer, geomUnder, geomHover, setGeomHover,
   clearShapeEdit, standDown,
+  /* --- THE ELECTRICAL DRAWING'S ONE REACH INTO THIS FILE --------------------
+     A STANDING LAMP IS PLUGGED IN AND NOTHING ELSE PLACED HERE IS, so it is the
+     one fitting whose arrival can oblige a socket to appear. The rule that
+     decides whether one is needed and which piece of wall it goes on belongs to
+     the electrical domain and stays there — see `socketForLamp` in
+     features/electrical/useBoardGestures.js. What crosses the boundary is a
+     command, handed in, so this file states WHEN it is spent and knows nothing
+     about plates, reach or walls.
+     OPTIONAL, because the read-only panel and every caller that wires no
+     electrical feature must still be able to place a lamp. Without it the lamp
+     lands and no socket is seated, which is the same drawing somebody gets by
+     placing one before this build. */
+  socketForLamp = null,
   docActions, setSel, guides, setGuides, setOverRoom, setAddAt, setOptionPick,
 }) {
   const {
@@ -289,12 +303,29 @@ export default function useFixtureGestures({
     state: [objDrag, setObjDrag],
     point: (e) => { const p = svgPoint(e); return { x: p.x / pxPerFt, y: p.y / pxPerFt }; },
     capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
-    at: (o) => ({ x: o.x, y: o.y }),
-    to: (o, q) => ({ ...o, x: q.x, y: q.y }),
+    /* --- THE PRIMITIVE'S OWN THREE ANSWERS, AND THEY WERE WRITTEN OUT HERE ---
+       A CEILING OBJECT IS A BOX: a centre, two extents and an angle, with the
+       centre as its position — which is exactly what box.js calls "a point with
+       a size rather than a shape". So `at`/`to`, whether the shift lock applies,
+       and which frames of this gesture are a translation are three facts about a
+       BOX, and all three were spelled out inline: `{ x: o.x, y: o.y }`,
+       `ortho: true`, `(d) => d.mode === 'move'`. Character for character the
+       primitive's own, which is the worst kind of duplication — it agrees today
+       and nothing makes it agree tomorrow.
+       SO THEY COME FROM THE PRIMITIVE NOW, through ceilingObjects.js like the
+       rest of this object's verbs. Nothing about the gesture changes; what
+       changes is that adding a fourth mode to `BOX_MODES` is one edit rather
+       than one edit and a search.
+       WHAT IS STILL THIS FILE'S IS EVERYTHING BELOW: the snapper, the copy, and
+       the resize and rotate branches in `onMove`. Those are kind-AWARE — a round
+       object has no ratio to unlock and reads its limits off the catalogue — and
+       they stay where the catalogue is. See the note at the foot of
+       lib/ceilingObjects.js on which half of the box moved and which did not. */
+    ...boxAdapters(),
     setList: docActions.updateObjects,
     slopPx: 0,
-    moves: (d) => d.mode === 'move',
-    ortho: true,
+    moves: boxMoves,
+    ortho: boxOrtho(),
     snap: (q, axis, { ids }) => objSnapAt(q, axis, ids),
     copy: true,
     mintId: () => newCeilingObjectId(),
@@ -891,6 +922,18 @@ export default function useFixtureGestures({
       let o = makeCeilingObject(armed, { x: snapped.x / pxPerFt, y: snapped.y / pxPerFt });
       if (o.kind === 'fan') o = withSweep(o, fanSweepMm);
       docActions.addObject(o);
+      /* --- AND A STANDING LAMP BRINGS A SOCKET WITH IT ---------------------
+         THE ONE PLACEMENT ON THIS CANVAS THAT WRITES TWICE, because a standard
+         lamp is the one fitting here that is not wired into a ceiling: it has a
+         lead, and a lamp out of reach of every plate is a lamp with nowhere to
+         plug in. The command decides whether anything is needed — a plate
+         already within reach means nothing is — so this line is unconditional
+         and the answer is the rule's. See LAMP_SOCKET_FT in lib/electrical.js.
+         AT THE SNAPPED POINT AND NOT THE RAW ONE, because that is where the
+         lamp actually lands, and the reach is measured from the lamp.
+         IN THE SAME TICK AS `addObject`, which is what makes the two one undo
+         step rather than two — see QUIET_MS in lib/undo.js. */
+      if (o.kind === 'standing_lamp') socketForLamp?.(snapped);
       setSel(select('object', o.id));
       setArmed(null);
       setGuides([]); setGhost(null); setGuides([]); setGhost(null);
@@ -916,7 +959,17 @@ export default function useFixtureGestures({
       return true;
     }
     const snapped = applySnap(p, null);
-    setGhost({ x: snapped.x, y: snapped.y, typeId: armed });
+    /* AND AT THE SWEEP THE PRESS WILL ACTUALLY USE. The ghost carried the
+       catalogue's diameter and the press applied the standing sweep — see the
+       `withSweep` line in `placeObject`, which this deliberately mirrors — so
+       choosing 1200 on the bar left a 900 circle following the cursor. That is
+       the same lie the ghost's COLOUR used to tell: a preview drawn at a size
+       the click will not produce is a promise about where the thing lands that
+       is off by a foot of diameter, and the fan's clearance circle is the one
+       thing anybody is placing it by eye against. */
+    let g = { x: snapped.x, y: snapped.y, typeId: armed };
+    if (CEILING_BY_ID[armed]?.kind === 'fan') g = withSweep(g, fanSweepMm);
+    setGhost(g);
     return true;
   };
 

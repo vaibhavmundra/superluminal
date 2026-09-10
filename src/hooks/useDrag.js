@@ -1,6 +1,16 @@
 // ---------------------------------------------------------------------------
 // useDrag.js — THE LIFECYCLE ROUND lib/dragMove.js.
 //
+// ===========================================================================
+// INHERITING FROM THIS PRIMITIVE MEANS INHERITING THE WHOLE GESTURE — move,
+// Option-copy, delete, the Shift ortho lock, the snap, the slop, the group
+// move, the snap-back and the refusal — ALL OF IT, ALWAYS, unless the user
+// says otherwise about that element in words. Migrating the arithmetic and
+// leaving the verbs is not a migration. THE FULL CONTRACT AND THE CHECKLIST
+// ARE AT THE TOP OF lib/point.js. Read it before migrating anything onto this.
+// ===========================================================================
+//
+//
 // WHAT IT IS FOR. Ten things on this canvas can be dragged — a ceiling object,
 // a hand-placed COB, a COB array, a track module, a light inside its cell, a
 // cove shape, a switchboard, a wire's grip, an accent run, a door box — and

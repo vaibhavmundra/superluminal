@@ -387,7 +387,14 @@ export function buildRoomEmitters({
      positions, so the documented broad-source approximation is a ring of bare
      lamps at the object's own radius — see `chandelier` in profiles.js for why
      a metre-wide fitting collapsed to its centre reads as a spotlight. */
-  const pendants = (room.geo?.fansInRoom ?? []).filter((f) => f.kind === 'chandelier');
+  /* `objectsInRoom` AND NOT `fansInRoom`, WHICH IS WHAT LETS THE STANDING LAMP
+     INTO THIS SECTION AT ALL. The obstacle list has the off-ceiling objects
+     filtered out of it, so a lamp standing on the floor was never in it and this
+     pass could not have found one — see `objectsInRoom` in lib/layout.js.
+     Falling back to the obstacles keeps a room laid out by a caller that hands
+     in only that list lighting its pendants as before. */
+  const objects = room.geo?.objectsInRoom ?? room.geo?.fansInRoom ?? [];
+  const pendants = objects.filter((f) => f.kind === 'chandelier');
   if (pendants.length) {
     const lm = perUnitOf(rows, 'lamp');
     const profile = DISTRIBUTION_PROFILES.chandelier;
@@ -398,6 +405,37 @@ export function buildRoomEmitters({
         push({ profileId: 'chandelier', lm,
                geom: { kind: 'ring', c: { ...c, z: mountZ(profile) },
                        r: Math.max(0.05, (f.r ?? 0) * M), n: profile.elements } });
+      }
+    }
+  }
+
+  /* --- 9. THE STANDING LAMPS ---------------------------------------------
+     THE SAME ACCOUNTING ROW AND A DIFFERENT DISTRIBUTION, which is the split
+     profiles.js's header describes and the reason that table is keyed by profile
+     rather than by family. A standard lamp is counted as `lamp` like a pendant
+     is — one family, one split, one row in the schedule — and it throws from
+     somewhere else entirely: 1500mm off the FLOOR rather than 600mm under the
+     slab. `floor_lamp` is the entry that says so, and it has been in that table
+     since it was written with nothing placing it.
+     A POINT AND NOT A RING. The chandelier above is a ring because a metre-wide
+     fitting collapsed to its centre reads as a spotlight; a 450mm shade at
+     1500mm is small next to the distances that matter and its own radius is
+     inside the solver's own sampling, so the honest approximation is the point
+     the profile already asks for.
+     ITS HEIGHT COMES OFF THE PROFILE, through `mountZ`, which reads `heightMm`
+     for a mount measured from the floor and `dropMm` for one measured down from
+     the slab. Nothing here knows which — that is the whole of what the profile
+     is for. See LAMP_MM in profiles.js. */
+  const standing = objects.filter((f) => f.kind === 'standing_lamp');
+  if (standing.length) {
+    const lm = perUnitOf(rows, 'lamp');
+    const profile = DISTRIBUTION_PROFILES.floor_lamp;
+    if (lm > 0) {
+      for (const f of standing) {
+        if (!Number.isFinite(f?.x) || !Number.isFinite(f?.y)) continue;
+        const c = toM(f);
+        push({ profileId: 'floor_lamp', lm,
+               geom: { kind: 'point', p: { ...c, z: mountZ(profile) } } });
       }
     }
   }

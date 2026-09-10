@@ -115,12 +115,14 @@ export default function useAccentEditing({
     onMove: (p, { drag: d, event: e }) => {
       // --- a derived run: the ends write a TRIM, and nothing else moves.
       if (d.derived) {
-        const { trimId, horizontal, base } = d.derived;
+        const { trimId, horizontal, axis, base } = d.derived;
         if (!base || !(pxPerFt > 0)) return;
         // Only the along-wall component of the pointer counts. A cove is on its
         // wall and stays there, so the across component is not a degree of
         // freedom — dragging away from the wall shortens nothing.
-        const v = horizontal ? p.x : p.y;
+        const v = axis?.origin && axis?.unit
+          ? (p.x - axis.origin.x) * axis.unit.x + (p.y - axis.origin.y) * axis.unit.y
+          : horizontal ? p.x : p.y;
         // Shift is the FINE drag here — the opposite hand of the same key on an
         // ordinary strip, where it locks the axis. There is no axis to lock on a
         // run that only moves along one, so the modifier is spent on the thing
@@ -202,7 +204,7 @@ export default function useAccentEditing({
       // pointer.
       derived: derived
         ? { trimId: derived.trimId, horizontal: derived.horizontal,
-            base: derived.base }
+            axis: derived.axis, base: derived.base }
         : null,
     });
   };

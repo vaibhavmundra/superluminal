@@ -1,5 +1,15 @@
 // ---------------------------------------------------------------------------
 // path.js — A PATH, AS A PRIMITIVE. The second geometry, and the HOST for the
+//
+// ===========================================================================
+// INHERITING FROM THIS PRIMITIVE MEANS INHERITING THE WHOLE GESTURE — move,
+// Option-copy, delete, the Shift ortho lock, the snap, the slop, the group
+// move, the snap-back and the refusal — ALL OF IT, ALWAYS, unless the user
+// says otherwise about that element in words. Migrating the arithmetic and
+// leaving the verbs is not a migration. THE FULL CONTRACT AND THE CHECKLIST
+// ARE AT THE TOP OF lib/point.js. Read it before migrating anything onto this.
+// ===========================================================================
+//
 // first.
 //
 // WHAT IT IS FOR. See the header of lib/point.js for the three layers this

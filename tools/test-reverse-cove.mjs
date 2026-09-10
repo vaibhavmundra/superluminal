@@ -21,8 +21,12 @@
 // ---------------------------------------------------------------------------
 
 import { reverseCovesFor, wallSegments, mergeReverseCoves, wantsReverseCove,
-         trimWallRun, RUN_TRIM, REVERSE_COVE } from '../src/lib/reverseCove.js';
+         manualReverseCove, trimWallRun, RUN_TRIM,
+         REVERSE_COVE } from '../src/lib/reverseCove.js';
+import { pointInZone } from '../src/lib/chunking.js';
 import { gridFor } from '../src/lib/wallGrid.js';
+import { buildReverseCoves, buildReverseCoveZones }
+  from '../src/features/scene/wallGeometry.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
@@ -213,9 +217,64 @@ console.log('\n-- changing the length by hand --');
 // THE EDIT IS STORED, NOT THE RESULT. Two numbers in feet per run — how far each
 // end moved from where the rule put it — so a trimmed cove still follows its
 // wall when the outline moves and still redraws at the right size when the scale
-// changes. What is asserted here is that it clamps, that it cannot cross the
-// door, and that it stamps the base a drag needs to stay under the pointer.
+// changes. What is asserted here is that it clamps to its wall (including over
+// a door head) and stamps the base a drag needs to stay under the pointer.
 const DOOR2 = { rect: { x0: 7 * PX, y0: -10, x1: 10 * PX, y1: 0.8 * PX } };
+
+console.log('\n-- a hand-placed cove follows an angled wall --');
+{
+  // A 3-4-5 wall, deliberately neither horizontal nor vertical. Its inward
+  // normal is perpendicular and unit length, so the band should remain exactly
+  // eight inches deep however the page is rotated under it.
+  const a = { x: 100, y: 80 }, b = { x: 340, y: 260 };
+  const inward = { x: -0.6, y: 0.8 };
+  const c = manualReverseCove({
+    a, b, t0: 30, t1: 270, inward, pxPerFt: PX,
+    roomId: 'angled-room', id: 'angled-cove',
+  });
+  ok(!!c && c.wall === 'angled' && c.horizontal === null,
+    'a diagonal outline edge produces a cove instead of a refusal');
+  ok(c.band.length === 4 && c.lip.length === 2,
+    'the slot is stored as its real four-corner band and inner lip');
+  const runDx = c.run[1].x - c.run[0].x, runDy = c.run[1].y - c.run[0].y;
+  ok(near(runDx / runDy, 4 / 3), 'the tape is parallel to the 4:3 wall');
+  const across = Math.hypot(c.band[3].x - c.band[0].x,
+                            c.band[3].y - c.band[0].y);
+  ok(near(across, DEPTH), `the angled slot is still exactly ${REVERSE_COVE.widthIn} inches deep`);
+  ok(near(c.runLength, 240) && near(c.lengthFt, 12),
+    'its billed length is measured along the wall, not across its bounding box');
+
+  const inside = {
+    x: (c.band[0].x + c.band[1].x + c.band[2].x + c.band[3].x) / 4,
+    y: (c.band[0].y + c.band[1].y + c.band[2].y + c.band[3].y) / 4,
+  };
+  const outsideButInBounds = { x: c.rect.x0 + 1, y: c.rect.y1 - 1 };
+  const zone = { ...c.rect, polygon: c.band };
+  ok(pointInZone(inside, zone), 'the real angled band is a no-light zone');
+  ok(!pointInZone(outsideButInBounds, zone),
+    'but empty space inside its bounding box is not falsely blocked');
+
+  const carried = buildReverseCoves({
+    source: {}, pxPerFt: PX, litOutlines: [{ id: 'angled-room' }],
+    wallResults: {}, useBoundingRect: false, doors: [], runTrims: {},
+    manualCoves: [c], runsOff: [],
+  });
+  const carriedZones = buildReverseCoveZones({ reverseCoves: carried });
+  ok(carried.length === 1 && carried[0].band.length === 4,
+    'the scene keeps the angled band instead of flattening it back to a rectangle');
+  ok(carriedZones[0].polygon === carried[0].band,
+    'and the scene’s no-light zone uses that same four-corner shape');
+
+  const t = trimWallRun(c, { a: 1, b: 2 }, { pxPerFt: PX });
+  ok(near(t.lengthFt, 9), 'end grips shorten it in the wall frame: 12 ft to 9 ft');
+  const trimmedDx = t.run[1].x - t.run[0].x;
+  const trimmedDy = t.run[1].y - t.run[0].y;
+  ok(near(trimmedDx / trimmedDy, 4 / 3),
+    'and a trimmed cove remains parallel to the angled wall');
+  ok(near(Math.hypot(t.band[3].x - t.band[0].x,
+                     t.band[3].y - t.band[0].y), DEPTH),
+    'trimming changes only its length, never its eight-inch depth');
+}
 {
   const c = one(runH(2, 9, 10));                       // 8 ft, x from 20 to 180 px
   const same = trimWallRun(c, null, { pxPerFt: PX });

@@ -281,9 +281,23 @@ export function fixtureGroups(r, {
     row.beam = nearestBeam(c.beam);
   }
 
-  const pendants = (r.geo?.fansInRoom ?? []).filter(
-    (f) => f.kind === 'chandelier').length;
-  if (pendants) bump('lamp', 'lamp', pendants, 0);
+  /* --- THE DECORATIVE LAMPS, AND THERE ARE TWO LISTS TO ASK -----------------
+     ONE ROW FOR ALL OF THEM, which is the `unit` rule this file already states
+     for the counted families: anything sold by the piece gets one row for the
+     lot, and three lamps in a room are one decision about lamps. See the note on
+     the key being the zone's id for the linear ones.
+     `objectsInRoom` AND NOT `fansInRoom`, AND THAT IS THE FIX. The obstacle list
+     has the off-ceiling objects filtered out of it, so a standing lamp was never
+     in it — the lamp landed on the drawing, moved no figure and appeared in no
+     row, which reads exactly like a fitting the app has not been told about. A
+     chandelier and a pendant were counted because they hang, and hanging is not
+     the reason they belong in a lighting schedule. See `objectsInRoom` in
+     lib/layout.js.
+     FALLING BACK TO THE OBSTACLES, so a room laid out by a caller that hands in
+     only that list still counts its pendants. */
+  const lamps = (r.geo?.objectsInRoom ?? r.geo?.fansInRoom ?? []).filter(
+    (f) => f.kind === 'chandelier' || f.kind === 'standing_lamp').length;
+  if (lamps) bump('lamp', 'lamp', lamps, 0);
 
   /* IN THE TABLE'S OWN ORDER, so the rows do not reshuffle as fittings are
      added, and within a family in the order the drawing produced them.

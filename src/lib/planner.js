@@ -403,13 +403,16 @@ function zoneDepth(p, zones) {
   let d = 0;
   for (const z of zones) {
     if (!pointInZone(p, z)) continue;
-    d += Math.min(p.x - z.x0, z.x1 - p.x, p.y - z.y0, z.y1 - p.y);
+    d += z.polygon?.length >= 3
+      ? distanceToBoundary(p, z.polygon)
+      : Math.min(p.x - z.x0, z.x1 - p.x, p.y - z.y0, z.y1 - p.y);
   }
   return d;
 }
 
 /** Distance from a point to a rectangle's boundary (works inside and out). */
 function rectEdgeDistance(p, z) {
+  if (z.polygon?.length >= 3) return distanceToBoundary(p, z.polygon);
   const dx = Math.max(z.x0 - p.x, 0, p.x - z.x1);
   const dy = Math.max(z.y0 - p.y, 0, p.y - z.y1);
   if (dx > 0 || dy > 0) return Math.hypot(dx, dy);

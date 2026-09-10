@@ -82,6 +82,16 @@ sec('a family is where its light goes, and the splits add up');
   ok('...and is specified at one wattage',
     FAMILY_BY_ID.sconce.watts.length === 1 && FAMILY_BY_ID.sconce.watts[0] === 7);
   ok('...which is therefore also its default', FAMILY_BY_ID.sconce.defaultWatts === 7);
+  /* --- AND A LAMP IS SEVEN TOO, WHICH IT WAS NOT ---------------------------
+     THE FAMILY HAD NO TOOL WHEN IT WAS WRITTEN, so its default was the middle
+     of a range for a product nobody could place. There are three now — a
+     chandelier, a pendant and a standing lamp, all placed by hand from the
+     Lamps flyout — and all three are specified at 7 W.
+     THE LIST IS UNTOUCHED, deliberately: 5, 9 and 12 W lamps exist and the
+     panel still offers them per room. What changed is where a room STARTS. */
+  ok('a decorative lamp is specified at 7 W', FAMILY_BY_ID.lamp.defaultWatts === 7);
+  ok('...and the range it is chosen from is unchanged',
+    FAMILY_BY_ID.lamp.watts.join(',') === '5,7,9,12');
   ok('tape is sold by the metre off one shared list',
     FAMILY_BY_ID.cove.watts === STRIP_WATTS_PER_M && FAMILY_BY_ID.cove.unit === 'm');
   ok('...and so are the other three strip families',

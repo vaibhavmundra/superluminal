@@ -7,6 +7,7 @@
 // cannot come to disagree about what SB7 is.
 // ---------------------------------------------------------------------------
 import { composeSwitchboard, composeOutlet } from '../../lib/switchboards.js';
+import { LAMP_BOARD_ROLE } from '../../lib/electrical.js';
 import { heightOf } from './boardRules.js';
 
 /**
@@ -45,6 +46,18 @@ export function composeBoard(b, { country, flowsPx = [], extras = [], order = []
   return composeSwitchboard({
     country, flows: flowsPx, boardId: b.id,
     extras, spareAmps: b.amps ?? null, order,
+    /* --- NO SPARE ON A PLATE THAT IS ALREADY A SOCKET --------------------
+       EVERY BOARD GETS ONE SOCKET MORE THAN THE DRAWING ASKED FOR — the
+       charger, the vacuum cleaner — and the argument for it is that nobody
+       thinks to draw that one and everybody wants it. See the note on the
+       spare pair in switchboards.js.
+       A STANDING LAMP'S PLATE IS THE ONE CASE WHERE THE ARGUMENT DOES NOT
+       HOLD, because the plate exists precisely BECAUSE somebody wanted a
+       socket there. Its whole content is the lamp's own socket and switch, and
+       a spare on top would double a three-module frame to six for a floor
+       lamp — a plate twice the size of the thing it is for, half of it
+       unasked. See LAMP_BOARD_ROLE in lib/electrical.js. */
+    spare: b.role !== LAMP_BOARD_ROLE,
   });
 }
 

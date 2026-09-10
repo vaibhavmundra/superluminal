@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { SHAPE_TOOLS, SHAPE_BY_ID, POLY_SIDES } from '../lib/ceilingShapes.js';
 import StageBar from './StageBar.jsx';
 
@@ -154,14 +155,147 @@ const NUM_ON = 'bg-black hover:bg-black text-white';
 const SEP = <span className="w-px h-5 bg-black/10 mx-0.5" aria-hidden="true" />;
 const CAP = 'text-[10.5px] leading-none tracking-[0.02em] text-black/55 px-1.5 select-none';
 
+/** A pointer position resolved to the range's own hundred-step scale. */
+function radiusAtPointer(clientX, el, max) {
+  const box = el.getBoundingClientRect();
+  if (!(box.width > 0) || !(max > 0)) return 0;
+  const f = Math.max(0, Math.min(1, (clientX - box.left) / box.width));
+  const step = max / 100 || 0.01;
+  return +Math.max(0, Math.min(max, Math.round((f * max) / step) * step)).toFixed(6);
+}
+
+/**
+ * A CORNER-RADIUS GESTURE IS ONE DOCUMENT EDIT, NOT ONE EDIT PER PIXEL.
+ *
+ * Changing the stored shape invalidates the full ceiling plan: every room is
+ * re-chunked, its fittings are replanned, the heatmap is rebuilt and the plan
+ * is queued for persistence. A native range input emits scores of changes in a
+ * single drag, so writing through on every one turns a small control into a
+ * tight loop of whole-plan rebuilds and eventually starves the pointer event
+ * that would finish the drag.
+ *
+ * Keep the thumb and readout live locally, then commit the value once the
+ * pointer is released. Keyboard changes commit on key-up, and blur is the
+ * fallback for assistive input. The `id` in `radius` resets the local value
+ * when selection moves to another shape; a committed value also flows back in
+ * after the document rebuild completes.
+ */
+function RadiusControl({ radius, onCommit }) {
+  const limit = Math.max(0, Number(radius.max) || 0);
+  const fromProp = Math.max(0, Math.min(limit, Number(radius.ft) || 0));
+  const [draft, setDraft] = useState(fromProp);
+  const draftRef = useRef(fromProp);
+  const dragRef = useRef(null);
+  const liveRef = useRef({ limit, fromProp, onCommit });
+  liveRef.current = { limit, fromProp, onCommit };
+
+  useEffect(() => {
+    draftRef.current = fromProp;
+    setDraft(fromProp);
+  }, [radius.id, fromProp]);
+
+  const write = (next) => {
+    draftRef.current = next;
+    setDraft(next);
+  };
+
+  /* READ THE POINTER AGAINST THE TRACK WE ACTUALLY DRAW. The native range
+     drag is deliberately suppressed below: mixing its hidden pointer state
+     with ours was what let the thumb remain attached after pointer-up. */
+  useEffect(() => {
+    const finish = (commit) => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      const live = liveRef.current;
+      if (commit && draftRef.current !== live.fromProp) live.onCommit?.(draftRef.current);
+      if (!commit) write(live.fromProp);
+    };
+    const move = (e) => {
+      const drag = dragRef.current;
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      /* PRIMARY BUTTON DOWN IS THE LICENSE TO MOVE. A lost pointer-up cannot
+         leave the control dragging: the first move with no button ends it. */
+      if ((e.buttons & 1) === 0) { finish(true); return; }
+      e.preventDefault();
+      write(radiusAtPointer(e.clientX, drag.el, liveRef.current.limit));
+    };
+    const up = (e) => {
+      const drag = dragRef.current;
+      if (drag && e.pointerId === drag.pointerId) finish(true);
+    };
+    const cancel = (e) => {
+      const drag = dragRef.current;
+      if (drag && e.pointerId === drag.pointerId) finish(false);
+    };
+    const windowBlur = () => finish(true);
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('blur', windowBlur);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('blur', windowBlur);
+    };
+  }, []); // all changing values are intentionally read through liveRef
+
+  const readInput = (el) => Math.max(0, Math.min(limit, Number(el.value) || 0));
+  const commitInput = (el) => {
+    const next = readInput(el);
+    write(next);
+    if (!dragRef.current && next !== fromProp) onCommit?.(next);
+  };
+
+  return (<>
+    <input type="range" min="0" max={limit} step={limit / 100 || 0.01}
+      value={draft} aria-label="Corner radius"
+      className="w-[92px] mx-1 accent-black cursor-pointer"
+      onPointerDown={(e) => {
+        if (e.button !== 0 || !(limit > 0)) return;
+        /* NO POINTER CAPTURE. A window-level release above is enough, and
+           capture was the source of the sticky drag the user was seeing. */
+        e.preventDefault();
+        e.stopPropagation();
+        e.currentTarget.focus({ preventScroll: true });
+        dragRef.current = { pointerId: e.pointerId, el: e.currentTarget };
+        write(radiusAtPointer(e.clientX, e.currentTarget, limit));
+      }}
+      onChange={(e) => {
+        // Pointer changes are ours; native changes here are keyboard input.
+        if (!dragRef.current) write(readInput(e.currentTarget));
+      }}
+      onKeyUp={(e) => {
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+             'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+          commitInput(e.currentTarget);
+        }
+      }}
+      onBlur={(e) => {
+        /* Losing focus while pressed is also a release boundary. The global
+           blur handler covers the browser losing focus; this covers the input. */
+        if (dragRef.current) {
+          const live = liveRef.current;
+          dragRef.current = null;
+          if (draftRef.current !== live.fromProp) live.onCommit?.(draftRef.current);
+        } else {
+          commitInput(e.currentTarget);
+        }
+      }} />
+    <span className={CAP + ' tabular-nums w-[42px] text-right'}>
+      {draft.toFixed(1)} ft
+    </span>
+  </>);
+}
+
 /**
  * `mode` is which of the four states the bar is in, and the caller owns it —
  * this component decides nothing. It is a row of buttons that reports presses.
  *
  *   tool        the armed shape id, so its button reads as latched
  *   sides       the polygon's current side count
- *   radius      { ft, max } for the selected shape, or null where a shape has
- *               no corners to round (a circle)
+ *   radius      { id, ft, max } for the selected shape, or null where a shape
+ *               has no corners to round (a circle)
  */
 export default function ShapeMenu({
   stage, mode, tool = null, sides = POLY_SIDES.initial, radius = null, sizeLabel = null,
@@ -288,17 +422,12 @@ export default function ShapeMenu({
         {sizeLabel && <span className={CAP}>{sizeLabel}</span>}
         {/* THE CORNER RADIUS, AND IT IS A SLIDER BECAUSE IT IS A FEEL.
             Nobody knows they want an 18-inch corner; they know they want it
-            rounder than it is, and they find out by watching the tape move. */}
+            rounder than it is. The thumb and readout stay live while it moves,
+            and the tape settles once on release — see RadiusControl. */}
         {radius && (<>
           {SEP}
           <span className={CAP}>Corner</span>
-          <input type="range" min="0" max={radius.max} step={radius.max / 100 || 0.01}
-            value={Math.min(radius.ft, radius.max)}
-            className="w-[92px] mx-1 accent-black cursor-pointer"
-            onChange={(e) => onRadius?.(Number(e.target.value))} />
-          <span className={CAP + ' tabular-nums w-[42px] text-right'}>
-            {radius.ft.toFixed(1)} ft
-          </span>
+          <RadiusControl radius={radius} onCommit={onRadius} />
         </>)}
         {SEP}
         <button type="button" title="Duplicate" className={BTN} onClick={onDuplicate}>

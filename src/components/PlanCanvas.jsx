@@ -1,6 +1,6 @@
-import React, { forwardRef, useState } from 'react';
+import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import { guideLine } from '../lib/snapGuides.js';
-import { CEILING_BY_ID, isRect } from '../lib/ceilingObjects.js';
+import { CEILING_BY_ID, isRect, sizeLabel } from '../lib/ceilingObjects.js';
 import { specsFor, runMetres, FIXTURE_BY_ID } from '../lib/boq.js';
 import { STRIP_STYLE, THROW_STYLE, GLINT_STYLE, PILL_STYLE,
          COVE_BAND_STYLE } from '../lib/settings.js';
@@ -510,6 +510,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        stay: those are the drawing, and the requirement is that they read ON TOP
        of the field. See the two `heatmapOn` tests below. */
     heatmapLayer = null, heatmapOn = false,
+    /* WHAT A FITTING IS RATED AT AND WHAT IT PUTS OUT, for its hover card —
+       `(familyId, at) => { watts, lumens }`.
+       A FUNCTION AND NOT A TABLE, because both answers are per SPACE and per
+       COUNTRY: the family's default is where a room starts and the Analysis
+       panel offers its other chips, and a watt buys 75 lumens in India against
+       100 abroad. A card printing constants would contradict the reading beside
+       the drawing the moment anybody moved either. App resolves it through the
+       same `wattsFor` and `unitOutput` the panel does — see `fittingOutput`.
+       NULL ON EVERY SHEET THAT DOES NOT WIRE IT, including the read-only panel,
+       and a card drops those two rows rather than guessing. */
+    fittingOutput = null,
     cursor = null },
   ref
 ) {
@@ -549,13 +560,75 @@ const PlanCanvas = forwardRef(function PlanCanvas(
    * mousemove made the card jitter under the cursor and told nobody anything
    * they did not already have.
    */
+  /* --- THE NODE THAT RAISED THE CARD, AND WHY IT IS WORTH KEEPING ----------
+     A HOVER CARD MUST NOT OUTLIVE THE THING IT DESCRIBES, and it was doing
+     exactly that. The contract below is enter/leave, which is complete for a
+     pointer that moves and silently incomplete for a fitting that VANISHES:
+     delete a lamp while its card is up and the browser fires no `mouseleave` —
+     the node is simply gone — so nothing ever told the card to go. It hung over
+     the drawing describing a fitting that was not there any more, until
+     something else happened to raise or clear one.
+
+     KEYBOARD DELETE IS THE COMMON WAY IN and it is the worst case, because the
+     pointer never moves: pick a fitting, read its card, press Delete, and the
+     card is still there over bare ceiling with the figures of the thing you
+     just removed.
+     --------------------------------------------------------------------------- */
+  const hotNode = useRef(null);
+  /* --- SO THE CLAIM IS CHECKED RATHER THAN REMEMBERED ----------------------
+     ONE RULE IN ONE PLACE, AND NOT A `setTip(null)` IN EVERY DELETE. There are
+     a dozen ways a fitting leaves this drawing — the Delete key on nine
+     different selections, a panel button, an undo, a layer switched off, a room
+     re-laid-out under it — and a clear written into each is a rule that lives
+     only in the heads of the people who wrote it. This file's own `openOnly`
+     note in ToolRail is the same argument: ask, do not remember.
+
+     `isConnected` IS THE QUESTION, AND THE DOM ANSWERS IT. React unmounts the
+     node for every one of those reasons, and a detached node reports false — so
+     one property read covers all of them, including the ones nobody has thought
+     of yet. No population has to be enumerated and no list has to be kept in
+     step with what is drawable.
+
+     `placing` IS THE SECOND CAUSE AND IT IS THE SAME BUG WEARING A DIFFERENT
+     HAT. Arming a tool makes every fitting `INERT` — the handlers are gone, the
+     node is not — so a card raised before the press had nothing left to clear
+     it either. It is not a stale card in that case so much as an impossible
+     one: nothing on the sheet is hoverable, so nothing can be hovered.
+
+     NO DEPENDENCY ARRAY, AND THE LINT'S SUGGESTION WOULD DEFEAT THE WHOLE
+     THING. It offers `[hot, placing, onFixture]`, and a delete changes NONE of
+     the three: `hot` is still the id of the fitting that has gone, `placing` is
+     still false, and `onFixture` is App's `setTip` and never moves. With that
+     array the effect would not run on the one render it exists for. What this
+     watches is not a value at all — it is whether a node the render just
+     produced is still in the document, which can only be asked AFTER a render,
+     and every one of the causes above is a render.
+     THE COST IS A NULL CHECK AND ONE PROPERTY READ, and it returns on the first
+     line whenever nothing is warm, which is almost always.
+     AND IT CANNOT LOOP: clearing `hot` re-renders, the next pass finds `hot`
+     null and returns immediately. */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (hot == null) return;
+    const node = hotNode.current;
+    if (node?.isConnected && !placing) return;
+    hotNode.current = null;
+    setHot(null);
+    onFixture?.(null);
+  });
+
   const feel = (id, spec, inert = placing) => (inert ? INERT : {
     onMouseEnter: (e) => {
       setHot(id);
+      /* THE ELEMENT THE HANDLER IS ON, WHICH IS THE ONE THAT WILL UNMOUNT.
+         `currentTarget` and not `target`: the pointer may be over a child shape
+         inside the fitting's group, and it is the group React owns. */
+      hotNode.current = e.currentTarget;
       if (spec) onFixture?.({ ...spec, x: e.clientX, y: e.clientY });
     },
     onMouseLeave: () => {
       setHot((h) => (h === id ? null : h));
+      hotNode.current = null;
       onFixture?.(null);
     },
     style: { cursor: 'pointer' },
@@ -2101,7 +2174,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 strokeWidth={lw * 7} strokeLinecap="round"
                 {...feel(f.id, {
                   id: 'flow', label: f.label,
-                  note: f.what || null,
+                  /* NO SENTENCE UNDER THE FIGURES. `f.what` was here — "6
+                     downlights, in a row across the ceiling" — and it is a
+                     description of the rows immediately above it. See the note
+                     over `specsFor` in boq.js: a card is a name and its
+                     figures. */
                   rows: [
                     ['Fittings', String(f.count)],
                     /* WHAT IS CLIPPED INTO THE RAIL, and how much of it aims.
@@ -2577,8 +2654,106 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // circle keeps a ring and a rectangle keeps a rounded rectangle.
         const CL = clearanceFt * (pxPerFt || 0);
         const R0 = rect ? 0 : R;
+        /* --- TWO OF THE EIGHT ARE DRAWN AS LIGHTS ---------------------------
+           A PENDANT AND A STANDING LAMP, which is the only distinction on this
+           layer that changes how a mark is PAINTED rather than what shape it is.
+           It puts the two of them on the same ink as the downlights and the
+           spots: the body is cut from the accent ramp (`lp-core`), the line work
+           is the ramp's rim tone, and a pool of light breathes under it. See the
+           spot, which is drawn from exactly those three parts.
+           WHICH ALSO TAKES THEM OFF `col`, and that is the point rather than a
+           side effect. `col` is the compromise the other objects need — white on
+           a night sheet, accent on paper — because somebody else's cassette has
+           to read against our pools without competing with them. A fitting has
+           no such problem: it is one of ours, it is meant to be one of the
+           brighter marks on the sheet, and the ramp reads on both grounds by
+           construction because its stops follow the ground (see RAMP).
+           THE CHANDELIER IS DELIBERATELY NOT IN THIS SET, though it is every bit
+           as much a light and shares the pendant's `kind`. Its rosette is an
+           established mark on these sheets and nobody asked for it to change;
+           adding `|| f.kind === 'chandelier'` here is the whole of the edit if
+           that is ever wanted, and the rosette would take the ramp and the pool
+           with no further work. The test is therefore on `typeId` for the
+           pendant and on `kind` for the lamp — the one place in this file those
+           two come apart, and the reason is in the pendant's own branch below. */
+        const emits = f.typeId === 'pendant' || f.kind === 'standing_lamp';
+        /* --- WHAT IT IS, UNDER THE POINTER ---------------------------------
+           THE TWO LAMPS GET A CARD AND THE REST OF THIS LAYER STILL DOES NOT.
+           A hover card is how every other fitting on this sheet says what it is
+           — see `specsFor`, and the flow's own card above — and these two are
+           fittings: they are on the schedule, they have an output, and the
+           pendant's diameter is the one thing about it that moves a light. A
+           lamp you can place and cannot interrogate is the only mark on the
+           drawing with no way to read it.
+           BUILT INLINE RATHER THAN THROUGH `specsFor`, because that function
+           reads `FIXTURE_BY_ID` — the BILLED lines — and these are coordination
+           items: counted, not billed, the fitting itself specified elsewhere
+           (see COORDINATION in boq.js and the argument in that file's header).
+           A `specsFor` that answered for both would be one function over two
+           catalogues with two different shapes of answer.
+           THE LABEL COMES OFF THE CATALOGUE, so the card, the flyout cell, the
+           flow's name and the schedule line are one word. `sizeLabel` likewise:
+           a pendant's 450mm is stated in exactly one place.
+           THE OTHER SIX ARE A ONE-LINE EXTENSION and are deliberately left out:
+           a fan, a cassette, a hatch, a split unit, a geyser and the chandelier
+           have never had a card, nobody has asked for one, and inventing rows
+           for six fittings at once is six chances to state something wrong.
+           AND NO SENTENCE UNDER THE ROWS. Both lamps carried one — that they are
+           counted and not billed, and how each is fed — and it is gone with
+           every other card's: see the note over `specsFor` in boq.js. What a
+           fitting IS is the rows.
+           NOR IS THE SOCKET A ROW ANY MORE. It named the reach a lamp's own
+           socket has to be within, and no other light on this sheet says
+           anything about how it is fed: a downlight's card is its wattage, its
+           optic and its output, and a lamp's has no business being the one that
+           also talks about the electrical drawing. The rule is unchanged and so
+           is the socket it seats — see LAMP_SOCKET_FT in lib/electrical.js — it
+           simply is not something the card is for. */
+        const spec = !emits ? null : (() => {
+          const t = CEILING_BY_ID[f.typeId];
+          const o = fittingOutput?.('lamp', f);
+          const stands = f.kind === 'standing_lamp';
+          return {
+            id: f.typeId ?? f.kind,
+            label: t?.label ?? (stands ? 'Standing lamp' : 'Pendant'),
+            /* THE WATTAGE AND THEN THE OUTPUT, WHICH IS `specsFor`'s OWN ORDER —
+               what it draws and then what that buys. The pair comes from the
+               lumen model rather than from a figure written here, so the card
+               and the Analysis panel cannot come apart; see `fittingOutput`.
+               BOTH LAMPS AND NOT ONLY THE STANDING ONE. They are one family with
+               one figure between them (see `lamp` in lumens.js), and a pendant
+               reading 7 W beside a standing lamp reading 7 W and 525 lm would
+               read as a number somebody had failed to fill in. */
+            rows: [
+              ...(o ? [['Wattage', `${o.watts} W`],
+                       ['Output', `${Math.round(o.lumens)} lm`]] : []),
+              // THE SHADE ON ONE AND THE BODY ON THE OTHER, which is what each
+              // number actually is — and on the pendant it is also what the grid
+              // keeps clear of, which is the row after it.
+              [stands ? 'Shade' : 'Diameter',
+                t ? sizeLabel({ ...t, diaFt: f.diaFt ?? t.diaFt }) : '—'],
+              /* AND WHAT THE CEILING OWES IT, ON THE ONE THAT HANGS FROM IT. A
+                 pendant reserves clearance the layout keeps off and a standing
+                 lamp reserves nothing, which is a fact about the DRAWING — the
+                 dashed ring is on the sheet for one and deliberately absent for
+                 the other — so the card accounts for the ring rather than
+                 introducing something the drawing does not show. */
+              ...(stands ? [] : [['Clearance', clearanceFt > 0
+                ? `${clearanceFt.toFixed(1)} ft kept clear` : 'kept clear']]),
+            ],
+          };
+        })();
         return (
-          <g key={f.id ?? 'fan' + i}
+          /* THE CARD IS RAISED BY THE GROUP AND NOT BY THE BODY, which is the
+             pattern the hand-placed downlight already uses: the enter and leave
+             bubble up from whichever `.hit` child the pointer actually found, so
+             one contract covers the body and the grips without either of them
+             having to know about the tooltip. The grips keep their own `grab`
+             cursor because they are deeper — see `grab` above.
+             `spec` IS NULL FOR THE SIX FITTINGS WITH NO CARD, and `feel` handles
+             that by warming the stroke and raising nothing, which is what it
+             already does everywhere a spec is missing. */
+          <g key={f.id ?? 'fan' + i} {...feel(f.id, spec)}
             /* 0.82 RESTING, NOT 0.55. The old figure was set when these were
                the only warm marks on a white sheet and it made them polite;
                against the accent pools it made them vanish. They are still
@@ -2586,8 +2761,38 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                not out-shout a fitting — just not to the point of disappearing.
                The objMode factor stays: while you are dragging one, the ones you
                are NOT dragging step back, which is what makes the gesture
-               readable. */
-            opacity={(objMode && !sel && f.source === 'placed' ? 0.8 : 1) * (sel ? 1 : 0.82)}>
+               readable.
+               AND A LAMP IS NOT PULLED BACK AT ALL, because the sentence above
+               is not true of it: a chandelier, a pendant and a standing lamp are
+               OUR fittings, on our schedule, and holding them at 0.82 to keep
+               them from out-shouting a downlight would be pulling a light back
+               so as not to compete with a light. See `emits`. The objMode factor
+               still applies to them — that one is about the gesture, not about
+               whose object it is. */
+            opacity={(objMode && !sel && f.source === 'placed' ? 0.8 : 1)
+              * (sel || emits ? 1 : 0.82)}>
+            {/* --- THE POOL OF LIGHT, BREATHING -----------------------------
+                THE SAME MARK EVERY OTHER FITTING ON THIS SHEET CARRIES and for
+                the same reason: it is the aperture reading as LIT, which is what
+                makes a plan look like a ceiling with lamps in it rather than a
+                drawing with circles on it. 2.6 x the body and staggered off the
+                object's own id, both of which are the downlights' figures — see
+                the note by the grid's pool for why forty on one beat read as one
+                flashing element and forty on their own read as forty lamps.
+                UNDER THE SYMBOL AND INERT. It is wider than the fitting, so a
+                live one would swallow presses aimed at the ceiling beside it —
+                and the body's own move target is painted after it either way.
+                STOOD DOWN WITH THE REST OF THE LAYER WHILE GEOMETRY IS BEING
+                SET OUT. `placingGeometry` means the question on screen is where
+                the next line goes, and three breathing discs over a faint dashed
+                one is the exchange that flag exists to make. */}
+            {emits && !placingGeometry && (
+              <circle cx={f.x} cy={f.y} r={R0 * 2.6} fill="url(#lp-glow)"
+                className="lp-pulse" pointerEvents="none"
+                style={{ animationDelay: `${(((f.id ?? '')
+                  .charCodeAt(Math.max(0, String(f.id ?? '').length - 1)) || 0)
+                  * 137 % 1000) / 1000 * -2.8}s` }} />
+            )}
             {/* WHAT IS ACTUALLY RESERVED, and it is not always a circle.
                 Clearance is measured to the object's own FACE, so the set of
                 points exactly `fanClearance` away from a rectangle is that
@@ -2613,7 +2818,92 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 strokeWidth={lw * 1.4} strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
             )}
 
-            {f.kind === 'chandelier' ? (
+            {f.typeId === 'pendant' ? (
+              /* --- A PENDANT: THE CEILING OUTLET MARK -----------------------
+                 A DISC WITH FOUR TICKS OFF ITS RIM, which is the symbol a
+                 lighting drawing has used for a pendant drop for as long as
+                 there have been lighting drawings: the circle is the fitting
+                 seen from below and the four strokes are what say it is a point
+                 hung off the slab rather than a hole cut into it.
+                 IT WAS THE CHANDELIER'S ROSETTE UNTIL NOW, because a pendant
+                 shares that `kind` — see ceilingObjects.js, which is a very good
+                 decision about GEOMETRY and says nothing about drawing. Six lamps
+                 on a ring is a chandelier; one lamp on a flex is not, and at
+                 450mm the rosette's ring of dots was six marks inside about
+                 twenty pixels, which reads as a smudge rather than as a fitting.
+                 SO THIS BRANCH IS KEYED ON `typeId` AND SITS ABOVE THE KIND'S,
+                 which is the one place in this file those two come apart. An
+                 object stored before `typeId` was carried has none, falls
+                 through, and is drawn as the chandelier it claims to be — the
+                 right default, since that is what every plan saved before the
+                 pendant existed actually holds.
+                 THE BODY IS THE RAMP AND THE TICKS ARE ITS RIM TONE, like every
+                 other fitting on the sheet. See `emits` above. */
+              <g>
+                <circle cx={f.x} cy={f.y} r={R0 * 0.62} fill="url(#lp-core)"
+                  stroke={rim} strokeWidth={lw * 2} />
+                {/* THE FOUR TICKS, ORTHOGONAL AND NOT AT THE DIAGONALS, which is
+                    what tells this apart from the standing lamp below it at a
+                    glance and at print size. They start ON the rim and run
+                    outward, so the disc keeps its own edge unbroken. */}
+                {[0, 1, 2, 3].map((k) => {
+                  const a = (k * Math.PI) / 2;
+                  return <line key={k}
+                    x1={f.x + Math.cos(a) * R0 * 0.62} y1={f.y + Math.sin(a) * R0 * 0.62}
+                    x2={f.x + Math.cos(a) * R0} y2={f.y + Math.sin(a) * R0}
+                    stroke={rim} strokeWidth={lw * 1.9} strokeLinecap="round" />;
+                })}
+              </g>
+            ) : f.kind === 'standing_lamp' ? (
+              /* --- A STANDING LAMP: THE SHADE, AND THE LAMP INSIDE IT --------
+                 THREE MARKS, AND EACH ONE IS A DIFFERENT CLAIM. The outer circle
+                 is the shade in plan — the thing that has a diameter and that a
+                 resize changes. The inner circle with a cross through it is the
+                 lamp inside it. The four strokes off the diagonals are the light
+                 leaving, which is the half a bare circle cannot say: without
+                 them this is a 450mm bollard, a stool or a plant pot, and a plan
+                 has all three.
+                 THE DIAGONALS ARE LOAD-BEARING AND NOT DECORATION. The pendant
+                 above uses the same idiom on the ORTHOGONALS, and the two
+                 fittings are otherwise one circle each — so the 45 degrees is
+                 what distinguishes a thing standing on the floor from a thing
+                 hanging off the ceiling, on a sheet where both are drawn from
+                 above and neither has any other visible difference.
+                 THEY CROSS THE RIM RATHER THAN STARTING AT IT, which is the
+                 second difference from the pendant and is why the two do not
+                 read as one symbol rotated: a tick outside the circle is a
+                 connection, and a stroke THROUGH it is radiation.
+                 THE INNER CIRCLE IS NOT FILLED. It sits on the ramp, so leaving
+                 it open lets the bright middle of the body show through it and
+                 the cross read as a filament in a lit lamp; a second fill here
+                 would put an opaque disc over the brightest part of the fitting,
+                 which is the mistake the spot's centre dot was removed for. */
+              <g>
+                <circle cx={f.x} cy={f.y} r={R0 * 0.86} fill="url(#lp-core)"
+                  stroke={rim} strokeWidth={lw * 2} />
+                {[0, 1, 2, 3].map((k) => {
+                  const a = (k * Math.PI) / 2 + Math.PI / 4;
+                  const c = Math.cos(a), sn = Math.sin(a);
+                  return <line key={k}
+                    x1={f.x + c * R0 * 0.58} y1={f.y + sn * R0 * 0.58}
+                    x2={f.x + c * R0 * 1.34} y2={f.y + sn * R0 * 1.34}
+                    stroke={rim} strokeWidth={lw * 1.7} strokeLinecap="round" />;
+                })}
+                {/* THE LAMP: a ring with a cross across its full diameter, which
+                    is the electrical drawing's own mark for a lamp holder. The
+                    chords run to the ring rather than past it, so the two circles
+                    stay legibly concentric at small sizes. */}
+                <circle cx={f.x} cy={f.y} r={R0 * 0.34} fill="none"
+                  stroke={rim} strokeWidth={lw * 1.6} />
+                {[0, 1].map((k) => {
+                  const a = Math.PI / 4 + (k * Math.PI) / 2;
+                  const c = Math.cos(a) * R0 * 0.34, sn = Math.sin(a) * R0 * 0.34;
+                  return <line key={k} x1={f.x - c} y1={f.y - sn}
+                    x2={f.x + c} y2={f.y + sn}
+                    stroke={rim} strokeWidth={lw * 1.4} strokeLinecap="round" />;
+                })}
+              </g>
+            ) : f.kind === 'chandelier' ? (
               /* THE LAMPS TAKE `lamp`, NOT THE GROUP'S STROKE. They were
                  `fill="#fff"` with the group's own stroke round them, which read
                  as six lamps while that stroke was amber and became six
@@ -2850,42 +3140,49 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           underneath it. A solid band would hide the very edges it is dimensioned
           from.
 
-          IT STOPS AT A DOOR, and that is not this file's doing: the geometry
-          arrives already cut into one band per wall segment. See wallSegments in
-          reverseCove.js.
+          DETECTED COVES MAY ARRIVE CUT AT DOORS; A HAND-SPANNED COVE MAY CROSS
+          ONE. That construction decision is made in reverseCove.js, not here.
 
           UNDER `layers.accents`, with the tape it holds. The band without the
-          strip is a rectangle nobody can interpret, and the strip without the
+          strip is a band nobody can interpret, and the strip without the
           band is a run floating eight inches off a wall for no visible reason.
           They are one fitting and they hide together. */}
       {layers.accents && reverseCoves.map((c, ci) => {
         const B = COVE_BAND_STYLE;
-        // The inner lip: the edge away from the wall. `wall` says which side of
-        // the band the wall is on, so the lip is the other one.
-        const lip = c.wall === 'top' ? [{ x: c.rect.x0, y: c.rect.y1 }, { x: c.rect.x1, y: c.rect.y1 }]
+        /* AN ORIENTED BAND WHEN THE WALL IS ANGLED, with the old rectangle as
+           the fallback for detected and previously saved coves. `band` is the
+           actual four corners of the slot; `rect` is only its bounds. Drawing
+           the latter on a diagonal would paint the whole box between the wall's
+           ends instead of the eight-inch strip beside it. */
+        const band = c.band ?? [
+          { x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x1, y: c.rect.y0 },
+          { x: c.rect.x1, y: c.rect.y1 }, { x: c.rect.x0, y: c.rect.y1 },
+        ];
+        // The inner lip: supplied directly by an oriented slot, or recovered
+        // from the cardinal wall name for the detector's rectangle.
+        const lip = c.lip ?? (c.wall === 'top' ? [{ x: c.rect.x0, y: c.rect.y1 }, { x: c.rect.x1, y: c.rect.y1 }]
           : c.wall === 'bottom' ? [{ x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x1, y: c.rect.y0 }]
           : c.wall === 'left' ? [{ x: c.rect.x1, y: c.rect.y0 }, { x: c.rect.x1, y: c.rect.y1 }]
-          : [{ x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x0, y: c.rect.y1 }];
+          : [{ x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x0, y: c.rect.y1 }]);
         // --- THE RAMP, ALONG THE BAND -------------------------------------
         //
-        // `horizontal` FINALLY DOES SOMETHING. It sat here behind a `void` for
-        // exactly this reason — the band's orientation was worked out and then
-        // nothing on the mark needed it, because a flat fill has no direction.
-        // A gradient does, and it has to run the LENGTH of the slot: this is
-        // linear product, billed by the metre, and the strips and the track
-        // rails already grade along themselves. Across the eight inches the ramp
-        // would resolve over a fingernail of drawing and read as a flat tone
-        // with a dirty edge.
+        // THE RUN IS THE GRADIENT'S DIRECTION. A gradient has to run the LENGTH
+        // of the slot: this is linear product, billed by the metre, and the
+        // strips and track rails already grade along themselves. Across the
+        // eight inches the ramp would resolve over a fingernail of drawing and
+        // read as a flat tone with a dirty edge.
         //
         // userSpaceOnUse, and here it is a choice about DIRECTION rather than a
         // dodge round a degenerate bounding box — a band has real extent both
         // ways, so objectBoundingBox would work and would grade the wrong way on
-        // half the walls in the room: across for a horizontal band, along for a
-        // vertical one, from the same markup. Pinning the vector to the rect's
-        // own long axis makes every band on the sheet read the same.
-        const g = c.horizontal
-          ? { x1: c.rect.x0, y1: c.rect.y0, x2: c.rect.x1, y2: c.rect.y0 }
-          : { x1: c.rect.x0, y1: c.rect.y0, x2: c.rect.x0, y2: c.rect.y1 };
+        // half the walls in the room. Pinning the vector to the actual tape run
+        // also makes angled bands grade along their wall; `horizontal` remains
+        // only as the compatibility fallback for old saved coves.
+        const g = c.run?.length >= 2
+          ? { x1: c.run[0].x, y1: c.run[0].y, x2: c.run[1].x, y2: c.run[1].y }
+          : c.horizontal
+            ? { x1: c.rect.x0, y1: c.rect.y0, x2: c.rect.x1, y2: c.rect.y0 }
+            : { x1: c.rect.x0, y1: c.rect.y0, x2: c.rect.x0, y2: c.rect.y1 };
         const gid = `lp-rcove-${ci}`;
         return (
           <g key={c.id} pointerEvents="none">
@@ -2902,8 +3199,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 set-out edge has to hold its weight the whole way along where a
                 ramp would fade it out in the middle. That is the same failure
                 the room selection outline hit; it is worth not repeating. */}
-            <rect x={c.rect.x0} y={c.rect.y0}
-              width={c.rect.x1 - c.rect.x0} height={c.rect.y1 - c.rect.y0}
+            <polygon points={band.map((p) => `${p.x},${p.y}`).join(' ')}
               fill={`url(#${gid})`} fillOpacity={B.fillOpacity}
               stroke={rim} strokeWidth={lw} strokeOpacity={B.edgeOpacity} />
             <line x1={lip[0].x} y1={lip[0].y} x2={lip[1].x} y2={lip[1].y}
@@ -2980,9 +3276,35 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // panelled wall — is the fixture, and it is the fixture the card should
         // name. A reverse cove reading "LED strip · concealed cove /
         // under-cabinet" describes the component and not the item.
+        /* --- AND A SCONCE'S FIGURES COME OFF THE LUMEN MODEL --------------
+           `specsFor('sconce')` GAVE "WATTAGE: SET BY FITTING" AND NOTHING ELSE,
+           which is the right answer for the SCHEDULE and a poor one for a card.
+           The BOQ line leaves a sconce's wattage blank on purpose — see the note
+           by it in boq.js: it is a decorative fitting whose lamping is the
+           client's choice, and printing a figure in a column somebody orders
+           from would be inventing one. But the app is not agnostic about it: the
+           lumen model has a sconce at 7 W (see SCONCE_WATTS), the Analysis panel
+           prints that figure, and the heatmap lights the room with it. So the
+           card was the one place on screen saying the app did not know a number
+           it is actively computing with.
+           BOTH ROWS FROM THE SAME PLACE, WHICH IS WHY THE WATTAGE MOVED TOO. An
+           output with no wattage over it is a figure out of nowhere — 525 lm is
+           7 W times the country's 75 lm/W and reads as arbitrary without the 7 —
+           and a wattage saying "set by fitting" beside it would be the card
+           contradicting itself in two adjacent rows. See `fittingOutput`.
+           THE STRIPS ARE UNTOUCHED. A run's rating IS in the BOQ catalogue —
+           9.6 W/m, a real per-metre figure for a real product — so `specsFor`
+           already answers for those completely, and routing them through the
+           family would trade a product's own number for a model's. */
         const spec = a.type === 'strip'
           ? specsFor(a.fixture || 'strip', { metres: runMetres(a, pxPerFt) })
-          : specsFor('sconce');
+          : (() => {
+            const base = specsFor('sconce');
+            const o = fittingOutput?.('sconce', a);
+            if (!base || !o) return base;
+            return { ...base, rows: [['Wattage', `${o.watts} W`],
+                                     ['Output', `${Math.round(o.lumens)} lm`]] };
+          })();
         // --- THE ACCENT GRADIENT, RUNNING ALONG THE TAPE ------------------
         //
         // The brand ramp laid down the LENGTH of the run rather than across it,
@@ -3289,7 +3611,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
                     className="hit"
                     style={{ cursor: a.derived
-                      ? (a.horizontal ? 'ew-resize' : 'ns-resize') : 'move' }}
+                      ? (() => {
+                          const dx = a.run[1].x - a.run[0].x;
+                          const dy = a.run[1].y - a.run[0].y;
+                          if (Math.abs(dy) <= 1e-6) return 'ew-resize';
+                          if (Math.abs(dx) <= 1e-6) return 'ns-resize';
+                          return dx * dy > 0 ? 'nwse-resize' : 'nesw-resize';
+                        })()
+                      : 'move' }}
                     onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, k === 0 ? 'end0' : 'end1')} />
                 ))}
               </g>
@@ -4039,10 +4368,30 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // with it any more, so do not reach for it expecting it to matter.
         const round = !isRect(t);
         const col = round && layers.invert ? C.object : C.lit;
-        const r = (isRect(t) ? Math.hypot(t.wFt, t.hFt) / 2 : (t.diaFt || 0) / 2) * pxPerFt;
+        /* THE GHOST'S OWN SIZE WHERE IT HAS ONE, AND THE TYPE'S OTHERWISE. A
+           fan is the one object whose size is chosen before it is placed — see
+           FanSpec — so the ghost carries the sweep in force and this draws
+           THAT, not the catalogue's default. Everything else is placed at its
+           catalogue size and carries nothing, which is what the fallback is
+           for; the alternative is a preview a foot of diameter out from the
+           thing the click produces. */
+        const r = (isRect(t) ? Math.hypot(t.wFt, t.hFt) / 2
+                             : (ghost.diaFt ?? t.diaFt ?? 0) / 2) * pxPerFt;
+        /* --- AND NO CLEARANCE RING ON A THING THAT RESERVES NOTHING ---------
+           THE PLACED OBJECT HAS NEVER DRAWN ONE and this preview was drawing it
+           anyway, which made the ghost a promise the click does not keep: arm a
+           split unit or a geyser, hover the plan, and a dashed circle says the
+           grid is about to move out of the way — then the object lands and the
+           circle is not there, because there is nothing reserved. See
+           `offCeiling` in ceilingObjects.js and the same test in the fansPx
+           block, which is the rule this now mirrors.
+           IT SURFACED WITH THE STANDING LAMP, the third entry to carry the flag
+           and the first one anybody places routinely. The other two were rare
+           enough that nobody had watched the ring appear and then vanish. */
+        const reserves = !t.offCeiling;
         return (
           <g opacity="0.55">
-            {isRect(t) ? (
+            {!reserves ? null : isRect(t) ? (
               <rect x={ghost.x - (t.wFt * pxPerFt) / 2 - clearanceFt * pxPerFt}
                 y={ghost.y - (t.hFt * pxPerFt) / 2 - clearanceFt * pxPerFt}
                 width={t.wFt * pxPerFt + clearanceFt * pxPerFt * 2}

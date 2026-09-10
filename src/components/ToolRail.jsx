@@ -122,6 +122,13 @@ function RailCell({ mark, label, on, disabled, title, onClick }) {
    word this long rather than clipping it. */
 const SHORT = {
   'Reverse cove': 'Rev. cove',
+  /* NOT "STAND. LAMP", WHICH IS THE ABBREVIATION THAT SWALLOWS THE WORD. Both
+     words are eight characters or fewer, so PaletteButton wraps them onto two
+     lines at full size and clips neither — the caption is "STANDING / LAMP" and
+     needs no help. It is in this table anyway, at its own full name, because
+     the next reader will look here first and finding it absent reads as an
+     oversight rather than as a decision. */
+  'Standing lamp': 'Standing lamp',
   'LED strip': 'Strip',
   'Cassette AC': 'Cassette',
   'Chandelier': 'Chand.',
@@ -149,7 +156,13 @@ const IN_COVES = ['cove', 'strip'];
    they differ in: a chandelier and a pendant are one fitting at two sizes — see
    ceilingObjects.js — and a sconce is the only one of the three that seats
    itself on a wall. */
-const IN_LAMPS = ['chandelier', 'pendant', 'sconce'];
+/* AND THE STANDING LAMP AFTER THE TWO DROPS, WHICH KEEPS THE ORDER THE ORDER OF
+   THE MOUNTING. Ceiling, ceiling, floor, wall — the two that hang, the one that
+   stands, the one that is fixed to plaster. A standard lamp beside them because
+   it is the same DECISION as a chandelier (a decorative fitting chosen for how
+   it looks) and not the same geometry: it reserves nothing and it needs a
+   socket. See its entry in LIGHT_TOOLS. */
+const IN_LAMPS = ['chandelier', 'pendant', 'standing_lamp', 'sconce'];
 const IN_SPOTS = ['spot'];
 
 /** THE CELLS WHOSE FLYOUT IS NOTHING BUT A PANEL, so this file owns whether it
@@ -437,13 +450,19 @@ export default function ToolRail({
         )}
 
         {/* --- LAMPS -------------------------------------------------------
-            THE DECORATIVE FITTINGS: a chandelier dropped on the ceiling, a
-            sconce seated on a wall. Neither is part of the ambient grid and both
-            are chosen for how they look, which is what puts them behind one
-            word rather than beside the downlights. */}
+            THE DECORATIVE FITTINGS: a chandelier or a pendant dropped on the
+            ceiling, a standard lamp stood on the floor, a sconce seated on a
+            wall. None of them is part of the ambient grid and every one is
+            chosen for how it looks, which is what puts them behind one word
+            rather than beside the downlights.
+            THE CATEGORY'S MARK IS A STANDING LAMP and the fitting inside it has
+            artwork of its own — see `standing_lamp` in LIGHT_ICON. They are two
+            drawings of one object on purpose: the rail's is line work at 30px
+            and a flyout cell is a photograph at 64, which is the same split
+            every one of these five cells makes. */}
         <div ref={lampsRef} className="flex-none">
           <RailCell mark={MARK.lamps} label="Lamps" on={lampsLive}
-            title="Chandeliers and sconces"
+            title="Chandeliers, pendants, standing lamps and sconces"
             onClick={() => openOnly('lamps')} />
         </div>
         {openId === 'lamps' && (

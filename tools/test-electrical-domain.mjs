@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import {
   planBoardResults, planBayResults, planOutdoorFeeds, baysOfRoom,
   boardModeOf, applyMode, drawnBoards, ruleBoards, handBoards, heightOf,
-  seatForClick,
+  seatForClick, lampSocketSeat,
 } from '../src/features/electrical/boardRules.js';
 import {
   buildBoardSheet, composeBoard, reorderUnits,
@@ -308,6 +308,35 @@ const IN = countryFor('IN');
     'a room with no outline seats nothing');
 }
 
+// --- which pieces of ceiling are bays --------------------------------------
+//
+// THE PILL'S LIST AND THE SWITCHING'S LIST ARE NOT THE SAME LIST, and reading
+// the wrong one cost every plan with the suggested grid switched off its second
+// switchboard. `designChunksPx` is emptied then — correctly, a pill there would
+// offer to re-cut a piece of ceiling with nothing on it to move — and how a
+// ceiling is CUT does not depend on whether the engine placed anything in it.
+{
+  const cut = [{ key: 'a', rect: rect(0, 0, 300, 360) },
+               { key: 'b', rect: rect(300, 0, 600, 360) }];
+  const withCut = { ...BEDROOM, bayChunksPx: cut, designChunksPx: [] };
+  assert.deepEqual(baysOfRoom(withCut).map((b) => b.key), ['a', 'b'],
+    'the cut is read off bayChunksPx, which the grid being off does not empty');
+
+  /* THE PILL'S LIST IS STILL A FALLBACK, for a room built by a caller that
+     carries only it — every room in this file, and the reason nothing else here
+     had to change. */
+  assert.deepEqual(
+    baysOfRoom({ ...BEDROOM, designChunksPx: cut }).map((b) => b.key), ['a', 'b'],
+    'a room carrying only the old list still answers with its chunks');
+
+  // AND NEITHER: the whole space is one bay, which is what a room the design
+  // pass never cut has always been.
+  assert.deepEqual(baysOfRoom(BEDROOM).map((b) => b.key), ['room'],
+    'a room with no cut at all is one bay');
+  assert.deepEqual(baysOfRoom({ ...BEDROOM, plan: { ok: false } }), [],
+    'and a room that would not lay out has none');
+}
+
 // --- seating one by hand ---------------------------------------------------
 
 {
@@ -327,6 +356,197 @@ const IN = countryFor('IN');
   assert.equal(seatForClick({ x: 0, y: 0 },
     { rooms: [{ id: 'z', plan: { polygonPx: [] } }], pxPerFt: PPF }), null,
   'a room with no outline does not bid');
+}
+
+// --- and one seated by a lamp rather than by a click -----------------------
+//
+// SAME PLATE, DIFFERENT QUESTION, which is why it is a second function beside
+// `seatForClick` and not a flag on it. That one resolves "which piece of
+// plaster did you mean"; this one resolves "this lamp has to be plugged in".
+{
+  const rooms = [BEDROOM, space('r2', 'Hall', poly(600, 0, 1200, 360))];
+  // AT SOCKET HEIGHT: a plate above 750mm is not one a floor lamp plugs into,
+  // and a fixture with no height defaults to switch height. See
+  // LAMP_SOCKET_MAX_MM.
+  const plate = (id, roomId, x, y, mm = 300) =>
+    ({ id, roomId, heightsMm: [mm], point: { x, y } });
+
+  // A PLATE IN REACH MEANS NOTHING TO DO. Three feet is 91.44px at this scale.
+  assert.equal(
+    lampSocketSeat({ x: 300, y: 180 },
+      { rooms, plates: [plate('a', 'r1', 300, 240)], pxPerFt: PPF }),
+    null, 'a lamp with a plate 60px away needs no socket of its own');
+
+  // ...AND OUT OF REACH MEANS THE NEAREST WALL, HOWEVER FAR THAT IS. This is
+  // the case `seatForClick` refuses — the middle of the room, ten feet from
+  // anything — and refusing it here would leave a lamp with nowhere to plug in.
+  const mid = lampSocketSeat({ x: 300, y: 180 },
+    { rooms, plates: [plate('a', 'r1', 300, 400)], pxPerFt: PPF });
+  assert.ok(mid, 'the middle of a room still gets a socket');
+  assert.equal(mid.roomId, 'r1', 'on its own room\'s wall');
+  assert.ok(Number.isFinite(mid.seat.sFt), 'stored as a distance round the walls');
+  /* AND IT GOES ON THE WALL THE LAMP IS CLOSEST TO, which is the half of the
+     rule `nearestSeat` answers: it projects the lamp onto every wall of the room
+     that can hold a plate and the nearest one wins. BEDROOM is 600 x 360, so a
+     lamp at (60, 180) is 60px from the left wall and 300 from the right, and the
+     seat has to land on the left one. Read back as a POSITION rather than as a
+     distance round the perimeter, because `sFt` is measured from wherever the
+     outline happens to start and asserting it would be asserting the tracer's
+     numbering rather than the rule. */
+  const near = lampSocketSeat({ x: 60, y: 180 },
+    { rooms, plates: [], pxPerFt: PPF });
+  assert.ok(near, 'a lamp near the left wall gets a seat');
+  {
+    const seated = handBoards(BEDROOM, {
+      manualBoards: [{ id: 'sl-sock', roomId: near.roomId, sFt: near.seat.sFt }],
+      pxPerFt: PPF,
+    })[0];
+    assert.ok(seated?.point, 'and it resolves to a plate on the drawing');
+    assert.ok(seated.point.x < 120,
+      `on the wall it is closest to, not the far one (x=${seated.point.x})`);
+  }
+
+  // THE PARTY WALL'S FAR FACE IS NOT A PLATE THIS LAMP CAN REACH. A socket
+  // 40px away through a wall is in the next room, and reach is physical.
+  const across = lampSocketSeat({ x: 560, y: 180 },
+    { rooms, plates: [plate('b', 'r2', 600, 180)], pxPerFt: PPF });
+  assert.ok(across, 'a plate in the NEXT room does not satisfy this lamp');
+
+  assert.equal(lampSocketSeat({ x: 2000, y: 2000 }, { rooms, pxPerFt: PPF }), null,
+    'a lamp inside no room seats nothing');
+  assert.equal(lampSocketSeat({ x: 300, y: 180 }, { rooms, pxPerFt: 0 }), null,
+    'no scale, no seat');
+  assert.equal(lampSocketSeat(null, { rooms, pxPerFt: PPF }), null, 'no point, no seat');
+
+  /* A PLATE AT SWITCH HEIGHT DOES NOT COUNT, so a lamp beside the door board
+     still gets a socket of its own rather than being wired up to hand height. */
+  assert.ok(
+    lampSocketSeat({ x: 300, y: 180 },
+      { rooms, plates: [plate('door', 'r1', 300, 240, 1200)], pxPerFt: PPF }),
+    'a board at 1200mm within reach does not save the lamp a socket');
+}
+
+// --- a standing lamp's plate, end to end -----------------------------------
+//
+// THE WHOLE CHAIN IN ONE PLACE, because it broke in the joins rather than in any
+// one function. A lamp seats a plate; the plate has to be born a SWITCHBOARD so
+// it can carry a switch; the lamp's flow has to land on it so a wire is drawn;
+// and `pointsFromFlows` has to put a socket AND its switch there. Miss any one
+// and the symptom is the same on screen: a plate with a lone socket on it, no
+// wire to the lamp, and nothing at all for a second lamp beside the first.
+{
+  const rooms = [BEDROOM];
+  const at = { x: 60, y: 180 };                    // near the left wall
+
+  // 1. NOTHING IN REACH, SO A PLATE IS SEATED — and it carries the role that
+  //    makes it a lamp's rather than an ordinary hand-dropped one.
+  const seat = lampSocketSeat(at, { rooms, plates: [], pxPerFt: PPF });
+  assert.ok(seat, 'a lamp out of reach of everything seats a plate');
+  assert.equal(seat.role, 'lamp', 'and the seat says what it is for');
+
+  const manualBoards = [{ id: 'sb-lamp', roomId: 'r1', sFt: seat.seat.sFt,
+                          role: seat.role }];
+  const raw = handBoards(BEDROOM, { manualBoards, pxPerFt: PPF });
+  assert.equal(raw.length, 1, 'and it resolves to one plate on the drawing');
+
+  // 2. IT IS BORN A SWITCHBOARD, NOT AN OUTLET. This is the defect: born an
+  //    outlet it arrived with one socket, no switch, and no way to be a flow's
+  //    board — so the lamp had no wire and no switch anywhere near it.
+  const mode = boardModeOf(raw[0], { boardKinds: {}, country: IN });
+  assert.equal(mode.outlet, false, 'a lamp\'s plate is born a switchboard');
+  const plate = applyMode(raw, { boardMode: (b) => boardModeOf(b, { boardKinds: {}, country: IN }) })[0];
+  assert.equal(plate.socketOnly, false, '...so nothing downstream treats it as a socket');
+  assert.deepEqual(plate.heightsMm, [300],
+    'and it sits at socket height, not at switch height');
+
+  // ...while an ordinary hand-dropped plate is untouched by all of that.
+  const plain = handBoards(BEDROOM,
+    { manualBoards: [{ id: 'sb-hand', roomId: 'r1', sFt: 4 }], pxPerFt: PPF })[0];
+  assert.equal(boardModeOf(plain, { boardKinds: {}, country: IN }).outlet, true,
+    'a plate somebody dropped by hand is still born an outlet');
+  assert.deepEqual(plain.heightsMm, [1200], '...at switch height');
+
+  // 3. AN OVERRIDE STILL WINS. Ticking a lamp's plate over to an outlet is
+  //    allowed; what it costs is the lamp's switch, which is the honest
+  //    consequence of the tick rather than a state to prevent.
+  assert.equal(
+    boardModeOf(plate, { boardKinds: { 'sb-lamp': { outlet: true } }, country: IN }).outlet,
+    true, 'and a person may still tick it across');
+
+  // 4. THE PLATE CARRIES A SOCKET AND ITS SWITCH — one pair per lamp.
+  const lampFlow = (id) => ({ id, kind: 'lamp', label: 'Standing lamp',
+                              boardId: 'sb-lamp' });
+  const one = composeBoard(plate, { country: IN, flowsPx: [lampFlow('f1')] });
+  const kinds = one.boards[0].points.map((q) => q.kind).filter((k) => k !== 'blank');
+  assert.deepEqual(kinds, ['switch', 'socket'],
+    `one lamp is a switch and a socket, and nothing else (got ${kinds.join()})`);
+  assert.equal(one.total, 3, 'three modules in India — a 1-module switch and a 2-module socket');
+
+  // 5. NO SPARE SOCKET ON IT. Every other board gets one more socket than the
+  //    drawing asked for; this plate EXISTS because somebody wanted a socket, so
+  //    a spare would double a three-module frame for a floor lamp.
+  assert.ok(!one.boards[0].points.some((q) => q.source === 'spare'),
+    'a lamp\'s plate gets no spare socket');
+  const spared = composeBoard(plain, { country: IN, flowsPx: [] });
+  assert.ok(spared.boards[0].points.some((q) => q.source === 'spare'),
+    '...and every other plate still does');
+
+  // 6. A SECOND LAMP BESIDE THE FIRST NEEDS ANOTHER SWITCH AND SOCKET, and it
+  //    gets them on the SAME plate rather than in a second frame — which is how
+  //    it is built, and is what "another socket, not another board" means.
+  const near = lampSocketSeat({ x: 60, y: 210 },
+    { rooms, plates: [plate], pxPerFt: PPF });
+  assert.equal(near, null, 'a second lamp within reach of that plate seats no new frame');
+  const two = composeBoard(plate,
+    { country: IN, flowsPx: [lampFlow('f1'), lampFlow('f2')] });
+  const kinds2 = two.boards[0].points.map((q) => q.kind).filter((k) => k !== 'blank');
+  assert.deepEqual(kinds2, ['switch', 'socket', 'switch', 'socket'],
+    `two lamps are two pairs on one plate (got ${kinds2.join()})`);
+  assert.equal(two.total, 6, 'six modules, and still one frame');
+
+  // ...and a second lamp OUT of reach of it gets a frame of its own.
+  const far = lampSocketSeat({ x: 540, y: 180 },
+    { rooms, plates: [plate], lamps: [{ x: 60, y: 180 }], pxPerFt: PPF });
+  assert.ok(far?.seat, 'a lamp across the room seats its own plate');
+  assert.equal(far.role, 'lamp', '...also as a lamp\'s plate');
+
+  /* --- ONE PLATE FOR TWO LAMPS FOUR FEET APART ---------------------------
+     TWO WERE GOING UP WHERE ONE WOULD DO. Each plate was seated at the wall
+     point nearest ITS OWN lamp, so the first ended up hard against the first
+     lamp and out of reach of the second by the time it arrived. Seated between
+     them it is inside the reach of both.
+     BEDROOM is 600 x 360 at 30.48 px/ft, so three feet is 91.44px. Two lamps
+     2ft off the left wall and 4ft apart: (61, 120) and (61, 242). */
+  const A = { x: 61, y: 120 }, B = { x: 61, y: 242 };
+  const first = lampSocketSeat(A, { rooms, plates: [], lamps: [A], pxPerFt: PPF });
+  const seated = applyMode(handBoards(BEDROOM, {
+    manualBoards: [{ id: 'sb-a', roomId: 'r1', sFt: first.seat.sFt, role: 'lamp' }],
+    pxPerFt: PPF,
+  }), { boardMode: (b) => boardModeOf(b, { boardKinds: {}, country: IN }) });
+  const share = lampSocketSeat(B,
+    { rooms, plates: seated, lamps: [A, B], pxPerFt: PPF });
+  assert.ok(share?.slide, 'the second lamp slides the first plate rather than adding one');
+  assert.equal(share.slide, 'sb-a', '...the plate that was already there');
+  // AND THE SLID POSITION REACHES BOTH, which is the condition the move is
+  // accepted on — a move that stranded the lamp it was already serving would be
+  // no improvement, and the answer there is the second plate after all.
+  const moved = applyMode(handBoards(BEDROOM, {
+    manualBoards: [{ id: 'sb-a', roomId: 'r1', sFt: share.sFt, role: 'lamp' }],
+    pxPerFt: PPF,
+  }), { boardMode: (b) => boardModeOf(b, { boardKinds: {}, country: IN }) });
+  const reach = 3 * PPF;
+  for (const [n, q] of [['first', A], ['second', B]]) {
+    assert.ok(Math.hypot(moved[0].point.x - q.x, moved[0].point.y - q.y) <= reach + 1e-6,
+      `the moved plate is within three feet of the ${n} lamp`);
+  }
+
+  /* A PLATE SERVING NOBODY IS LEFT WHERE IT IS. Sharing means reaching this
+     lamp AND the ones it already reaches; with nothing on it there is nothing
+     to share, and sliding it would be moving a plate whose lamp the caller may
+     simply not have handed us. */
+  const orphan = lampSocketSeat({ x: 540, y: 180 },
+    { rooms, plates: seated, lamps: [], pxPerFt: PPF });
+  assert.ok(orphan?.seat, 'a plate serving no known lamp is not dragged across the room');
 }
 
 // --- what is on a plate ----------------------------------------------------

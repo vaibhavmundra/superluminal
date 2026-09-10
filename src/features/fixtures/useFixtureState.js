@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { idOf, idsOf, selectMany } from '../../lib/selection.js';
+import { FAN_SWEEP_MM } from '../../lib/ceilingObjects.js';
 
 /**
  * THE FITTING SESSION — everything about placing and manipulating a fixture
@@ -41,7 +42,13 @@ export default function useFixtureState({ sel, setSel }) {
   //
   // To the planner they are all one thing — see ceilingObjects.js.
   const [objType, setObjType] = useState('fan');
-  const [fanSweepMm, setFanSweepMm] = useState(1200);
+  /* THE SWEEP THE NEXT FAN WILL BE, SEEDED FROM THE CATALOGUE and not written
+     out here: the default is a fact about the product — see FAN_SWEEP_MM — and
+     a second copy of it in the chrome is a copy that drifts. It is state
+     because it is STICKY: set the bar to 1050 and the next three fans are
+     1050 too, which is the same one-shot-tool-with-a-standing-choice the COB's
+     wattage has. */
+  const [fanSweepMm, setFanSweepMm] = useState(FAN_SWEEP_MM);
 
   /* THE SELECTION IS A LIST FOR CEILING OBJECTS, because Shift-clicking builds
      one, and they are the only kind that can be several — see `selectMany`.
@@ -105,7 +112,9 @@ export default function useFixtureState({ sel, setSel }) {
      draft that governs nothing is only useful when something can promote it,
      and a one-shot is only reachable through a button that no longer exists.
      Null means "ask the engine", which is the default and what the bar opens
-     on; the Recommended chip is what puts it back. */
+     on; the Recommended chip is what puts it back, and so is putting the tool
+     down — see `reset.cobGesture` for why an override does not outlive one
+     arming of the tool. */
   const [cobOpen, setCobOpen] = useState(false);
   const [cobMode, setCobMode] = useState(null);
   const [cobStanding, setCobStanding] = useState(null);
@@ -278,18 +287,39 @@ export default function useFixtureState({ sel, setSel }) {
     /* THE COB BAR — `disarmAdd`'s half of this feature. `cobAt` is the point
        the bar was answering for, so it has to go with the tool, and `cobLock`
        is the ceiling this arming of it claimed.
-       `cobStanding` DELIBERATELY SURVIVES. A wattage set on the bar is a
-       standing decision about this session's fittings, not about this arming of
-       the tool — somebody who sets 24 W, places four, reaches for the strip
-       tool and comes back is still placing 24 W lamps, and having to say so
-       again would make the control mean "the next few". The bar reads out which
-       figures are in force every time it opens, so nothing is hidden.
-       THE ARRAY BEING SET UP GOES WITH THE TOOL. It is a geometry picked and a
-       count half-typed — a gesture, not a record — and one left behind would
-       reappear over a different plan the next time the tool was armed. The
-       arrays already PLACED are untouched: those are fittings. */
+
+       --- `cobStanding` GOES WITH THE TOOL NOW, AND IT USED TO SURVIVE --------
+       THE ARGUMENT FOR KEEPING IT WAS THIS, and it is worth recording because it
+       is a good argument that turns out to be answering the wrong question: a
+       wattage set on the bar is a standing decision about this session's
+       fittings rather than about this arming of the tool, so somebody who sets
+       24 W, places four, reaches for the strip tool and comes back is still
+       placing 24 W lamps — and having to say so again would make the control
+       mean "the next few".
+
+       WHAT BEATS IT IS THAT THE RECOMMENDATION IS PER CELL. `recommendCob` is
+       asked about the ROOM AND THE POINT the pointer is over — the cell's size,
+       the ceiling height, the room's own basis — so the engine's answer is not
+       one figure for the session, it is a different figure in every space and
+       often in every cell. A standing override therefore outlives the reason it
+       was made: 24 W was right for the cell it was chosen over, and carrying it
+       into a bathroom two spaces away silently discards an answer the engine was
+       never asked to give. The bar reads out the figures in force, which is true
+       and is no help — what it reads out is the override, so the recommendation
+       is not on screen to disagree with.
+
+       SO THE DEFAULT IS THE ENGINE'S, EVERY TIME THE TOOL IS PICKED UP, and an
+       override is a decision about the run you are placing now. Setting 24 W and
+       placing four is unaffected; the override survives every one of those
+       clicks, because putting the tool DOWN is what clears it.
+
+       THE ARRAY BEING SET UP GOES WITH THE TOOL for its own reason. It is a
+       geometry picked and a count half-typed — a gesture, not a record — and one
+       left behind would reappear over a different plan the next time the tool
+       was armed. The arrays already PLACED are untouched: those are fittings. */
     cobGesture: () => {
       setCobAt(null); setCobLock(null);
+      setCobStanding(null);
       setCobDraftArray(null);
     },
     /* THE HALF-AIMED SPOT, CLEARED WITH THE TOOL. Its own entry rather than a

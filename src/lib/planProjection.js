@@ -568,13 +568,15 @@ export function projectAccentZonesPx(rooms, accentResults, accentDismissed, manu
         // what a reverse cove is; `fixture` is what they read when they DO need
         // to know — the tooltip's words, the schedule's line, the DXF's layer.
         fixture: 'reverse-cove',
-        run: c.run, rect: c.rect, runLength: c.runLength,
+        run: c.run, rect: c.rect, band: c.band, lip: c.lip,
+        runLength: c.runLength,
         // WHAT THE DRAG NEEDS. `derived` says this run has no stored geometry to
         // edit — the ends write a trim instead — and the rest is what turns a
         // pointer position into one: which way the run lies, where the RULE put
         // its ends, and how far it may be stretched before it hits the door.
         derived: 'reverse-cove', trimId: c.id, horizontal: c.horizontal,
-        base: c.base, seg: c.seg, bounds: c.bounds, trimmed: c.trimmed,
+        axis: c.axis, base: c.base, seg: c.seg, bounds: c.bounds,
+        trimmed: c.trimmed,
       });
     }
     /* --- THE SLOTS SOMEBODY DREW ACROSS A CEILING ---------------------------

@@ -58,6 +58,11 @@
 import { edges, pointInPolygon, polygonArea, distanceToBoundary } from './geometry.js';
 import { sub, add, mul, dot, len, distToSegment, shortSide } from './geometry.js';
 import { projectOntoWall } from './accentPlace.js';
+/* THE POINT PRIMITIVE, BECAUSE A SWITCHBOARD IS ONE — see the note over
+   `wallHostFor`. lib/point.js names the switchboard plate as one of the six
+   elements that are a point with a fitting drawn on it, and this is that
+   claim cashed in rather than restated. */
+import { pointOn, pointAdapters, clampU } from './point.js';
 import { openingPx, doorWidthAt, MM_PER_FT } from './doors.js';
 
 /** The board itself, in millimetres. A 4-6 module plate, near enough. */
@@ -119,12 +124,61 @@ export const SB_HEIGHT_MM = {
   bay: [1200],
   bedside: [700],
   facing: [700, 1200],
+  /* --- AND THE ONE PLATE THAT IS NOT OPERATED STANDING UP ------------------
+     300 IS SOCKET HEIGHT, above the skirting, which is where a socket for a
+     floor lamp goes — and the switch is on the same plate at the same height,
+     because a switched socket is ONE plate. That is the ordinary Indian
+     wall socket and it is what a standard lamp plugs into.
+     IT IS NOT 1200, WHICH IS WHERE IT WOULD SIT WITHOUT THIS LINE. A plate at
+     switch height is a plate you reach walking past; this one is behind the
+     lamp, at the floor, and a drawing that put it at 1200 would have the
+     electrician chasing a socket to eye level. Same figure `asOutlet` uses for
+     the same reason. */
+  lamp: [300],
 };
+
+/** THE ROLE A STANDING LAMP'S OWN PLATE CARRIES. A named constant because four
+ *  files test for it — the height above, whether a ceiling may fall back to it,
+ *  whether it is born a switchboard, and whether it gets a spare socket — and a
+ *  string spelled out in four places is three chances to mistype one. */
+export const LAMP_BOARD_ROLE = 'lamp';
 
 /* Switch height, in mm — under this a plate is equipment rather than a switch
    somebody flicks. Nothing filters on it yet; it is here so that when something
    does, the threshold is written down once. */
 export const SB_SWITCH_MIN_MM = 600;
+
+/**
+ * HOW HIGH A PLATE MAY BE AND STILL BE SOMETHING A FLOOR LAMP PLUGS INTO, in mm.
+ *
+ * A STANDING LAMP GOES INTO A SOCKET NEAR THE FLOOR. The board beside the door
+ * is at 1200 — hand height, where a switch is reached walking past — and a lamp
+ * "served" by one would be a flex running up the wall to shoulder level. That
+ * is not a socket for a floor lamp; it is a socket for something on a worktop.
+ *
+ * SO REACH IS NOT THE ONLY TEST, and it was the only one until now. A lamp
+ * standing three feet from the door board was quietly wired to it, which is the
+ * right DISTANCE and the wrong PLATE.
+ *
+ * ITS OWN FIGURE AND NOT `SB_SWITCH_MIN_MM`, though the two ask nearly the same
+ * question. That one is "is this plate equipment rather than a switch", set at
+ * 600; this is "can a standard lamp be plugged into it", set at 750. Folding
+ * them together would mean one number answering two questions and moving for
+ * reasons belonging to the other.
+ */
+export const LAMP_SOCKET_MAX_MM = 750;
+
+/**
+ * HOW HIGH A PLATE IS SET, in mm — the override if there is one, the role's own
+ * figure otherwise, and switch height for a role this file has not heard of.
+ *
+ * HERE RATHER THAN IN THE FEATURE, because two callers now need it and they are
+ * in different layers: `heightOf` in features/electrical/boardRules.js prints it
+ * on a card, and `lampPlateInReach` below decides with it. One expression, so
+ * the plate a lamp refuses and the height the card shows cannot disagree.
+ */
+export const plateHeightMm = (b) =>
+  b?.heightsMm?.[0] ?? heightsFor(b?.role)[0] ?? 1200;
 
 /**
  * The heights for one board, and the count of plates that implies.
@@ -945,14 +999,117 @@ export function nearestSeat(p, { polygonPx = [], pxPerFt = 0, opts = {} } = {}) 
   return best;
 }
 
+/* --- A SWITCHBOARD IS A POINT ON THE ROOM'S WALLS -------------------------
+   AND IT IS THE FIFTH OF THE SIX lib/point.js NAMES. That file's header lists
+   the things on this sheet that are "a point with a fitting drawn on it" — a
+   hand-placed downlight, a task spot, an art spot, a ceiling object, A
+   SWITCHBOARD PLATE, a module on a run — and says each of them arrived with its
+   own answer to how you move it. A plate's answer was `slideBoardTo`, and it is
+   the primitive's answer written out by hand: project a wanted position onto a
+   host geometry, apply the domain's veto, and store a parameter rather than a
+   coordinate.
+
+   WHAT MAKES IT THE `ON_PATH` KIND AND NOT THE FREE ONE. A board stores `sFt`,
+   how far round this room's walls it sits, and NOT an x and a y — for the
+   reason point.js gives about a fraction: a coordinate stored against a wall
+   falls off it when the outline is re-traced, silently, because a plate with
+   nowhere to sit is simply not drawn. `sFt` IS `u`, in the units the rest of
+   this file measures walls in; see `boardU` and `boardSFt`, which are the one
+   place the two spellings meet.
+
+   THE HOST IS THE MERGED WALL PATH AND NOT THE POLYGON. `wallRuns` folds a
+   three-inch pilaster jog into the wall it belongs to — see the header — so the
+   runs are what a plate can actually stand on, and the polyline through their
+   corners is the path a plate slides along.
+   --------------------------------------------------------------------------- */
+
+/**
+ * THE ROOM'S WALLS AS A HOST THE POINT PRIMITIVE CAN HOLD A PLATE ON:
+ * `{ id, pts, closed }` and the three things this domain's own veto needs.
+ *
+ * `pts` IS THE RUNS' CORNERS, in order, closed. A run's `b` is the next run's
+ * `a` all the way round, so the starts alone are the whole polyline — and
+ * `pathLength(pts, { closed })` then agrees with `wallPath(runs).total` to the
+ * bit, which is what lets `sFt` and `u` be the same number twice.
+ */
+export function wallHostFor(polygonPx = [], pxPerFt = 0, opts = {}) {
+  if (polygonPx.length < 3 || !(pxPerFt > 0)) return null;
+  const o = { ...ELEC_DEFAULTS, ...opts };
+  const runs = wallRuns(polygonPx, o);
+  const { total } = wallPath(runs);
+  if (!runs.length || !(total > 0)) return null;
+  return { id: 'walls', pts: runs.map((r) => r.a), closed: true,
+           polygonPx, pxPerFt, total, opts: o };
+}
+
+/** A plate's stored distance round the walls, as the primitive's fraction. */
+export const boardU = (sFt, host) =>
+  (host?.total > 0 ? clampU((sFt * host.pxPerFt) / host.total) : 0);
+
+/** ...and back, which is what the store keeps. */
+export const boardSFt = (u, host) =>
+  (host?.total > 0 ? (clampU(u) * host.total) / host.pxPerFt : null);
+
+/** A plate as the primitive sees it: a point on the wall path. */
+export const boardAsPoint = (b, host) =>
+  pointOn(host?.id ?? 'walls', boardU(b?.sFt ?? 0, host), { id: b?.id ?? null });
+
+/**
+ * THE PLATE'S OWN VETO, in the shape `constrainPoint` takes.
+ *
+ * IT IGNORES THE FRACTION IT IS HANDED AND PROJECTS THE POSITION ITSELF, which
+ * is the whole reason that function passes one. A plate may not stand within
+ * half its width of a corner and may not stand on a run too short to hold one,
+ * and those exclusions apply BEFORE the nearest wall is chosen — so the answer
+ * is not a correction to "the nearest point on the path", it is a different
+ * projection. See the note on `clamp` in lib/point.js for the measured size of
+ * the difference.
+ *
+ * `nearestSeat` IS THAT PROJECTION AND IS UNCHANGED. This is a translation and
+ * not a second implementation: the rule that decides where a plate may stand
+ * stays in the one function that has always owned it, and what is new is only
+ * that it can now be spent through the primitive.
+ */
+export const plateClampU = (host) => (_wanted, _pt, h, want) => {
+  const seat = nearestSeat(want, { polygonPx: (h ?? host).polygonPx,
+                                   pxPerFt: (h ?? host).pxPerFt,
+                                   opts: (h ?? host).opts });
+  return seat ? boardU(seat.sFt, h ?? host) : null;
+};
+
+/**
+ * THE TWO ADAPTERS, FILLED IN FOR A PLATE — `pointAdapters`, with this domain's
+ * host and this domain's veto. `at` and `to` are the only two things
+ * dragMove.js and useDrag.js ask about a member's position, so handing these
+ * over is the whole of what a plate has to do to inherit the gesture.
+ */
+export const boardAdapters = (host) =>
+  pointAdapters(() => host, { clamp: plateClampU(host) });
+
 /**
  * ...AND THE ONE NUMBER A DRAG NEEDS. `slideBoardTo` is what App.jsx has always
  * called and it still means the same thing; the distance came out of it because
  * PLACING a board asks a question dragging one never has to — which of several
  * rooms did that click mean. A drag already knows its room.
+ *
+ * THROUGH THE PRIMITIVE NOW, and the answer is unchanged to the bit — see
+ * tools/test-electrical.mjs, which drives a grid of pointer positions through
+ * both spellings and compares them. What the plate gains by going this way is
+ * not a different position: it is that `at`, `to`, "this point is constrained",
+ * "a constrained point takes no shift lock and no snap" and "a drag with
+ * nowhere to land leaves the point where it was" all stop being four things
+ * this file happened to agree with and become the one thing it is.
  */
 export function slideBoardTo(p, opts = {}) {
-  return nearestSeat(p, opts)?.sFt ?? null;
+  const host = wallHostFor(opts.polygonPx ?? [], opts.pxPerFt ?? 0, opts.opts);
+  if (!host) return null;
+  const pt = boardAsPoint({ sFt: 0 }, host);
+  const next = boardAdapters(host).to(pt, p);
+  /* UNMOVED MEANS REFUSED, which is `constrainPoint`'s own answer to a drag
+     with nowhere to land — every wall too short for a plate, or a pointer with
+     no finite coordinate. It comes back as the point that went in, and the
+     caller wants a null rather than a plate slid to the start of the path. */
+  return next === pt ? null : boardSFt(next.u, host);
 }
 
 /**
@@ -992,21 +1149,205 @@ export function placedBoards(seats = [], { polygonPx = [], pxPerFt = 0, opts = {
   for (const seat of seats) {
     const plate = plateAtS(seat.sFt * pxPerFt, runs, polygonPx, pxPerFt, scale);
     if (!plate) continue;
+    /* --- TWO KINDS OF SEAT NOW, AND THE ROLE IS THE WHOLE DIFFERENCE --------
+       A SEAT WITH NO ROLE IS THE ONE SOMEBODY DROPPED, unchanged: a plate whose
+       whole meaning is "there is a switchboard here", born a socket outlet
+       because that is the commonest thing a person means by dropping one, and
+       named for nothing in particular because nothing in particular is what it
+       serves yet.
+       A SEAT CARRYING `lamp` WAS PUT THERE BY A FITTING. A standing lamp has to
+       be plugged into something, so placing one seats a plate on the wall it is
+       nearest — see `lampSocketSeat` in features/electrical/boardRules.js — and
+       that plate is not a general-purpose board: it is at socket height, it is
+       born a switchboard rather than an outlet so it can carry the lamp's switch
+       beside its socket, and it says what it is for. Every one of those four
+       facts is keyed off this role and nothing else. */
+    const role = seat.role ?? 'placed';
+    const forLamp = role === LAMP_BOARD_ROLE;
     out.push({
       id: seat.id,
       roomId: seat.roomId,
-      role: 'placed',
+      role,
       placed: true,
-      serves: 'whatever is wired to it',
-      servesShort: 'Board',
-      why: 'Placed by hand on this wall.',
-      heightsMm: SB_HEIGHT_MM.door,
+      serves: forLamp ? 'the standing lamp beside it' : 'whatever is wired to it',
+      servesShort: forLamp ? 'Lamp' : 'Board',
+      why: forLamp
+        ? 'A standing lamp needs a socket within three feet, so one was put on'
+          + ' the wall it is nearest.'
+        : 'Placed by hand on this wall.',
+      /* THROUGH `heightsFor` RATHER THAN OFF THE TABLE DIRECTLY, so a role with
+         no entry falls back to switch height exactly as it did when this line
+         read `SB_HEIGHT_MM.door`. `placed` has no entry and gets 1200; `lamp`
+         has one and gets 300. */
+      heightsMm: heightsFor(role),
       plates: 1,
       sFt: seat.sFt,
       ...plate,
     });
   }
   return out;
+}
+
+/**
+ * HOW FAR A STANDING LAMP MAY BE FROM THE PLATE IT IS PLUGGED INTO, IN FEET.
+ *
+ * THREE FEET IS THE FLEX, AND THAT IS THE WHOLE ARGUMENT. Every other fitting on
+ * this drawing is WIRED — a cove, a downlight, a sconce: the cable is run to
+ * wherever it has to go and the distance is a length of cable, not a constraint.
+ * A standard lamp is the one thing here that is PLUGGED IN, so the distance is
+ * the lamp's own lead, and a lamp further from a socket than its lead is long is
+ * a lamp with an extension cord across the floor — which is not a thing a
+ * drawing should specify.
+ *
+ * IN FEET AND NOT IN MILLIMETRES, WHICH IS THE ONE FIGURE IN THIS FILE THAT IS.
+ * `SB_MM` is a plate's own dimensions and a set-out from a door jamb: those are
+ * manufactured sizes and site measurements, and millimetres is the unit they are
+ * given in. This is a reach somebody stated as "three feet" — a round number in
+ * the unit it was decided in — and holding it as 914.4 would hide that, then
+ * invite the next reader to round it. `pxPerFt` is a direct multiply, so the
+ * conversion `px()` exists for is not needed either.
+ *
+ * WHAT HAPPENS WHEN NOTHING IS IN REACH IS NOT "REFUSE". A lamp is a decision
+ * somebody has made and the drawing's job is to make it buildable, so a lamp out
+ * of reach of every plate gets a socket outlet of its own on the wall it is
+ * CLOSEST TO — see `nearestSeat`, which projects onto every wall of the room and
+ * takes the nearest, and `placedBoards` for what one is. That outlet then wires
+ * itself and grows its switch on the nearest board, by the ordinary route, which
+ * is the whole of "a socket and its switch".
+ */
+export const LAMP_SOCKET_FT = 3;
+
+/**
+ * THE PLATE A LAMP AT THIS POINT PLUGS INTO, or null if nothing is in reach.
+ *
+ * TWO TESTS BESIDES THE DISTANCE, AND BOTH WERE LEARNED THE HARD WAY.
+ *
+ * A `socketOnly` PLATE IS SKIPPED. What a lamp needs is a socket AND ITS
+ * SWITCH, and a socket outlet is by definition the one plate that has no switch
+ * on it — its switch is on the board its wire runs to. A lamp "served" by one
+ * has no way to be turned off at the wall.
+ *
+ * AND SO IS A PLATE ABOVE `LAMP_SOCKET_MAX_MM`. A standing lamp plugs in near
+ * the floor; the board beside the door is at 1200, which is hand height for a
+ * switch and shoulder height for a flex. A lamp three feet from that board was
+ * quietly wired to it — the right distance and the wrong plate. See the note on
+ * that constant.
+ *
+ * WHAT IS LEFT IS THE PLATE A LAMP CAN ACTUALLY USE: one seated at socket
+ * height by an earlier lamp's placement, which is what lets a second lamp share
+ * one frame and grow a second pair of modules on it rather than a second plate.
+ *
+ * AS DRAWN AND NOT AS RULED. A board dragged along its wall is a decision about
+ * where the socket actually is, and reach is a physical question about the lamp's
+ * lead — so it is measured to `point`, which is where the plate ends up. That is
+ * the opposite of `boardFor`'s `rulePoint` rule, and deliberately: which ceiling
+ * a plate switches must not change because somebody nudged it, and whether a
+ * lamp can reach one must.
+ *
+ * ONE FUNCTION BECAUSE THERE ARE TWO CALLERS AND THEY MUST AGREE. The placement
+ * gesture asks it whether a plate has to be seated at all, and flows.js asks it
+ * which plate the lamp's wire runs to. Those two have to give the same answer or
+ * the lamp gets a plate and no wire, or a wire to a plate that is not the one
+ * the seat test looked at. Two copies of one distance test is how that happens.
+ */
+export function nearestLampPlate(at, plates = []) {
+  if (!at || !Number.isFinite(at.x) || !Number.isFinite(at.y)) return null;
+  let best = null;
+  for (const b of plates) {
+    if (b?.socketOnly) continue;
+    if (plateHeightMm(b) > LAMP_SOCKET_MAX_MM) continue;
+    const p = b?.point;
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    const d = len(sub(p, at));
+    if (!best || d < best.d) best = { d, board: b };
+  }
+  return best;
+}
+
+/**
+ * ...AND THE SAME PLATE, CAPPED AT THE LAMP'S OWN REACH.
+ *
+ * THE CAP IS AN ALLOCATION RULE AND NOT A WIRING ONE, which is the distinction
+ * this pair exists to draw and the one that was missing.
+ *
+ *   ALLOCATION asks "is a socket ALREADY here?" and three feet is the answer:
+ *              inside it, this lamp uses the plate that is there; outside it,
+ *              a plate goes up. That is `lampPlateInReach`.
+ *   WIRING     asks "which plate is this lamp plugged into?" and has no cap at
+ *              all. A lamp standing in the middle of a twenty-foot room gets a
+ *              socket on the nearest wall because a socket has to be ON a wall,
+ *              and that may be six feet away — the flex is longer than three
+ *              feet or it runs under the rug, but the socket is its socket and
+ *              the wire is real. That is `nearestLampPlate`.
+ *
+ * CAPPING BOTH IS WHAT PRODUCED AN EMPTY PLATE. A lamp too far from any wall
+ * seated a socket it could not then be wired to: no flow, no modules, a blank
+ * frame on the drawing and a lamp with nothing.
+ */
+export function lampPlateInReach(at, plates = [], pxPerFt = 0) {
+  if (!(pxPerFt > 0)) return null;
+  const hit = nearestLampPlate(at, plates);
+  return hit && hit.d <= LAMP_SOCKET_FT * pxPerFt ? hit.board : null;
+}
+
+/**
+ * COULD ONE PLATE SERVE THIS LAMP AND EVERYTHING AN EXISTING ONE ALREADY DOES?
+ *
+ * TWO LAMPS FOUR FEET APART WERE GETTING TWO PLATES, and one is enough: seated
+ * between them it is two feet from each, inside the reach of both. The rule that
+ * produced two is not wrong so much as short-sighted — it seats each plate at
+ * the wall point nearest ITS OWN lamp, so the first plate ends up hard against
+ * the first lamp and out of reach of the second by the time it arrives.
+ *
+ * SO BEFORE SEATING A SECOND, TRY MOVING THE FIRST. The candidate position is
+ * the wall point nearest the CENTROID of the whole group — the lamps that plate
+ * already serves, plus this one — and it is accepted only if every one of them
+ * is within reach of it. That last clause is what stops a plate being dragged
+ * away from a lamp it was already serving to reach a new one: a move that would
+ * strand somebody is not an improvement, and the answer there is the second
+ * plate after all.
+ *
+ * ONLY A LAMP'S OWN PLATE IS MOVED. The board beside the door is where a rule
+ * put it and a bay plate likewise; sliding one of those to suit a floor lamp
+ * would be a fitting overruling the wiring. A plate seated BY a lamp has no
+ * position of its own to defend — it went where the first lamp happened to be —
+ * so moving it to serve two is strictly better than what it was.
+ *
+ * `null` MEANS "NO, SEAT A NEW ONE". Returns `{ id, sFt }` otherwise: which
+ * plate to slide and how far round the walls to slide it to.
+ */
+export function lampPlateToShare(at, { plates = [], lamps = [], polygonPx = [],
+                                       pxPerFt = 0 } = {}) {
+  if (!at || !(pxPerFt > 0) || polygonPx.length < 3) return null;
+  const reach = LAMP_SOCKET_FT * pxPerFt;
+  const near = (p, q) => len(sub(p, q)) <= reach + 1e-6;
+  /* THE LAMP PLATES ONLY, NEAREST FIRST — nearest because if two could be made
+     to work, the one already closest moves least and is the one a person would
+     have picked. */
+  const movable = plates
+    .filter((b) => b?.role === LAMP_BOARD_ROLE && b.point && !b.socketOnly)
+    .sort((a, b) => len(sub(a.point, at)) - len(sub(b.point, at)));
+  const others = lamps.filter((l) => l && Number.isFinite(l.x) && Number.isFinite(l.y)
+    && len(sub(l, at)) > 1e-6);
+  for (const b of movable) {
+    // WHAT IT SERVES TODAY, which is every lamp already inside its reach.
+    const served = others.filter((l) => near(l, b.point));
+    /* A PLATE SERVING NOBODY IS NOT SHARED, IT IS LEFT ALONE. "Sharing" means
+       one plate reaching this lamp AND the ones it already reaches; with
+       nothing on it there is nothing to share, and sliding it across the room
+       to a new lamp would be moving a plate for no gain — or, worse, moving one
+       whose lamp the caller simply did not hand us. Either way it is not this
+       rule's to touch. */
+    if (!served.length) continue;
+    const group = [...served, at];
+    const c = group.reduce((a, q) => ({ x: a.x + q.x / group.length,
+                                        y: a.y + q.y / group.length }),
+                           { x: 0, y: 0 });
+    const seat = nearestSeat(c, { polygonPx, pxPerFt });
+    if (!seat) continue;
+    if (group.every((q) => near(q, seat.at))) return { id: b.id, sFt: seat.sFt };
+  }
+  return null;
 }
 
 /**
@@ -1871,7 +2212,13 @@ export const CHUNK_BOARD = {
    two at least have a switch on them, where an outlet has none at all — a row of
    downlights whose nearest plate is a socket would come out switched from a
    thing with nothing to press. */
-export const DEDICATED_ROLES = new Set(['bedside', 'facing', 'socket']);
+/* `lamp` JOINS THEM, AND FOR THE `socket` ENTRY'S EXACT REASON. A standing
+   lamp's plate is a socket at 300mm behind a lamp; a room's downlights falling
+   back to it would be a ceiling switched from a point nobody stands at, on a
+   plate whose only module is a lamp's. It is not in the rules' fallback list
+   today either — that list is the door and bay boards — so this changes no
+   answer now and states the intent for the day something adds it. */
+export const DEDICATED_ROLES = new Set(['bedside', 'facing', 'socket', 'lamp']);
 export const servesBay = (b) => !DEDICATED_ROLES.has(b?.role);
 
 /** Rect corners, and its centre. Local because a bay is a rect and nothing more. */

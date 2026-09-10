@@ -53,6 +53,7 @@
 // ---------------------------------------------------------------------------
 
 import { pointInPolygon, distanceToBoundary } from './geometry.js';
+import { pointInZone } from './chunking.js';
 import { surfaceDistance } from './planner.js';
 
 export const SPOT_DEFAULTS = {
@@ -414,7 +415,7 @@ export function spotLegality({ polygon, zones = [], fixtures = [], coves = [],
       // ceiling or somebody's instruction, and neither of those cares what the
       // fitting is aimed at.
       if (overBed && isBedZone(z)) continue;
-      if (p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1) {
+      if (pointInZone(p, z)) {
         return note('inside a no-light zone');
       }
     }

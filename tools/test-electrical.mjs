@@ -15,8 +15,14 @@ import {
   entryDoor, latchEnd, halfPlaneArea, swingSides, planSwitchboards, px, SB_MM,
   headSide, facingWall, FACING_PLATES,
   slideBoardTo, plateAtS, wallPath, asDrawn, boardUnder, nearestSeat, placedBoards,
-  asOutlet, servesBay,
+  asOutlet, servesBay, lampPlateInReach, nearestLampPlate,
+  LAMP_SOCKET_FT, LAMP_SOCKET_MAX_MM,
+  wallHostFor, boardAsPoint, boardAdapters, boardU, boardSFt, LAMP_BOARD_ROLE,
 } from '../src/lib/electrical.js';
+import { makeDrag } from '../src/hooks/useDrag.js';
+import { boardSeatWrites } from '../src/features/electrical/boardRules.js';
+import { pointKind, isConstrained, orthoFor, ON_PATH } from '../src/lib/point.js';
+import { pathLength } from '../src/lib/geometry.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
@@ -738,6 +744,272 @@ console.log('\n-- which plate is under the pointer --');
   ok(boardUnder({ x: 0, y: 0 }, [], {}) === null, 'no plates, no plate');
   ok(boardUnder({ x: 0, y: 0 }, [{ id: 'junk' }], {}) === null,
     'a board with no geometry is skipped rather than thrown over');
+}
+
+// --- A SWITCHBOARD IS A POINT ON THE ROOM'S WALLS --------------------------
+//
+// lib/point.js NAMES THE SWITCHBOARD PLATE as one of the six things on this
+// sheet that are "a point with a fitting drawn on it", and this is that claim
+// cashed in: the plate's own answer to "how do you move it" was `slideBoardTo`,
+// which is the primitive's answer written out by hand.
+{
+  console.log('\n-- a plate is a constrained point, and slides like one --');
+  const L = [{ x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 400 },
+             { x: 300, y: 400 }, { x: 300, y: 200 }, { x: 0, y: 200 }];
+  const host = wallHostFor(ROOM, PPF);
+
+  /* THE HOST'S POLYLINE AND THE WALL PATH ARE THE SAME LENGTH, which is what
+     lets `sFt` and `u` be one number in two spellings. A run's `b` is the next
+     run's `a` all the way round, so the starts alone are the whole path. */
+  ok(near(pathLength(host.pts, { closed: true }), host.total, 1e-9),
+    `the host is the wall path, to the bit (${host.total})`);
+  ok(near(host.total, wallPath(wallRuns(ROOM, {})).total, 1e-9),
+    '...and it agrees with wallPath, which is what sFt is measured along');
+
+  // IT IS THE `ON_PATH` KIND, which is what makes it take no shift lock and no
+  // snap — a rule of the primitive's now, where it used to be an omission.
+  const pt = boardAsPoint({ id: 'b1', sFt: 10 }, host);
+  ok(pointKind(pt) === ON_PATH && isConstrained(pt),
+    'a plate is a point on a path, not a free one');
+  ok(orthoFor(pt) === false,
+    '...so it honours no shift lock: its alignment is its wall\'s');
+
+  // sFt <-> u ROUND-TRIPS, which is the whole of the translation.
+  for (const sFt of [0, 1, 7.5, 19.999]) {
+    ok(near(boardSFt(boardU(sFt, host), host), sFt, 1e-9),
+      `${sFt} ft round the walls survives the trip through the fraction`);
+  }
+
+  /* --- AND THE ANSWER IS UNCHANGED, WHICH IS THE POINT --------------------
+     `slideBoardTo` GOES THROUGH THE PRIMITIVE NOW and must land every plate
+     exactly where it always did. Driven over a grid of pointer positions —
+     inside the room, outside it, and past every corner — in a rectangle and in
+     an L, whose re-entrant corner is the case that separates the plate's own
+     projection from the primitive's default one. See `plateClampU`. */
+  for (const [name, poly] of [['a rectangle', ROOM], ['an L', L]]) {
+    let n = 0, bad = 0;
+    for (let x = -40; x < 660; x += 17) {
+      for (let y = -40; y < 460; y += 15) {
+        const p = { x, y };
+        const was = nearestSeat(p, { polygonPx: poly, pxPerFt: PPF })?.sFt ?? null;
+        const now = slideBoardTo(p, { polygonPx: poly, pxPerFt: PPF });
+        n += 1;
+        const same = (was === null && now === null)
+          || (was != null && now != null && Math.abs(was - now) < 1e-9);
+        if (!same) bad += 1;
+      }
+    }
+    ok(bad === 0, `in ${name}, all ${n} pointer positions land where they did`
+      + (bad ? ` (${bad} moved)` : ''));
+  }
+
+  /* A DRAG WITH NOWHERE TO LAND LEAVES THE PLATE WHERE IT WAS, which is
+     `constrainPoint`'s own answer and reaches the caller as a null rather than
+     as a plate slid to the start of the path. A 40px room has no wall long
+     enough to hold a 230mm plate clear of both its corners. */
+  const tiny = [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 40 }, { x: 0, y: 40 }];
+  ok(slideBoardTo({ x: 20, y: 1 }, { polygonPx: tiny, pxPerFt: PPF }) === null,
+    'a room whose walls cannot hold a plate refuses the drag');
+  ok(slideBoardTo({ x: 1, y: 1 }, { polygonPx: [], pxPerFt: PPF }) === null
+     && slideBoardTo({ x: 1, y: 1 }, { polygonPx: ROOM, pxPerFt: 0 }) === null
+     && slideBoardTo(null, { polygonPx: ROOM, pxPerFt: PPF }) === null
+     && slideBoardTo({ x: NaN, y: 1 }, { polygonPx: ROOM, pxPerFt: PPF }) === null,
+    '...and so do no outline, no scale, no point and a point that is not one');
+  ok(wallHostFor([], PPF) === null && wallHostFor(ROOM, 0) === null,
+    'and there is no host to hold a plate on either');
+}
+
+// --- ...AND IT INHERITS THE GESTURE, NOT JUST THE ARITHMETIC ---------------
+//
+// ROUTING `slideBoardTo` THROUGH `constrainPoint` MIGRATED THE HALF NOBODY CAN
+// SEE. The plate's maths became the primitive's and its GESTURE did not: the
+// drag wrote its answer in `onMove` and handed `useDrag` no `at`, no `to`, no
+// `setList` and no `copy` — which are the four things Option-copy, the group
+// move and the snap-back are made of. A plate could not be duplicated, and the
+// whole argument for having primitives is that it should not have had to ask.
+//
+// DRIVEN THROUGH `makeDrag` DIRECTLY, the way tools/test-drag.mjs drives every
+// other gesture: down, a move, the modifier arriving MID-DRAG, another move, up.
+{
+  console.log('\n-- a plate is Option-copied like anything else on the sheet --');
+  const host = wallHostFor(ROOM, PPF);
+  const unit = boardAdapters(host);
+  const seatOf = (b) => ({ ...boardAsPoint({ id: b.id, sFt: 0 }, host),
+    u: boardU(b.sFt, host), id: b.id, roomId: 'r1', role: b.role ?? null, host });
+
+  /** The store, as `useBoardGestures`'s `setList` shim spends it. */
+  const run = (member, frames) => {
+    let drag = null, seats = [member], n = 0;
+    const log = [];
+    const d = makeDrag({
+      get: () => drag,
+      set: (v) => { drag = typeof v === 'function' ? v(drag) : v; },
+      point: (e) => ({ x: e.x, y: e.y }),
+      moved: (f, q) => Math.hypot(q.x - f.x, q.y - f.y) >= 3,
+      at: (m) => boardAdapters(m.host).at(m),
+      to: (m, q) => ({ ...m, ...boardAdapters(m.host).to(m, q) }),
+      copy: true,
+      mintId: () => `sb-twin${++n}`,
+      /* THE REAL RULE AND NOT A COPY OF IT. `boardSeatWrites` is what
+         `useBoardGestures` spends, so a change to what a twin inherits fails
+         here rather than passing against a second implementation written to
+         agree with the first. All this stands in for is the dispatching. */
+      setList: (fn) => {
+        const before = seats;
+        seats = fn(before);
+        for (const w of boardSeatWrites(before, seats)) {
+          log.push(w.kind === 'add'
+            ? { add: w.id, sFt: w.sFt, role: w.role }
+            : { slide: w.id, sFt: w.sFt });
+        }
+      },
+      onCopy: ({ ids }) => log.push({ select: ids[0] }),
+    });
+    d.down({ x: unit.at(member).x, y: unit.at(member).y, pointerId: 1 },
+      { id: member.id, members: [member] });
+    for (const f of frames) d.move(f);
+    d.up();
+    return { log, seats };
+  };
+
+  const start = seatOf({ id: 'sb-a', sFt: 5 });
+  const { log, seats } = run(start, [
+    { x: 300, y: 2 },                   // a plain drag along the top wall
+    { x: 420, y: 2, altKey: true },     // ...and Option, arriving mid-drag
+    { x: 500, y: 2, altKey: true },     // ...and on past it
+  ]);
+  const at = (id) => seats.find((q) => q.id === id);
+
+  ok(log.some((e) => e.slide === 'sb-a'), 'the plain drag slides the plate');
+  // RULE 4, WHICH THE PLATE NOW GETS FOR FREE: the original goes back to where
+  // it was picked up, so one gesture does not both move a thing and copy it.
+  ok(near(boardSFt(at('sb-a').u, host), 5, 1e-9),
+    `Option puts the original back where it was picked up `
+    + `(${boardSFt(at('sb-a').u, host)})`);
+  const twin = log.find((e) => e.add);
+  ok(!!twin, 'and a twin is added — a plate can be Option-copied at last');
+  ok(seats.length === 2 && !!at(twin.add), '...so the room has two plates');
+  ok(log.some((e) => e.select === twin.add),
+    'the twin is what is selected, and what keeps moving');
+  ok(log.filter((e) => e.slide === twin.add).length > 0
+     && boardSFt(at(twin.add).u, host) > twin.sFt,
+    'later frames move the twin and not the original');
+  // ONE TWIN AND NOT ONE PER FRAME — `copied` latches, and letting go of Option
+  // does not un-create it.
+  ok(log.filter((e) => e.add).length === 1, 'Option makes one twin, not one a frame');
+
+  /* THE TWIN IS A HAND-PLACED PLATE WHATEVER IT CAME FROM. There is no second
+     door in a room and no second bay, so a duplicate of either is simply a
+     plate somebody put on a wall — the role is dropped. */
+  const fromDoor = run({ ...seatOf({ id: 'bd', sFt: 5 }), role: 'door' },
+    [{ x: 300, y: 2 }, { x: 420, y: 2, altKey: true }]);
+  const doorTwin = fromDoor.log.find((e) => e.add);
+  ok(doorTwin && doorTwin.role == null,
+    `a copy of the door board is an ordinary hand-placed plate (got ${doorTwin?.role})`);
+  /* ...EXCEPT A STANDING LAMP'S SOCKET, which carries its role over: a second
+     one should be another socket at 300mm and not a switch plate at 1200. */
+  const fromLamp = run({ ...seatOf({ id: 'sl', sFt: 5 }), role: LAMP_BOARD_ROLE },
+    [{ x: 300, y: 2 }, { x: 420, y: 2, altKey: true }]);
+  ok(fromLamp.log.find((e) => e.add)?.role === LAMP_BOARD_ROLE,
+    'and a copy of a lamp\'s socket is another lamp\'s socket');
+
+  // RULE 1: a press that never travels writes nothing at all — no slide, and
+  // certainly no duplicate stacked invisibly on its original.
+  ok(run(seatOf({ id: 'sb-a', sFt: 5 }), [{ x: 152, y: 1, altKey: true }]).log.length === 0,
+    'and a press that never travels copies nothing');
+}
+
+// --- HOW FAR A STANDING LAMP CAN REACH -------------------------------------
+//
+// THE ONE FITTING ON THE DRAWING THAT IS PLUGGED IN, so the one distance rule
+// that is about a lead rather than about a length of cable. Three feet at 30.48
+// px/ft is 91.44px, and it is stated in FEET rather than millimetres because
+// that is the unit the reach was decided in — see the note on the constant.
+{
+  console.log('\n-- a standing lamp reaches three feet and no further --');
+  const REACH = LAMP_SOCKET_FT * PPF;                     // 91.44
+  ok(LAMP_SOCKET_FT === 3 && near(REACH, 91.44),
+    `three feet is 91.44px at this scale (got ${REACH})`);
+  const at = { x: 300, y: 200 };
+  /* AT SOCKET HEIGHT BY DEFAULT, because that is now half of what makes a plate
+     usable at all — see LAMP_SOCKET_MAX_MM. A fixture with no height falls back
+     to switch height and would be refused for a reason none of the distance
+     assertions below is about. */
+  const plate = (id, dx, extra = {}) => ({
+    id, roomId: 'r1', heightsMm: [300],
+    point: { x: at.x + dx, y: at.y }, ...extra });
+
+  ok(lampPlateInReach(at, [plate('near', REACH - 1)], PPF)?.id === 'near',
+    'a plate just inside the reach is the one it plugs into');
+  ok(lampPlateInReach(at, [plate('far', REACH + 1)], PPF) === null,
+    '...and one just outside is not reached at all');
+  // EXACTLY THREE FEET IS IN, because the rule is "within three feet".
+  ok(lampPlateInReach(at, [plate('on', REACH)], PPF)?.id === 'on',
+    'and a plate at exactly three feet is in reach');
+  // THE NEAREST OF SEVERAL, because a lamp between two sockets uses the near
+  // one and the wire has to be drawn to the plate it is actually plugged into.
+  ok(lampPlateInReach(at, [plate('b', 80), plate('a', 30)], PPF)?.id === 'a',
+    'of two in reach, the nearer wins');
+  /* A BARE SOCKET OUTLET IS NOT A PLATE A LAMP MAY USE, and this assertion is
+     the reverse of what it said when this rule was first written. An outlet is
+     BY DEFINITION the one plate with no switch on it — its switch is on the
+     board its wire runs to — and what a standing lamp needs is a socket AND its
+     switch within reach. A lamp "served" by an outlet three feet away has no way
+     to be turned off at the wall, and, because an outlet cannot be a flow's
+     board, it had no wire to it either. So it is skipped and the lamp gets a
+     plate of its own. */
+  ok(lampPlateInReach(at, [plate('sock', 40, { socketOnly: true })], PPF) === null,
+    'a bare socket outlet is skipped — it has no switch to offer');
+  ok(lampPlateInReach(at, [plate('sock', 40, { socketOnly: true }),
+                           plate('board', 70)], PPF)?.id === 'board',
+    '...and a real plate further away wins over it');
+  // MEASURED TO `point` AND NOT TO `rulePoint`, which is the opposite of
+  // `boardFor`'s rule and deliberately so: which ceiling a plate switches must
+  // not change because somebody nudged it, and whether a lamp can reach one must.
+  ok(lampPlateInReach(at, [{ id: 'moved', heightsMm: [300],
+                         point: { x: at.x + 40, y: at.y },
+                         rulePoint: { x: at.x + 400, y: at.y } }], PPF)?.id === 'moved',
+    'a plate dragged into reach is in reach');
+  ok(lampPlateInReach(at, [{ id: 'moved', heightsMm: [300],
+                         point: { x: at.x + 400, y: at.y },
+                         rulePoint: { x: at.x + 40, y: at.y } }], PPF) === null,
+    '...and one dragged out of it is not');
+
+  ok(lampPlateInReach(at, [], PPF) === null, 'no plates, nothing in reach');
+  ok(lampPlateInReach(null, [plate('a', 0)], PPF) === null, 'no point, no answer');
+  ok(lampPlateInReach(at, [plate('a', 0)], 0) === null, 'no scale, no answer');
+  ok(lampPlateInReach(at, [{ id: 'junk' }], PPF) === null,
+    'a plate with no geometry is skipped rather than thrown over');
+
+  /* --- AND HOW HIGH IT IS, WHICH IS THE OTHER HALF OF "USABLE" -------------
+     REACH WAS THE ONLY TEST AND IT IS THE RIGHT DISTANCE TO THE WRONG PLATE.
+     A standing lamp plugs in near the floor; the board beside the door is at
+     1200mm, where a hand reaches a switch walking past. A lamp three feet from
+     that board was being wired to it — a flex up the wall to shoulder height. */
+  ok(lampPlateInReach(at, [plate('high', 30, { heightsMm: [1200] })], PPF) === null,
+    'a plate at switch height is not something a floor lamp plugs into');
+  ok(lampPlateInReach(at, [plate('ok', 30, { heightsMm: [LAMP_SOCKET_MAX_MM] })],
+    PPF)?.id === 'ok', '...and one exactly at the limit still is');
+  // BY ROLE WHERE NOTHING OVERRIDES IT, so a plate carrying no explicit height
+  // is judged on what its role is set at rather than dropped.
+  ok(lampPlateInReach(at, [{ id: 'byRole', roomId: 'r1', role: 'lamp',
+                             point: { x: at.x + 30, y: at.y } }], PPF)?.id === 'byRole',
+    'a lamp plate with no override is read off its role, and its role is 300');
+  ok(lampPlateInReach(at, [{ id: 'byRole', roomId: 'r1', role: 'door',
+                             point: { x: at.x + 30, y: at.y } }], PPF) === null,
+    '...and a door board likewise, at 1200');
+
+  /* --- THE WIRE HAS NO CAP, WHICH IS NOT THE SAME QUESTION -----------------
+     THREE FEET DECIDES WHETHER A SOCKET HAS TO GO UP. Once one is there it is
+     this lamp's socket at whatever distance the wall happened to be — a lamp in
+     the middle of a room gets one six feet away because a socket has to be ON a
+     wall. Capping both left that lamp with a blank frame and no wire. */
+  ok(nearestLampPlate(at, [plate('far', 400)])?.board.id === 'far',
+    'the wiring test reaches a plate the allocation test would not');
+  ok(nearestLampPlate(at, [plate('far', 400), plate('near', 200)])?.board.id === 'near',
+    '...and still takes the nearest of them');
+  ok(nearestLampPlate(at, [plate('high', 40, { heightsMm: [1200] })]) === null,
+    'but it applies the same height and outlet filters');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

@@ -140,6 +140,25 @@ export const LIGHT_TOOLS = [
   { id: 'pendant', label: 'Pendant', arms: 'object',
     hint: 'Click the ceiling to drop it.',
     consequence: 'The ambient grid keeps clear of it.' },
+  /* --- AND THE ONE LAMP THAT DOES NOT HANG --------------------------------
+     THE SAME MACHINE AND A DIFFERENT CONSEQUENCE. It arms the ceiling-object
+     one-shot like the two above it — a centre, a diameter, one click — and then
+     the two sentences under it are the opposite of theirs, because a standard
+     lamp stands on the FLOOR:
+       the grid does NOT keep clear of it. A downlight over a lamp is not
+       obstructed by it, so nothing moves. See `offCeiling` on its catalogue
+       entry in lib/ceilingObjects.js.
+       it needs a SOCKET. It is the only fitting on this palette that is plugged
+       in rather than wired, so placing one can put a socket on the wall behind
+       it — which is a mark appearing somewhere the click did not land, and
+       therefore exactly the kind of thing `consequence` is for. See
+       LAMP_SOCKET_FT in lib/electrical.js.
+     THE CLICK IS ON THE FLOOR AND THE HINT SAYS SO. "Click the ceiling" is the
+     right instruction for a pendant and a lie about this one; a plan view is the
+     same rectangle either way, so the word is the only thing that can carry it. */
+  { id: 'standing_lamp', label: 'Standing lamp', arms: 'object',
+    hint: 'Click the floor to stand it there.',
+    consequence: 'It takes the nearest socket, or gets one on the nearest wall.' },
 ];
 
 /**
@@ -153,6 +172,13 @@ export const LIGHT_ICON = {
   spot:   '/icons/new_icons/directional_spot.png',
   chandelier: '/icons/new_icons/chandelier.png',
   pendant: '/icons/new_icons/pendant.png',
+  /* ITS OWN ARTWORK AND NOT THE RAIL'S LAMPS MARK, which is what this briefly
+     was. `lamp.png` is the CATEGORY's symbol: 15 x 29 of line work, exactly the
+     right size at the rail's own 30px and about 2.2x upscaled in a 64px cell, so
+     it read visibly softer than the pendant and the chandelier beside it. A cell
+     in these flyouts is a photograph of the fitting at 100 square — see the
+     three above — and this is now one of those. */
+  standing_lamp: '/icons/new_icons/standing_lamp.png',
   cove:   '/icons/new_icons/reverse_cove.png',
   track:  '/icons/track.png',
 };

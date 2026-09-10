@@ -32,18 +32,40 @@
 // ---------------------------------------------------------------------------
 
 import { SIZE_LIMITS, clampFt, toLocal, toWorld, resizeFromCorner,
-         ROTATE_SNAP, rotateTo } from './box.js';
+         ROTATE_SNAP, rotateTo, boxAdapters, boxOrtho, boxMoves } from './box.js';
 
 const MM = 1 / 304.8;
 
+/* --- THE SWEEPS A CEILING FAN IS SOLD AT ----------------------------------
+   ABOVE THE CATALOGUE BECAUSE THE CATALOGUE USES IT, and it is one list rather
+   than two for the reason any duplicated table eventually gives: the day a
+   fifth size is added, the half that was not edited is the half somebody
+   notices six months later. The fan's entry names this array; the bar at the
+   foot of the drawing draws it; nothing else has a list of sweeps.
+
+   THESE ARE THE FOUR REAL ONES. A sweep is a blade span in millimetres and it
+   is what the product is ordered by — 600 over a small utility or a box room,
+   900 and 1050 the two ordinary bedroom sizes, 1200 for a living room. A
+   number between them is not a quieter version of its neighbour, it is nothing
+   anybody can buy, which is why this is chips and not a slider — the same
+   argument ModuleSpec makes about a diffuser's three wattages.
+
+   900 IS THE DEFAULT AND IT IS THE COMMONEST FITTING, not the largest. The
+   value seeded here is what an unedited fan measures and what the bar has
+   latched before anybody touches it, and defaulting to the biggest sweep in
+   the list means every ordinary room's fan is a correction. */
+export const FAN_SWEEPS = [600, 900, 1050, 1200];
+export const FAN_SWEEP_MM = 900;
+
 /**
  * The catalogue. `kind` is what it is; `id` is what the picker offers, which is
- * not the same thing — the two fan sweeps are one kind and two entries, because
- * "900 or 1200" is the whole of the choice a person makes about a fan.
+ * not the same thing — a fan is one kind, one entry and FOUR SIZES, because the
+ * sweep is a property of the fan you placed rather than four things to place.
+ * See `FAN_SWEEPS` above, and FanSpec, which is where that choice is made.
  */
 export const CEILING_TYPES = [
   { id: 'fan',        kind: 'fan',        label: 'Fan',        colour: '#404040',
-    diaFt: 1200 * MM, sweepsMm: [900, 1200] },
+    diaFt: FAN_SWEEP_MM * MM, sweepsMm: FAN_SWEEPS },
   { id: 'chandelier', kind: 'chandelier', label: 'Chandelier', colour: '#404040',
     diaFt: 900 * MM },
   /* --- A PENDANT IS A CHANDELIER, AND THE `kind` SAYS SO ON PURPOSE --------
@@ -65,6 +87,28 @@ export const CEILING_TYPES = [
      measures from its body to a worktop. */
   { id: 'pendant',    kind: 'chandelier', label: 'Pendant',    colour: '#404040',
     diaFt: 450 * MM },
+  /* --- A STANDING LAMP, AND IT IS ON THE FLOOR ------------------------------
+     THE THIRD DECORATIVE FITTING AND THE FIRST ONE THAT DOES NOT HANG. A
+     chandelier and a pendant are the same `kind` because they differ only in
+     size; a standard lamp differs in the one thing this table's geometry is
+     about — where it is — so it is its own kind rather than a third diameter on
+     the first one. It stands at 1500mm on the floor and hangs off nothing.
+
+     `offCeiling`, FOR THE REASON THE SPLIT UNIT AND THE GEYSER CARRY IT: the
+     grid does not move for a thing that is not on the ceiling. A downlight in
+     the middle of a room is not obstructed by a lamp standing under it, and
+     feeding one in as an obstacle would punch a hole in a layout for something
+     that is not in its way. See the note over those two entries below.
+
+     WHICH IS ALSO WHY IT NEEDS A SOCKET AND NOTHING ELSE HERE DOES. Every other
+     fitting on this drawing is wired into a ceiling; a standard lamp is plugged
+     in. See LAMP_SOCKET_FT in lib/electrical.js for the reach that decides
+     whether it uses a plate already on the wall or gets one of its own.
+
+     450mm IS THE SHADE, which is what a plan view of one shows and what the
+     symbol is drawn to — see the standing-lamp branch in PlanCanvas. */
+  { id: 'standing_lamp', kind: 'standing_lamp', label: 'Standing lamp',
+    colour: '#404040', diaFt: 450 * MM, offCeiling: true },
   { id: 'ac',         kind: 'ac',         label: 'Cassette AC', colour: '#404040',
     wFt: 900 * MM, hFt: 900 * MM },
   /* --- AND TWO THINGS THAT ARE NOT ON THE CEILING AT ALL --------------------
@@ -119,8 +163,9 @@ export const offCeiling = (o) => OFF_CEILING.has(o?.kind);
 
 export const CEILING_BY_ID = Object.fromEntries(CEILING_TYPES.map((t) => [t.id, t]));
 
-/** A fan's sweep is the whole of the choice anyone makes about a fan. */
-export const FAN_SWEEPS = [900, 1200];
+/* A fan's sweep is the whole of the choice anyone makes about a fan. The list
+   and the default are at the top of this file, above the catalogue that seeds
+   itself from them. */
 export const sweepMm = (o) => Math.round((o.diaFt || 0) / MM);
 export const withSweep = (o, mm) => ({ ...o, diaFt: mm * MM });
 
@@ -214,8 +259,21 @@ export function sizeLabel(o) {
 
    RE-EXPORTED UNDER THE NAMES THE CALL SITES ALREADY USE, for `penLengthFt`'s
    reason: renaming them at forty of them would be a change about nothing. */
+/* AND THE MOVE ADAPTERS WITH THEM, which is the half that had been left behind.
+   A CEILING OBJECT IS A BOX AND ITS POSITION IS ITS CENTRE, so `at`/`to`,
+   "does this modifier apply" and "which frames of the gesture are a
+   translation" are three facts about a box and not three about a chandelier —
+   see `boxAdapters`, `boxOrtho` and `boxMoves` in box.js. They were spelled out
+   inline in the object drag, character for character, which is the divergence
+   this whole re-export exists to prevent: two copies of one rule, and the day
+   `boxMoves` learns a fourth mode only one of them hears about it.
+   THROUGH THIS FILE AND NOT IMPORTED DIRECTLY BY THE GESTURE, for the reason
+   the seven above are re-exported: the callers ask ceilingObjects.js what a
+   ceiling object does, and reaching past it to the primitive for three of its
+   verbs and not the other seven would be an inconsistency with no argument
+   behind it. */
 export { SIZE_LIMITS, clampFt, toLocal, toWorld, resizeFromCorner,
-         ROTATE_SNAP, rotateTo };
+         ROTATE_SNAP, rotateTo, boxAdapters, boxOrtho, boxMoves };
 
 /** The half-extents of an object's selection box, in feet. */
 export function halfExtents(o) {

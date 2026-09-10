@@ -80,6 +80,10 @@ export function useElectrical({
   const gestures = useBoardGestures({
     rooms, pxPerFt, svgPoint, svgRef, pressState, setSel, docActions,
     flowsPx, allBoardsPx, setBoardOutlet: panel.setBoardOutlet,
+    /* THE PLACED OBJECTS, FOR ONE COMMAND ONLY. `socketForLamp` needs to know
+       what else is standing in the room before it decides whether a plate has
+       to go up — see `lampPlateToShare`. */
+    obstaclesPx,
   });
 
   /**
@@ -173,6 +177,12 @@ export function useElectrical({
       resetBoard: panel.resetBoard,
       deleteBoard: panel.deleteBoard,
       placeBoardAt: gestures.placeBoardAt,
+      /* THE ONE COMMAND ON THIS LIST THAT ANOTHER DOMAIN CALLS. Placing a
+         standing lamp can oblige the electrical drawing to grow a socket — see
+         `socketForLamp` — and the lamp is placed by the fixtures feature, so
+         this is handed across rather than being reached for. It is a command
+         and not a rule: it writes a plate, once, at the moment of placement. */
+      socketForLamp: gestures.socketForLamp,
       openBoardPlace: boardStep.openBoardPlace,
       closeBoardPlace: boardStep.closeBoardPlace,
       clearPlacedBoards,

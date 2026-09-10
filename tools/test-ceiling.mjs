@@ -12,7 +12,8 @@
 import { CEILING_TYPES, makeCeilingObject, radiusFt, toObstaclePx,
          sizeLabel, clampFt, resizeFromCorner, rotateTo, toLocal, toWorld,
          halfExtents, isUniform, applyResize, ROTATE_SNAP, isRect, sweepMm,
-         withSweep, offCeiling } from '../src/lib/ceilingObjects.js';
+         withSweep, offCeiling, FAN_SWEEPS, FAN_SWEEP_MM, CEILING_BY_ID,
+         boxAdapters, boxOrtho, boxMoves } from '../src/lib/ceilingObjects.js';
 import { collectTargets, snapPoint, guideLine } from '../src/lib/snapGuides.js';
 import { planLights, surfaceDistance } from '../src/lib/planner.js';
 import { PLAN_OPTIONS } from '../src/lib/settings.js';
@@ -21,8 +22,42 @@ let fail = 0; const ok = (c,m)=>{console.log((c?'  ok  ':'  FAIL')+'  '+m); if(!
 const near=(a,b,e=1e-3)=>Math.abs(a-b)<=e;
 
 ok(CEILING_TYPES.map(t=>t.id).join(',')
-     === 'fan,chandelier,pendant,ac,split_ac,geyser,trapdoor',
-  `seven types, in catalogue order: ${CEILING_TYPES.map(t=>t.id).join(', ')}`);
+     === 'fan,chandelier,pendant,standing_lamp,ac,split_ac,geyser,trapdoor',
+  `eight types, in catalogue order: ${CEILING_TYPES.map(t=>t.id).join(', ')}`);
+// --- AND THE STANDING LAMP IS ITS OWN KIND, WHICH THE PENDANT IS NOT --------
+// THE SPLIT IS WHERE THE THING IS. A pendant shares the chandelier's kind
+// because it differs only in diameter; a standard lamp stands on the FLOOR, and
+// every question this catalogue's geometry answers turns on that. It reserves
+// nothing (a downlight over a lamp is not obstructed by it) and it is the one
+// fitting on the drawing that has to be plugged in rather than wired into a
+// ceiling — see LAMP_SOCKET_MM in lib/electrical.js.
+ok(makeCeilingObject('standing_lamp',{x:0,y:0}).kind === 'standing_lamp',
+  'a standing lamp is its own kind, not a chandelier');
+ok(offCeiling(makeCeilingObject('standing_lamp',{x:0,y:0})),
+  '...and it is off the ceiling, so no layout opens a hole for it');
+ok(!isRect(makeCeilingObject('standing_lamp',{x:0,y:0}))
+   && sizeLabel(makeCeilingObject('standing_lamp',{x:0,y:0})) === '450 mm ⌀',
+  'round, at the shade\'s own 450mm');
+// --- AND EVERY ONE OF THEM MOVES AS THE PRIMITIVE, NOT AS ITSELF -----------
+// A CEILING OBJECT IS A BOX — a centre, two extents and an angle — so `at`/`to`
+// and "which frames are a translation" belong to box.js and not to any one
+// fitting. They were written out inline in the object drag, identical to these
+// and with nothing keeping them identical. This asserts they come from the
+// primitive, so a lamp, a pendant and a fan cannot come to move differently.
+{
+  const a = boxAdapters();
+  const lamp = makeCeilingObject('standing_lamp', { x: 3, y: 4 });
+  ok(a.at(lamp).x === 3 && a.at(lamp).y === 4,
+    'a ceiling object\'s position is its centre, read by the box primitive');
+  const moved = a.to(lamp, { x: 9, y: 1 });
+  ok(moved.x === 9 && moved.y === 1 && moved.diaFt === lamp.diaFt
+     && moved.kind === lamp.kind,
+    '...and a move writes the centre, leaving the size and the kind alone');
+  ok(boxMoves({ mode: 'move' }) && !boxMoves({ mode: 'resize' })
+     && !boxMoves({ mode: 'rotate' }),
+    'only the move mode is a translation — a corner drag is not a thing going anywhere');
+  ok(boxOrtho() === true, 'and a box move honours the shift lock');
+}
 // --- SEVEN IDS AND SIX KINDS, WHICH IS THE POINT OF HAVING BOTH -------------
 // A PENDANT IS A CHANDELIER AT HALF THE DIAMETER. Nine files in this app decide
 // what a fitting does by testing `kind === 'chandelier'` — the grid keeps off
@@ -54,9 +89,22 @@ ok(!isRect(makeCeilingObject('geyser',{x:0,y:0})), 'and a geyser is round');
 ok(toObstaclePx(makeCeilingObject('geyser',{x:0,y:0}), 30).offCeiling === true,
   'the flag survives the conversion to plan pixels');
 const fan = makeCeilingObject('fan',{x:0,y:0});
-ok(near(radiusFt(fan), 3.937/2, 0.01), 'a fan defaults to 1200 sweep -> 1.97ft radius');
-ok(sweepMm(fan) === 1200 && sweepMm(withSweep(fan, 900)) === 900, 'the sweep is switchable and round-trips');
-ok(near(radiusFt(withSweep(fan, 900)), 2.953/2, 0.01), '900 sweep -> 1.48ft radius');
+/* --- THE SWEEP IS THE WHOLE OF THE CHOICE, AND THERE ARE FOUR OF THEM -------
+   600 OVER A UTILITY, 900 AND 1050 IN A BEDROOM, 1200 IN A LIVING ROOM. They
+   are asserted as a list rather than one at a time because the point is that
+   the catalogue and the bar read the SAME list: a fifth size added to one and
+   not the other is the failure this is here to catch. */
+ok(FAN_SWEEPS.join() === '600,900,1050,1200', `the four sweeps a fan is sold at: ${FAN_SWEEPS}`);
+ok(CEILING_BY_ID.fan.sweepsMm === FAN_SWEEPS,
+  'and the catalogue names that list rather than keeping a second copy');
+/* 900 AND NOT 1200. The default is the commonest fitting, not the largest —
+   seeding the biggest means every ordinary bedroom fan is a correction. */
+ok(FAN_SWEEP_MM === 900 && sweepMm(fan) === 900, `a fan defaults to 900 sweep (${sweepMm(fan)})`);
+ok(near(radiusFt(fan), 2.953/2, 0.01), '...which is a 1.48ft clearance radius');
+ok(FAN_SWEEPS.every((mm) => sweepMm(withSweep(fan, mm)) === mm),
+  'every one of the four is switchable and round-trips');
+ok(near(radiusFt(withSweep(fan, 1200)), 3.937/2, 0.01), '1200 sweep -> 1.97ft radius');
+ok(near(radiusFt(withSweep(fan, 600)), 1.969/2, 0.01), '...and 600 -> 0.98ft');
 ok(isRect(makeCeilingObject('ac',{x:0,y:0})) && isRect(makeCeilingObject('trapdoor',{x:0,y:0}))
    && !isRect(fan), 'rectangular vs round is the only split the maths cares about');
 const td = makeCeilingObject('trapdoor',{x:0,y:0});

@@ -356,6 +356,60 @@ say('5. THE SUGGESTED GRID PROPOSES WHAT AUTO PLACE LIGHTS WOULD PUT DOWN');
 }
 
 // --- 6. the schedule renders too --------------------------------------
+// --- 6a. the two decorative lamps put their own marks on the sheet -------
+say('6a. A PENDANT AND A STANDING LAMP DRAW THEIR OWN SYMBOLS');
+{
+  const r = room(box(24, 18));
+  const obj = (id, typeId, kind, x, y) => ({
+    id, typeId, kind, source: 'placed',
+    x: x * S, y: y * S, r: 0.74 * S, diaFt: 0.74 * 2, w: 0, h: 0, rot: 0,
+    shape: 'circle', offCeiling: kind === 'standing_lamp',
+  });
+  const L = { ...LAYERS, fan: true };
+  /* A PENDANT AND A CHANDELIER SHARE A `kind` ON PURPOSE — see
+     ceilingObjects.js — so the ONE thing that can tell their marks apart on a
+     rendered sheet is the branch order in the canvas. That is what this pins:
+     three fittings of one kind, three different drawings. */
+  const pend = draw(r, { fansPx: [obj('pd', 'pendant', 'chandelier', 8, 8)], layers: L });
+  const chan = draw(r, { fansPx: [obj('ch', 'chandelier', 'chandelier', 8, 8)], layers: L });
+  const stand = draw(r, { fansPx: [obj('sl', 'standing_lamp', 'standing_lamp', 8, 8)],
+                          layers: L,
+                          fittingOutput: () => ({ watts: 7, lumens: 525 }) });
+  ok(pend !== chan,
+    'a pendant and a chandelier of the same kind do not draw the same mark');
+  ok(stand !== pend, '...and a standing lamp draws a third thing again');
+
+  /* THE POOL OF LIGHT IS WHAT SAYS "THIS EMITS", and it is the one mark both
+     lamps have and no other object on this layer does. `lp-pulse` is the
+     breathing class and `lp-glow` the ramp it is filled from — see the note by
+     the grid's own pool. */
+  const glows = (h) => (h.match(/lp-pulse/g) ?? []).length;
+  ok(glows(pend) > 0 && pend.includes('url(#lp-glow)'),
+    'a pendant carries a breathing pool of light');
+  ok(glows(stand) > 0, '...and so does a standing lamp');
+  ok(glows(chan) === glows(draw(r, { fansPx: [], layers: L })),
+    'and a chandelier deliberately does not — it was not asked to change');
+
+  /* THE BODY IS CUT FROM THE ACCENT RAMP, like every other fitting on the
+     sheet, which is what takes the two of them off the objects' own white/amber
+     compromise. See `emits`. */
+  ok(pend.includes('url(#lp-core)') && stand.includes('url(#lp-core)'),
+    'both lamps fill their body from the fitting ramp rather than from a flat ink');
+
+  /* AND NO CLEARANCE RING ON THE ONE THAT RESERVES NOTHING. A standing lamp is
+     off-ceiling: the grid does not move for it, so a dashed circle round it
+     would be drawing a hole in a layout that has none. */
+  const dashes = (h) => (h.match(/stroke-dasharray/g) ?? []).length;
+  ok(dashes(stand) < dashes(pend),
+    'a standing lamp draws no clearance ring and a pendant does');
+
+  // THE CARD'S OWN NUMBERS ARE NOT IN THE MARKUP — a tooltip is raised by a
+  // pointer and this is a static render — so what is asserted here is that
+  // wiring the resolver changes nothing about the drawing and throws nothing.
+  ok(stand.startsWith('<svg'),
+    'and the sheet still renders with an output resolver wired');
+}
+
 say('6. THE SCHEDULE RENDERS');
 {
   const { buildBOQ } = await import('../src/lib/boq.js');

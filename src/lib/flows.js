@@ -75,7 +75,7 @@
 
 import { pointInPolygon } from './geometry.js';
 import { footGeometry, BED_GRID_DEFAULTS } from './bedGrid.js';
-import { servesBay } from './electrical.js';
+import { servesBay, nearestLampPlate } from './electrical.js';
 import { CEILING_BY_ID } from './ceilingObjects.js';
 
 export const FLOW_DEFAULTS = {
@@ -333,6 +333,22 @@ export function planFlows({
   spots = [],
   tracks = [],
   boards = [],
+  /* --- THE PLATES ON THIS ROOM'S WALLS THAT SOMEBODY PUT THERE -------------
+     A THIRD LIST OF BOARDS, AND IT HAS TO BE THIRD. `boards` is the rules'
+     FALLBACK POOL — what a row of downlights may be switched from when its bay
+     names no owner — and it is deliberately the door and bay plates only. A
+     hand-placed plate has never been in it, and a standing lamp's plate must
+     not be: it is a socket at 300mm behind a lamp, and a ceiling falling back
+     to it would be a room switched from a point nobody stands at.
+     BUT THE LAMP HAS TO BE ABLE TO FIND ITS OWN PLATE, and until this list
+     existed it could not: the caller drops every socket-only plate out of
+     `boards` and hands those in as `outlets`, and a lamp's plate is NEITHER —
+     it is a switchboard, so it fell through both and the lamp had no plate in
+     reach, no wire and no modules. That was the whole of the defect.
+     SO THEY ARRIVE ON THEIR OWN AND ONLY SECTION 4a READS THEM. Nothing else in
+     this file is handed them, which is what keeps `boards` meaning exactly what
+     it meant before. */
+  handPlates = [],
   /* THE SOCKET OUTLETS IN THIS SPACE — `[{ id, x, y, amps }]`, in plan pixels.
      Plates with one socket and no switch, dropped on a wall by hand. See
      `placedBoards` in electrical.js for what one is and why it is the only
@@ -467,7 +483,7 @@ export function planFlows({
    * end up bowing opposite ways.
    */
   const add = ({ kind, tag, label, what, nodes, bayKey, order = 'chain',
-                 board: given = null, also = null, extra = {} }) => {
+                 board: given = null, fallback = true, also = null, extra = {} }) => {
     const pts = nodes.filter((n) => n && Number.isFinite(n.x) && Number.isFinite(n.y));
     if (!pts.length) return null;
     /* THE ID BEFORE THE BOARD, because the board may be an answer keyed on the
@@ -483,7 +499,22 @@ export function planFlows({
        rules, so deleting a board un-assigns the wires that named it rather than
        leaving them switched from a plate that is not there. */
     const forced = assign[flowId] ? byIdAll.get(assign[flowId]) ?? null : null;
-    const board = forced ?? given ?? boardFor(bayKey, centroid(pts));
+    /* `fallback` IS WHETHER "THE NEAREST PLATE THAT CAN SWITCH SOMETHING" IS AN
+       ANSWER FOR THIS FITTING, and for one of them it is not.
+       EVERY CEILING FLOW WANTS IT. A row of downlights whose bay names no owner
+       is switched from the nearest board and that is a good rule.
+       A STANDING LAMP DOES NOT. Its plate is decided by REACH — three feet, at
+       socket height — and falling through to "the nearest plate" would wire a
+       lamp to a board across the room the moment its own socket was deleted,
+       which is a wire nobody could build from. So it passes `false`, and with no
+       plate in reach and no hand assignment it comes out with no board: a lamp
+       with nowhere to plug in, said plainly.
+       THE HAND ASSIGNMENT IS UNAFFECTED BY ANY OF THIS, and that is the point of
+       taking `forced` first. Three feet is the rule for what the app does BY
+       ITSELF; drag a lamp's wire onto a plate fifty feet away in another room
+       and it goes there, because somebody said so. See `boardPool`, which is
+       every plate on the drawing and is what the assignment resolves against. */
+    const board = forced ?? given ?? (fallback ? boardFor(bayKey, centroid(pts)) : null);
     const seat = order === 'walk' ? walk(pts, board?.point)
       : order === 'fixed' ? pts
       : towards(pts, board?.point);
@@ -855,6 +886,79 @@ export function planFlows({
     });
   }
 
+  /* --- 4a. the standing lamps ----------------------------------------------
+     THE ONE FITTING ON THIS DRAWING THAT IS PLUGGED IN AND NOT WIRED, which is
+     why it is its own section rather than a third entry in `POWERED` above. A
+     fan and a pendant are fed from the ceiling and their flow runs to whichever
+     plate the RULES say switches that piece of ceiling — the nearest one that
+     can carry a bay. A standard lamp stands on the floor with a lead on it, so
+     the question is not "which plate switches this ceiling" but "which plate can
+     this lamp actually reach", and the answer is a distance: see LAMP_SOCKET_FT
+     in electrical.js for the figure and why it is the lamp's flex.
+
+     ITS OWN SOCKET FIRST, AND THAT IS THE CASE THAT DRAWS NOTHING. Placing a
+     lamp out of reach of every plate seats a socket outlet on the nearest wall
+     (see `objectDown` in features/fixtures/useFixtureGestures.js), and that
+     outlet is already a flow of its own — section 0 — running back to the
+     nearest board and growing the switch there. So the wire is drawn once. A
+     second wire from the lamp to a plate a foot behind it would be a mark
+     saying nothing, over the top of the one that says everything.
+
+     A PLATE IN REACH GETS THE SOCKET AND ITS SWITCH. That is the other half of
+     `lampPlateInReach`: the lamp names the plate outright with `board`, rather than
+     falling back through `boardFor` to whatever switches the ceiling, because
+     reach is the whole of the decision here. `pointsFromFlows` in
+     switchboards.js reads `kind: 'lamp'` and puts a socket and its switch on
+     that plate — the pair, because a lamp needs somewhere to plug in and the
+     board's SPARE socket is explicitly the one nobody has claimed.
+
+     AND NOTHING AT ALL WHEN NOTHING IS IN REACH, which is a lamp placed before
+     this rule existed or one whose outlet was deleted afterwards. No flow, no
+     module, no invented socket: the honest picture of a lamp with nowhere to
+     plug in. Re-place it, or drop a plate beside it, and it wires itself. */
+  /* EVERY PLATE IN THIS ROOM THAT COULD CARRY A SWITCHED SOCKET — the rules'
+     own boards and the ones somebody put on a wall, which is where a lamp's own
+     plate lives. See `handPlates`. `lampPlateInReach` drops the socket-only ones
+     itself, so this list does not have to. */
+  const lampPlates = [...live, ...handPlates.filter((b) => b && b.point)];
+  for (const ob of objects) {
+    if (ob.kind !== 'standing_lamp') continue;
+    if (!Number.isFinite(ob.x) || !Number.isFinite(ob.y)) continue;
+    const label = CEILING_BY_ID[ob.typeId]?.label ?? 'Standing lamp';
+    /* NO REACH CAP ON THE WIRE — see `nearestLampPlate`. Three feet decides
+       whether a socket has to go UP, and once one is there it is this lamp's
+       socket at whatever distance the wall happened to be. Capping the wire too
+       left a lamp in the middle of a room with a plate it could not reach: a
+       blank frame and a fitting wired to nothing. */
+    const plate = nearestLampPlate(ob, lampPlates)?.board ?? null;
+    /* THE FLOW IS MADE WHETHER OR NOT ANYTHING IS IN REACH, and it used to be
+       skipped when nothing was. That was wrong for a reason that only shows up
+       later: a hand assignment is stored AGAINST A FLOW ID, and the wire is
+       what somebody drags onto another plate — so a lamp with no flow has no
+       wire to drag, no id to store against, and no way ever to be connected by
+       hand. Refusing to draw the automatic answer also refused the manual one.
+       WITH NO PLATE AND NO ASSIGNMENT IT COMES OUT WITH NO BOARD, draws nothing,
+       and earns no module. That is the honest picture of a lamp with nowhere to
+       plug in, and it is a state the app does not produce by itself — placing a
+       lamp seats a plate — but reaches by deleting one. */
+    /* ONE FLOW PER LAMP, WHICH IS WHAT GIVES EACH ONE ITS OWN SOCKET. Two lamps
+       beside each other are two flows onto one plate, and `pointsFromFlows`
+       emits a socket and its switch for each — two pairs on one frame, which is
+       how it is built. A shared flow would have been one socket for two lamps. */
+    add({
+      kind: 'lamp', label, tag: `lamp-${ob.id}`,
+      what: `${label.toLowerCase()} — plugged into the plate beside it`,
+      nodes: [{ id: ob.id, x: ob.x, y: ob.y, what: label }],
+      bayKey: bayAt(ob)?.key ?? null, order: 'fixed',
+      board: plate,
+      /* NO "NEAREST PLATE" FALLBACK — see `fallback` in `add`. Three feet at
+         socket height is the whole of the automatic rule; anything further is
+         somebody's own decision, and that arrives as an assignment. */
+      fallback: false,
+      extra: { objectId: ob.id },
+    });
+  }
+
   // --- 5. the directional spots --------------------------------------------
   //
   // BY PROXIMITY, and it is the one grouping on this drawing that ignores the
@@ -893,6 +997,57 @@ export function planFlows({
     }
   }
 
+  /* --- 5a. the spot arrays ------------------------------------------------
+     AN ARRAY IS ONE DECISION, SO IT IS ONE SWITCH. A ring of twelve spots or a
+     run of four along a line is a geometry, a count and an offset — one thing
+     somebody set out, carrying one wattage and one optic between them. The
+     schedule has said so since arrays existed (`row.label = 'Spot array'` in
+     features/lighting-planner/lightingRules.js, one row whatever the count) and
+     this file did not know arrays were a thing at all.
+
+     WHAT THAT COST WAS A STARBURST. An array's lamps went into section 6 as
+     ordinary hand-placed COBs: seated in whatever cell they landed in, or — with
+     no grid under them — thrown to the proximity fallback in section 7, which
+     groups at `spotGroupFt`. Six feet is a sensible reach for picture lights and
+     is NARROWER THAN A RUN OF DOWNLIGHTS IS SPACED. So a four-lamp array at the
+     ordinary eight-foot pitch came out as four clusters, four flows, four
+     modules and four separate wires fanning out of one plate — which is exactly
+     what an array is not.
+
+     NO PROXIMITY TEST AT ALL, WHICH IS THE POINT. Sections 5 and 7 cluster
+     because they are RECOVERING a formation nobody recorded; an array HAS an
+     id, so its membership is a fact rather than a guess and no distance can
+     disagree with it. That is also why this runs before section 6 rather than
+     being another case inside it: the cell a lamp stands in is irrelevant to a
+     lamp that belongs to a named run.
+
+     IN THE ORDER THEY WERE SET OUT, which is the order they arrive in — see
+     `arrayLampsPx` in lib/fixtureProjection.js, which walks the offset path.
+     That makes the loop trace the run itself rather than a nearest-neighbour
+     path recovered from the points, and `chain` then turns the whole thing
+     round if the board is nearer the far end.
+
+     A LAMP A TRACK HAS SWALLOWED IS NOT ON IT. Same rule the downlights and the
+     directional spots follow: a fitting clipped into a profile is a module on
+     that rail and is fed by the rail's single connection. */
+  const arrays = new Map();
+  for (const c of lamps) {
+    if (!c?.arrayId || onTrack.has(c.id)) continue;
+    if (!Number.isFinite(c.x) || !Number.isFinite(c.y)) continue;
+    if (!arrays.has(c.arrayId)) arrays.set(c.arrayId, []);
+    arrays.get(c.arrayId).push(c);
+  }
+  for (const [aid, set] of arrays) {
+    const n = set.length;
+    add({
+      kind: 'array', tag: `array-${aid}`, label: 'Spot array',
+      what: `${n} spot${n === 1 ? '' : 's'} set out on one run, switched together`,
+      nodes: set.map((c) => ({ id: c.id, x: c.x, y: c.y, what: 'a spot on the run' })),
+      bayKey: bayAt(centroid(set))?.key ?? null,
+      extra: { arrayId: aid },
+    });
+  }
+
   // --- 6. the downlights, chunk by chunk -----------------------------------
   //
   /* A HAND-PLACED LAMP IS SEATED IN THE CELL IT STANDS IN, and then it IS a
@@ -919,6 +1074,12 @@ export function planFlows({
   const strays = [];
   for (const c of lamps) {
     if (!Number.isFinite(c?.x) || !Number.isFinite(c?.y)) continue;
+    /* AN ARRAY'S LAMPS ARE ALREADY ON A FLOW — see section 5a. They are not
+       seated in a cell and they do not fall to the proximity fallback in
+       section 7: their run is their formation, and the cell one of them
+       happens to stand in would only be a second, contradictory answer to
+       which switch it is on. */
+    if (c.arrayId && arrays.has(c.arrayId)) continue;
     const cell = cells.find((q) => inRect(c, q));
     // `kind: 'small'` BECAUSE THAT IS WHAT IT IS: one lamp in one cell. The
     // planner's other kind is a large fitting spanning several, which nothing a

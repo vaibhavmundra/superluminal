@@ -128,7 +128,8 @@ const Glyph = ({ d }) => (
 /**
  * `recommended` says the two figures showing are the engine's answer for the
  * point under the cursor and nobody has overruled them — it latches the chip,
- * and pressing it when it is not latched is the way back.
+ * and pressing it when it is not latched is the way back. THE CHIP IS DRAWN
+ * ONLY WHILE THE SPECIFICATION IS CLOSED; see the block that draws it.
  *
  * `dirty`, `placed`, `space`, `onThis`, `onAll`, `onKeep` AND `onDiscard` WERE
  * HERE AND ARE GONE. The first three described a wattage change waiting on a
@@ -346,22 +347,38 @@ export default function CobSpec({
           it is true; once something is standing instead, the same chip is the
           way back. The alternative was a second button called Reset, which is a
           word for the thing this already is. */}
-      {!array && (<>
+      {!array && (specOpen ? (<>
+        {/* --- CHANGE REPLACES THE SUMMARY; IT DOES NOT OPEN BESIDE IT -------
+            THE CLOSED ROW IS AN ANSWER: "Recommended · 7 W · 30° · Change".
+            THE OPEN ROW IS THE EDITOR FOR THAT ANSWER: wattage and beam. Showing
+            both at once repeats the same 7 W and 30° immediately before their
+            controls, and leaves a second Change button inside the very section
+            it just opened. That is two versions of one decision on one bar.
+
+            SO THE EDITOR REPLACES THE WHOLE CLOSED ROW. No Recommended chip, no
+            summary readout and no Change link remain once Change is pressed;
+            the slider's readout and the selected beam chip say everything the
+            open state needs to say. It stays open for this arming of the manual
+            tool, and putting the tool down unmounts the bar, closes this local
+            state and restores the engine recommendation — see `cobGesture` in
+            features/fixtures/useFixtureState.js. */}
+        {wattControl}
+        {SEP}
+        {beamControl}
+      </>) : (<>
+        {/* THE CLOSED ROW, AND ONLY THE CLOSED ROW, CARRIES THE ENGINE'S CLAIM.
+            Once an override exists the same chip is the one-press way back to
+            the recommendation. Change then replaces this entire group with the
+            controls above; it never duplicates it alongside them. */}
         <button type="button" aria-pressed={recommended} disabled={recommended}
           className={(recommended ? CHIP_ON : CHIP_OFF)
             + (recommended ? ' cursor-default' : ' border-black/12')}
           onClick={() => onRecommended?.()}>Recommended</button>
         <span className={`${VAL} ml-1.5 tabular-nums`}>{watts} W · {beam}°</span>
-        <button type="button" className={LINK} aria-expanded={specOpen}
-          style={{ color: specOpen ? '#000' : 'rgba(0,0,0,0.55)' }}
-          onClick={() => setSpecOpen((o) => !o)}>Change</button>
-        {specOpen && (<>
-          {SEP}
-          {wattControl}
-          {SEP}
-          {beamControl}
-        </>)}
-      </>)}
+        <button type="button" className={LINK} aria-expanded="false"
+          style={{ color: 'rgba(0,0,0,0.55)' }}
+          onClick={() => setSpecOpen(true)}>Change</button>
+      </>))}
 
       {/* --- AND A PLACED ARRAY SHOWS THEM OUTRIGHT ------------------------
           NO "CHANGE" HERE, AND THE ASYMMETRY IS THE POINT. Manual placing hides

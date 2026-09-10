@@ -1,6 +1,16 @@
 // ---------------------------------------------------------------------------
 // usePoint.js — THE POINT PRIMITIVE, BOUND TO THE CANVAS'S ONE DRAG LIFECYCLE.
 //
+// ===========================================================================
+// INHERITING FROM THIS PRIMITIVE MEANS INHERITING THE WHOLE GESTURE — move,
+// Option-copy, delete, the Shift ortho lock, the snap, the slop, the group
+// move, the snap-back and the refusal — ALL OF IT, ALWAYS, unless the user
+// says otherwise about that element in words. Migrating the arithmetic and
+// leaving the verbs is not a migration. THE FULL CONTRACT AND THE CHECKLIST
+// ARE AT THE TOP OF lib/point.js. Read it before migrating anything onto this.
+// ===========================================================================
+//
+//
 // WHAT IT IS FOR. lib/point.js says what a point IS — free, or a fraction of
 // another geometry — and hooks/useDrag.js already owns the lifecycle every
 // draggable thing on this canvas goes through: the capture, the slop, the

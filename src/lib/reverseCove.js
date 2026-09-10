@@ -48,6 +48,32 @@
 // ---------------------------------------------------------------------------
 
 import { cellRect } from './wallGrid.js';
+import { bbox } from './geometry.js';
+
+/**
+ * THE FOUR CORNERS OF A SLOT ON ANY STRAIGHT WALL.
+ *
+ * `p0` and `p1` are on the wall; `inward` points into the room. Keeping this
+ * as a quadrilateral is what lets a hand-placed reverse cove follow an angled
+ * outline without pretending the large axis-aligned box around it is the slot.
+ * `rect` remains as its bounding box for old readers and hit-testing, but the
+ * band, lip and tape below are the actual construction geometry.
+ */
+function bandOnWall(p0, p1, inward, depth) {
+  const q0 = { x: p0.x + inward.x * depth, y: p0.y + inward.y * depth };
+  const q1 = { x: p1.x + inward.x * depth, y: p1.y + inward.y * depth };
+  const band = [{ ...p0 }, { ...p1 }, q1, q0];
+  const box = bbox(band);
+  return {
+    band,
+    lip: [q0, q1],
+    run: [
+      { x: p0.x + inward.x * depth / 2, y: p0.y + inward.y * depth / 2 },
+      { x: p1.x + inward.x * depth / 2, y: p1.y + inward.y * depth / 2 },
+    ],
+    rect: { x0: box.minX, y0: box.minY, x1: box.maxX, y1: box.maxY },
+  };
+}
 
 export const REVERSE_COVE = {
   /**
@@ -115,8 +141,9 @@ export const wantsReverseCove = (type, o = REVERSE_COVE) => o.types.includes(typ
  * twenty-foot wall: it is thirteen feet and five, with an opening between them.
  * Panelling filling the thirteen is 65% of the wall and 100% of the segment it
  * is actually on — under the threshold by the first reading and over it by the
- * second, and the second is the one a person would give. The ceiling detail
- * cannot cross an opening, so neither can the arithmetic about it.
+ * second, and the second is the one a person would give. Detection uses those
+ * segments for its arithmetic; a hand-spanned cove is deliberately allowed to
+ * cross the head of an opening, as described at the top of this file.
  *
  * `doors` are whole-sheet detections in the same pixel space as the grid — the
  * ones this app already found to set the scale. A door is IN this wall if its
@@ -316,19 +343,17 @@ export function reverseCovesFor(element, grid,
  * only way to keep that true is for the two builders to sit where a change to
  * one is read next to the other.
  *
- * AXIS-ALIGNED WALLS ONLY, and the caller must have checked. Every rect in this
- * feature is `{x0,y0,x1,y1}` — the band, and the no-light zone derived from it —
- * so a slot on a diagonal wall has nowhere to be stored, not merely nowhere to
- * be drawn. The detector never meets the case because it works off an
- * axis-aligned wall grid; a hand tool pointing at a real polygon can, so it is
- * refused there rather than mis-stored here.
+ * ANY STRAIGHT WALL ANGLE. The detector still works from an axis-aligned wall
+ * grid, but the hand tool starts from the room's real polygon and therefore
+ * meets diagonal edges routinely. Its authoritative shape is `band`, a
+ * four-corner polygon parallel to that edge; `rect` is only the tight bounding
+ * box retained for readers that need bounds. Treating the bounding box as the
+ * slot would make a long 45-degree cove occupy half the room.
  *
  * `inward` IS THE NORMAL POINTING INTO THE ROOM, and it is the caller's to
- * supply because only the caller has the polygon. It decides two things that
- * have to agree: which side of the wall line the eight inches of band occupy,
- * and which of `top`/`bottom`/`left`/`right` this wall is called — and the
- * canvas draws the inner lip from that name, so a wrong answer is a lip on the
- * wall side and a band hanging outside the room.
+ * supply because only the caller has the polygon. It decides which side of the
+ * wall line the eight inches of band occupy; the inner lip is then stored as
+ * geometry, so the canvas never has to guess it from a page-axis label.
  */
 export function manualReverseCove({
   a, b, t0, t1, roomId, id, pxPerFt, inward, type = 'manual', opt = REVERSE_COVE,
@@ -339,7 +364,6 @@ export function manualReverseCove({
   if (!(L > 1e-9)) return null;
   const horizontal = Math.abs(dy) <= Math.abs(dx) * 1e-6;
   const vertical = Math.abs(dx) <= Math.abs(dy) * 1e-6;
-  if (!horizontal && !vertical) return null;
 
   const depth = (opt.widthIn / 12) * pxPerFt;
   // Clamped to the wall and ordered, so a drag that ran backwards or off the end
@@ -352,33 +376,19 @@ export function manualReverseCove({
   const u = { x: dx / L, y: dy / L };
   const p0 = { x: a.x + u.x * lo, y: a.y + u.y * lo };
   const p1 = { x: a.x + u.x * hi, y: a.y + u.y * hi };
+  const shape = bandOnWall(p0, p1, inward, depth);
 
-  // The wall's own extent in the axis the band is measured along: x for a wall
-  // that runs across the sheet, y for one that runs down it. This is the space
-  // every rect, base and bound in this feature lives in — see `seg` below.
-  const axisLo = horizontal ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
-  const axisHi = horizontal ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
-
+  /* The four legacy wall names still describe the two cardinal cases. An
+     angled wall is named for what it is; readers that need its geometry use
+     `band`/`lip`/`axis`, never this label. */
   const side = horizontal ? (inward.y > 0 ? 'top' : 'bottom')
-                          : (inward.x > 0 ? 'left' : 'right');
-  const rect = horizontal
-    ? { x0: Math.min(p0.x, p1.x), x1: Math.max(p0.x, p1.x),
-        ...(side === 'top' ? { y0: a.y, y1: a.y + depth }
-                           : { y0: a.y - depth, y1: a.y }) }
-    : { y0: Math.min(p0.y, p1.y), y1: Math.max(p0.y, p1.y),
-        ...(side === 'left' ? { x0: a.x, x1: a.x + depth }
-                            : { x0: a.x - depth, x1: a.x }) };
-
-  // The tape down the middle of the slot — one straight run, two ends, no
-  // corners. Same construction as the detector's, for the same reason.
-  const midAcross = horizontal ? (rect.y0 + rect.y1) / 2 : (rect.x0 + rect.x1) / 2;
-  const run = horizontal
-    ? [{ x: rect.x0, y: midAcross }, { x: rect.x1, y: midAcross }]
-    : [{ x: midAcross, y: rect.y0 }, { x: midAcross, y: rect.y1 }];
+    : vertical ? (inward.x > 0 ? 'left' : 'right') : 'angled';
 
   return {
-    id, roomId, rect, run, along: null,
-    wall: side, horizontal,
+    id, roomId, ...shape, along: null,
+    wall: side, horizontal: horizontal ? true : vertical ? false : null,
+    axis: { origin: { ...a }, unit: u },
+    range: { lo, hi }, inward: { ...inward },
     type,
     runLength: runPx,
     lengthFt: runPx / pxPerFt,
@@ -392,23 +402,16 @@ export function manualReverseCove({
     fraction: runPx / L,
     full: false,
     segment: 1, ofSegments: 1, split: false,
-    /* HOW FAR THE ENDS MAY BE DRAGGED — AND THESE ARE PLAN-PIXEL POSITIONS
-       ALONG THE WALL'S AXIS, NOT DISTANCES FROM THE WALL'S START.
-       I had them as `{ lo: 0, hi: L }`, which reads as the obvious thing and is
-       the wrong space entirely. `trimWallRun` compares them directly against
-       `rect.x0`/`rect.x1` (or y, on a vertical wall) — the same numbers the band
-       is drawn at — and the grip's drag writes its offset from the pointer's own
-       plan x. So on a wall out at x = 500..800 a cove whose band sat at 560..740
-       was being clamped into 0..300: the first nudge of a grip threw the slot
-       several rooms to the left and collapsed it to the minimum length, which on
-       screen is a cove that vanishes.
+    /* HOW FAR THE ENDS MAY BE DRAGGED, as distances along the wall from `a`.
+       The pointer is projected into this same frame by useAccentEditing, so a
+       diagonal drag has exactly one degree of freedom just like a cardinal one.
        `seg` and `bounds` ARE THE SAME HERE and different for a detected cove.
        There, `seg` is the piece of wall between doors that the 70% rule was
        measured against and `bounds` is the whole wall, because the ceiling runs
        over a door head. A hand-placed slot was never measured against anything
        and its whole wall is fair game, so both are the wall. */
-    seg: { lo: axisLo, hi: axisHi },
-    bounds: { lo: axisLo, hi: axisHi },
+    seg: { lo: 0, hi: L },
+    bounds: { lo: 0, hi: L },
     // The wall, kept, because a manual cove's ends are edited in ITS frame and
     // there is no wall grid to look the geometry up in later.
     wallLine: { a: { ...a }, b: { ...b } },
@@ -547,9 +550,10 @@ export const RUN_TRIM = {
 export function trimWallRun(item, trim = null,
                             { pxPerFt = null, minLenFt = RUN_TRIM.minLenFt } = {}) {
   if (!item) return item;
+  const oriented = !!(item.axis?.origin && item.axis?.unit && item.range && item.inward);
   const horiz = item.horizontal;
-  const lo0 = horiz ? item.rect.x0 : item.rect.y0;
-  const hi0 = horiz ? item.rect.x1 : item.rect.y1;
+  const lo0 = oriented ? item.range.lo : horiz ? item.rect.x0 : item.rect.y0;
+  const hi0 = oriented ? item.range.hi : horiz ? item.rect.x1 : item.rect.y1;
   const base = { lo: lo0, hi: hi0 };
   const a = Number(trim?.a) || 0;
   const b = Number(trim?.b) || 0;
@@ -566,6 +570,21 @@ export function trimWallRun(item, trim = null,
   let hi = hi0 - b * pxPerFt;
   lo = Math.max(segLo, Math.min(lo, segHi - min));
   hi = Math.min(segHi, Math.max(hi, lo + min));
+
+  if (oriented) {
+    const { origin, unit } = item.axis;
+    const p0 = { x: origin.x + unit.x * lo, y: origin.y + unit.y * lo };
+    const p1 = { x: origin.x + unit.x * hi, y: origin.y + unit.y * hi };
+    const shape = bandOnWall(p0, p1, item.inward, item.widthFt * pxPerFt);
+    return {
+      ...item, ...shape,
+      base, trimmed: true,
+      trimFt: { a: (lo - lo0) / pxPerFt, b: (hi0 - hi) / pxPerFt },
+      range: { lo, hi },
+      runLength: hi - lo,
+      lengthFt: (hi - lo) / pxPerFt,
+    };
+  }
 
   const across = horiz
     ? { y0: item.rect.y0, y1: item.rect.y1 }

@@ -862,6 +862,47 @@ sec('12. the adapter reads the app\'s own lists and invents nothing');
     near(ch.geom.c.z, h - DISTRIBUTION_PROFILES.chandelier.dropMm / 1000, 1e-9));
   ok('...with a radius taken from the object\'s own diameter', ch.geom.r > 0.2);
 
+  /* --- AND A STANDING LAMP STANDS, WHICH IS THE OTHER HALF OF ONE FAMILY ----
+     THE SAME `lamp` ROW AND A DIFFERENT PROFILE. A pendant and a floor lamp are
+     one accounting family — one split, one row in the schedule — and two
+     distributions, because one hangs 600mm under the slab and the other stands
+     1500mm off the floor. That is the split this table's header calls "keyed by
+     what a thing IS rather than by its family".
+     READ OFF `objectsInRoom` AND NOT `fansInRoom`, WHICH IS THE BUG THIS
+     GUARDS. A standing lamp is off-ceiling, so it is filtered out of the
+     obstacle list before a layout ever sees it — a pass reading that list could
+     not have found one, and the lamp would have lit nothing while appearing on
+     the drawing. */
+  const stand = buildRoomEmitters({
+    room: { ...room,
+      geo: { ...room.geo, fansInRoom: [],
+             objectsInRoom: [{ kind: 'standing_lamp', x: ftPx(4), y: ftPx(4),
+                               r: ftPx(0.74) }] },
+      plan: { ok: true, lightsPx: [] } },
+    analysis: { rows: [{ key: 'lamp', familyId: 'lamp', count: 1, metres: null,
+                         totalOutput: 525, beam: null }] },
+    metresPerPx, ceilingMm: 2700,
+  });
+  const sl = stand.find((q) => q.profileId === 'floor_lamp');
+  ok('a standing lamp is an emitter, and it takes the floor lamp\'s profile', !!sl);
+  ok('...a POINT and not a ring, because a 450mm shade is not a metre-wide one',
+    sl?.geom.kind === 'point');
+  ok('...at its own documented height above the FLOOR',
+    near(sl.geom.p.z, DISTRIBUTION_PROFILES.floor_lamp.heightMm / 1000, 1e-9),
+    `${sl.geom.p.z} m`);
+  ok('...carrying the whole of the lamp row\'s per-piece output', sl.lm > 0);
+  // AND NOTHING AT ALL WHERE THE OBJECT LIST ONLY HAS THE OBSTACLES IN IT: the
+  // fallback keeps a caller that hands in `fansInRoom` alone lighting its
+  // pendants, and a standing lamp was never in that list to begin with.
+  ok('a room whose object list is empty lights no lamp',
+    !buildRoomEmitters({
+      room: { ...room, geo: { ...room.geo, fansInRoom: [], objectsInRoom: [] },
+        plan: { ok: true, lightsPx: [] } },
+      analysis: { rows: [{ key: 'lamp', familyId: 'lamp', count: 1, metres: null,
+                           totalOutput: 525, beam: null }] },
+      metresPerPx, ceilingMm: 2700,
+    }).some((q) => q.profileId === 'floor_lamp' || q.profileId === 'chandelier'));
+
   // LENGTH ALLOCATION. The loop's four legs are 16, 9, 16 and 9 ft, so the two
   // long legs must carry the lumens the two short ones do not.
   const legs = sources.filter((s) => s.profileId === 'cove').map((s) => s.lm).sort((a, b) => a - b);

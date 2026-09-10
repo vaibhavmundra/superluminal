@@ -277,6 +277,26 @@ export const TRACK_SPOT_WATTS = [3, 5, 7, 9, 12];
 /** A floor or table lamp, per piece — and what a chandelier is counted as. */
 export const LAMP_WATTS = [5, 7, 9, 12];
 
+/**
+ * WHAT ONE OF THEM IS SPECIFIED AT, out of that list.
+ *
+ * SEVEN AND NOT NINE, AND THE THREE FITTINGS BEHIND IT ARE WHY. This family had
+ * no tool at all when it was written — a chandelier was routed into it and
+ * nothing else — so its default was the middle of a range for a product nobody
+ * could place. There are three now, all of them placed by hand from the Lamps
+ * flyout: a chandelier, a pendant and a standard lamp (see CEILING_TYPES in
+ * lib/ceilingObjects.js), and all three are specified at 7 W, which is what a
+ * decorative LED lamp of that size actually is.
+ *
+ * THE LIST IS UNTOUCHED, deliberately. 5, 9 and 12 W lamps exist and the panel
+ * still offers them per room; what changed is where a room STARTS, which is the
+ * only thing a default is. Same shape as the sconce's figure below — one number
+ * that is a product decision rather than a per-room one — kept as a default over
+ * a list rather than as a one-entry list because a lamp genuinely is chosen from
+ * a range and a sconce is not.
+ */
+export const LAMP_DEFAULT_WATTS = 7;
+
 /** A wall sconce, and there is one figure rather than a list: a sconce is a
  *  decorative fitting specified at 7 W, not a wattage anybody picks per room.
  *  A single-entry list is still a list, so nothing downstream special-cases it —
@@ -420,9 +440,23 @@ export const FIXTURE_FAMILIES = [
     watts: TRACK_SPOT_WATTS, defaultWatts: 5, lumens: null,
   },
   {
+    /* --- THE DECORATIVE LAMPS, AND THERE ARE THREE OF THEM NOW -------------
+       A CHANDELIER, A PENDANT AND A STANDARD LAMP, all placed by hand and all
+       counted here. The split is what it always was and is the reason this is
+       the family they land in: it is the only one of the six that describes a
+       fitting throwing in EVERY direction — a quarter at the ceiling, a quarter
+       at the floor, half out sideways through the shade — which is what a bare
+       decorative lamp does whether it hangs or stands.
+       WHERE THEY DIFFER IS THE MOUNT AND NOT THE SPLIT, and that difference is
+       the heatmap's business rather than this table's: `chandelier` hangs 600mm
+       under the slab and `floor_lamp` stands at 1500mm off the floor, which are
+       two entries in features/heatmap/profiles.js sharing this one accounting
+       row. See the note in that file's header on why it is keyed by profile and
+       not by family.
+       SEE `LAMP_DEFAULT_WATTS` for why the default is 7 and not 9. */
     id: 'lamp', label: 'Floor / table lamp', unit: 'nos', layer: 'accent',
     split: { ceiling: 0.25, walls: 0.5, floor: 0.25 },
-    watts: LAMP_WATTS, defaultWatts: 9, lumens: null,
+    watts: LAMP_WATTS, defaultWatts: LAMP_DEFAULT_WATTS, lumens: null,
   },
   {
     /* --- THE TWO THE BRIEF DID NOT NAME AT FIRST, AND THEY SAY SO -----------

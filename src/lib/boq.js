@@ -194,6 +194,19 @@ export const FIXTURES = [
 export const COORDINATION = [
   { id: 'fan',        label: 'Ceiling fan' },
   { id: 'chandelier', label: 'Chandelier / pendant' },
+  /* --- AND THE LAMP THAT STANDS, WHICH IS THE CHANDELIER'S CASE EXACTLY -----
+     THE SAME AWKWARDNESS AND THE SAME ANSWER — see the note in this file's
+     header. A standard lamp is a light, and it is a chosen object whose lamping
+     is not ours: nobody orders one off a lighting schedule, they buy the lamp
+     they liked and plug it in. So it is counted and not billed, like the
+     chandelier two lines up.
+     WHAT IT DOES OWE THE ELECTRICAL DRAWING IS A SOCKET, and that is not
+     counted here — the socket is a module on a plate and the switchboards are
+     scheduled in their own right. See LAMP_SOCKET_FT in lib/electrical.js.
+     A `kind` OF ITS OWN, so it is its own line: a chandelier and a pendant share
+     one because they are one item to anybody ordering them, and a floor lamp is
+     not the same purchase as either. */
+  { id: 'standing_lamp', label: 'Standing lamp' },
   { id: 'ac',         label: 'AC cassette unit' },
   { id: 'split_ac',   label: 'Split AC indoor unit' },
   { id: 'geyser',     label: 'Geyser / water heater' },
@@ -501,6 +514,16 @@ export function runMetres(zone, pxPerFt) {
  * `metres` is passed for a strip, which is the one fitting whose specification
  * depends on how long the run happens to be.
  */
+/* --- NO `note` ON THE CARD ANY MORE, AND THE FIELD IS STILL ON THE CATALOGUE
+   `FIXTURES[].note` IS THE SCHEDULE'S COLUMN and it stays exactly where it is:
+   "accent — concealed cove / under-cabinet" is a line a reader of the BOQ wants
+   and it is exported in the CSV. What it is not is something a hover card should
+   repeat. A card is a NAME AND ITS FIGURES — the wattage, the beam, the run —
+   and a sentence of product description under them is text nobody asked to
+   read, on a card that appears without being asked for.
+   SO THE ROWS ARE THE WHOLE ANSWER HERE. The field is not passed on rather than
+   being removed from the table, which is the split that matters: the schedule
+   keeps its words and the drawing keeps its numbers. */
 export function specsFor(kind, { metres = null } = {}) {
   const f = FIXTURE_BY_ID[kind];
   if (!f) return null;
@@ -513,7 +536,7 @@ export function specsFor(kind, { metres = null } = {}) {
       rows.push(['Run', metres != null ? `${metres.toFixed(2)} m` : 'no scale']);
     }
     rows.push(['Load', 'none — the heads draw']);
-    return { id: f.id, label: f.label, note: f.note, rows };
+    return { id: f.id, label: f.label, rows };
   }
   if (f.unit === 'm') {
     rows.push(['Run', metres != null ? `${metres.toFixed(2)} m` : 'no scale']);
@@ -529,7 +552,7 @@ export function specsFor(kind, { metres = null } = {}) {
     if (f.beam != null) rows.push(['Beam angle', `${f.beam}°`]);
     if (f.lumens != null) rows.push(['Output', `${f.lumens} lm`]);
   }
-  return { id: f.id, label: f.label, note: f.note, rows };
+  return { id: f.id, label: f.label, rows };
 }
 
 export function round(n, dp = 0) {

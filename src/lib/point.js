@@ -1,5 +1,76 @@
 // ---------------------------------------------------------------------------
 // point.js — A POINT, AS A PRIMITIVE. Free, or held on another geometry.
+// ---------------------------------------------------------------------------
+// ===========================================================================
+// ||                                                                       ||
+// ||   INHERITING FROM A PRIMITIVE MEANS INHERITING THE WHOLE GESTURE.     ||
+// ||   NOT THE ARITHMETIC. THE WHOLE GESTURE. EVERY TIME. NO EXCEPTIONS.   ||
+// ||                                                                       ||
+// ===========================================================================
+//
+// READ THIS BEFORE MIGRATING ANY ELEMENT ONTO ANY OF THE FIVE PRIMITIVES.
+//
+// When an element is asked to inherit from a primitive — this one, path.js,
+// span.js, region.js, box.js — it inherits ALL OF THE FOLLOWING, and it
+// inherits them AT ONCE. This is not a menu. There is nothing to opt into.
+//
+//     MOVE                dragging it puts it where the pointer says, under
+//                         its own constraint
+//     OPTION / ALT COPY   a twin, made once mid-drag, the original restored to
+//                         where it was picked up, the twin left selected and
+//                         still moving
+//     DELETE              the element and everything held on it
+//     SHIFT               the ortho lock — a straight line from where the
+//                         press was — for anything free to honour one
+//     SNAP                to the other things on the sheet, same rule
+//     THE SLOP            a press that never travels is a click and writes
+//                         nothing at all
+//     THE GROUP MOVE      one delta, every member's own constraint
+//     THE SNAP-BACK       a drag with nowhere to land leaves it where it was
+//     THE REFUSAL         a press on something that cannot be placed is not
+//                         taken
+//
+// IF ONE OF THOSE DOES NOT WORK AFTER A MIGRATION, THE MIGRATION IS NOT DONE.
+// It is a bug. It is not a scoping decision, it is not "the arithmetic is the
+// interesting part", and it is not something to mention in a summary and leave.
+// The whole reason these five files exist is so that no element ever has to be
+// taught any of it a second time. An element that inherits nine of the ten has
+// cost more than it saved: the logic is now in two places AND the thing still
+// does not work.
+//
+// THE ONLY THING THAT REMOVES A VERB IS THE USER SAYING SO, in words, about
+// that element. Not a guess that it "does not make sense here" — a plate can be
+// copied, a lamp can be copied, everything can be copied — and not an
+// awkwardness in the store. If a store makes a verb hard, the store is what
+// gets an adapter; see `boardSeatWrites` in features/electrical/boardRules.js,
+// which is one such adapter and is nine lines long.
+//
+// HOW THIS WENT WRONG, SO IT DOES NOT AGAIN. The switchboard plate was
+// "migrated" onto this primitive by routing `slideBoardTo` through
+// `constrainPoint` — its projection, its clamp, its refusals, all correct and
+// all verified identical. And the gesture was left as it was: `useDrag` was
+// handed no `at`, no `to`, no `setList` and no `copy`, because the plate's
+// position is written by a dispatch rather than into a list. So the plate could
+// not be Option-copied, and the migration was reported as done. The maths is
+// the half nobody can see. THE VERBS ARE THE HALF SOMEBODY USES.
+//
+// THE CHECKLIST, THEN. An element has inherited when it hands `useDrag` (or
+// `usePoint`, which is this file already wired to it):
+//
+//     at, to          the primitive's adapters — NEVER hand-written
+//     setList         some list the verbs can fork and restore. If the store is
+//                     not a list, write the adapter. It is not a reason to stop.
+//     members         at the press. An empty `startAll` has nothing to clone,
+//                     which is a copy that silently does nothing.
+//     copy, mintId    on, and an id minter for the twin
+//     onCopy          select the twin — it is what keeps moving
+//     ortho, snap     the primitive's answers, not the caller's guesses
+//
+// ...and when a test drives a whole press-move-modifier-release through it. See
+// tools/test-electrical.mjs, which drives a plate's Option-copy with no
+// renderer, and tools/test-drag.mjs, which is where the four rules are named.
+//
+// ===========================================================================
 //
 // WHAT IT IS FOR. Everything you can touch on this canvas is one of three
 // things, and until now only the middle one had a name:
@@ -211,6 +282,25 @@ export function resolvePoint(pt, host = null) {
  * honest answer to a drag with nowhere to land; moving it to the end of the run
  * instead would be putting a fitting somewhere nobody asked for.
  *
+ * IT IS HANDED THE WANTED POSITION AS WELL AS THE FRACTION, and the fourth
+ * argument is there because one domain's projection is not this file's.
+ *
+ * THE DEFAULT PROJECTION IS "NEAREST POINT ON THE HOST", computed on the line
+ * above, and for a module on a busbar that is the whole answer. A SWITCHBOARD'S
+ * IS NOT. A plate may not sit within half its own width of a corner and may not
+ * sit on a run too short to hold one, and — this is the part that cannot be
+ * recovered from a fraction — those exclusions are applied BEFORE the nearest
+ * wall is chosen, not after. A pointer in the notch of an L-shaped room is
+ * nearest to the re-entrant corner and belongs on the wall behind it, because
+ * the corner itself is not a place a plate can go. Handed only `wanted`, the
+ * veto would be correcting a fraction that had already committed to the wrong
+ * wall: measured over a grid of pointer positions in one L-shaped room that is
+ * a different answer at 71 of 546 of them, by as much as 38 feet.
+ *
+ * SO A DOMAIN WITH ITS OWN PROJECTION IS GIVEN WHAT IT NEEDS TO DO IT, and one
+ * without ignores the argument — `placeableU` takes two and is untouched. See
+ * `plateClampU` in lib/electrical.js for the other kind.
+ *
  * A CONSTRAINED POINT WITH NO HOST IS REFUSED rather than freed. Its host may
  * be missing because a lookup has not caught up yet, and quietly turning it
  * into a free point at the pointer would be an edit nobody made, to a record
@@ -221,7 +311,7 @@ export function constrainPoint(pt, want, host = null, { clamp = null } = {}) {
   if (!isConstrained(pt)) return { ...pt, x: want.x, y: want.y };
   if (!host?.pts?.length) return pt;
   const wanted = uAt(host.pts, want, { closed: !!host.closed });
-  const u = clamp ? clamp(wanted, pt, host) : wanted;
+  const u = clamp ? clamp(wanted, pt, host, want) : wanted;
   return u == null ? pt : { ...pt, on: host.id ?? pt.on, u: clampU(u) };
 }
 

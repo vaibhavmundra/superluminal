@@ -54,7 +54,8 @@ export function roomInFeet(room, pxPerFt) {
       yLines: (ch.yLines || []).map((y) => y / pxPerFt),
     })),
     cells: (plan.cellsPx || []).map(rect),
-    zones: (plan.zonesPx || []).map(rect),
+    zones: (plan.zonesPx || []).map((z) => ({ ...rect(z),
+      ...(z.polygon?.length ? { polygon: z.polygon.map(f) } : {}) })),
     fans: (plan.fansPx || []).map((fan) => ({ ...f(fan), r: (fan.r || 0) / pxPerFt })),
     lights: (plan.lightsPx || []).map((l) => ({
       // `kind` IS GEOMETRY, `fixture` IS PRODUCT, and every export needs the
@@ -94,6 +95,9 @@ export function toJSON(rooms, meta = {}) {
       areaSqft: r.areaSqft != null ? +r.areaSqft.toFixed(2) : null,
       noLightZones: r.zones.map((z) => ({
         x0: +z.x0.toFixed(3), y0: +z.y0.toFixed(3), x1: +z.x1.toFixed(3), y1: +z.y1.toFixed(3),
+        ...(z.polygon?.length ? { polygon: z.polygon.map((p) => ({
+          x: +p.x.toFixed(3), y: +p.y.toFixed(3),
+        })) } : {}),
       })),
       fans: r.fans.map((fan) => ({ x: +fan.x.toFixed(3), y: +fan.y.toFixed(3), r: +fan.r.toFixed(3) })),
       // which of the possible decompositions this layout was built on. Without
@@ -606,6 +610,45 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
       add(dxfDisc(LY_D, c, Math.min(L(rFt) * 0.42, L(DOT_MARK_FT))));
       continue;
     }
+    /* --- A STANDING LAMP IS A LIGHT FITTING TOO, AND ON THE SAME LAYER -----
+       `decorative` FOR THE CHANDELIER'S REASON. It is a chosen fitting whose
+       lamping is not ours, it is not part of the ceiling grid, and it is
+       emphatically not a `ceiling_object`: nothing on that layer emits and this
+       does. Without this branch it fell to the `else` below and left the
+       drawing with a lamp filed as an obstruction, drawn as a fan.
+       THE SYMBOL IS THE SCREEN'S, part for part — see the standing-lamp branch
+       in PlanCanvas. The shade at its real radius, four strokes off the
+       DIAGONALS, and a small ring with a cross in it for the lamp. The diagonals
+       are what tell it from a pendant on a printed sheet, where both are
+       otherwise one circle; the inner ring with the cross is the trade's own
+       mark for a lamp holder and does the job the chandelier's filled dot does.
+       NO FILLED DISC, DELIBERATELY. A solid blob and an open ring with a cross
+       both mean "this emits", and the ring is the one that survives being
+       plotted at a sensible line weight inside a 450mm circle. The chandelier
+       keeps its dot because its body is three feet across and has room for one.
+       THE RADII ARE THE SCREEN'S FRACTIONS OF `R0`, which is the body radius
+       here as it is there, so the two drawings cannot come apart without
+       somebody editing both. */
+    if (o.kind === 'standing_lamp') {
+      const c = P({ x: o.x, y: o.y });
+      const rFt = (o.r || 0) / px;
+      const R = L(rFt);
+      add(dxfCircle(LY_D, c.x, c.y, R * 0.86));
+      for (let k = 0; k < 4; k++) {
+        const a = (k * Math.PI) / 2 + Math.PI / 4;
+        const ux = Math.cos(a), uy = Math.sin(a);
+        add(dxfLine(LY_D, c.x + ux * R * 0.58, c.y + uy * R * 0.58,
+                          c.x + ux * R * 1.34, c.y + uy * R * 1.34));
+      }
+      const ri = R * 0.34;
+      add(dxfCircle(LY_D, c.x, c.y, ri));
+      for (let k = 0; k < 2; k++) {
+        const a = Math.PI / 4 + (k * Math.PI) / 2;
+        const ux = Math.cos(a) * ri, uy = Math.sin(a) * ri;
+        add(dxfLine(LY_D, c.x - ux, c.y - uy, c.x + ux, c.y + uy));
+      }
+      continue;
+    }
     if (o.w > 0 && o.h > 0 && (o.kind === 'ac' || o.kind === 'trapdoor')) {
       // Rotated in PIXELS and converted corner by corner. See the header: an
       // angle carried across the Y flip comes out mirrored, four points cannot.
@@ -691,10 +734,12 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
     // The tape is NOT drawn as well. It runs down the middle of a rectangle
     // whose width is the specification; a second line inside the first adds no
     // information and one more thing to snap to by accident.
-    if (a.fixture === 'reverse-cove' && a.rect) {
-      const { x0, y0, x1, y1 } = a.rect;
-      const ring = [{ x: x0, y: y0 }, { x: x1, y: y0 },
-                    { x: x1, y: y1 }, { x: x0, y: y1 }].map(P);
+    if (a.fixture === 'reverse-cove' && (a.band || a.rect)) {
+      const ring = (a.band ?? (() => {
+        const { x0, y0, x1, y1 } = a.rect;
+        return [{ x: x0, y: y0 }, { x: x1, y: y0 },
+                { x: x1, y: y1 }, { x: x0, y: y1 }];
+      })()).map(P);
       // FILLED, BECAUSE EIGHT INCHES OF CEILING IS AN AREA AND NOT A LINE.
       //
       // An outline alone was the whole of this before, and on a busy sheet it is

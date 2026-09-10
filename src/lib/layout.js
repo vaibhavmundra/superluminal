@@ -74,6 +74,24 @@ export function layoutRooms(input) {
     zones, reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes,
     projectId, designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks,
     isAdmin, autoLights,
+    /* --- EVERY PLACED OBJECT, INCLUDING THE ONES THAT ARE NOT OBSTACLES -----
+       `ceilingObstaclesPx` ABOVE IS THE PLANNER'S LIST AND IS DELIBERATELY
+       SHORTER. It has already had the off-ceiling entries filtered out (see
+       `offCeiling` in lib/ceilingObjects.js) because a split unit on a wall, a
+       geyser over a door and a lamp standing on the floor obstruct no downlight,
+       and feeding them in would punch holes in a layout for things that are not
+       in its way. That filter is right and stays.
+       BUT TWO READERS WANT THE OBJECT AND NOT THE OBSTACLE, and both of them
+       broke on the standing lamp: the analysis has to COUNT it as a lamp (see
+       `fixtureGroups`) and the heatmap has to LIGHT from it (see `emitters`), and
+       both were reading `geo.fansInRoom`, which is the obstacle list. A fitting
+       absent from both is a lamp on the drawing contributing nothing and
+       appearing in no row, which reads as a bug rather than as a decision.
+       SO THE FULL LIST COMES IN AS WELL, and `geo.objectsInRoom` is what those
+       two read. Defaulted, so a caller that hands in only the obstacles — every
+       test in tools/ — gets an empty list and behaves exactly as before rather
+       than throwing. */
+    obstaclesPx = [],
   } = input;
   /* THE SWITCH, READ ONCE PER LAYOUT — see the memo at the top of this file.
      A PLAIN BOOLEAN CAST AND NOT `!== false`, because the caller hands in a
@@ -98,6 +116,11 @@ export function layoutRooms(input) {
       // over THIS ceiling are obstacles in THIS layout, and a centre inside the
       // polygon is the test — a bed belongs to the room it is standing in.
       const mine = ceilingObstaclesPx.filter(
+        (f) => pointInPolygon({ x: f.x, y: f.y }, polygonPx));
+      /* THE SAME CONTAINMENT TEST OVER THE LONGER LIST — see `obstaclesPx` in
+         the signature. A superset of `mine`, so anything already reading
+         `fansInRoom` is unaffected. */
+      const myObjects = obstaclesPx.filter(
         (f) => pointInPolygon({ x: f.x, y: f.y }, polygonPx));
       const myZones = [
         // BY ROOM WHERE THE ZONE KNOWS ITS ROOM, and by containment otherwise.
@@ -161,7 +184,8 @@ export function layoutRooms(input) {
           || pointInPolygon({ x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 }, polygonPx)),
       ].map((z) => {
         const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
-        return { x0: a.x, y0: a.y, x1: c.x, y1: c.y };
+        return { x0: a.x, y0: a.y, x1: c.x, y1: c.y,
+                 ...(z.polygon?.length ? { polygon: z.polygon.map(toFt) } : {}) };
       });
       const originFt = { x: origin.x / pxPerFt, y: origin.y / pxPerFt };
       const localPt = (q) => ({ x: q.x - originFt.x, y: q.y - originFt.y });
@@ -273,6 +297,11 @@ export function layoutRooms(input) {
            inside a pointer handler on every frame. */
         polygonPlanFt: polygonPx.map((p) => ({ x: p.x / pxPerFt, y: p.y / pxPerFt })),
         fansInRoom: mine,
+        /* EVERY OBJECT STANDING IN THIS ROOM, obstacle or not. `fansInRoom` is
+           what the LAYOUT had to keep clear of; this is what is actually THERE,
+           which is the question the schedule and the heatmap ask. See
+           `obstaclesPx` in the signature for why they are two lists. */
+        objectsInRoom: myObjects,
         // THE SHAPE TRAVELS WITH IT. A rectangular object hands the planner
         // its own w/h/rot so clearance is measured from its faces; anything
         // without a shape stays the circle it always was, which is every fan
@@ -297,7 +326,8 @@ export function layoutRooms(input) {
         zonesFt: myZones.map((z) => {
           const a = toFt({ x: z.x0, y: z.y0 }), c = toFt({ x: z.x1, y: z.y1 });
           return { id: z.id, cls: z.cls, kind: z.kind, source: z.source,
-                   x0: a.x, y0: a.y, x1: c.x, y1: c.y };
+                   x0: a.x, y0: a.y, x1: c.x, y1: c.y,
+                   ...(z.polygon?.length ? { polygon: z.polygon.map(toFt) } : {}) };
         }),
         // THE SAME ROOM, WITHOUT THE FURNITURE. A bed is a no-light zone and a
         // no-light zone carves the room up — which is right for the grid (a
@@ -713,6 +743,37 @@ export function layoutRooms(input) {
          re-cut a piece of ceiling; with no fittings on it there is nothing for
          the re-cut to move, so it would be a control over an answer that is not
          on the drawing. See AUTO_GRID. */
+      /* --- THE PIECES OF CEILING, KEPT ASIDE FROM THE PILL'S OWN LIST -------
+         THE SAME SPLIT `gridChunksPx` MAKES, and it is here for the same reason:
+         one list was answering two questions and got blanked for one reader's
+         sake, silently breaking the other's.
+         `designChunksPx` BELOW IS THE OPTION PILL'S — which chunk can be flipped
+         through its arrangements — and it is rightly empty while the grid is
+         off, because a pill offers to re-cut a piece of ceiling and there is
+         nothing on it for the re-cut to move.
+         THE ELECTRICAL PASS ASKS SOMETHING ELSE ENTIRELY: which pieces this
+         ceiling is CUT INTO, because a piece over 25 sqft is switched from its
+         own wall (see CHUNK_BOARD in lib/electrical.js, and `baysOfRoom`). That
+         is true whether or not the suggestion engine placed anything — the cut
+         is the chunker's, the fittings standing in it are the ones somebody laid
+         by hand, and they still need a switch each.
+         WHAT IT COST WAS THE SECOND BOARD. With the grid off, `baysOfRoom` fell
+         through to "the whole space is one bay", that one bay adopted the plate
+         beside the door, and a living-dining room cut into two — the exact case
+         the bay pass was written for — came out with one switchboard and the
+         sofa half switched from the far end of the room.
+         NOT FOLDED BACK INTO `designChunksPx`, deliberately. Making that list
+         survive would put a pill on every chunk with the grid off, which is the
+         control-over-nothing the blanking exists to prevent. Two readers, two
+         lists, each honest about its own question. */
+      const bayChunksPx = !built.plan?.ok ? [] : built.parts
+        .filter((p) => !p.chunk.shapeId)
+        .map((p) => ({
+          key: p.key,
+          rect: { x0: p.chunk.x0 * pxPerFt + origin.x, y0: p.chunk.y0 * pxPerFt + origin.y,
+                  x1: p.chunk.x1 * pxPerFt + origin.x, y1: p.chunk.y1 * pxPerFt + origin.y },
+        }));
+
       const designChunksPx = (!AUTO_GRID || !built.plan?.ok) ? [] : built.parts
         .filter((p) => !p.chunk.shapeId)
         .map((p) => ({
@@ -995,7 +1056,7 @@ export function layoutRooms(input) {
         // `plan.tracksPx`; this is what the SCHEDULE reads, and a schedule
         // measuring a profile off plan pixels would be measuring it off the
         // zoom. See buildBOQ, which takes the length from here.
-        design, designChunksPx, coves, coveStrips, tracks,
+        design, designChunksPx, bayChunksPx, coves, coveStrips, tracks,
         stats: outlineStats(o, pxPerFt),
       });
     }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import PlanCanvas from './components/PlanCanvas.jsx';
 import ChunkPicker from './components/ChunkPicker.jsx';
 import OutlineTracer from './components/OutlineTracer.jsx';
@@ -13,6 +13,15 @@ import { PLAN_OPTIONS,
             (see AUTO_GRID and the note in that list), and the ramp had no other
             reader in this file. */
        } from './lib/settings.js';
+/* THE LAMP FAMILY'S FIGURE AND THE FUNCTION THAT RESOLVES IT PER ROOM. Read by
+   `lampWatts`, the one thing in this file that has to state a wattage for a
+   fitting that stores none — see the note there. */
+/* THE LUMEN MODEL'S OWN THREE ANSWERS, read by `fittingOutput` — the one thing
+   in this file that has to state a wattage and an output for a fitting that
+   stores neither. Same calls `analyseSpace` makes, in the same order, which is
+   what keeps the hover card and the Analysis panel from disagreeing. */
+import { FAMILY_BY_ID, wattsFor, unitOutput,
+         lumensPerWattFor } from './lib/lumens.js';
 /* enumerateChunkings AND findChunking ARE GONE FROM THIS FILE. Both existed to
    run and resolve a second enumeration of the chunkings, on a different room
    from the one the drawing used — see the note in the rooms memo. There is one
@@ -153,7 +162,7 @@ import SwitchboardSheet from './components/SwitchboardSheet.jsx';
    a corner, rotating it and setting a fan's sweep are all features/fixtures/;
    what is read here is the label a palette prints, the sweep chips and the
    sweep the selected fan is at. */
-import { CEILING_BY_ID, FAN_SWEEPS, sweepMm } from './lib/ceilingObjects.js';
+import { CEILING_BY_ID, sweepMm } from './lib/ceilingObjects.js';
 import { collectTargets, SNAP_DEFAULTS } from './lib/snapGuides.js';
 /* PICKING A THING UP, MOVING IT, AND LEAVING A COPY BEHIND — the four rules
    every draggable object on this canvas needs and each of which has been got
@@ -168,6 +177,7 @@ import PdfPagePicker from './components/PdfPagePicker.jsx';
 import ToolRail from './components/ToolRail.jsx';
 import Popover, { PopoverButton } from './components/Popover.jsx';
 import StageBar, { SceneSwitch } from './components/StageBar.jsx';
+import FanSpec from './components/FanSpec.jsx';
 /* --- WHERE THE LIGHT LANDS, AND IT IS ONE IMPORT ------------------------
    FOUR NAMES OFF ONE FEATURE INDEX: the hook that computes the field, the
    overlay that draws it inside the drawing's own <svg>, the key, and the
@@ -2337,6 +2347,52 @@ export default function App({
     return poly && pointInPolygon(p, poly);
   }) || null, [rooms]);
 
+  /**
+   * WHAT ONE FITTING OF A FAMILY IS RATED AT AND WHAT IT PUTS OUT, where it is
+   * standing. `{ watts, lumens }`, or null for a family the model has never
+   * heard of.
+   *
+   * THE CARD UNDER THE POINTER AND THE PANEL BESIDE THE DRAWING MUST NOT
+   * DISAGREE, which is the whole reason this is a lookup rather than two
+   * constants. A room's wattage is a CHOICE — the Analysis panel offers the
+   * family's chips and `fixtureWatts` stores what was picked — and the lumens
+   * per watt is a fact about the COUNTRY (75 in India against 100 abroad, see
+   * `lumensPerWattFor`). A card printing 525 lm over a room somebody has set to
+   * 12 W, or over a project in Dubai, would be the drawing contradicting the
+   * reading two inches to its right.
+   *
+   * SO IT IS `wattsFor` AND `unitOutput`, WHICH ARE THE TWO FUNCTIONS
+   * `analyseSpace` RESOLVES ITS OWN ROWS WITH. Not a re-derivation of them: the
+   * same calls in the same order, so the figure on the card is the figure in the
+   * panel by construction rather than by coincidence — and the family's loss and
+   * its own lumens-per-watt come along for free, which is what makes this
+   * correct for a family whose numbers are not a plain multiplication.
+   *
+   * HERE AND NOT IN THE CANVAS, because the answer needs `fixtureWatts`, the
+   * project's country and the hit test that says which space a point is in, and
+   * all three of those are App's — the doors, the accents and the ceiling
+   * objects all ask `roomAt`. What the canvas gets is one function.
+   *
+   * THE ROOM COMES OFF THE THING WHERE IT KNOWS IT AND OFF ITS POSITION WHERE IT
+   * DOES NOT. An accent zone was placed by a rule that ran on one room and
+   * carries its `roomId`; a ceiling object stores none and belongs to whichever
+   * space it is standing in, which is the same rule `layoutRooms` uses to decide
+   * whose obstacle it is and `planFlows` uses to decide whose circuit it is on.
+   * A fitting in no room falls back to the family's own default rather than to
+   * nothing, because it is still a 7 W lamp — it is simply on no schedule.
+   *
+   * DIRECTLY BELOW `roomAt` FOR THE REASON THE COB'S MODEL IS: it needs it.
+   */
+  const fittingOutput = useCallback((familyId, at) => {
+    const family = FAMILY_BY_ID[familyId];
+    if (!family) return null;
+    const r = at?.roomId
+      ? rooms.find((q) => q.id === at.roomId)
+      : (Number.isFinite(at?.x) && Number.isFinite(at?.y) ? roomAt(at) : null);
+    const watts = wattsFor(familyId, (r && fixtureWatts[r.id]) || {}, familyId);
+    return { watts, lumens: unitOutput(family, watts, lumensPerWattFor(country)) };
+  }, [rooms, roomAt, fixtureWatts, country]);
+
   /* --- THE MANUAL DOWNLIGHT'S LIVE MODEL -----------------------------------
      THE FITTING FEATURE'S FOURTH CALL SITE, AND IT IS DOWN HERE BECAUSE
      `roomAt` IS. Which space the pointer is over decides the recommendation, the
@@ -2381,12 +2437,10 @@ export default function App({
    * side of a recess gives two separate walls to cove along, which is correct —
    * the ceiling does not run straight across the recess.
    *
-   * AXIS-ALIGNED ONLY, AND IT SAYS SO RATHER THAN COPING. Every rectangle in
-   * this feature is `{x0,y0,x1,y1}` — the band, and the no-light zone taken from
-   * it — so a slot on a diagonal wall has nowhere to be STORED, never mind
-   * drawn. The detector never meets the case because it works off an
-   * axis-aligned wall grid. A hand tool pointing at a real polygon does, and the
-   * honest answer is to refuse the click with a reason.
+   * AT THE WALL'S ACTUAL ANGLE. The seat keeps the edge's unit direction and
+   * inward normal; `manualReverseCove` turns those into an oriented four-corner
+   * band. No page-axis test belongs here: the outline is the authority, so an
+   * angled outline edge produces an angled slot.
    *
    * THE INWARD NORMAL IS DECIDED BY THE POLYGON, not by which side of a
    * bounding box the edge sits on. Probing a hair off the wall's midpoint and
@@ -2400,13 +2454,6 @@ export default function App({
     const dx = w.b.x - w.a.x, dy = w.b.y - w.a.y;
     const L = Math.hypot(dx, dy);
     if (!(L > 1e-9)) return null;
-    const horizontal = Math.abs(dy) <= Math.abs(dx) * 1e-6;
-    const vertical = Math.abs(dx) <= Math.abs(dy) * 1e-6;
-    if (!horizontal && !vertical) {
-      return { angled: true, reason: 'That wall runs at an angle. A reverse cove '
-        + 'is set out square to the ceiling, so it can only go on a wall that runs '
-        + 'straight across or straight down the sheet.' };
-    }
     // A hair off the midpoint, on both sides: whichever is in the room is in.
     const mid = { x: (w.a.x + w.b.x) / 2, y: (w.a.y + w.b.y) / 2 };
     const n = { x: -dy / L, y: dx / L };
@@ -2470,9 +2517,11 @@ export default function App({
     setAddTool(null); setStripFrom(null); setAddAt(null);
     setAddSnap(null); setAddGhost(null);
     setCoveFrom(null); setCoveNote('');
-    /* THE COB BAR, THE HALF-MADE CHANGE ON IT AND THE ARRAY BEING SET UP — the
-       fitting session's half, called where the block stood. `cobStanding`
-       deliberately survives it; see `reset.cobGesture`. */
+    /* THE COB BAR, THE SPECIFICATION STANDING ON IT AND THE ARRAY BEING SET UP
+       — the fitting session's half, called where the block stood. `cobStanding`
+       goes with the tool: the engine's recommendation is per CELL, so an
+       override carried into the next arming would discard an answer nobody had
+       heard. See `reset.cobGesture`. */
     fixtureReset.cobGesture();
     /* AND THE SPOT BETWEEN ITS TWO CLICKS — see `spotAim`. A body placed and
        not yet aimed is half a gesture, and putting the tool down is the answer
@@ -2690,6 +2739,11 @@ export default function App({
           addBoardPoint, removeBoardPoint, deleteBoard, placeBoardAt,
           openBoardPlace: enterBoardPlace, clearPlacedBoards,
           toggleLayer: toggleElectricalLayer,
+          /* HANDED STRAIGHT TO THE FIXTURE GESTURES, which is the one command on
+             that list another domain spends. Placing a standing lamp can oblige
+             a socket to appear on the wall behind it — see `socketForLamp` — and
+             the lamp is placed by the fixtures feature. */
+          socketForLamp,
           /* `closeBoardPlace` IS ALREADY IN SCOPE — it came off the step at the
              feature's first call site, because four other steps stand this one
              down and all four are defined above this line. Same function. */
@@ -3154,6 +3208,7 @@ export default function App({
     roomAt, insideAnyRoom, snapTargets, snapTol,
     arrayOutline, shapeAtPointer, geomUnder, geomHover, setGeomHover,
     clearShapeEdit, standDown,
+    socketForLamp,
     docActions, setSel, guides, setGuides, setOverRoom, setAddAt, setOptionPick,
   });
   /* THE NAMES THIS FILE ALREADY USED. The canvas props, the pointer router's
@@ -4158,7 +4213,6 @@ export default function App({
         const poly = seatRoom.plan?.polygonPx || seatRoom.geo?.polygonPx;
         const seat = coveWallAt(raw, poly);
         if (!seat) { setCoveNote('That space has no wall to cove along.'); return; }
-        if (seat.angled) { setCoveNote(seat.reason); return; }
         setCoveNote('');
         setCoveFrom({ ...seat, roomId: seatRoom.id });
         /* THE POINTER IS CAPTURED, exactly as the spot's marquee captures it.
@@ -4999,6 +5053,33 @@ export default function App({
   const moduleBarOn = !readOnly && addTool === 'module' && !!trackMode
     && !!moduleSpec && !geometry.bar.mode;
 
+  /* --- THE FAN'S BAR, AND THE SWEEP IT IS TALKING ABOUT --------------------
+     TWO TENSES, ONE BAR. With the tool armed it is the sweep the NEXT fan will
+     be placed at — the standing choice, which is sticky; with a fan selected it
+     is THAT fan's, read off the object, because a bar showing the standing
+     choice while a 600 sits selected underneath it would be a control lying
+     about the thing it is pointed at. `setFanSweep` writes both — see
+     `setSweep`, which sets the standing value and every selected fan in one
+     act — so the two tenses stay one control.
+
+     THE SELECTED FAN WINS WHEN BOTH ARE TRUE. Arming a tool does not clear the
+     selection, and the object in front of you is the more specific subject.
+
+     `!geometry.bar.mode` IS THE ONE-BAR-AT-A-TIME RULE, exactly as `moduleBarOn`
+     states it: the shape bar and this one stand in the same place at the foot
+     of the stage, and the shape bar is about what the DRAWING shows. */
+  const selFan = ceilingObjs.find((o) => o.id === selObjId && o.kind === 'fan') ?? null;
+  /* AND IT YIELDS TO THE THREE THAT WERE HERE FIRST. A fan selection and an
+     armed downlight cannot really coexist — the register holds one kind (see
+     selection.js) and arming either machine disarms the other — but a
+     SELECTION outlives a press that arms a tool, so "a fan is picked and the
+     COB tool is now in hand" is reachable, and two bars in one place is the
+     bug lib/selection.js was written to end. The tool in hand is the more
+     urgent subject; the fan is still there when it is put away. */
+  const fanBarOn = !readOnly && !geometry.bar.mode && !moduleBarOn
+    && addTool !== 'cob' && !selArrayBar && (armed === 'fan' || !!selFan);
+  const fanBarSweep = selFan ? sweepMm(selFan) : fanSweepMm;
+
   const sceneTail = !source || showTrace || prep || readOnly || sheetOpen ? null : (
     <SceneSwitch label="Electrical layer" on={layers.electrical}
       title={doorsOk
@@ -5704,7 +5785,7 @@ export default function App({
                track path, and those have to be thrown away with it — see the
                note there. It clears this cell's own bar too, which is right:
                switching gesture is not the moment to carry a slider position
-               across. `cobStanding` survives it deliberately. */
+               across, and `cobStanding` with them — see `reset.cobGesture`. */
             disarmAdd();
             setCobMode(m);
             /* THE DRAWER STAYS OPEN WHILE A GESTURE IS ARMED. It is the only
@@ -5799,6 +5880,11 @@ export default function App({
             closeTrackEdit(); closeBoardPlace();
             setArmed(null); setGhost(null);
             setCobOpen(false); setCobMode(null); setSel(clear());
+            /* PUT THE PREVIOUS PLACER DOWN BEFORE ARMING THE MODULE. In
+               particular this clears a manual COB wattage/beam override; a
+               module picked after a run of COBs is the end of that arming, and
+               returning to manual placement must ask the grid cell again. */
+            disarmAdd();
             setAddTool(next ? 'module' : null);
             setTrackMode(next);
             /* AND THE BAR AT THE FOOT OF THE DRAWING OPENS ON THE MODULE'S OWN
@@ -5859,8 +5945,14 @@ export default function App({
               if (t) setObjType(t);
               return;
             }
-            setAddTool(t); setStripFrom(null); setAddAt(null);
-            setCoveFrom(null); setCoveNote('');
+            /* THIS IS ALSO A REAL DISARM, even though another hand-placement
+               tool is armed immediately afterwards. The old inline clearing
+               covered strip/cove points but missed the COB's standing wattage
+               and beam, so using a sconce or spot between two manual COB runs
+               carried the old override into the new run. `disarmAdd` owns the
+               complete gesture boundary; the new tool is armed after it. */
+            disarmAdd();
+            setAddTool(t);
             // AND THE HALF-CLICKED RUN, for the reason `disarmAdd` throws one
             // away: leaving the points behind would mean coming back to the
             // track tool later and finding a path somebody abandoned three tools
@@ -6300,6 +6392,11 @@ export default function App({
               onZoneMove={readOnly ? null : onZoneMove}
               onZoneUp={readOnly ? null : onZoneUp}
               accents={accentZonesPx} switchboards={switchboardsPx} onFixture={setTip}
+              /* WHAT A FITTING ON THE SHEET IS RATED AT AND PUTS OUT, for its
+                 hover card. A FUNCTION AND NOT A PAIR OF FIGURES, because the
+                 answer is per space and per country — see `fittingOutput`
+                 directly above `roomAt`. */
+              fittingOutput={fittingOutput}
               /* --- THE HEATMAP, AS AN ELEMENT RATHER THAN AS DATA -----------
                  PlanCanvas TAKES THE PICTURE AND NOT THE FIELD, and that is the
                  direction the import rules already run in: a component does not
@@ -6555,9 +6652,14 @@ export default function App({
                 bar's `edit` state is withheld (`otherBar` in `shapeBarMode`),
                 so `geometry.bar.mode` is null unless something opened it. */}
             {!readOnly && addTool === 'cob' && !geometry.bar.mode && (
-              <CobSpec stage={stageRef} lead={autoLead} tail={sceneTail}
+              <CobSpec key={cobMode} stage={stageRef} lead={autoLead} tail={sceneTail}
                 watts={cobShow.watts} beam={cobShow.beam}
                 recommended={!cobStanding}
+                /* THE MODE IS ALSO THE EDITOR'S LIFETIME, hence the key. React
+                   otherwise preserves CobSpec's local `specOpen` while a
+                   batched manual-to-array switch replaces the props in place;
+                   returning to Manual would then reopen directly on controls
+                   even though the command and its override had been reset. */
                 /* STRAIGHT THROUGH, AND `cobInForce` IS THE BASE. A change here
                    is the choice from the next lamp on, which is what the second
                    of the two retired buttons used to mean and the only one of
@@ -6664,8 +6766,23 @@ export default function App({
                 standing switches at the two ends of it, both gated the same way
                 (see `autoLead`), and a bar drawn only when one of them survived
                 would be a bar that vanished the day their gates diverged. */}
+            {/* --- AND THE FAN'S, WHICH IS ITS ONE PROPERTY -----------------
+                A SWEEP IS A FOOT AND A HALF OF DIAMETER EITHER WAY, so it is a
+                decision made while the fan is in hand and not a row in a panel
+                behind a drawer — the journey the downlight's wattage and the
+                module's both made. `fanBarOn` carries the two tenses and the
+                one-bar-at-a-time rule; see it, and FanSpec's header for why the
+                Design column no longer holds a second copy of this. */}
+            {fanBarOn && (
+              <FanSpec stage={stageRef} lead={autoLead} tail={sceneTail}
+                sweepMm={fanBarSweep} onSweep={setFanSweep} />
+            )}
+            {/* `!fanBarOn` JOINS THE NEGATION FOR THE REASON THE OTHER FOUR ARE
+                IN IT: this is the same bar with nothing in front of the tail,
+                and drawn while a tool owns the position it would be a second
+                one stacked on the first. */}
             {!(!readOnly && (addTool === 'cob' || selArrayBar || geometry.bar.mode))
-              && !moduleBarOn && (autoLead || sceneTail) && (
+              && !moduleBarOn && !fanBarOn && (autoLead || sceneTail) && (
               <StageBar stage={stageRef} lead={autoLead} tail={sceneTail} label="Drawing" />
             )}
             {/* --- THE HEATMAP'S KEY ----------------------------------------
@@ -6718,7 +6835,8 @@ export default function App({
                 onOffsetFt={(ft) => setHeldOffset({ ft: Math.max(0, Number(ft) || 0) })}
                 radius={geometry.bar.mode === 'edit' && geometry.shapes.selected
                   && roundable(geometry.shapes.selected)
-                  ? { ft: geometry.shapes.selected.radiusFt || 0,
+                  ? { id: geometry.shapes.selected.id,
+                      ft: geometry.shapes.selected.radiusFt || 0,
                       max: maxRadiusFt(geometry.shapes.selected) } : null}
                 onTool={pickShapeTool}
                 onSides={(n) => { setShapeSides(n); setShapeAskSides(false); }}
@@ -6732,8 +6850,14 @@ export default function App({
                   if (geometry.bar.askSides) { setShapeAskSides(false); setShapeTool(null); return; }
                   abandonShape();
                 }}
-                onRadius={(ft) => geometry.shapes.selected
-                  && docActions.patchShape(geometry.shapes.selected.id, { radiusFt: ft })}
+                onRadius={(ft) => {
+                  const id = geometry.shapes.selected?.id;
+                  /* A RADIUS INVALIDATES THE WHOLE CEILING PLAN. The slider
+                     already collapses a drag to one commit in ShapeMenu; make
+                     that one rebuild non-urgent as well, so releasing its thumb
+                     and painting its final value are never held behind layout. */
+                  if (id) startTransition(() => docActions.patchShape(id, { radiusFt: ft }));
+                }}
                 onDuplicate={() => geometry.shapes.selected && duplicateShape(geometry.shapes.selected.id)}
                 onDelete={() => geometry.shapes.selected && deleteShape(geometry.shapes.selected.id)} />
             )}
@@ -8188,9 +8312,10 @@ export default function App({
                 </p>
               </div>
 
-              {/* WHY A GESTURE WAS REFUSED, and it belongs to the cove. A diagonal
-                  wall and a slot an inch long are both things a person can
-                  reasonably try and both have real reasons they cannot be done.
+              {/* WHY A GESTURE WAS REFUSED, and it belongs to the cove. A slot
+                  an inch long is something a person can reasonably try and it
+                  has a real reason it cannot be done. Angled walls are valid:
+                  the slot follows the outline edge at whatever angle it runs.
                   It used to sit under the palette; with the palette off screen
                   while the step is open, the answer has to be here or the click
                   simply does nothing and says nothing. */}
@@ -8661,37 +8786,24 @@ export default function App({
               IT KEEPS ITS PLACE UNDER THE LIGHTING, which the rename does not
               change: the lights are what somebody came here to lay out, and
               three of these six still shape where they can go. */}
-          {/* THE PALETTE IS IN THE RAIL NOW — see ToolRail — and what is left
-              here is the one PROPERTY it always carried underneath: a fan's
-              sweep. That is a fact about the object you have selected, which is
-              exactly what this column is for; the six buttons that placed them
-              were not.
+          {/* THE PALETTE IS IN THE RAIL NOW — see ToolRail — and the one
+              PROPERTY it carried underneath, a fan's sweep, HAS FOLLOWED THE
+              TOOL TO THE STAGE BAR. See FanSpec. It was the last thing in this
+              block, and it was in the wrong place for the reason the six
+              buttons above it were: a fan's sweep is a foot and a half of
+              diameter either way, and a decision that size is made while you
+              are choosing where the fan goes — not in a column on the other
+              side of the screen, behind a drawer that is shut while you place
+              it. THERE IS NO SECOND COPY OF IT HERE, deliberately: two controls
+              for one decision is exactly what retired the "AC or trap door"
+              chips that used to stand below.
+              WHAT IS LEFT IS THE TWO WARNINGS, which are not controls — one
+              says the drawing has no scale yet and the other says what the
+              armed tool is waiting for.
               THE HEADING WENT WITH THE PALETTE, for the reason the Lighting one
               did: it named a row of tools that is no longer here. */}
-          {(!pxPerFt || !!armed
-            || ceilingObjs.some((o) => o.id === selObjId && o.kind === 'fan')) && (
+          {(!pxPerFt || !!armed) && (
           <div className={SEC}>
-            {/* A fan's sweep, offered only when a fan is in play — armed, or
-                selected. It is the one property of the four that is a standard
-                size rather than something to drag to. */}
-            {(() => {
-              const obj = ceilingObjs.find((o) => o.id === selObjId);
-              if (armed !== 'fan' && obj?.kind !== 'fan') return null;
-              const current = obj?.kind === 'fan' ? sweepMm(obj) : fanSweepMm;
-              return (
-                <div className="flex gap-1 mt-[7px]">
-                  {FAN_SWEEPS.map((mm) => (
-                    <button key={mm} type="button"
-                      className={current === mm ? PROP_ON : PROP_OFF}
-                      /* EVERY SELECTED FAN, NOT JUST THE PRIMARY — see
-                         `setSweep`, which carries the argument. */
-                      onClick={() => setFanSweep(mm)}
-                      >{mm} sweep</button>
-                  ))}
-                </div>
-              );
-            })()}
-
             {/* THE "AC OR TRAP DOOR" CHIPS WERE HERE, and they were the cost of
                 one shared palette cell: the button placed a rectangle and this
                 row said which rectangle it was. The cassette and the hatch have

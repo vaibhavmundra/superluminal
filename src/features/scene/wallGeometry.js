@@ -148,12 +148,13 @@ export function buildWardrobeZones({ wardrobesPx }) {
  * is actually enforced.
  *
  * Not by a new rule in every placer — there are four of them and they would
- * drift — but by the band joining the list of rectangles that every placer in
- * this app already keeps out of. Eight inches of ceiling with tape in it is
- * exactly the same kind of fact as a hole for a beam.
+ * drift — but by the band joining the shared list of zones that every placer
+ * in this app already keeps out of. An angled band keeps its polygon as well as
+ * its bounding box, so the two large triangles beside it remain usable ceiling.
  */
 export function buildReverseCoveZones({ reverseCoves }) {
   return reverseCoves.map((c) => ({ id: c.id, roomId: c.roomId, ...c.rect,
+                                   polygon: c.band,
                                    kind: 'reverse-cove' }));
 }
 

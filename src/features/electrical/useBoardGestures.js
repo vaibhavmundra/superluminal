@@ -7,17 +7,19 @@
 // the other a wire being aimed, and both are gone the moment the pointer is
 // released. What they COMMIT goes through `docActions` like everything else.
 // ---------------------------------------------------------------------------
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useDrag } from '../../hooks/useDrag.js';
-import { boardUnder, slideBoardTo } from '../../lib/electrical.js';
+import { boardUnder, wallHostFor, boardAsPoint, boardAdapters,
+         boardU } from '../../lib/electrical.js';
+import { uAt } from '../../lib/point.js';
 import { canGrab } from '../../lib/pressOwner.js';
 import { select } from '../../lib/selection.js';
-import { seatForClick } from './boardRules.js';
+import { seatForClick, lampSocketSeat, boardSeatWrites } from './boardRules.js';
 import { newManualBoardId } from './boardSheet.js';
 
 export function useBoardGestures({
   rooms, pxPerFt, svgPoint, svgRef, pressState, setSel, docActions,
-  flowsPx, allBoardsPx, setBoardOutlet,
+  flowsPx, allBoardsPx, setBoardOutlet, obstaclesPx = [],
 }) {
   const [boardDrag, setBoardDrag] = useState(null);   // {id, roomId, origin, live}
   /* THE GESTURE IN FLIGHT: `{ id, kind, key, origin, live, at, overId }`.
@@ -66,25 +68,95 @@ export function useBoardGestures({
      Without it a click that wobbles one pixel writes a hand position onto a
      board that was exactly where the rule put it, and the plate is then marked
      "moved by hand" for the life of the plan. */
+  /* --- THE PLATES THIS GESTURE IS WORKING ON, AS POINTS -------------------
+     `useDrag` MOVES AND FORKS A LIST, and a plate does not live in one: a
+     hand-placed plate is a `manualBoards` entry, a rule board's hand position is
+     a `boardMoves` value, and the two are told apart in the reducer on purpose.
+     So the list handed to the hook is the gesture's own — the members it picked
+     up, as point records — and `setList` below is the one place it is turned
+     back into dispatches. Everything between the two is the primitive's.
+     A REF AND NOT STATE, because `setList` takes an UPDATER and two moves can
+     fire before a re-render; a value read out of a render would be a frame
+     behind the one the last write produced. */
+  const seats = useRef([]);
+
+  /** The room's walls, as the host a plate is a point on. @see wallHostFor */
+  const hostOf = useCallback((roomId) => {
+    const r = rooms.find((q) => q.id === roomId);
+    return wallHostFor(r?.plan?.polygonPx ?? [], pxPerFt);
+  }, [rooms, pxPerFt]);
+
+  /** One plate, as the point the primitive moves. */
+  const seatOf = useCallback((b, roomId) => {
+    const host = hostOf(roomId);
+    if (!host) return null;
+    /* `sFt` WHERE THE PLATE HAS ONE AND THE PROJECTION WHERE IT HAS NOT. A
+       hand-placed plate stores its distance round the walls; a rule board's
+       position came out of its own rule and it stores none, so the only answer
+       is where it actually stands — which is `uAt`, the primitive's own
+       projection, and exact because the plate is on the wall by construction. */
+    const u = Number.isFinite(b?.sFt)
+      ? boardU(b.sFt, host)
+      : uAt(host.pts, b?.point ?? { x: 0, y: 0 }, { closed: true });
+    return { ...boardAsPoint({ id: b?.id, sFt: 0 }, host), u,
+             id: b?.id, roomId, role: b?.role ?? null, host };
+  }, [hostOf]);
+
   const board = useDrag({
     state: [boardDrag, setBoardDrag],
     point: svgPoint,
     capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
     moved: (from, p) => Math.hypot(p.x - from.x, p.y - from.y)
       >= Math.max(3, (pxPerFt || 12) * 0.12),
-    onMove: (p, { drag: d }) => {
-      const r = rooms.find((q) => q.id === d.roomId);
-      const poly = r?.plan?.polygonPx;
-      if (!poly?.length) return;
-      const sFt = slideBoardTo(p, { polygonPx: poly, pxPerFt });
-      if (sFt == null) return;
-      /* WHICH STORE THIS LANDS IN IS DECIDED IN THE REDUCER, and on a
-         per-frame path that is not a style preference: read from here it would
-         be the membership as of the render that QUEUED the write, which is a
-         frame behind. See BOARD_SLID, which also carries the reason a
-         hand-placed plate has no `boardMoves` entry of its own. */
-      docActions.slideBoard(d.id, sFt);
+    /* --- THE PRIMITIVE'S OWN PAIR, AND EVERY VERB THAT COMES WITH THEM ------
+       THIS IS WHAT WAS MISSING. `slideBoardTo` had already been routed through
+       `constrainPoint`, so the plate's ARITHMETIC was the primitive's — and the
+       gesture still was not, because it wrote its answer in `onMove` and handed
+       `useDrag` no `at`, no `to`, no `setList` and no `copy`. Those four are
+       where Option-copy, the group move and the snap-back live, so the plate
+       inherited none of them. Migrating the maths and not the gesture is
+       migrating the half nobody can see. */
+    at: (m) => boardAdapters(m.host).at(m),
+    to: (m, p) => ({ ...m, ...boardAdapters(m.host).to(m, p) }),
+    /* OPTION-COPY, WHICH IS THE WHOLE POINT OF INHERITING. `useDrag` reads the
+       modifier live off each frame and calls `forkCopy` once — see RULE 4 there
+       — so the original goes back to where it was picked up and the twin is
+       what keeps moving, exactly as it does for a ceiling object. */
+    copy: true,
+    mintId: () => newManualBoardId(),
+    /**
+     * THE ONE PLACE A POINT BECOMES A DISPATCH — the deciding half of which is
+     * `boardSeatWrites`, pure and in boardRules.js so a whole Option-copy can
+     * be driven in a test with no renderer. What is left here is spending it.
+     *
+     * WHICH STORE A SLIDE LANDS IN IS DECIDED IN THE REDUCER, and on a
+     * per-frame path that is not a style preference: read from here it would be
+     * the membership as of the render that QUEUED the write, which is a frame
+     * behind. See BOARD_SLID, which also carries the reason a hand-placed plate
+     * has no `boardMoves` entry of its own. So this asks for a slide and does
+     * not care where it goes.
+     *
+     * A RECORD THAT WAS NOT THERE BEFORE IS A TWIN, and a twin is always a
+     * HAND-PLACED plate whatever it was copied from: there is no second door in
+     * the room and no second bay, so a duplicate of either is simply a plate
+     * somebody put on a wall. THE LAMP ROLE IS THE ONE THAT CARRIES OVER —
+     * copying a standing lamp's socket to make a second one should give another
+     * socket at 300mm and not a switch plate at 1200 — and it is named rather
+     * than passed through for that reason.
+     */
+    setList: (fn) => {
+      const before = seats.current;
+      seats.current = fn(before);
+      for (const w of boardSeatWrites(before, seats.current)) {
+        if (w.kind === 'add') docActions.addManualBoard(
+          { id: w.id, roomId: w.roomId, sFt: w.sFt, ...(w.role ? { role: w.role } : {}) });
+        else docActions.slideBoard(w.id, w.sFt);
+      }
     },
+    /* THE TWIN IS WHAT IS SELECTED, which is the convention everywhere this
+       gesture exists: Option, drag, release — and the plate you just positioned
+       is the one in hand, ready to be moved again or given its points. */
+    onCopy: ({ ids }) => { if (ids?.[0]) setSel(select('board', ids[0])); },
   });
 
   const boardPointerDown = (e, id, roomId) => {
@@ -111,8 +183,18 @@ export function useBoardGestures({
     /* NO ROOM, NO DRAG, AND STILL A SELECTION. A plate the board pass produced
        outside any space has no outline to slide along, so there is nothing for
        the gesture to resolve the pointer to — but it is still a thing you can
-       pick and read the card of. */
-    if (roomId) board.down(e, { id, roomId });
+       pick and read the card of. A room whose walls cannot hold a plate is the
+       same case and `seatOf` answers null for it. */
+    if (!roomId) return;
+    const seat = seatOf(allBoardsPx.find((b) => b.id === id), roomId);
+    if (!seat) return;
+    /* THE MEMBERS ARE WHAT THE HOOK MOVES AND FORKS, and handing none was the
+       other half of the omission: `startAll` was empty, so there was nothing
+       for a copy to clone even once `copy` was on. One plate today — a
+       multi-select of plates would seed several and move as one gesture, which
+       the primitive already does and this file does not yet offer. */
+    seats.current = [seat];
+    board.down(e, { id, roomId, members: [seat] });
   };
 
   const boardPointerMove = board.move;
@@ -245,11 +327,66 @@ export function useBoardGestures({
     docActions.addManualBoard({ id: newManualBoardId(), roomId: best.roomId, sFt: best.seat.sFt });
   }, [rooms, pxPerFt, docActions]);
 
+  /**
+   * ...AND THE SAME PLATE, SEATED BY A LAMP RATHER THAN BY A CLICK.
+   *
+   * A STANDARD LAMP IS PLUGGED IN AND NOTHING ELSE ON THIS DRAWING IS, so it is
+   * the one fitting whose placement can oblige the electrical drawing to grow.
+   * `lampSocketSeat` decides both halves — whether anything is in reach, and
+   * which piece of wall it goes on if not — and this spends the answer.
+   *
+   * THE SAME `manualBoards` LIST AND THE SAME KIND OF PLATE, deliberately.
+   * A socket the lamp asked for and a socket somebody dropped by hand are the
+   * same object: it is drawn the same, it can be dragged along its wall, re-rated,
+   * converted to a full switchboard or deleted, and it wires itself and grows its
+   * switch on the nearest board by the ordinary route (section 0 of flows.js).
+   * Deriving it instead would have meant a fourth source of plates for five
+   * readers to remember, and a socket that reappeared every time somebody deleted
+   * it.
+   *
+   * WHICH MAKES IT A DECISION AND NOT A DERIVATION, and that is the honest
+   * description: the lamp is where somebody put it, the socket is where it had to
+   * go, and from then on both are theirs to move. Moving the lamp afterwards does
+   * not chase the socket around — see the note in the README on the same choice
+   * for `manualBoards`.
+   *
+   * ONE DISPATCH IN THE SAME TICK AS THE LAMP'S, which is what makes the pair one
+   * undo step: the history coalesces a burst of changes into the state from
+   * before it, so placing a lamp and getting its socket is one Ctrl+Z. See
+   * QUIET_MS in lib/undo.js.
+   */
+  const socketForLamp = useCallback((p) => {
+    /* THE OTHER LAMPS ARE PART OF THE QUESTION, not just this one. A plate
+       seated hard against the lamp that asked for it is out of reach of the
+       next lamp four feet away, and two plates go up where one between them
+       would have served both — so the rule is handed everything standing in
+       the room and may answer "slide the one that is there" instead of
+       "add another". See `lampPlateToShare`. */
+    const lamps = obstaclesPx.filter((o) => o.kind === 'standing_lamp');
+    const best = lampSocketSeat(p, { rooms, plates: allBoardsPx, lamps, pxPerFt });
+    if (!best) return null;
+    /* MOVING A PLATE IS THE SAME WRITE A DRAG MAKES, which is what keeps this
+       to one mechanism: `sFt` is a distance round the room's walls and
+       `slideBoard` is what a hand dragging a plate along them writes. Nothing
+       here knows whether the plate is a lamp's or somebody's. */
+    if (best.slide) { docActions.slideBoard(best.slide, best.sFt); return best.slide; }
+    const id = newManualBoardId();
+    /* THE ROLE IS THE LOAD-BEARING FIELD AND IT USED TO BE MISSING. Without it
+       the plate came out of `placedBoards` as an ordinary hand-dropped board —
+       born a socket outlet, at switch height, with no switch on it and no way
+       for the lamp's wire to land on it. The role is what makes it a lamp's
+       plate: socket height, born a switchboard, no spare socket, and named for
+       what it serves. See LAMP_BOARD_ROLE in lib/electrical.js. */
+    docActions.addManualBoard({
+      id, roomId: best.roomId, sFt: best.seat.sFt, role: best.role });
+    return id;
+  }, [rooms, allBoardsPx, obstaclesPx, pxPerFt, docActions]);
+
   return {
     boardDrag, setBoardDrag, flowDrag, setFlowDrag,
     boardPointerDown, boardPointerMove, boardPointerUp,
     flowPointerDown, flowGripDown, flowPointerMove, flowPointerUp,
-    placeBoardAt,
+    placeBoardAt, socketForLamp,
   };
 }
 

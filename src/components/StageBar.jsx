@@ -22,6 +22,13 @@ import { useCallback, useEffect, useState } from 'react';
    FIXED AND MEASURED, NOT ABSOLUTE, which is the one non-obvious part: the
    stage is a SCROLL container, so a child positioned inside it scrolls away
    with the drawing, and a child of the <svg> would be scaled by the zoom.
+
+   *** THE CONTEXT MENU'S NON-NEGOTIABLE RULE: NOTHING ON THIS BAR EVER, EVER,
+   *** EVER WRAPS. NO TEXT ON IT IS EVER TWO LINES.                         ***
+   Read the banner over `className` in the component below before you put a
+   word on any bar that stands here. It is enforced once, on the container,
+   and it applies to every caller — CobSpec, ModuleSpec, FanSpec, ShapeMenu
+   and whatever is written next.
    --------------------------------------------------------------------------- */
 
 /** Its clearance from the foot of the stage. */
@@ -162,7 +169,34 @@ export default function StageBar({ stage, className = '', label = null,
          slider — and the position people have learned is the CENTRE of one row.
          The downlight bar carried `flex-wrap` and a 92vw cap for exactly the
          case this forbids; it grows sideways now. */
+      /* ===================================================================
+         ||                                                               ||
+         ||   NOTHING IN THIS BAR EVER WRAPS. NO TEXT ON IT IS EVER TWO   ||
+         ||   LINES. NOT A CAPTION, NOT A READOUT, NOT A CHIP, NOT A      ||
+         ||   LABEL ADDED IN SIX MONTHS BY SOMEBODY WHO HAS NOT READ      ||
+         ||   THIS. EVER.                                                 ||
+         ||                                                               ||
+         =====================================================================
+         `whitespace-nowrap` IS HERE, ON THE BAR, AND NOT ON THE THINGS INSIDE
+         IT — because `white-space` INHERITS. One declaration on the container
+         is the rule for every descendant it will ever have, including the ones
+         nobody has written yet; a class per label is a rule that holds until
+         the first label somebody forgets it on. "Sweep (mm)" broke over two
+         lines and "7 W · 30°" broke after the middle dot, both inside a bar
+         that already said `flex-nowrap` — because that governs the FLEX ITEMS
+         and says nothing whatever about the text inside one.
+         WHY IT MATTERS MORE HERE THAN ANYWHERE ELSE. This bar is one row,
+         centred on the drawing, and its height is whatever its tallest child
+         is. One caption breaking in two makes the whole bar taller, which
+         moves every control on it — including the one under the finger that is
+         reaching for it. It is the same argument `flex-nowrap` makes two lines
+         down and it is the same bug: a control that is not where it was a
+         moment ago.
+         THE BAR GROWS SIDEWAYS INSTEAD. That is the trade and it is settled —
+         if a bar gets too wide, the answer is fewer or shorter labels on it,
+         never a second line. */
       className={'fixed z-30 flex flex-nowrap items-center gap-0.5 rounded-[11px] '
+        + 'whitespace-nowrap '
         + 'bg-white border border-black/[0.10] shadow-[0_6px_24px_rgba(0,0,0,0.22)] '
         + 'px-1.5 py-1.5 ' + className}
       style={{ left: (box.left + box.right) / 2,

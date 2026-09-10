@@ -223,11 +223,20 @@ function point(country, p) {
  * a 16A outlet is not controlled by a 6A switch. The two are ordered switch-
  * first because that is how a plate reads left to right on site.
  */
-export function socketWithSwitch(country, { amps = null, source = 'design', what = null } = {}) {
+/* `flowId` IS OPTIONAL AND IT IS THE ONE FIELD THAT IS NOT ABOUT THE PART. A
+   module carries the id of the wire it is on so that picking either lights the
+   other — see `pickFlow` in App.jsx — and most callers of this function have no
+   wire: the spare pair and a point somebody added by hand exist because of a
+   decision, not because of a fitting. The standing lamp's pair does have one
+   (see the `lamp` branch in `pointsFromFlows`), so it can say so. Null rather
+   than absent for the rest, which is what every other point on a plate carries. */
+export function socketWithSwitch(country, { amps = null, source = 'design',
+                                            what = null, flowId = null } = {}) {
   const a = amps ?? lightSwitchA(country);
   return [
-    point(country, { kind: 'switch', amps: a, source, what: what ?? 'its socket', pairs: true }),
-    point(country, { kind: 'socket', amps: a, source, what }),
+    point(country, { kind: 'switch', amps: a, source, flowId,
+                     what: what ?? 'its socket', pairs: true }),
+    point(country, { kind: 'socket', amps: a, source, flowId, what }),
   ];
 }
 
@@ -293,6 +302,26 @@ export function pointsFromFlows(country, flows = [], boardId = null) {
       if (f.kind === 'socket') {
         out.push(point(country, { kind: 'switch', amps: f.amps ?? a, flowId: f.id,
                                   what: f.label, forOutlet: true }));
+      } else if (f.kind === 'lamp') {
+        /* A STANDING LAMP IS THE PAIR, AND IT IS THE ONLY FLOW THAT BRINGS ITS
+           OWN SOCKET WITH IT.
+           EVERY OTHER FITTING ON THIS DRAWING IS WIRED and needs a switch and
+           nothing else; a standard lamp is PLUGGED IN, so what its flow asks of
+           the plate is somewhere to plug into. Both modules, here, because the
+           socket is on THIS plate — which is what distinguishes it from the
+           outlet branch above, where the socket is over on the wall and only its
+           switch lands here.
+           AND NOT THE BOARD'S SPARE, which is the mistake this exists to avoid.
+           `composeSwitchboard` adds one socket over and above what the drawing
+           asked for — see the note on the spare pair in the header — and it is
+           explicitly the one nobody has claimed: the charger, the vacuum
+           cleaner. A lamp quietly taking it would leave the room a socket short
+           while the schedule looked unchanged.
+           AT THE LIGHT RATING, because a 7 W lamp is a light: the flow's own
+           reach test (`lampPlateInReach` in electrical.js) is about the lead, not
+           the load. */
+        out.push(...socketWithSwitch(country, {
+          amps: a, source: 'design', what: f.label, flowId: f.id }));
       } else if (f.kind === 'object' && f.label === 'Fan') {
         // BOTH, AND IN THIS ORDER. See the header: the switch turns it on, the
         // regulator is what the speed is left set to.

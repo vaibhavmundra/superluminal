@@ -257,8 +257,18 @@ libraries are used rather than reimplemented: `cob`, `magTrack`, `ceilingObjects
   the COB tool stays armed on a stray click on the margin, and a module press
   anywhere but on a run places nothing and does not disarm.
 - The COB run still owns one ceiling, the first lamp still chooses it and opens
-  its space on the Spaces tab, the tick and the cross still act only on the ids
-  placed since the tool was armed, and `cobStanding` still survives `disarmAdd`.
+  its space on the Spaces tab, and the tick and the cross still act only on the
+  ids placed since the tool was armed.
+- `cobStanding` NO LONGER SURVIVES `disarmAdd`, and that is a deliberate reversal
+  rather than drift. It used to, on the argument that a wattage set on the bar is
+  a decision about the session's fittings rather than about one arming of the
+  tool. What beat that is where the recommendation comes from: `recommendCob` is
+  asked about the room AND the cell under the pointer, so the engine's answer is
+  a different figure in every space and often in every cell — and an override
+  carried into the next arming silently discards an answer nobody had heard, in a
+  room it was never chosen for. Putting the tool down now returns the bar to the
+  engine, and an override lasts for as long as the run you are placing. See
+  `reset.cobGesture` in useFixtureState.js.
 - A chunk somebody overruled still answers for its whole chunk; a lamp still on
   the rule is still not a decision; the autoplace toggle still takes back only
   what is still the toggle's; and a dragged or re-specified lamp is still adopted.

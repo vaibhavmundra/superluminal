@@ -105,10 +105,16 @@ export default function usePlanScene({
     zones, reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes,
     projectId, designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks,
     isAdmin, autoLights,
+    /* BOTH LISTS, AND THE LAYOUT USES ONLY THE SHORTER ONE. See `obstaclesPx`
+       in layoutRooms: the obstacles are what the planner keeps clear of, and the
+       full list is what `geo.objectsInRoom` carries for the schedule and the
+       heatmap. Naming it in the deps costs a re-layout when an off-ceiling
+       object is placed, which is the same cost placing any other object pays. */
+    obstaclesPx,
   }), [source, pxPerFt, litOutlines, useBoundingRect, ceilingObstaclesPx, zoneList, zones,
       reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes, projectId,
       designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks, isAdmin,
-      autoLights]);
+      autoLights, obstaclesPx]);
 
   const drawnZones = useMemo(() => buildDrawnZones({ zones, rooms, enclosedZones }), [zones, rooms, enclosedZones]);
 

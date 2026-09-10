@@ -688,7 +688,12 @@ export async function plotToPDF({
   // builds and the tape is what gets ordered, so both are drawn — the band at
   // setting-out weight, the run at fitting weight.
   for (const c of coves) {
-    if (c?.rect) {
+    if (c?.band?.length >= 3) {
+      /* A hand-placed slot follows the wall, so its four real corners win over
+         the axis-aligned bounding box. The screen and DXF use the same polygon;
+         a plotted diagonal cove must not turn back into a large rectangle. */
+      polyline(page, T, c.band, WEIGHT.setout, true, line);
+    } else if (c?.rect) {
       const a = T.p({ x: c.rect.x0, y: c.rect.y1 });
       const w = T.len(c.rect.x1 - c.rect.x0), h = T.len(c.rect.y1 - c.rect.y0);
       // THE SLOT IS THE ONE MARK ON THIS SHEET WITH A REAL WIDTH — eight inches

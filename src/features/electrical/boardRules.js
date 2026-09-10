@@ -9,11 +9,13 @@
 // without a renderer.
 // ---------------------------------------------------------------------------
 import { planSwitchboards, planChunkBoards, asDrawn, asOutlet, heightsFor,
-         innerSpaceFor, nearestBoardTo, nearestSeat, placedBoards } from '../../lib/electrical.js';
+         innerSpaceFor, nearestBoardTo, nearestSeat, placedBoards,
+         lampPlateInReach, lampPlateToShare,
+         LAMP_BOARD_ROLE, plateHeightMm, boardSFt } from '../../lib/electrical.js';
 import { bedZoneIn } from '../../lib/bedGrid.js';
 import { lightSwitchA } from '../../lib/switchboards.js';
 import { isOutdoor } from '../../lib/roomTypes.js';
-import { bbox } from '../../lib/geometry.js';
+import { bbox, pointInPolygon } from '../../lib/geometry.js';
 
 /**
  * THE BOARDS THAT COST NOTHING, WITHOUT ASKING FOR THEM.
@@ -147,8 +149,23 @@ export function planBoardResults({ rooms = [], doors = [], roomTypes = {}, proje
  */
 export function baysOfRoom(r) {
   if (!r.plan?.ok) return [];
-  if (r.designChunksPx?.length) {
-    return r.designChunksPx.map((c) => ({ key: c.key, rect: c.rect }));
+  /* `bayChunksPx` AND NOT `designChunksPx`, WHICH IS THE FIX. The two hold the
+     same cut and differ in one thing: the pill's list is emptied while the
+     suggested grid is off — correctly, a pill there would offer to re-cut a
+     piece of ceiling with nothing on it to move — and this one is not. How a
+     ceiling is CUT is not a fact about whether the engine placed anything on
+     it, and it is the whole of what a bay is.
+     READING THE PILL'S LIST MEANT NO SECOND BOARD. With the grid off this fell
+     to the line below, the whole space came out as one bay, that bay adopted the
+     plate beside the door, and a living-dining room cut into two — the case this
+     pass exists for — got one switchboard. See `bayChunksPx` in lib/layout.js.
+     THE OLD LIST IS STILL CONSULTED as a fallback, for a room laid out by a
+     caller that carries only it: every test in tools/ builds its rooms by hand,
+     and a bay list that went empty for them would be a silent behaviour change
+     in the pass under test. */
+  const cut = r.bayChunksPx?.length ? r.bayChunksPx : r.designChunksPx;
+  if (cut?.length) {
+    return cut.map((c) => ({ key: c.key, rect: c.rect }));
   }
   const b = bbox(r.plan.polygonPx);
   return [{ key: 'room', rect: { x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY } }];
@@ -285,7 +302,28 @@ export function planOutdoorFeeds({ rooms = [], roomTypes = {}, projectId = null,
 export function boardModeOf(b, { boardKinds = {}, country } = {}) {
   const o = boardKinds[b?.id] ?? {};
   return {
-    outlet: o.outlet ?? !!b?.placed,
+    /* --- WHAT A PLATE IS BORN AS, AND A LAMP'S IS NOT AN OUTLET ------------
+       A HAND-DROPPED PLATE IS BORN A SOCKET OUTLET because that is the
+       commonest thing somebody means by dropping one: a socket on a wall,
+       switched from the board by the door.
+       A STANDING LAMP'S PLATE IS BORN A SWITCHBOARD, and that is the fix. It
+       was born an outlet with the rest — so it arrived on the drawing carrying
+       one socket and NO SWITCH, which is precisely what a lamp may not have.
+       An outlet's switch lives on the board its wire runs to, and there is no
+       sense in a plate three feet from a lamp whose switch is across the room.
+       Worse, an outlet cannot be a flow's board, so the lamp had no wire to it
+       either and a second lamp beside it got nothing at all.
+       BORN A SWITCHBOARD, EVERY ONE OF THOSE FOLLOWS. The lamp's flow can land
+       on it, so the wire is drawn; `pointsFromFlows` sees `kind: 'lamp'` and
+       puts a socket AND its switch on the plate; and a second lamp within three
+       feet lands on the same plate and grows a second pair rather than a second
+       frame. See LAMP_BOARD_ROLE in lib/electrical.js.
+       STILL AN OVERRIDE ANYBODY MAY GIVE. `o.outlet` wins, so a person who
+       genuinely wants the switch elsewhere can tick it across — and the lamp
+       then has no plate in reach that can carry a switched socket, loses its
+       wire, and says so by having none. That is the honest consequence of the
+       tick rather than a state to prevent. */
+    outlet: o.outlet ?? (!!b?.placed && b?.role !== LAMP_BOARD_ROLE),
     amps: o.amps ?? lightSwitchA(country),
   };
 }
@@ -381,9 +419,12 @@ export function handBoards(r, { manualBoards = [], boardsOff = [], pxPerFt = 0 }
 }
 
 /** The height a plate is actually set at, override or rule. */
-export function heightOf(b) {
-  return b?.heightsMm?.[0] ?? heightsFor(b?.role)[0] ?? 1200;
-}
+/* THE EXPRESSION MOVED TO electrical.js AND THIS DELEGATES. `lampPlateInReach`
+   has to ask the same question — a plate above 750mm is not something a floor
+   lamp plugs into — and two copies of "the override, then the role, then 1200"
+   is how the plate a lamp refuses comes to differ from the height its card
+   prints. See `plateHeightMm`. */
+export const heightOf = plateHeightMm;
 
 /**
  * ONE CLICK SEATS A PLATE ON THE NEAREST WALL THAT CAN HOLD ONE.
@@ -416,4 +457,111 @@ export function seatForClick(p, { rooms = [], pxPerFt = 0 } = {}) {
   // person pointed.
   if (!best || best.seat.d > Math.max(24, pxPerFt * 4)) return null;
   return best;
+}
+
+/**
+ * A STANDING LAMP HAS LANDED — DOES IT NEED A SOCKET OF ITS OWN, AND WHERE?
+ *
+ * THE ONE FITTING ON THIS DRAWING THAT IS PLUGGED IN. Everything else is wired
+ * into a ceiling and the cable is run to wherever it has to go; a standard lamp
+ * has a lead, so it either reaches a plate that already exists or it needs one
+ * put on the wall behind it. See LAMP_SOCKET_FT in lib/electrical.js for the
+ * reach and why it is short.
+ *
+ * NULL MEANS "NOTHING TO DO", AND THE TWO CASES IT COVERS ARE WORTH SEPARATING.
+ * A plate that can carry a switched socket within reach — the board by the door,
+ * or the plate the LAST standing lamp put on this wall — is what this lamp plugs
+ * into as well, and seating a second frame beside it would be a plate nobody
+ * asked for. What the second lamp still gets is its own SOCKET AND SWITCH, as
+ * two more modules on that plate: its flow lands there and `pointsFromFlows`
+ * emits the pair. Two lamps, two sockets, one frame — which is how it is built.
+ * A BARE SOCKET OUTLET IS NOT SUCH A PLATE and `lampPlateInReach` skips it: an
+ * outlet has no switch on it by definition, so a lamp "served" by one would have
+ * no way to be turned off at the wall. That is the same test flows.js runs when
+ * it decides which plate the lamp's wire runs to, which is why it is one
+ * function in electrical.js and not a distance written down twice.
+ *
+ * ITS OWN ROOM AND NO OTHER, which is the opposite of `seatForClick` above and
+ * for a different question. That one is resolving a CLICK — a wall is shared by
+ * two rooms and which side of it you meant is decided by a pixel, so every room
+ * bids. This is resolving a lamp that is already standing inside one room, and
+ * the wall on the far side of a party wall is not a wall this lamp can be
+ * plugged into however near it is.
+ *
+ * AND NO DISTANCE CEILING, which is the other difference. `seatForClick` refuses
+ * a wall more than four feet from the pointer because a click that far out was
+ * aimed at nothing; a lamp in the middle of a twenty-foot room is aimed at
+ * exactly where it is, and the nearest wall is the answer however far away it
+ * is. A socket ten feet from the lamp is a fair drawing of a real problem — the
+ * lamp is where somebody put it — and a lamp with no socket at all is not.
+ */
+export function lampSocketSeat(at, { rooms = [], plates = [], lamps = [],
+                                     pxPerFt = 0 } = {}) {
+  if (!at || !Number.isFinite(at.x) || !Number.isFinite(at.y)) return null;
+  if (!(pxPerFt > 0)) return null;
+  const room = rooms.find((r) => r.plan?.polygonPx?.length
+    && pointInPolygon(at, r.plan.polygonPx));
+  if (!room) return null;
+  const polygonPx = room.plan.polygonPx;
+  const mine = plates.filter((b) => b.roomId === room.id);
+
+  // 1. ALREADY SERVED. Nothing to do, and this is the common answer.
+  if (lampPlateInReach(at, mine, pxPerFt)) return null;
+
+  /* 2. ...OR ONE PLATE COULD SERVE THIS LAMP AND THE ONES ANOTHER ALREADY
+        DOES, if it were seated between them rather than hard against the first
+        lamp that asked for it. See `lampPlateToShare`: this is the case where
+        two lamps four feet apart were coming out with two plates. */
+  const inRoom = lamps.filter((l) => l && Number.isFinite(l.x)
+    && Number.isFinite(l.y) && pointInPolygon(l, polygonPx));
+  const share = lampPlateToShare(at, { plates: mine, lamps: inRoom,
+                                       polygonPx, pxPerFt });
+  if (share) return { slide: share.id, sFt: share.sFt };
+
+  // 3. NOTHING WILL REACH, SO A PLATE OF ITS OWN, on the wall it is nearest.
+  const seat = nearestSeat(at, { polygonPx, pxPerFt });
+  return seat ? { seat, roomId: room.id, role: LAMP_BOARD_ROLE } : null;
+}
+
+/**
+ * ONE PLATE-AS-A-POINT LIST, TURNED INTO THE WRITES THAT STORE IT.
+ *
+ * THE ONE PLACE THE PRIMITIVE MEETS THE STORE, and it is here rather than
+ * inside the gesture so it can be driven without a renderer. `useDrag` moves and
+ * forks a LIST — that is how every other element on this canvas inherits the
+ * Option-copy — and a plate does not live in one: a hand-placed plate is a
+ * `manualBoards` entry and a rule board's hand position is a `boardMoves` value,
+ * told apart in the reducer on purpose. So the gesture keeps its own list of the
+ * members it picked up and this says what each frame of it means.
+ *
+ * A RECORD THAT WAS NOT THERE BEFORE IS A TWIN. Everything else is a slide, and
+ * an unchanged record is nothing at all — a dispatch per frame per plate that
+ * had not moved would re-order the loop and re-compose a switchboard for no
+ * change.
+ *
+ * A TWIN IS ALWAYS A HAND-PLACED PLATE WHATEVER IT WAS COPIED FROM. There is no
+ * second door in a room and no second bay, so a duplicate of either is simply a
+ * plate somebody put on a wall, and carrying `role: 'door'` across would give it
+ * a rule's height and a rule's name for a position no rule chose.
+ *
+ * THE LAMP ROLE IS THE ONE THAT CARRIES OVER, and it is named rather than passed
+ * through so that the exception is a decision rather than an accident of what
+ * happened to be on the record: copying a standing lamp's socket to make a
+ * second one has to give another socket at 300mm, born a switchboard, and not a
+ * switch plate at 1200. See LAMP_BOARD_ROLE.
+ */
+export function boardSeatWrites(before = [], after = []) {
+  const out = [];
+  for (const rec of after) {
+    const sFt = boardSFt(rec.u, rec.host);
+    if (sFt == null) continue;
+    const was = before.find((q) => q.id === rec.id);
+    if (!was) {
+      out.push({ kind: 'add', id: rec.id, roomId: rec.roomId, sFt,
+                 ...(rec.role === LAMP_BOARD_ROLE ? { role: rec.role } : {}) });
+    } else if (was.u !== rec.u) {
+      out.push({ kind: 'slide', id: rec.id, sFt });
+    }
+  }
+  return out;
 }

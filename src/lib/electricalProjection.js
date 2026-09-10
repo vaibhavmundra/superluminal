@@ -50,6 +50,14 @@ export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
          it in would give a row of downlights a board with nothing to press. */
       const boards = (feed ? [feed.board] : [...boardsFor(r), ...bayBoardsFor(r)])
         .filter((b) => !b.socketOnly);
+      /* --- AND THE PLATES ON THIS ROOM'S WALLS, WHICH ARE NOT IN THAT LIST ---
+         DELIBERATELY BESIDE `boards` AND NOT IN IT. That list is what a ceiling
+         may fall back to, and a hand-placed plate has never been part of it —
+         see the note above and `handPlates` in flows.js. What reads this one is
+         the standing lamps and nothing else: a lamp's socket plate IS a
+         hand-placed plate (the placement seats it), so without this the lamp
+         could not find the very plate that was put there for it. */
+      const handPlates = placedBoardsFor(r).filter((b) => !b.socketOnly);
       const bays = baysOf(r);
       /* EVERY BAY OUT HERE IS SWITCHED FROM THAT ONE PLATE, said as ownership
          rather than left to the fallback. `boardFor` falls back to the nearest
@@ -97,6 +105,7 @@ export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
         spots: taskSpotsPx.filter((sp) => sp.roomId === r.id),
         tracks: r.plan.tracksPx ?? [],
         boards,
+        handPlates,
         /* THE SOCKET OUTLETS ON THIS SPACE'S WALLS, each of which becomes one
            flow back to the nearest plate that can switch it — see section 0 of
            flows.js. They are handed in as FITTINGS and not as boards, which is
