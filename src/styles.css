@@ -184,6 +184,15 @@
      order every reader already has, and it deliberately does not run through the
      brand accent, which on this canvas means "a fitting is emitting here".
 
+     AND ONE RAMP FOR BOTH LAYERS OF THE HEATMAP. `Estimated illuminance` and
+     `Reflected ambient light` are different measurements against different
+     targets — horizontal lux against a maintained figure, reflected mean
+     spherical illuminance against the reflected-ambient figure — but the thing
+     coloured is a RATIO either way, so green means "within a quarter of what
+     this space is aiming at" on both and the reader learns the scale once. A
+     second palette for the second layer would be a second thing to learn for no
+     extra meaning; editing one line here still changes both layers and the key.
+
      THESE FIVE PROPERTIES ARE THE ONLY PLACE THESE COLOURS EXIST. Both the
      renderer and the legend resolve them off the document at runtime — see
      `readHeatmapPalette` in src/features/heatmap/colours.js — so editing one

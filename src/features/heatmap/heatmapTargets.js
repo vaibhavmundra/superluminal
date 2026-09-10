@@ -122,8 +122,274 @@ export const heatmapTargetFor = (projectId, roomTypeId) =>
   ?? HEATMAP_TARGET_LUX[projectId]
   ?? HEATMAP_TARGET_LUX_DEFAULT;
 
+// ===========================================================================
+// THE SECOND LAYER — REFLECTED AMBIENT LIGHT, AND ITS OWN TARGET TABLE.
+//
+// A DIFFERENT MEASUREMENT, SO A DIFFERENT NUMBER. Everything above is
+// HORIZONTAL ILLUMINANCE on a plane: direct light and bounced light together,
+// with a cosine, judged against a maintained lux figure out of CIBSE and IES.
+// The reflected-ambient layer measures REFLECTED MEAN SPHERICAL ILLUMINANCE at
+// a probe — light arriving from every direction after at least one surface
+// reflection, with the direct beam excluded — and there is no published
+// maintained figure for that quantity in these spaces. So the two tables are
+// separate, neither reads the other, and they are allowed to disagree.
+//
+// WHERE THESE FIGURES COME FROM, STATED PLAINLY. They are the RECEIVED
+// LUMENS PER SQUARE FOOT references this practice already designs general
+// illumination to — the same 10 / 20 / 30 that LUMENS_PER_SQFT carries in
+// lib/lumens.js — converted once, at 10.7639104 lux per lm/ft², which is
+// simply the number of square feet in a square metre. One received lumen per
+// square foot IS 10.7639104 lux by definition of the units; nothing about the
+// conversion is a lighting assumption.
+//
+// AND THEY ARE PRODUCT DEFAULTS RATHER THAN COMPLIANCE THRESHOLDS. There is no
+// standard that says a residential space shall reach 108 lux of reflected mean
+// spherical illuminance, and this file must not be read as claiming one. They
+// are a chosen starting point, pending calibration against representative
+// designs, and they are here as one table so that recalibrating is an edit to
+// five numbers rather than a change to the engine.
+//
+// WHAT THIS IS NOT, AND IT IS THE SAME TRAP THE HEADER OF THIS FILE DESCRIBES:
+// it is NOT a fixture-lumens-over-floor-area figure. `LUMENS_PER_SQFT` is a
+// BUDGET — how many lumens to buy for a box of surfaces — and dividing a
+// scheme's total output by its floor area does not give an illuminance anybody
+// can measure. The reference below is on the RECEIVING side: lumens per square
+// foot ARRIVING at a location, which is a flux density and therefore is lux.
+// The two use the same round numbers because the practice does; they are not
+// the same quantity and neither is derived from the other.
+// ===========================================================================
+
+/**
+ * LUX PER RECEIVED LUMEN PER SQUARE FOOT. Square feet in a square metre, to the
+ * seven figures the brief specifies. Exact by definition (0.3048 m to the foot),
+ * and it is a constant rather than a literal at the two use sites so that the
+ * table below and any future reader convert the same way.
+ */
+export const LUX_PER_LM_PER_SQFT = 10.7639104;
+
+/**
+ * THE DESIGN REFERENCE, IN RECEIVED LUMENS PER SQUARE FOOT, BY PROJECT.
+ *
+ * Keyed by the ids in PROJECT_TYPES (lib/roomTypes.js), and `retail` is here
+ * for the reason LUMENS_PER_SQFT keeps it: a figure that was specified and then
+ * silently dropped is a figure somebody has to find again.
+ *
+ * `educational` IS NOT IN THE SPECIFIED TABLE AND IS CARRIED ACROSS FROM THE
+ * OFFICE FIGURE, which is exactly what LUMENS_PER_SQFT already does with it and
+ * for the same reason: it has had no review of its own, and the commercial
+ * figure is a better answer than a number nobody has looked at. Stated here so
+ * the day somebody reviews it, this is the line to change.
+ */
+export const REFLECTED_AMBIENT_LM_PER_SQFT = {
+  residential: 10,
+  hotel: 10,
+  restaurant: 10,
+  office: 20,
+  educational: 20,
+  retail: 30,
+};
+
+/** For a project nobody has given a figure — the documented residential
+ *  reference, and the same argument LUMENS_PER_SQFT_DEFAULT makes: the gentlest
+ *  of them, because over-lighting a space nobody specified is the error that
+ *  gets built. */
+export const REFLECTED_AMBIENT_LM_PER_SQFT_DEFAULT = 10;
+
+/**
+ * ...AND THE SAME TABLE IN LUX, WHICH IS WHAT THE ENGINE COMPARES AGAINST.
+ *
+ * DERIVED RATHER THAN TYPED OUT, so the two can never drift: editing a
+ * reference above moves the target, and there is no second place holding 107.64
+ * that somebody could update by half. THE FULL PRECISION IS KEPT HERE and the
+ * rounding happens at the point of display — 108, 215 and 323 — which is the
+ * rule the rest of this file follows for the same reason.
+ */
+export const REFLECTED_AMBIENT_TARGET_LUX = Object.fromEntries(
+  Object.entries(REFLECTED_AMBIENT_LM_PER_SQFT)
+    .map(([id, lm]) => [id, lm * LUX_PER_LM_PER_SQFT]));
+
+/** 107.64 lux — the residential reference, and what an unrecognised project
+ *  gets. Derived from the same constant for the same reason. */
+export const REFLECTED_AMBIENT_TARGET_LUX_DEFAULT =
+  REFLECTED_AMBIENT_LM_PER_SQFT_DEFAULT * LUX_PER_LM_PER_SQFT;
+
+/**
+ * WHAT THIS SPACE IS AIMING AT ON THE REFLECTED-AMBIENT LAYER, in lux.
+ *
+ * BY PROJECT AND NOT BY ROOM TYPE, WHICH IS A DELIBERATE DIFFERENCE from
+ * `heatmapTargetFor` above and is worth stating rather than leaving as an
+ * omission. The horizontal table has a per-room override because a kitchen
+ * worktop and a bedroom genuinely want different amounts of light ON THE TASK.
+ * The specified reflected-ambient references are a per-project general-
+ * illumination figure and nobody has reviewed a per-room breakdown of them; a
+ * table invented here would be this file asserting a specification it does not
+ * have. The signature takes `roomTypeId` anyway so that the day such a table is
+ * reviewed it is an entry here and not a change at every call site.
+ *
+ * ONE PLACE FOR THE MAPPING, THE CONVERSION AND THE FALLBACK, which is what the
+ * brief asks for and what makes recalibration an edit to this file alone.
+ */
+export const reflectedAmbientTargetFor = (projectId, _roomTypeId = null) =>
+  REFLECTED_AMBIENT_TARGET_LUX[projectId] ?? REFLECTED_AMBIENT_TARGET_LUX_DEFAULT;
+
+/**
+ * HOW MUCH OF THE FLOOR'S HORIZONTAL ILLUMINANCE THE `average` LAYER ADDS.
+ *
+ * IT IS THE MEAN-SPHERICAL CONVERSION AND NOT A WEIGHTING. A sphere reads a
+ * quarter of the normal illuminance of any beam it sits in — see
+ * MEAN_SPHERICAL_FACTOR in reflection.js, which is the same number derived
+ * from the same geometry — so a quarter of a horizontal lux figure IS the mean
+ * spherical illuminance a sphere would read if all of that light arrived from
+ * straight overhead. That is what puts both halves of `average` in the same
+ * units and lets them be added at all.
+ *
+ * IT LIVES HERE, IN THE CONFIG, BECAUSE TWO THINGS HAVE TO USE IT AND THEY MUST
+ * NOT BE ABLE TO DISAGREE — the VALUE (`solveAverage` in indirect.js) and the
+ * TARGET (`heatmapTargetForLayer` below). They were separate for one revision
+ * and the consequence was exactly what you would expect: the layer grew a term
+ * that its target had never heard of, so every room read over target by
+ * whatever a quarter of its horizontal figure came to. One constant, two
+ * readers, and tools/test-heatmap-indirect.mjs asserts it is still the same
+ * number reflection.js derives.
+ */
+export const AVERAGE_FLOOR_SHARE = 0.25;
+
+/**
+ * THE LAYERS THE HEATMAP CAN SHOW. Three, and the table is the whole of what
+ * the legend's selector is built from — a fourth is an entry here, a line in
+ * the resolver below, and nothing at all in the engine.
+ *
+ * `label` IS THE FULL NAME AND `short` IS WHAT FITS IN THE SELECTOR. The
+ * existing view keeps the name it has always had on the card ("Estimated
+ * illuminance"), which is what "preserve existing view names" asks for.
+ *
+ * `note` IS THE ONE SENTENCE THAT ANSWERS "WHAT AM I LOOKING AT" and it is a
+ * TOOLTIP rather than a paragraph on the card — this app's rule is that a
+ * control is its label, and the card already carries the measurement, the
+ * height and the target in plain sight. The sentence is for the reader who
+ * wants to know what a layer includes and excludes, which is the one thing the
+ * name cannot say.
+ *
+ * --- `probe` AND `floor` ARE WHAT THE ENGINE READS, AND THEY ARE THE WHOLE
+ *     INTERFACE BETWEEN THIS TABLE AND THE SOLVER ------------------------
+ *
+ *   `floor`  this layer needs the DIRECT illuminance at every grid cell — the
+ *            expensive nine-sub-sample pass. False means the pass is skipped
+ *            outright, which is what makes the reflected layer cheap.
+ *
+ *   `probe`  this layer is read at a point in the room's VOLUME rather than on
+ *            the floor, so it needs a sphere transfer at a height — and so the
+ *            legend shows the height control. One field for both, because a
+ *            layer with a probe is exactly a layer with a height to set.
+ *
+ * A layer that wants neither is a layer with nothing to draw; a layer that
+ * wants both is `average`, which is literally the sum of the other two.
+ */
+export const HEATMAP_LAYERS = [
+  {
+    id: 'illuminance',
+    label: 'Estimated illuminance',
+    short: 'Illuminance',
+    measure: 'Horizontal lux',
+    note: 'Horizontal illuminance on the measurement plane — direct fixture '
+      + 'light and reflected light together.',
+    probe: false, floor: true,
+  },
+  {
+    id: 'reflected',
+    label: 'Reflected ambient light',
+    short: 'Reflected',
+    measure: 'Reflected ambient',
+    note: 'Light reaching this location after reflecting from room surfaces. '
+      + 'Direct fixture light is excluded.',
+    probe: true, floor: false,
+  },
+  {
+    /**
+     * AVERAGE — the reflected ambient at the probe, plus a quarter of the
+     * horizontal illuminance on the floor beneath it.
+     *
+     * THE QUARTER IS NOT A WEIGHTING, IT IS A UNIT CONVERSION — see
+     * AVERAGE_FLOOR_SHARE above, which is the one place it is written and is
+     * read by the target as well as by the value. Both terms are therefore in
+     * the same units and the sum is a mean spherical illuminance.
+     *
+     * AND ITS TARGET IS BUILT THE SAME WAY: the reflected target plus a
+     * quarter of the horizontal one. See `heatmapTargetForLayer`, which
+     * carries the argument for why it must be.
+     *
+     * IT DOES COUNT THE REFLECTED HALF TWICE, once properly and once as a
+     * quarter of what reaches the floor, and that is a property of the formula
+     * as specified rather than a bug in it: it is a deliberate blend that puts
+     * the fitting back into a picture the reflected layer leaves out. Stated
+     * here so nobody has to rediscover it from the arithmetic.
+     */
+    id: 'average',
+    label: 'Average',
+    short: 'Average',
+    measure: 'Average',
+    note: 'Reflected ambient light at this height, plus a quarter of the '
+      + 'horizontal illuminance on the floor below it.',
+    probe: true, floor: true,
+  },
+];
+
+/** The layer a plan opens on: the one that was here first, so switching the
+ *  heatmap on shows what it has always shown. */
+export const HEATMAP_LAYER_DEFAULT = 'illuminance';
+
+/** A layer by id, falling back to the default rather than to nothing — a stored
+ *  preference naming a layer this build has dropped must not blank the drawing. */
+export const heatmapLayerFor = (id) =>
+  HEATMAP_LAYERS.find((l) => l.id === id)
+  ?? HEATMAP_LAYERS.find((l) => l.id === HEATMAP_LAYER_DEFAULT);
+
+/**
+ * THE TARGET FOR A LAYER — the one door, so that no caller has to know which
+ * table its layer reads. The whole point of this function is that the branch
+ * lives here rather than in the engine or in the legend.
+ *
+ * --- A COMPOSITE LAYER TAKES A COMPOSITE TARGET, AND IT HAS TO ------------
+ * `average` IS BUILT THE SAME WAY ITS VALUE IS:
+ *
+ *     target_average  =  target_reflected  +  1/4 * target_horizontal
+ *
+ * and that is not symmetry for its own sake, it is the only thing that makes
+ * the colour mean anything. The band scale is a RATIO of value to target, so
+ * the two have to be the same quantity built out of the same parts: give the
+ * value a term the target has not got and every room reads over target by
+ * whatever that term came to — which is precisely what happened when this
+ * layer took the reflected target unmodified.
+ *
+ * THE INVARIANT IT BUYS, AND IT IS THE ONE TO REMEMBER: a room sitting exactly
+ * on target on BOTH component layers sits exactly on target on Average. That
+ * is asserted rather than hoped for; see tools/test-heatmap-indirect.mjs.
+ *
+ * IT THEREFORE VARIES BY ROOM TYPE where the reflected target does not — a
+ * kitchen's horizontal figure is three times a bedroom's, and half of this
+ * target is that figure. Nothing to reconcile: the composite inherits whatever
+ * its two halves do, which is the point of composing it rather than tabulating
+ * it.
+ */
+export const heatmapTargetForLayer = (layerId, projectId, roomTypeId) => {
+  if (layerId === 'average') {
+    return reflectedAmbientTargetFor(projectId, roomTypeId)
+      + AVERAGE_FLOOR_SHARE * heatmapTargetFor(projectId, roomTypeId);
+  }
+  return layerId === 'reflected'
+    ? reflectedAmbientTargetFor(projectId, roomTypeId)
+    : heatmapTargetFor(projectId, roomTypeId);
+};
+
 /**
  * THE FIVE BANDS, AS RATIOS OF THE TARGET — the brief's own figures.
+ *
+ * ONE SCALE FOR BOTH LAYERS, and that is what makes the selector a change of
+ * QUESTION rather than a change of instrument. `ratio` is the layer's own
+ * measurement over the layer's own target — horizontal lux over the maintained
+ * figure, or reflected mean spherical illuminance over the reflected-ambient
+ * figure — so green means "within a quarter of what this space is aiming at"
+ * on either, and the reader learns the scale once.
  *
  * `token` IS THE WHOLE OF EACH BAND'S COLOUR and it names a CSS custom property
  * declared in the `@theme` block of src/styles.css. Nothing in this feature

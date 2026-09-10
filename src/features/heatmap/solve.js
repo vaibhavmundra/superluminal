@@ -15,12 +15,20 @@
 //      cosine applies; nothing is bounced yet.
 //
 //   3. REFLECTED. The patches hand back what landed on them, bounded — see
-//      reflection.js.
+//      reflection.js. What comes out is `exitance`: the lumens each surface
+//      sends back, and the whole of the light transport in one vector.
 //
 //   4. THE FIELD. direct + reflected, in lux, one figure per cell. Kept as two
 //      arrays as well as their sum, because the two answer different questions
 //      and one of the verification checks is about the difference: changing a
 //      floor finish must not move the direct component at all.
+//
+// STEPS 2 AND 3 ARE `surfacePass` AND STEP 4 IS `solveRoom`, and the split is
+// what makes a second layer cheap rather than a second engine. `exitance` does
+// not know where anybody is measuring, so the reflected-ambient layer takes the
+// SAME vector and gathers it at probes in the room's volume instead — see
+// indirect.js. A caller holding a surface pass hands it to `solveRoom` and the
+// expensive half is not run twice.
 //
 // WHAT IS DELIBERATELY NOT NORMALISED, AND WHAT IS. The direct illuminance at a
 // cell is left exactly as the inverse square gives it — it is a point quantity
@@ -36,7 +44,8 @@
 import { pointInPolygon, distanceToBoundary } from '../../lib/geometry.js';
 import { buildFieldGrid, buildPatches, isConvex, blocked,
          HEATMAP_RESOLUTION } from './grid.js';
-import { buildTransfer, buildPlaneTransfer, bounce } from './reflection.js';
+import { buildTransfer, buildPlaneTransfer,
+         exitanceOf, gather } from './reflection.js';
 import { expandSource, illuminanceFrom } from './photometry.js';
 import { profileFor } from './profiles.js';
 
@@ -139,7 +148,7 @@ export function buildRoomGeometry({ polygonM, heightM, materials, mode = 'fine' 
  * really does enclose the source — see `inRoom` in the body, which is the guard,
  * and `MAX_RECOVERY`, which is only a numerical backstop behind it.
  */
-export function directPass(geometry, sources) {
+export function directPass(geometry, sources, { cells = true } = {}) {
   const { field, patches, poly, convex } = geometry;
   const m = field.count, n = patches.n;
   const direct = new Float64Array(m);
@@ -200,6 +209,14 @@ export function directPass(geometry, sources) {
 
       /* --- AND THE PLANE, AVERAGED ACROSS EACH CELL RATHER THAN SAMPLED AT
              ITS CENTRE ------------------------------------------------------
+         SKIPPED ENTIRELY WHEN NOBODY IS ASKING FOR IT, which is the
+         reflected-ambient layer: that layer excludes direct fixture-to-probe
+         light by definition, so this loop would compute a field it then throws
+         away — and it is the expensive half of a drag, nine sub-samples at
+         every cell for every sample of every source. `direct` comes back as
+         zeros rather than as null so that no caller has to branch on it, and
+         so that "the direct component of this layer is zero" is a thing the
+         array itself says.
          A CELL IS AN AVERAGE OVER ITS OWN PATCH OF FLOOR, and a downlight's
          direct contribution is peaked enough that one sample makes the answer
          depend on where the grid happened to fall. See FIELD_SUBSAMPLES, which
@@ -208,6 +225,7 @@ export function directPass(geometry, sources) {
          shadow edge in an L-shaped room runs through cells, and averaging four
          points across a cell that straddles it is a truer answer than declaring
          the whole cell lit or dark on its centre. */
+      if (!cells) continue;
       const { subs, nSub, subMask, subN } = field;
       for (let g = 0; g < m; g++) {
         const gx = field.cx[g], gy = field.cy[g];
@@ -243,6 +261,34 @@ export function directPass(geometry, sources) {
 }
 
 /**
+ * STEPS 2 AND 3 — WHAT THE ROOM'S SURFACES END UP HANDING BACK, and nothing
+ * about where anybody is measuring.
+ *
+ * THIS IS THE HALF BOTH LAYERS SHARE AND IT IS THE EXPENSIVE HALF. Every
+ * source expanded, every sample against every patch, the flux closure, and
+ * then the whole bounce — and the vector that comes out of it, `exitance`,
+ * depends on the room and the fittings and on NOTHING ELSE. Not on the
+ * measurement plane, not on the probe height, not on the target. So it is
+ * lifted out where it can be computed once and cached: switching layers or
+ * moving the measurement height re-gathers a cached vector through a new
+ * receiver, which is a matrix multiply rather than a solve.
+ *
+ * `cells` IS THE ONE THING THE CALLER HAS TO DECIDE, and it is not an
+ * optimisation flag so much as a statement about the layer: the horizontal
+ * field needs the direct illuminance at every cell, and the reflected-ambient
+ * layer excludes direct light by definition and must not pay for it.
+ */
+export function surfacePass(geometry, sources, { cells = true } = {}) {
+  const { patches, T } = geometry;
+  const { direct, incident, emitted, onSurfaces } =
+    directPass(geometry, sources, { cells });
+  const { exitance, bounces, carried, firstBounceLumens } =
+    exitanceOf(patches, T, incident);
+  return { direct, incident, exitance, emitted, onSurfaces,
+           bounces, carried, firstBounceLumens, cells };
+}
+
+/**
  * STEPS 2 TO 4 — the whole room, given its geometry and what is on its ceiling.
  *
  * `direct`, `reflected` AND `total` ARE ALL RETURNED. The sum is what gets
@@ -251,13 +297,18 @@ export function directPass(geometry, sources) {
  * reflected component and may not touch the direct one, and a concealed cove
  * must contribute nothing direct at all.
  */
-export function solveRoom(geometry, sources) {
-  const { field, patches, T, G } = geometry;
+export function solveRoom(geometry, sources, surface = null) {
+  const { field, G } = geometry;
   const m = field.count;
-  const { direct, incident, emitted, onSurfaces } = directPass(geometry, sources);
-  const bounced = bounce(patches, T, G, field, incident);
+  /* THE SURFACE PASS IS TAKEN WHERE THE CALLER HAS ONE, and run where it has
+     not. Passing it in is how the two layers share a solve; the default keeps
+     every existing caller — and every test — a one-argument call that computes
+     its own. */
+  const s = surface ?? surfacePass(geometry, sources);
+  const { direct, exitance, emitted, onSurfaces, bounces, carried } = s;
+  const reflected = gather(exitance, G, m);
   const total = new Float64Array(m);
-  for (let g = 0; g < m; g++) total[g] = direct[g] + bounced.plane[g];
+  for (let g = 0; g < m; g++) total[g] = direct[g] + reflected[g];
 
   /* --- THE MEAN IS AREA-WEIGHTED, AND THAT IS NOT A REFINEMENT ------------
      A CELL AT THE WALL IS PART FLOOR AND PART WALL. Averaging every cell equally
@@ -276,13 +327,12 @@ export function solveRoom(geometry, sources) {
     if (total[g] > max) max = total[g];
   }
   return {
-    field, direct, reflected: bounced.plane, total,
+    field, direct, reflected, total,
     mean: wsum > 0 ? sum / wsum : 0, min: m ? min : 0, max,
     /* THE ACCOUNTING, and it is not decoration: `emitted` is what the fittings
        put out and is the figure that must not move when the sampling changes,
        and `bounces` is what the engine actually ran. Both are asserted by
        tools/test-heatmap.mjs and neither is shown in the UI. */
-    emitted, onSurfaces,
-    bounces: bounced.bounces, carried: bounced.carried,
+    emitted, onSurfaces, bounces, carried,
   };
 }

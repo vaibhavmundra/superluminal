@@ -19,7 +19,15 @@
 //      A diffuse surface has no memory of where its light came from, which is
 //      what makes this cheap and what makes it right.
 //   3. That light lands on the other patches, and step 2 repeats.
-//   4. The floor plane collects what every bounce sent it.
+//   4. A RECEIVER collects what every bounce sent it.
+//
+// STEP 4 IS WHERE THE TWO LAYERS PART, AND IT IS THE ONLY PLACE THEY DO. Steps
+// 1 to 3 produce one vector — `exitance`, the lumens each surface hands back —
+// and that vector is the whole of the light transport. `buildPlaneTransfer`
+// gathers it as HORIZONTAL ILLUMINANCE on a plane, cosine and all;
+// `buildSphereTransfer` gathers it as MEAN SPHERICAL ILLUMINANCE at a probe in
+// the room's volume, solid angle only. Same light, two questions, one engine —
+// which is why switching layers on the drawing costs a matrix and not a solve.
 //
 // AND IT IS BOUNDED, BY BOTH TESTS THE BRIEF ASKS FOR: a hard cap on the number
 // of bounces, and a stop the moment a bounce is carrying less than a fixed
@@ -187,22 +195,141 @@ export function buildPlaneTransfer(patches, field, polygonM, { convex = false } 
 }
 
 /**
- * THE BOUNCES — in, and then out onto the plane.
+ * THE ¼ IN THE DEFINITION OF MEAN SPHERICAL ILLUMINANCE, AND WHERE IT COMES
+ * FROM — because a factor nobody derived is a factor somebody will "fix".
+ *
+ * MEAN SPHERICAL ILLUMINANCE IS THE AVERAGE ILLUMINANCE OVER THE SURFACE OF AN
+ * INFINITESIMAL IMAGINARY SPHERE at the point. A sphere of radius r has surface
+ * area 4 pi r^2 and presents a projected area of pi r^2 to a beam from ANY
+ * direction, so a beam of normal illuminance E_n delivers E_n * pi r^2 lumens
+ * to it and the average over its surface is E_n / 4. Integrating over all
+ * directions, with L the luminance arriving from each:
+ *
+ *     E_mean_spherical(p)  =  1/4 * INTEGRAL L(p, omega) d omega
+ *
+ * which is exactly the brief's formula. IT IS NOT HORIZONTAL LUX and it is not
+ * an unweighted sum of directional samples: every direction is weighted by its
+ * own SOLID ANGLE and by nothing else — no receiver cosine, because a sphere
+ * has no orientation. That is the entire difference between this and
+ * `buildPlaneTransfer` above, and it is one line in the loop.
+ *
+ * FROM A PATCH TO A PROBE, WRITTEN OUT. A Lambertian patch q of area A_q
+ * emitting F_q lumens has luminance F_q / (pi A_q), and subtends solid angle
+ * A_q cos(theta_q) / d^2 at the probe. So its share of the integral is
+ * F_q cos(theta_q) / (pi d^2), and its share of the mean spherical illuminance
+ * is a quarter of that. The area cancels, exactly as it does for the plane
+ * transfer, which is why this matrix has the same shape and the same cost.
+ */
+export const MEAN_SPHERICAL_FACTOR = 0.25;
+
+/**
+ * PATCH TO A PROBE IN THE ROOM'S VOLUME — mean spherical illuminance per lumen
+ * leaving the patch. `buildPlaneTransfer`'s sibling, and it is deliberately
+ * written beside it: the two differ in one term and keeping them apart is how
+ * they would come to differ in more.
+ *
+ * `probeZ` IS A HEIGHT ABOVE THE FLOOR AND IT IS THE ONLY THING THAT CHANGES
+ * when the reader moves the measurement height. Nothing in `patches` or `T`
+ * depends on it, which is what lets a height change reuse the whole of the
+ * light transport and rebuild only this — see indirect.js.
+ *
+ * THE OCCLUSION TEST IS THE SAME PLAN-PROJECTION ONE, and it is still correct
+ * at height: every wall in this model runs floor to slab, so what a probe at
+ * 1.2 m cannot see is exactly what a point on the floor beneath it cannot see.
+ *
+ * --- AND THE COLUMNS ARE NORMALISED, FOR buildTransfer'S OWN REASON ---------
+ * A POINT INSIDE A CLOSED ROOM SEES ROOM SURFACE IN EVERY DIRECTION. That is
+ * not a modelling choice, it is what "closed" means, and it fixes the sum of
+ * the patches' solid angles at exactly 4 pi — which in this matrix's terms is
+ * `sum over p of S[p][g] * area[p] === 1` at every probe g. Patch-centre
+ * sampling produces rather less than that, badly so for a probe within a patch
+ * width of a surface, and the shortfall is a systematic dimming with no
+ * physical meaning at all.
+ *
+ * SO THE COLUMN IS SCALED TO CLOSE, exactly as `buildTransfer` scales its rows,
+ * and it is what makes the analytical case exact rather than approximate: a
+ * room whose every surface has uniform exitance M lm/m^2 reads M lux at every
+ * probe in it, which is the reference tools/test-heatmap-indirect.mjs checks.
+ * THE ONE PLACE IT IS AN APPROXIMATION rather than a correction is the same
+ * place: in a non-convex room the solid angle of the surfaces a probe cannot
+ * see is shared among the ones it can, which is bounded by how much of the room
+ * is hidden and is the right direction to err.
+ */
+export function buildSphereTransfer(patches, field, polygonM,
+                                    { convex = false, probeZ = 0 } = {}) {
+  const { n, px, py, pz, nx, ny, nz, area, radius } = patches;
+  const { cx, cy, count } = field;
+  const S = new Float32Array(n * count);
+  for (let p = 0; p < n; p++) {
+    const ax = px[p], ay = py[p], az = pz[p];
+    const anx = nx[p], any = ny[p], anz = nz[p];
+    const ar = radius[p];
+    const row = p * count;
+    for (let g = 0; g < count; g++) {
+      const dx = cx[g] - ax, dy = cy[g] - ay, dz = probeZ - az;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (!(d2 > 0)) continue;
+      const d = Math.sqrt(d2);
+      const cp = (dx / d) * anx + (dy / d) * any + (dz / d) * anz;
+      // FACING AWAY IS NOT DIM, IT IS DARK — the cosine at the PATCH, which is
+      // the only cosine in this transfer. There is no receiver cosine and no
+      // receiver-facing test: a sphere faces every way at once, and adding one
+      // here is how this quietly becomes horizontal lux again.
+      if (!(cp > 0)) continue;
+      if (!convex && blocked(ax, ay, cx[g], cy[g], polygonM)) continue;
+      S[row + g] = (cp * MEAN_SPHERICAL_FACTOR) / (Math.PI * soften(d2, ar));
+    }
+  }
+
+  /* THE CLOSURE, COLUMN BY COLUMN — see the note above. Two passes rather than
+     one because the sum for a probe is spread down a column of a row-major
+     matrix; accumulating it as the matrix is built would mean an m-long
+     accumulator anyway, and this way the arithmetic is where its argument is. */
+  const closure = new Float64Array(count);
+  for (let p = 0; p < n; p++) {
+    const row = p * count, a = area[p];
+    for (let g = 0; g < count; g++) {
+      const t = S[row + g];
+      if (t > 0) closure[g] += t * a;
+    }
+  }
+  for (let g = 0; g < count; g++) {
+    closure[g] = closure[g] > 0 ? 1 / closure[g] : 0;
+  }
+  for (let p = 0; p < n; p++) {
+    const row = p * count;
+    for (let g = 0; g < count; g++) {
+      if (S[row + g] > 0) S[row + g] *= closure[g];
+    }
+  }
+  return S;
+}
+
+/**
+ * THE BOUNCES — IN. What every surface of the room ends up handing back.
  *
  * `incident` is the DIRECT flux on each patch, in lumens, which solve.js has
  * already worked out. Everything from here is arithmetic on that vector.
  *
- * `exitance` ACCUMULATES ACROSS BOUNCES AND IS APPLIED TO THE PLANE ONCE. It
- * would be more obvious to add each bounce's contribution to the floor as it
- * happens, and it would be three passes of the big matrix instead of one; the
- * plane transfer is linear, so summing first is the same answer for a third of
- * the work.
+ * `exitance` IS THE ANSWER AND IT IS PER PATCH, IN LUMENS — the total each
+ * surface sends back out across every bounce. IT IS ALSO THE ONE RESULT BOTH
+ * LAYERS SHARE, which is why this is its own function rather than the first
+ * half of `bounce`: the horizontal field and the reflected-ambient probes are
+ * the SAME light gathered by two different receivers, and computing the light
+ * transport twice to answer two questions about it would be the expensive half
+ * of the feature done twice. See useHeatmap.js, which caches exactly this.
  *
- * Returns the plane's reflected illuminance and the accounting the legend and
- * the tests read: how many bounces were run, and what each carried.
+ * EVERY LUMEN IN IT HAS REFLECTED AT LEAST ONCE, by construction: the first
+ * bounce is `incident * rho`, so a lumen only enters this vector by leaving a
+ * surface. That is not a filter applied afterwards — it is the definition of
+ * the quantity, and it is what makes the reflected-ambient layer's exclusion of
+ * direct light exact rather than approximate.
+ *
+ * Returns the accounting the legend and the tests read alongside it: how many
+ * bounces were run, and what each carried.
  */
-export function bounce(patches, T, G, field, incident) {
-  const n = patches.n, rho = patches.rho, m = field.count;
+export function exitanceOf(patches, T, incident) {
+  const n = patches.n, rho = patches.rho;
   const exitance = new Float64Array(n);
   let leaving = new Float64Array(n);
   let next = new Float64Array(n);
@@ -245,15 +372,40 @@ export function bounce(patches, T, G, field, incident) {
     for (let p = 0; p < n; p++) leaving[p] *= rho[p];
   }
 
-  const plane = new Float64Array(m);
+  return { exitance, bounces, carried, firstBounceLumens: first };
+}
+
+/**
+ * ...AND OUT, THROUGH WHICHEVER RECEIVER IS ASKING.
+ *
+ * `X` IS A RECEIVER TRANSFER — `buildPlaneTransfer`'s G for horizontal lux, or
+ * `buildSphereTransfer`'s S for mean spherical illuminance at a probe. Both are
+ * `row per patch, column per cell` and both are LINEAR in what leaves the
+ * patches, which is the property that lets the bounces be summed into one
+ * exitance vector first and a receiver applied once at the end: one pass of the
+ * big matrix rather than one per bounce, and one function rather than one per
+ * layer.
+ */
+export function gather(exitance, X, m) {
+  const out = new Float64Array(m);
+  const n = exitance.length;
   for (let p = 0; p < n; p++) {
     const f = exitance[p];
     if (!(f > 0)) continue;
     const row = p * m;
     for (let g = 0; g < m; g++) {
-      const t = G[row + g];
-      if (t > 0) plane[g] += f * t;
+      const t = X[row + g];
+      if (t > 0) out[g] += f * t;
     }
   }
-  return { plane, bounces, carried, firstBounceLumens: first };
+  return out;
+}
+
+/**
+ * THE TWO OF THEM, FOR THE HORIZONTAL FIELD — the call solve.js has always
+ * made, kept whole so that the layer added beside it changed nothing about it.
+ */
+export function bounce(patches, T, G, field, incident) {
+  const r = exitanceOf(patches, T, incident);
+  return { plane: gather(r.exitance, G, field.count), ...r };
 }
