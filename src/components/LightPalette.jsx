@@ -93,25 +93,34 @@ export const LIGHT_TOOLS = [
      schedule an electrician orders from does not get renamed because a palette
      did. Only `label` moved; the id is untouched, and every store, selection
      and analysis row is keyed by that. */
+  /* --- THIS CARD DESCRIBED A GESTURE THAT NO LONGER EXISTS ----------------
+     IT SAID "Drag a box round what it should light", AND THE BOX WAS RETIRED.
+     See the note at the pointer-up in App.jsx: the box wrote a task area and
+     asked the ambient grid to stand a spot beside it, the grid's placement is
+     off by default now, and so the gesture became two clicks on the ceiling —
+     one to put the fitting down, one to lock the direction it is turned to.
+     THE COPY WAS LEFT BEHIND AND IT IS THE WORST KIND OF STALE. A hint that
+     merely goes out of date is ignored; this one INSTRUCTED, and following it
+     produced nothing at all: the drag's press is read as the first click, the
+     release is not a second one, and the fitting sits waiting for a click
+     somewhere the hand has already left. It reads exactly like a tool that does
+     not work, which is how it was reported.
+     ALL THREE HALVES OF THE CARD ARE THE GESTURE'S, and all three had to move:
+     the heading asks, the hint says how, and the drawing shows it — see
+     `GESTURE.spot`, which was a dashed rectangle being dragged out. */
   { id: 'spot',   label: 'Adjustable spot',
-    hint: 'Drag a box round what it should light.',
+    hint: 'Click the ceiling, turn it, click again.',
     /* THE STEP'S HEADING. Only the two tools with a `GESTURE` carry one, and
        that is not a coincidence — arming either of them empties the panel down
        to a step (see the branch in App.jsx), and a step needs a line at the top
        saying what is being asked. It is an IMPERATIVE where `hint` is a
        description: the heading asks, the card under it explains. */
-    stepTitle: 'Box what the spot should light',
-    // WHAT HAPPENS NEXT, WHICH IS THE HALF NOBODY GUESSES. The other two tools
-    // put a fitting where you click. This one does not put a fitting anywhere
-    // you point: the box says what is being lit, and the placer then stands the
-    // spot on the ceiling's own grid, off to one side, aimed back at the box.
-    // Somebody who does not know that drags the box where they want the FITTING
-    // — and gets a spot several feet away from it, which reads as a bug in the
-    // app rather than as the feature it is.
-    // SHORT, because the picture is carrying it. "On the ceiling nearby" cost a
-    // fourth line in a card whose drawing already shows the fitting standing off
-    // to the side; the sentence only has to name the surprise, not describe it.
-    consequence: 'The spot lands nearby, aimed at it.' },
+    stepTitle: 'Place the spot, then aim it',
+    // WHAT HAPPENS BETWEEN THE TWO CLICKS, which is the half nobody guesses:
+    // the body is down after the first one and the pointer is no longer moving
+    // the fitting, it is TURNING it. Somebody who does not know that lets go and
+    // wonders why there is an arrow following the cursor.
+    consequence: 'The second click locks the direction.' },
   { id: 'chandelier', label: 'Chandelier', arms: 'object',
     hint: 'Click the ceiling to drop it.',
     // WHY IT IS NOT SIMPLY "click to place". A chandelier reserves clearance
@@ -177,29 +186,35 @@ export const LIGHT_ICON = {
    the first time the marquee or the stand-off fitting was retouched here, and
    the two would then disagree about what the gesture is. */
 export const GESTURE = {
+  /* TWO CLICKS AND A TURN, WHICH IS WHAT THE GESTURE ACTUALLY IS. It was a
+     dashed rectangle being dragged out — see the note on the card above for why
+     that picture had to go with the copy.
+     WHAT IS HARD TO GUESS IS NOT WHERE YOU PRESS, IT IS WHAT THE SECOND MOVE
+     DOES. The body is down after the first click and the pointer stops moving
+     the fitting: it swings the beam. So the fitting is drawn PLACED, the arc
+     shows the swing, and the pointer sits out at the end of the arrow with its
+     tip on the direction rather than on the lamp. */
   spot: (
     <svg viewBox="0 0 72 46" className="w-[72px] h-[46px] block overflow-visible" aria-hidden="true">
-      {/* What is being lit: the box, and the corner the drag started from. */}
-      <rect x="24" y="10" width="37" height="24" rx="2"
-        fill="var(--accent)" fillOpacity="0.07"
-        stroke="var(--text-subtle)" strokeWidth="1.4" strokeDasharray="4 3" />
-      <circle cx="24" cy="10" r="2" fill="var(--text-subtle)" />
-      {/* ...and the pointer dragging the far corner, tip ON it, so the two read
-          as one gesture rather than as a box and an arrow. */}
-      <g transform="translate(61 34)">
+      {/* THE SWING, DOTTED, and it is the only dashed thing left in the picture
+          — the one part of the gesture that is not yet decided. */}
+      <path d="M31,10 A22,22 0 0 1 31,34" fill="none"
+        stroke="var(--text-subtle)" strokeWidth="1.3" strokeDasharray="3 3" />
+      {/* THE FITTING, PLACED BY THE FIRST CLICK — the same symbol the drawing
+          uses for a spot: a lit aperture with a centre and a beam off it. */}
+      <g stroke="var(--accent)" strokeLinecap="round">
+        <circle cx="13" cy="22" r="4.3" fill="#fff" strokeWidth="1.7" />
+        <circle cx="13" cy="22" r="1.7" fill="var(--accent)" stroke="none" />
+        <line x1="18" y1="22" x2="40" y2="22" strokeWidth="1.6" fill="none" />
+        <path d="M41.6,22 L37,19.6 L37,24.4 Z" fill="var(--accent)" stroke="none" />
+      </g>
+      {/* ...AND THE POINTER AT THE FAR END OF THE ARROW, tip ON the head, so the
+          two read as one gesture: this is where the second click goes, and the
+          direction is what it settles. */}
+      <g transform="translate(42 21)">
         <path d="M0,0 L0,15 L4,11.2 L6.8,17.6 L9.6,16.4 L6.8,10.2 L12,10 Z"
           fill="var(--accent)" stroke="#fff" strokeWidth="1.1"
           strokeLinejoin="round" />
-      </g>
-      {/* THE FITTING, OFF TO THE SIDE. At the middle of the left edge on
-          purpose: the two corners are spoken for by the drag — one by its start
-          dot, the other by the pointer — and a beam crossing either of them
-          would read as part of the gesture instead of as its consequence. */}
-      <g stroke="var(--accent)" strokeLinecap="round">
-        <circle cx="7" cy="22" r="4.3" fill="#fff" strokeWidth="1.7" />
-        <circle cx="7" cy="22" r="1.7" fill="var(--accent)" stroke="none" />
-        <line x1="12" y1="22" x2="19.5" y2="22" strokeWidth="1.6" fill="none" />
-        <path d="M20.6,22 L16.4,20 L16.4,24 Z" fill="var(--accent)" stroke="none" />
       </g>
     </svg>
   ),

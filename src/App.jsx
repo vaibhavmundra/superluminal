@@ -168,6 +168,15 @@ import PdfPagePicker from './components/PdfPagePicker.jsx';
 import ToolRail from './components/ToolRail.jsx';
 import Popover, { PopoverButton } from './components/Popover.jsx';
 import StageBar, { SceneSwitch } from './components/StageBar.jsx';
+/* --- WHERE THE LIGHT LANDS, AND IT IS ONE IMPORT ------------------------
+   FOUR NAMES OFF ONE FEATURE INDEX: the hook that computes the field, the
+   overlay that draws it inside the drawing's own <svg>, the key, and the
+   capsule that switches it. Everything else about it — the distribution
+   profile per fixture family, the grid, the photometry, the reflection engine,
+   the colour scale and the caching — is behind src/features/heatmap/ and is
+   not reachable from here, which is the whole arrangement. */
+import { useHeatmap, HeatmapOverlay, HeatmapLegend,
+         HeatmapSwitch } from './features/heatmap/index.js';
 import SpaceDetail from './components/SpaceDetail.jsx';
 import WallTonePopup from './components/WallTonePopup.jsx';
 import { DEFAULT_CEILING_MM, CEILING_MM_MIN, CEILING_MM_MAX,
@@ -2627,6 +2636,38 @@ export default function App({
   const lampsPx = useMemo(() => [...manualCobsPx, ...arrayCobsPx],
     [manualCobsPx, arrayCobsPx]);
 
+  /* --- WHERE THE LIGHT ACTUALLY LANDS -------------------------------------
+     THE ESTIMATED ILLUMINANCE HEATMAP. Everything about it is
+     features/heatmap/ — the distribution profile per fixture family, the grid,
+     the photometry, the reflection engine, the colour scale and the caching —
+     and what is here is one call plus, further down, three elements. It costs
+     nothing while the switch is off; see the first line of the hook's memo.
+
+     IT STANDS HERE AND BOTH BOUNDS ARE LOAD-BEARING. It is lit by
+     `spaceAnalysis`, so it cannot stand above the call that makes that; and it
+     needs the lamps in PLAN PIXELS, so it cannot stand above `manualCobsPx`.
+     A `useMemo` evaluates its dependency array on every render, so a reader
+     above its own `const` is a temporal dead zone and a blank screen.
+
+     --- AND IT WAS HANDED `manualCobs` FIRST, WHICH WAS A REAL BUG ----------
+     THE STORE IS IN FEET AND EVERY PROJECTION IS IN PIXELS. A `manualCobs`
+     entry carries `xFt`/`yFt` and no `x`/`y` at all — see `projectManualCobsPx`,
+     which is what puts them on — so the adapter read `undefined`, placed the
+     lamp at NaN, and every hand-placed COB contributed exactly nothing to the
+     field. Silently: a NaN source throws nothing and draws nothing, so a spot
+     somebody put down simply did not appear, which is how it was reported.
+     THE ADAPTER REFUSES A SOURCE WITHOUT A POSITION NOW rather than trusting
+     its caller, and tools/test-heatmap.mjs asserts that a feet-only fitting
+     produces no emitter. The lists below are the same ones the CANVAS draws,
+     which is the rule for every projection in this file. */
+  const heatmap = useHeatmap({
+    on: canvasLayers.heatmap,
+    rooms, pxPerFt, projectId, roomTypes, materials, ceilingMmFor,
+    spaceAnalysis, focusId,
+    accentZonesPx, taskSpotsPx,
+    manualCobsPx, arrayCobsPx, magTracksPx, trackModulesPx,
+  });
+
   const electrical = useElectrical({
     rooms, pxPerFt, obstaclesPx, wardrobesPx, accentZonesPx, taskSpotsPx, lampsPx,
     roomTypes, doors, projectId, country, layers, doorEdit,
@@ -4957,10 +4998,24 @@ export default function App({
      IT IS `layers.suggestGrid` AND NOT A THIRD STORE. The same key the exports
      and PlanCanvas read, so this switch and the drawing cannot disagree — see
      LAYER_DEFAULTS for why the grid stopped being part of `lights`. */
+  /* --- ...AND THE HEATMAP RIDES IN THE SAME SLOT ---------------------------
+     THE THIRD SWITCH THAT IS ABOUT WHAT THE DRAWING SHOWS, which is what the
+     lead slot is for — see the note on the slots in StageBar. The Suggested Grid
+     asks whether the planner is PROPOSING; this asks what the ceiling as it
+     stands actually DELIVERS to the floor, which is the same kind of question
+     about the same sheet and belongs beside it rather than in the View menu with
+     the marks nobody reaches for.
+     THE SAME GATES, TO THE TERM. No drawing, no field; nothing while the
+     pipeline is still making one; and a viewer gets the sheet as it was left
+     rather than switches over it. Sharing the list is what keeps the bar from
+     arriving with one of its three switches missing. */
   const autoLead = !source || showTrace || prep || readOnly || sheetOpen ? null : (
-    <SceneSwitch label="Suggested Grid" on={layers.suggestGrid}
-      title="Draw the planner's answer as dotted suggestions instead of fittings"
-      onClick={toggle('suggestGrid')} />
+    <>
+      <SceneSwitch label="Suggested Grid" on={layers.suggestGrid}
+        title="Draw the planner's answer as dotted suggestions instead of fittings"
+        onClick={toggle('suggestGrid')} />
+      <HeatmapSwitch on={layers.heatmap} onClick={toggle('heatmap')} />
+    </>
   );
 
   return (
@@ -6211,6 +6266,28 @@ export default function App({
               onZoneMove={readOnly ? null : onZoneMove}
               onZoneUp={readOnly ? null : onZoneUp}
               accents={accentZonesPx} switchboards={switchboardsPx} onFixture={setTip}
+              /* --- THE HEATMAP, AS AN ELEMENT RATHER THAN AS DATA -----------
+                 PlanCanvas TAKES THE PICTURE AND NOT THE FIELD, and that is the
+                 direction the import rules already run in: a component does not
+                 reach into a feature (see features/ceiling-geometry, which
+                 imports from components and not the reverse). So the feature
+                 renders its own overlay, App composes it, and the canvas's whole
+                 involvement is knowing WHERE in the paint order it goes — over
+                 the plan, under every mark we make. One slot, one prop.
+                 `heatmapOn` IS SEPARATE AND IS NOT DERIVED FROM THE ELEMENT,
+                 because it answers a different question: not "draw this" but
+                 "stand the decorative washes down" — the throw pools and the
+                 cove's ceiling fill, which are a second, cruder claim about the
+                 same floor and would sit on top of this one.
+                 `night` IS THE GROUND AND IT IS THE ONE THING THE FIELD TAKES
+                 FROM THE VIEW. On the night sheet the drawing's ground is black,
+                 and alpha over black multiplies — the cold half of the scale
+                 vanished at the paper opacity. It changes how much ground shows
+                 through and not one of the five colours; see the note on
+                 `heatmapOpacity`. */
+              heatmapLayer={<HeatmapOverlay heatmap={heatmap}
+                night={canvasLayers.invert} />}
+              heatmapOn={canvasLayers.heatmap}
               /* A PLATE CAN BE PICKED AND THROWN AWAY, and that is all it can
                  be — see `deleteBoard` for why there is no drag. Null in the
                  viewer, like every other editing handler here. */
@@ -6557,6 +6634,15 @@ export default function App({
               && !moduleBarOn && (autoLead || sceneTail) && (
               <StageBar stage={stageRef} lead={autoLead} tail={sceneTail} label="Drawing" />
             )}
+            {/* --- THE HEATMAP'S KEY ----------------------------------------
+                OUTSIDE THE BAR'S OWN CONDITION, because it is not part of the
+                bar: the bar is one row at the bottom CENTRE of the stage and is
+                replaced wholesale every time a tool claims it, and the key has
+                to survive that — a scale is unreadable without its legend
+                whether or not somebody happens to be drawing a cove at the time.
+                It measures off the same stage and sits at its bottom LEFT, clear
+                of the bar. It draws nothing while the layer is off. */}
+            <HeatmapLegend heatmap={heatmap} stage={stageRef} />
             {/* --- THE CARD THAT EXPLAINS THE OPTIONS PILL --------------------
                 BESIDE THE CANVAS AND NOT INSIDE IT, because it deliberately
                 sits OFF the sheet with a leader line back to the chip — see

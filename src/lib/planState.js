@@ -119,6 +119,20 @@ export const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: tru
      and not the layout, and a plan that opened in it would be a plan that
      opened proposing rather than answering. */
   suggestGrid: false,
+  /* --- THE ESTIMATED ILLUMINANCE HEATMAP ---------------------------------
+     A THIRD WAY OF LOOKING AT THE SAME CEILING, and it is the only one that is
+     not a drawing of the fittings: `autoLights` places the engine's grid,
+     `suggestGrid` proposes it, and this asks what either of them actually
+     DELIVERS to the floor, cell by cell. See src/features/heatmap/.
+     OFF BY DEFAULT, like both of those. It is a way of LOOKING and not part of
+     the design — and it is the one layer here that costs real arithmetic, so a
+     plan that opened with it on would spend a photometric solve per room before
+     anybody had asked a question. The switch is on the bar at the foot of the
+     drawing beside the Suggested Grid, which is where a layer somebody reaches
+     for while working belongs.
+     SERIALISED WITH THE REST, so a sheet reopens showing what it was left
+     showing — the same courtesy every other layer gets. */
+  heatmap: false,
   electrical: false,
   /* DARK MODE FOR THE DRAWING, AND IT IS A PIXEL INVERSION OF THE SCAN — the
      same thing Cmd-I does in Photoshop, applied to the plan image and nothing

@@ -167,6 +167,38 @@
 
   --shadow:0 1px 2px rgba(0,0,0,.04);
   --shadow-pop:0 8px 30px rgba(0,0,0,.12);
+
+  /* --- THE HEATMAP SCALE, AND IT IS THE THIRD CONSIDERED EXCEPTION TO
+         "BLACK, WHITE AND ONE BLUE" --------------------------------------
+     THE OTHER TWO ARE THE SPACE FILLS ON THE TRACER AND THE FITTINGS' AMBER —
+     both argued for at the head of PlanCanvas.jsx — and this one is argued for
+     the same way: the rule exists because the SYMBOLS were already doing the
+     work, and colour spent on saying a second time what a shape says is colour
+     wasted. A heatmap has no shape. It is a scalar field over the floor, and
+     the only way to read one is by hue; there is no symbol to draw instead.
+
+     FIVE BANDS OF A RATIO AND NOT FIVE LEVELS OF LIGHT. Each is a share of the
+     space's own target — see src/features/heatmap/heatmapTargets.js, which owns
+     the bands, the anchors and the target itself. Blue is short, green is on,
+     orange is over; the ramp runs cold to warm because that is the one colour
+     order every reader already has, and it deliberately does not run through the
+     brand accent, which on this canvas means "a fitting is emitting here".
+
+     THESE FIVE PROPERTIES ARE THE ONLY PLACE THESE COLOURS EXIST. Both the
+     renderer and the legend resolve them off the document at runtime — see
+     `readHeatmapPalette` in src/features/heatmap/colours.js — so editing one
+     line here changes the drawing and its key together, and no JavaScript in
+     this app holds a heatmap hex. Change them freely; the only rule is that the
+     five stay distinguishable in order, because the order is the meaning.
+
+     NOT `--color-heatmap-*` BY ACCIDENT: the `--color-` prefix is what makes
+     Tailwind emit them as theme colours, so `bg-[--color-heatmap-75-125]` works
+     in the legend markup as well as `var()` in a fill. */
+  --color-heatmap-below-25:#1B3FA0;
+  --color-heatmap-25-75:#1FB6D4;
+  --color-heatmap-75-125:#28A85C;
+  --color-heatmap-125-200:#F0A32A;
+  --color-heatmap-above-200:#EE6A1E;
 }
 
 @utility bg-accent-gradient {

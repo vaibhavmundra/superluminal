@@ -598,8 +598,48 @@ export function projectAccentZonesPx(rooms, accentResults, accentDismissed, manu
     // removes it outright, so nothing new lands in `accentDismissed` — but a
     // plan saved while that was broken has manual ids sitting in the list, and
     // those fittings should stay deleted rather than reappearing on reload.
-    return [...out, ...manualAccents.filter(
-      (m) => live.has(m.roomId) && !accentDismissed.includes(m.id))];
+    /* --- ...AND A HAND-PLACED FITTING BELONGS TO THE SPACE IT IS OVER -------
+       IT BELONGED TO WHICHEVER ROOM THE FIRST CLICK LANDED IN, AND THAT WAS A
+       BUG WITH NO VISIBLE CAUSE. A strip is two clicks and the first one is
+       SNAPPED (see `snapPlacing` — it pulls onto walls, corners and existing
+       fittings), so a run aimed at the edge of a space can have its opening
+       pixel resolve into the space NEXT DOOR. `roomId` was stamped from that
+       pixel and never revisited; the run was then DRAWN at its own coordinates,
+       which is over the space you aimed at. So the fitting appeared in one room
+       and was counted in another — the schedule billed it next door, the
+       Analysis panel reported the room you had just lit as ACHIEVED 0, and the
+       heatmap coloured it dark. All three were right about the data and the data
+       was wrong.
+       SO THE HOME IS RESOLVED FROM THE GEOMETRY, WHICH IS ALREADY THE HOUSE
+       RULE. `projectMagTracksPx` says it in as many words about a hand-placed
+       track: "`roomId` IS WHERE THE MIDDLE OF IT IS ... the honest single answer
+       is the space its centre is over". A run of tape is the same kind of
+       object and gets the same rule.
+       AT THE READ AND NOT AT THE PLACEMENT, deliberately: a plan already saved
+       with a run stamped next door heals on reload rather than needing a
+       migration, and there is one place the answer comes from instead of two.
+       THE STORED ID IS THE FALLBACK, so a run whose centre is over no space at
+       all — across a threshold, or outside a re-traced outline — keeps the home
+       it had rather than disappearing from the drawing. */
+    const homeOf = (m) => {
+      const at = m.point
+        ?? (m.run?.length >= 2
+          ? { x: (m.run[0].x + m.run[m.run.length - 1].x) / 2,
+              y: (m.run[0].y + m.run[m.run.length - 1].y) / 2 }
+          : (m.rect ? { x: (m.rect.x0 + m.rect.x1) / 2,
+                        y: (m.rect.y0 + m.rect.y1) / 2 } : null));
+      if (!Number.isFinite(at?.x) || !Number.isFinite(at?.y)) return m.roomId;
+      const hit = rooms.find((r) => pointInPolygon(
+        at, r.plan?.polygonPx ?? r.geo?.polygonPx ?? []));
+      return hit ? hit.id : m.roomId;
+    };
+    return [...out, ...manualAccents
+      .filter((m) => !accentDismissed.includes(m.id))
+      .map((m) => { const roomId = homeOf(m); return roomId === m.roomId ? m : { ...m, roomId }; })
+      // LIVE AGAINST THE RESOLVED HOME AND NOT THE STORED ONE, so a fitting
+      // whose stored room has been re-traced away survives if it is standing
+      // over one that exists.
+      .filter((m) => live.has(m.roomId))];
 
 }
 

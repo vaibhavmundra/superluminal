@@ -487,6 +487,29 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        feature, not two unrelated adjustments: see the `!sh.lit` line in the
        shapes layer, which is the mark this is clearing the way for. */
     placingGeometry = false,
+    /* --- THE ESTIMATED ILLUMINANCE FIELD, ALREADY DRAWN -------------------
+       AN ELEMENT AND NOT DATA, which is the one thing worth explaining about
+       this pair. Every other list here arrives as geometry for this file to
+       draw; this arrives drawn. The reason is the import direction: the heatmap
+       is a FEATURE, features import from components and not the other way about
+       (see features/ceiling-geometry), and a canvas that knew how to colour a
+       lux field would be a canvas that knew what a lux was. What it knows
+       instead is the one thing only it can know — WHERE in the paint order the
+       layer belongs, which is immediately after the plan and before the first
+       mark we make ourselves. Null on every sheet that has no heatmap, which is
+       every sheet by default.
+
+       `heatmapOn` IS NOT DERIVED FROM IT because it answers a different
+       question: not "draw this" but "stand the decorative washes down". The
+       throw pools under the fittings and the wash on a ceiling a cove carries
+       are the sheet's OTHER claim about how much light reaches the floor —
+       three stated pool diameters and a flat fill — and they are a cruder
+       version of exactly what the field underneath them is saying, painted on
+       top of it. Two claims about one floor is one too many, and the coarser one
+       goes. The fittings, their own aperture glows, the strips and every outline
+       stay: those are the drawing, and the requirement is that they read ON TOP
+       of the field. See the two `heatmapOn` tests below. */
+    heatmapLayer = null, heatmapOn = false,
     cursor = null },
   ref
 ) {
@@ -1291,6 +1314,20 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           pointerEvents="none" />
       )}
 
+      {/* --- THE ESTIMATED ILLUMINANCE FIELD --------------------------------
+          HERE, AND THE POSITION IS THE WHOLE OF WHAT THIS FILE CONTRIBUTES TO
+          IT. Everything above this line is somebody else's drawing and the
+          scrim that puts it down; everything below is ours — the cells, the
+          outlines, the fittings, the tags, the guides. So the field sits ON the
+          plan and UNDER every mark we make, which is the requirement stated
+          twice over: it must colour the floor inside the outlines, and the
+          fixture symbols and room boundaries must stay legible above it.
+          IT TAKES NO POINTER, and that is the overlay's own doing rather than
+          something asserted here — see HeatmapOverlay, whose group carries
+          `pointerEvents: none`. Selection, dragging, panning and zooming all
+          reach the drawing through it untouched. */}
+      {heatmapLayer}
+
       {/* Cells, grid and outline, room by room. All three under the lights, so
           no light is ever obscured by a grid line drawn after it. */}
       {laid.map((r, i) => (
@@ -1450,7 +1487,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               chunk would come out with four visible seams in it. One rect over
               the union carries one ramp. The pieces tile the host exactly, so
               the union of their bounds IS the host. */}
+          {/* AND IT STANDS DOWN UNDER THE HEATMAP. This fill and the field
+              beneath it are two answers to one question — how much light
+              reaches this piece of floor — and this is the cruder of them by an
+              order of magnitude: a flat ramp over the whole host chunk, at the
+              throw pools' own opacity, saying "the cove did it". Left on, it
+              would lie across the field it agrees with in spirit and
+              contradicts in detail. See `heatmapOn`. */}
           {(() => {
+            if (heatmapOn) return null;
             const chunks = r.plan.chunksPx ?? [];
             const lit = new Set(chunks
               .filter((ch) => ch.cove === 'inner' && ch.dark)
@@ -1838,7 +1883,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           a proposal has not been made yet — a dotted outline standing in six
           feet of glow would be the strongest possible statement that it is
           going in, said by the one mark on the sheet that cannot be dotted. */}
-      {(autoLights || layers.spots) && laid.map((r, ri) => {
+      {/* AND EVERY ONE OF THEM STANDS DOWN UNDER THE HEATMAP, which is the same
+          argument the cove's ceiling fill makes further up: a pool is this
+          drawing's claim that a lamp covers this much floor, read off three
+          stated diameters at a 9 ft assumption (THROW_STYLE.diameterFtByWatt),
+          and the field underneath is the same claim computed from the beam, the
+          height and everything else in the room. The coarser of two answers to
+          one question is the one that goes. See `heatmapOn`. */}
+      {!heatmapOn && (autoLights || layers.spots) && laid.map((r, ri) => {
         const pools = [];
         // THE GRID AND THE TRACK HEADS — 7 W ambient, 12 W over a pair of
         // cells, 5 W narrow in a wet room. A ceiling light points straight
@@ -4189,7 +4241,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           ABOVE THE GRID AND BELOW THE SELECTABLE OBJECTS, for the ordering
           reason the drawn coves state: a fitting somebody placed has to beat the
           layout underneath it for a press, and must not beat a control. */}
-      {layers.lights && !placingGeometry && manualCobs.map((c) => {
+      {/* ...AND THESE GO WITH THEM UNDER THE HEATMAP, for the reason stated on
+          the grid's pools above. A hand-placed lamp's pool is a truer figure
+          than the grid's — it is computed from the lamp's own beam and the
+          space's own height, see `projectManualCobsPx` — and it is still a disc
+          against a field. */}
+      {!heatmapOn && layers.lights && !placingGeometry && manualCobs.map((c) => {
         const ri = laid.findIndex((r) => r.id === c.roomId);
         if (ri < 0 || !(c.throwFt > 0)) return null;
         return (
@@ -4344,6 +4401,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 `roomId` — and it costs nothing: the ghost is only ever drawn
                 while the pointer is inside a room, so the spill is a foot or two
                 at the wall for the moment before the click resolves it. */}
+            {/* AND IT STAYS UNDER THE HEATMAP, unlike every placed fitting's
+                pool. The two that stand down are MARKS ON THE SHEET making a
+                claim the field makes better; this one is the GESTURE answering
+                the pointer — it is what makes the beam-angle slider legible, as
+                the note above says, and it is gone the moment the click
+                resolves. Suppressing it would take a live control's only
+                feedback away to tidy a layer it is not competing with. */}
             {!blocked && cobGhost.throwFt > 0 && (
               <circle cx={cobGhost.x} cy={cobGhost.y} r={(cobGhost.throwFt / 2) * s}
                 fill="url(#lp-throw)" opacity={THROW_STYLE.opacity} />
