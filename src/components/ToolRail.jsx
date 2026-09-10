@@ -113,10 +113,15 @@ function RailCell({ mark, label, on, disabled, title, onClick }) {
    who does not recognise the artwork will look anyway.
    ONLY THE ONES THAT OVERFLOW. A map with an entry per tool would be a second
    set of names to keep in step with the first; this is a list of exceptions,
-   and a tool not in it is called what it is called. */
+   and a tool not in it is called what it is called.
+   AND THE ADJUSTABLE SPOT IS NO LONGER ONE OF THEM. "ADJ. SPOT" was read as the
+   fitting being called a spot, which is the one thing the rename to "Adjustable
+   spot" was for: the cell is a verb — what it lets you DO is aim one — and an
+   abbreviation that swallows the verb hands the name back to the schedule's
+   word. It is spelled out, and PaletteButton drops the caption a point for a
+   word this long rather than clipping it. */
 const SHORT = {
   'Reverse cove': 'Rev. cove',
-  'Adjustable spot': 'Adj. spot',
   'LED strip': 'Strip',
   'Cassette AC': 'Cassette',
   'Chandelier': 'Chand.',

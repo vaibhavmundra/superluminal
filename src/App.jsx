@@ -1326,6 +1326,7 @@ export default function App({
     docActions.clearCoves(); setCoveFrom(null); setCoveNote('');
     roomIntelReset.current.renderState();
     roomIntelReset.current.accentEditing();
+    roomIntelReset.current.spotEditing();
     // BACK TO THE PROJECT'S ANSWER, NOT TO NULL. This runs on every file load,
     // including the one that opens a saved plan, and blanking it here would put
     // the plan-level dialog back in front of a user whose project already
@@ -3100,9 +3101,20 @@ export default function App({
      three calls for the same reason. Nothing is shared between the two halves
      but the document. */
   const roomEditing = useRoomEditing({
-    rooms, pxPerFt, zoom, svgPoint, svgRef, pressState,
+    rooms, pxPerFt, zoom, svgPoint, svgRef, pressState, roomAt,
     accentZonesPx, taskSpotsPx, manualAccents, manualCoves, manualSurfaces,
-    addTool, zoneMode, setSel, setArmed, deleteShape, docActions,
+    /* THE HAND-PLACED SPOTS' STORE AND THE SNAP, both for the one gesture the
+       spot has that a derived one does not: it can be picked up and carried.
+       The store because a patch is written in FEET and the projection cannot be
+       patched; `snapTargets`, `snapTol` and `setGuides` because a dragged
+       fitting aligns against the same collector the ceiling objects, the lights
+       and the geometry use — see useTaskSpots.
+       `spotAiming` IS THE ONE THING THAT WITHHOLDS THE DRAG. Between the two
+       clicks that place a spot the pointer is already turning a fitting that
+       does not exist yet, and a second gesture reading the same moves would
+       carry one spot while aiming another. */
+    manualSpots, addTool, zoneMode, spotAiming: !!spotAim,
+    setSel, setArmed, setGuides, snapTargets, snapTol, deleteShape, docActions,
   });
   /* BOTH RESET GROUPS, MERGED INTO THE ONE REF `resetForNewPlan` READS. It is
      assigned here rather than at the first call site because this is the first
@@ -3110,7 +3122,8 @@ export default function App({
   roomIntelReset.current = { ...roomIntel.reset, ...roomEditing.reset };
   const { accentDrag: accDrag, onAccPointerDown: accPointerDown,
           accPointerMove, accPointerUp,
-          onSpotPointerDown: spotPointerDown } = roomEditing.canvas;
+          spotDrag, onSpotPointerDown: spotPointerDown,
+          spotPointerMove, spotPointerUp } = roomEditing.canvas;
   const { deleteAccent, deleteSpot } = roomEditing.commands;
 
   /* --- THE FIVE DRAGS AND THE PRESSES THAT PLACE ---------------------------
@@ -4290,7 +4303,7 @@ export default function App({
         e.preventDefault();
         if (!spotAim) {
           setSpotAim({ xFt: p.x / pxPerFt, yFt: p.y / pxPerFt,
-                       roomId: room.id, aim: 0 });
+                       roomId: room.id, aim: 0, aimFt: 0 });
           return;
         }
         /* THE SECOND CLICK IS THE COMMIT, and it takes the angle off the state
@@ -4302,6 +4315,11 @@ export default function App({
           id: `mspot-${Date.now().toString(36)}`,
           roomId: spotAim.roomId,
           xFt: spotAim.xFt, yFt: spotAim.yFt, aim: spotAim.aim,
+          /* AND HOW FAR OUT IT IS AIMED, which is the second click's DISTANCE
+             and not just its direction. A record holding only the angle cannot
+             say where the beam lands, and the projection had to invent a reach
+             for it. See the note at the move above and `HAND_AIM_FT`. */
+          aimFt: spotAim.aimFt,
         });
         /* THE TOOL STAYS ARMED, like the COB's. Spots come in threes over a
            worktop, and a tool that disarms after one costs a trip to the rail
@@ -4355,8 +4373,17 @@ export default function App({
        written, which is what the second click will store. */
     if (spotAim && pxPerFt) {
       const p = svgPoint(e);
+      /* THE POINTER SAYS TWO THINGS AND BOTH ARE KEPT: which way the fitting is
+         turned, and HOW FAR IN FRONT OF IT THE BEAM LANDS. The distance used to
+         be thrown away and a fixed six feet used in its place — see
+         `HAND_AIM_FT` — so a spot aimed at a table four feet off was drawn and
+         modelled throwing at a point six feet off, past the thing it was for.
+         Aiming AT something and having the light land somewhere else is the one
+         mistake this gesture must not make: the second click is a point on the
+         floor, so the point on the floor is what is recorded. */
       setSpotAim((d) => (d ? { ...d,
-        aim: Math.atan2(p.y / pxPerFt - d.yFt, p.x / pxPerFt - d.xFt) } : d));
+        aim: Math.atan2(p.y / pxPerFt - d.yFt, p.x / pxPerFt - d.xFt),
+        aimFt: Math.hypot(p.x / pxPerFt - d.xFt, p.y / pxPerFt - d.yFt) } : d));
       return;
     }
     // THE DOOR EDITOR FIRST, for the reason given on the press: it owns the
@@ -4381,6 +4408,12 @@ export default function App({
     // owns the pointer until it is released.
     if (moduleDrag) { fixtureGestures.move.module(e); return; }
     if (accDrag) { accPointerMove(e); return; }
+    /* A DIRECTIONAL SPOT BEING CARRIED — same rule, and it is the branch that
+       makes the spot STEP survive the gesture: the tool stays armed after a
+       spot is placed, so this sits above the armed-tool branches below exactly
+       as the lamp's and the accent's do. A gesture that has the pointer owns it
+       until it is released, whatever else is in hand. */
+    if (spotDrag) { spotPointerMove(e); return; }
     // A PLATE BEING SLID ROUND THE WALLS. Above the armed-tool branch below for
     // the same reason the object and accent drags are: a gesture already in
     // flight owns the pointer until it is released.
@@ -4515,6 +4548,7 @@ export default function App({
     if (arrayDrag) { fixtureGestures.up.array(); return; }
     if (moduleDrag) { fixtureGestures.up.module(); return; }
     if (accDrag) { accPointerUp(); return; }
+    if (spotDrag) { spotPointerUp(); return; }
     if (boardDrag) { boardPointerUp(); return; }
     if (flowDrag) { flowPointerUp(); return; }
     /* A COVE IS A DRAG TOO, AND THIS IS WHERE IT LANDS. Press seats the wall,

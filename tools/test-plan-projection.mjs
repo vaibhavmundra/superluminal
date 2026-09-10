@@ -9,6 +9,7 @@ import {
   projectAccentZonesPx,
 } from '../src/lib/planProjection.js';
 import { projectFlowsPx } from '../src/lib/electricalProjection.js';
+import { SPOT_DEFAULTS } from '../src/lib/taskSpots.js';
 
 let fail = 0;
 const ok = (condition, message) => {
@@ -71,10 +72,32 @@ console.log('-- task spots cross into room feet and back to plan pixels --');
      both know to count it, and `x` being finite is the analysis's own guard. */
   ok(!h.rejected && Number.isFinite(h.x) && Number.isFinite(h.angle),
     '...and nothing that would make a counter skip it');
-  /* THE AIM POINT IS DERIVED FROM THE ANGLE, six feet out — see HAND_AIM_FT.
-     Aimed along +x from (4,5) ft at 10 px/ft, that is (100, 50) px. */
+  /* A RECORD WITH NO REACH FALLS BACK TO SIX FEET — see HAND_AIM_FT, which is
+     now only what a plan saved before the distance was stored keeps. Aimed
+     along +x from (4,5) ft at 10 px/ft, that is (100, 50) px. */
   ok(near(h.target.x, 100) && near(h.target.y, 50),
-    `the target is a fixed reach along the angle: ${h?.target?.x},${h?.target?.y}`);
+    `an angle with no reach keeps the old six feet: ${h?.target?.x},${h?.target?.y}`);
+
+  /* --- BUT WHERE THE SECOND CLICK LANDED IS WHERE THE BEAM LANDS ----------
+     THE FAULT THIS FIXES: aiming at a table four feet off and having the throw
+     pool, the arrow and the heatmap's cone all land six feet off, past it. The
+     pool is drawn on `target` and the heatmap tilts at `target`, so this one
+     number is the whole of "aimed at THAT". */
+  const aimed = projectTaskSpotsPx([room], [], [], {},
+    [{ id: 'mspot-1', roomId: 'room-1', xFt: 4, yFt: 5, aim: 0, aimFt: 4 }], 10);
+  ok(near(aimed[0]?.target.x, 80) && near(aimed[0]?.target.y, 50),
+    `a four-foot aim throws four feet out: ${aimed[0]?.target?.x},${aimed[0]?.target?.y}`);
+  ok(near(aimed[0]?.aimFt, 4),
+    'and the distance the panel and the schedule quote is the one that was aimed');
+
+  /* FLOORED AT THE PLACER'S OWN STANDOFF. A second click on top of the body
+     asks for a fitting with no direction to point in, which is the case
+     `minStandoff` was written for — the same rule and the same number rather
+     than a second one invented for the hand. */
+  const onTop = projectTaskSpotsPx([room], [], [], {},
+    [{ id: 'mspot-1', roomId: 'room-1', xFt: 4, yFt: 5, aim: 0, aimFt: 0 }], 10);
+  ok(near(onTop[0]?.aimFt, SPOT_DEFAULTS.minStandoff),
+    `a click on the body is held off by the standoff: ${onTop[0]?.aimFt}`);
 
   /* A ROOM WITH NO TASK SURFACE `continue`s out of the pass above, which is
      why the hand-placed loop is over the SPOTS and not over the rooms. */
@@ -87,6 +110,39 @@ console.log('-- task spots cross into room feet and back to plan pixels --');
     'a record with no angle is not a spot and is not drawn');
   ok(projectTaskSpotsPx([room], [], [], {}, HAND, 0).length === 0,
     'and nothing is projected before there is a scale');
+
+  /* --- WHICH SPACE IT BELONGS TO IS WHERE IT IS ---------------------------
+     A HAND-PLACED SPOT CAN BE DRAGGED NOW, so the id the second click stamped
+     is no longer the answer: carried into the next room it would go on being
+     billed, analysed and heat-mapped in the one it was placed in. Resolved at
+     the READ, which is what `projectAccentZonesPx` already does for a run and
+     `projectMagTracksPx` for a track — and which heals a plan saved before the
+     drag existed.
+     The neighbour is 30..54 ft across, i.e. 300..540 px at this scale. */
+  const NEXT = {
+    id: 'room-2',
+    plan: { ok: true, chunks: [], lights: [], polygonFt: [], zones: [] },
+    tracks: [],
+    geo: {
+      toFt: (q) => ({ x: q.x / 10, y: q.y / 10 }),
+      toPx: (q) => ({ x: q.x * 10, y: q.y * 10 }),
+      fixturesFt: [],
+      polygonPx: [{ x: 300, y: 0 }, { x: 540, y: 0 },
+                  { x: 540, y: 160 }, { x: 300, y: 160 }],
+    },
+  };
+  const moved = projectTaskSpotsPx([room, NEXT], [], [], {},
+    [{ id: 'mspot-1', roomId: 'room-1', xFt: 40, yFt: 5, aim: 0 }], 10);
+  ok(moved[0]?.roomId === 'room-2',
+    `a spot dragged next door is attributed next door: ${moved[0]?.roomId}`);
+
+  /* THE STORED ID IS THE FALLBACK. A spot dropped across a threshold, or left
+     outside a re-traced outline, keeps the home it had rather than falling out
+     of every schedule at once. */
+  const off = projectTaskSpotsPx([room, NEXT], [], [], {},
+    [{ id: 'mspot-1', roomId: 'room-1', xFt: 100, yFt: 100, aim: 0 }], 10);
+  ok(off[0]?.roomId === 'room-1',
+    'and one over no space at all keeps the room it was placed in');
 }
 
 console.log('\n-- accent sources are merged and filtered in screen space --');

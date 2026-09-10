@@ -167,16 +167,22 @@ export function projectArtPiecesPx(rooms, wallResults, pxPerFt, artDismissed) {
  * the chunks, the lights and the clearance rules all already live in, and
  * back out to plan pixels for the canvas.
  */
-/* HOW FAR IN FRONT OF A HAND-PLACED SPOT ITS AIM POINT SITS, in plan feet.
-   THE FIGURE IS A DRAWING DECISION AND NOT A PHOTOMETRIC ONE, which is why it
-   is here and named rather than inlined. A placer's spot has a real target —
-   the middle of the table it was put there for — and its `aimFt` is the honest
-   distance to it. A hand-aimed spot has a direction and no target at all, so
-   something has to stand in for one, and what reads correctly on the sheet is a
-   point far enough out that the arrow is unambiguous and near enough that the
-   wash it carries lands where somebody pointed. Six feet is a little over the
-   throw of a 5 W narrow lamp at 2.7 m, which makes the pool and the arrow agree
-   with each other. */
+/* HOW FAR IN FRONT OF A HAND-PLACED SPOT ITS AIM POINT SITS WHEN THE RECORD
+   DOES NOT SAY, in plan feet.
+   IT WAS THE FIGURE FOR EVERY HAND-AIMED SPOT AND IT IS NOW ONLY THE FALLBACK,
+   which is the correction of a real fault. The note here argued that "a
+   hand-aimed spot has a direction and no target at all, so something has to
+   stand in for one" — and that was simply not true of the gesture: the second
+   click lands ON something, and its distance was being discarded on the way to
+   the store. So a spot aimed at a table four feet away was drawn throwing at a
+   point six feet away, past the table, and the heatmap tilted the cone to
+   match. Aiming at a thing and lighting somewhere else is the one mistake this
+   fitting cannot afford, since the arrow is the whole of what makes it a task
+   light. The distance is stored now — see `aimFt` in `addSpot`.
+   WHAT IS LEFT IS PLANS SAVED BEFORE THAT. They hold an angle and no reach, and
+   six feet is what they were drawn with, so it is what they keep: a little over
+   the throw of a 5 W narrow lamp at 2.7 m, which makes the pool and the arrow
+   agree with each other. */
 const HAND_AIM_FT = 6;
 
 export function projectTaskSpotsPx(rooms, surfacesPx, artPiecesPx, opt,
@@ -479,18 +485,52 @@ export function projectTaskSpotsPx(rooms, surfacesPx, artPiecesPx, opt,
        points at it, and the absorbed-onto-a-track case re-derives the angle
        from it. Storing a point instead would make the record say the spot is
        aimed at a particular spot on the floor, which is not what was said. */
+    /* WHICH SPACE A HAND-PLACED SPOT BELONGS TO IS WHERE IT IS, NOT WHERE IT
+       WAS PUT DOWN. The id stamped by the second click was never revisited,
+       which was harmless only while the fitting could not move: it can be
+       carried now (see useTaskSpots), and a spot dragged into the next room
+       would go on being billed, analysed and heat-mapped in the one it was
+       placed in — three readers all correct about wrong data, and nothing on
+       the drawing to say so.
+       AT THE READ AND NOT AT THE DRAG, which is already the house rule:
+       `projectAccentZonesPx` says it in full about a hand-placed run and
+       `projectMagTracksPx` about a track ("`roomId` IS WHERE THE MIDDLE OF IT
+       IS"). One place the answer comes from instead of two, and a plan saved
+       before this heals on reload rather than needing a migration.
+       THE STORED ID IS THE FALLBACK, so a spot over no space at all — dropped
+       across a threshold, or left outside a re-traced outline — keeps the home
+       it had rather than falling out of every schedule. */
+    const spotHome = (at) => rooms.find((r) => pointInPolygon(
+      at, r.plan?.polygonPx ?? r.geo?.polygonPx ?? []))?.id ?? null;
     for (const sp of manualSpots) {
       if (!Number.isFinite(sp?.xFt) || !Number.isFinite(sp?.yFt)
           || !Number.isFinite(sp?.aim) || !(pxPerFt > 0)) continue;
       const x = sp.xFt * pxPerFt, y = sp.yFt * pxPerFt;
-      const reach = HAND_AIM_FT * pxPerFt;
+      /* WHERE THE SECOND CLICK LANDED IS WHERE THE BEAM LANDS. `aimFt` is that
+         distance, and everything downstream reads the aim point rather than
+         this figure: the throw pool is drawn on `target`, the heatmap tilts its
+         cone at `target`, and the arrow points at it. So this one number is the
+         whole of "aimed at THAT".
+         FLOORED AT THE STANDOFF THE PLACER ALREADY USES. `minStandoff` is there
+         because "a spot ON the table has no direction to point in, and the arrow
+         is half the drawing" — which is exactly what a second click landing on
+         the body would ask for. Same rule, same number, rather than a second
+         one invented here.
+         AND IT IS NOT CAPPED AT `maxAimFt`. That cap is how the placer CHOOSES
+         between candidates; a hand that has aimed a fitting has said the last
+         word on it, which is the rule this whole block exists to state. */
+      const aimFt = Number.isFinite(sp.aimFt)
+        ? Math.max(sp.aimFt, SPOT_DEFAULTS.minStandoff)
+        : HAND_AIM_FT;
+      const reach = aimFt * pxPerFt;
       out.push({
-        id: sp.id, roomId: sp.roomId ?? null, fixture: sp.fixture || 'spot',
+        id: sp.id, roomId: spotHome({ x, y }) ?? sp.roomId ?? null,
+        fixture: sp.fixture || 'spot',
         hand: true,
         x, y,
         target: { x: x + Math.cos(sp.aim) * reach, y: y + Math.sin(sp.aim) * reach },
         angle: sp.aim,
-        aimFt: HAND_AIM_FT, far: false,
+        aimFt, far: false,
       });
     }
     return out;

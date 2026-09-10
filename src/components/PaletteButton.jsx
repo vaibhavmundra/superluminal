@@ -111,7 +111,25 @@ export default function PaletteButton({ icon, label, on = false, disabled = fals
           #2F2F2F is about 2.4:1, which is quiet to the point of absent. #A8A8A8
           is 4.2:1 and is the ink the rail's own five labels wear, so a category
           and the cells inside it read at one weight. */}
-      <span className={'text-[8.5px] leading-[1.15] text-center uppercase tracking-[0.07em] '
+      {/* A NAME WITH A LONG WORD IN IT GETS A POINT LESS TYPE RATHER THAN A
+          SHORTER NAME. Eight tracked capitals is about all 64px holds, and past
+          that the default is not a tidy wrap: CSS breaks at spaces only, so a
+          single long word overflows its cell and the flyout's `overflow-hidden`
+          clips it — "ADJUSTABL". The abbreviations in ToolRail's `SHORT` are one
+          answer to that and are still right for most of them (a chandelier is a
+          chandelier however it is captioned), but they cost the one case where
+          the words ARE the name: "Adjustable spot" is a verb, and "Adj. spot"
+          hands the fitting back to being called a spot.
+          THE CELL DECIDES AND NOT THE CALLER, because the constraint is the
+          cell's — 64px and no padding — and a flag would be one more thing a
+          new row has to know. A label whose longest word still fits is
+          untouched, so this changes nothing about the eleven that already fit.
+          8 IS MEASURED OFF THIS RAIL RATHER THAN CHOSEN: every caption of nine
+          characters or more is in `SHORT`, and every one of eight or fewer —
+          Diffuser, Pendant, Sconce, Cassette — is not. */}
+      <span className={(String(label ?? '').split(/\s+/).some((w) => w.length > 8)
+          ? 'text-[7.2px] ' : 'text-[8.5px] ')
+        + 'leading-[1.15] text-center uppercase tracking-[0.07em] '
         + (on ? 'text-white' : 'text-faint')}>{label}</span>
     </button>
   );
