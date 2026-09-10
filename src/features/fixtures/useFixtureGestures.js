@@ -61,7 +61,7 @@ export default function useFixtureGestures({
     lightDrag, setLightDrag,
     objDrag, setObjDrag, objMode, setObjMode, selObjIds, toggleSelObj,
     armed, setArmed, ghost, setGhost, fanSweepMm,
-    cobOnce, setCobOnce, cobStanding, setCobRun, cobLock, setCobLock,
+    cobStanding, cobLock, setCobLock,
     setCobAt, cobDraftArray, setCobDraftArray,
     arrayDrag, setArrayDrag, trackMode, moduleSpec,
     moduleDrag, setModuleDrag,
@@ -752,10 +752,34 @@ export default function useFixtureGestures({
      inside a room is always also inside that room's outline; without the
      ordering the smaller of the two targets could never be hit.
 
-     AND THE ROOM'S OWN OUTLINE IS A GEOMETRY. It is the one every plan has,
-     it is what you offset from to ring a room with downlights, and it needs
-     no drawing first. `room:` says which list to look in — see
-     `arrayOutline`. */
+     AND THE ROOM'S OWN OUTLINE IS NO LONGER ONE, WHICH REVERSES A DECISION.
+     The note here used to argue that a space's outline "is the geometry every
+     plan has, and it needs no drawing first", so a press on bare ceiling took
+     it. That is wrong, and it was wrong in the ordinary case rather than at the
+     edges: a room's outline is traced on the PLASTER, every one of its vertices
+     is a corner, and `arraySpots` is obliged to put a lamp on each — so the
+     gesture answered "ring this room with spots" with four lamps jammed into
+     the four corners of it. Nobody asks for that, and worse, nobody ASKED at
+     all: the outline was taken by a press somebody made to choose a point.
+
+     SO A PRESS ON BARE CEILING TAKES NOTHING NOW. The array is set out on a
+     geometry you DRAW — the bar that arrives with this gesture is the geometry
+     bar, in the guide role, exactly as the magnetic track's cell works (see the
+     track drawer in App, and `openShapeTool`). Draw one, tick it, and the
+     committed guide is handed straight to this draft; the count and the wattage
+     are then asked about a path that exists.
+
+     A SHAPE UNDER THE POINTER IS STILL TAKEN, and that is why the bar opens
+     UNARMED. `takeableGeometry` offers any role to this gesture — a run of
+     spots references a line and builds nothing from it — so a cove or a guide
+     already on the drawing is a legitimate answer to "on what", and requiring a
+     primitive first would mean arming a rectangle you are not going to draw in
+     order to use an outline that is already there. Same argument the track's
+     bar makes, in the same words.
+
+     `arrayOutlineFor` STILL READS `room:` AND THAT IS DELIBERATE. Arrays saved
+     before this change carry one, and a reader that dropped the prefix would
+     make those runs vanish off the drawing. What stopped is MINTING them. */
   const arrayDown = (e, p, room, cobMode) => {
     if (!(addTool === 'cob' && cobMode === 'array')) return false;
     /* THE SAME HIT TEST THE CURSOR AND THE HIGHLIGHT RUN, which is what
@@ -764,13 +788,18 @@ export default function useFixtureGestures({
        tolerance is a hover that lights one thing and a press that takes
        another. */
     const hitSh = shapeAtPointer(p);
-    const geomId = hitSh ? hitSh.id : `room:${room.id}`;
-    const geo = arrayOutline(geomId);
+    /* NOTHING UNDER THE POINTER IS NOT AN ERROR AND NOT A FALLBACK EITHER — it
+       is a press that has not chosen anything yet, and the bar over the drawing
+       is already saying what to do about it. The press is still SWALLOWED: this
+       gesture owns the canvas while it is armed, and letting it through would
+       clear the selection or drop a lamp, neither of which anybody asked for. */
+    if (!hitSh) return true;
+    const geo = arrayOutline(hitSh.id);
     if (!geo) return true;
     setCobDraftArray((d) => nextArrayDraft(d, {
-      geomId, geo, roomId: room.id,
+      geomId: hitSh.id, geo, roomId: room.id,
       watts: cobTool.show.watts, beam: cobTool.show.beam }));
-    setSel(select('shape', hitSh ? hitSh.id : null));
+    setSel(select('shape', hitSh.id));
     return true;
   };
 
@@ -803,7 +832,11 @@ export default function useFixtureGestures({
     if (cobObstacleBlocked({
       room, at, pxPerFt, clearanceFt: opt.fanClearance,
     })) return true;
-    const override = cobOnce ?? cobStanding ?? null;
+    /* `cobOnce ?? cobStanding` WAS THE OVERRIDE and the one-shot half is gone
+       with the button that set it — see useFixtureState. What is left is the
+       standing choice, which is null until somebody moves a control on the bar
+       and is cleared by the Recommended chip. */
+    const override = cobStanding ?? null;
     const spec = override ?? recommendCob(room, at, basisFor(room));
     const lamp = placeCob({
       p: at, pxPerFt, roomId: room.id,
@@ -811,9 +844,6 @@ export default function useFixtureGestures({
       spec: !!override, seq: manualCobs.length,
     });
     docActions.addCob(lamp);
-    /* AND IT JOINS THE RUN, which is what the tick and the cross on the bar
-       act on. See `cobRun`. */
-    setCobRun((r) => [...r, lamp.id]);
     /* --- THE FIRST LAMP CHOOSES THE SPACE, AND OPENS IT ----------------
        The lock is what stops the rest of the run wandering into the next
        room — see `cobLock`. Opening the space is the other half of the same
@@ -826,6 +856,9 @@ export default function useFixtureGestures({
        own detail lives — its finishes, its height, and the Analysis with a
        row per placed lamp. The Design tab holds the palettes, which are
        about the drawing rather than about this room.
+       AND THE LAMP NO LONGER JOINS A `cobRun`. That list was read by the tick
+       and the cross at the end of the bar and by nothing else; both are gone,
+       and a lamp is in the schedule the moment this line writes it.
        ONLY ON THE FIRST. Re-focusing on every press would fight anybody who
        opened a different space mid-run to compare a figure. */
     if (!cobLock) {
@@ -834,7 +867,6 @@ export default function useFixtureGestures({
       setOptionPick(null);
       docActions.setView('spaces');
     }
-    if (cobOnce) setCobOnce(null);
     return true;
   };
 

@@ -25,7 +25,7 @@ import { MODULE_BY_ID, placeModule, planDiffusers } from '../../lib/magTrack.js'
 import { netPerUnit, FAMILY_BY_ID } from '../../lib/lumens.js';
 import { absorbAutoplaceSpots, autoplaceCobs, draftCount,
          gridSpotsOnTrack, gridSpotsOwnedByTrack,
-         lightKey, roomForTrackPath,
+         lightKey, nextArrayDraft, roomForTrackPath,
          reconcileCobSpecs } from './fixtureRules.js';
 
 export default function useFixtureCommands({
@@ -34,8 +34,11 @@ export default function useFixtureCommands({
   arrayOutline, spaceAnalysis, setSel, setOptionPick,
 }) {
   const {
-    cobDraftArray, setCobDraftArray, cobRun, selObjIds,
+    cobDraftArray, setCobDraftArray, selObjIds,
     setArrayDrag, setModuleDrag, setFanSweepMm,
+    /* WHICH OF THE COB'S TWO GESTURES IS ARMED — read by `takeArrayGeometry`
+       alone, which has to decline a guide drawn for any other reason. */
+    cobMode,
   } = state;
   const cobBasisFor = fixtures.cob.basisFor;
   const magTracksPx = fixtures.tracks.runsPx;
@@ -105,7 +108,16 @@ export default function useFixtureCommands({
    * next geometry. Somebody ringing four rooms does it four times without
    * touching the rail.
    */
-  const placeArray = useCallback(() => {
+  /* `spec` IS THE WATTAGE AND OPTIC AS THE BAR IS SHOWING THEM AT THE TICK, and
+     it is a parameter because the draft's own copy goes stale. The seed is taken
+     when the GEOMETRY is chosen — see `nextArrayDraft` — and the two controls
+     that change it afterwards write the COB spec stack, which is what the bar
+     renders. So picking a path, then setting the wattage, then ticking placed a
+     run at whatever was showing when the path was picked: the bar said 12 W and
+     the drawing got 7 W. The caller knows both halves and hands the live one in;
+     the draft is still the fallback, so a caller that passes nothing behaves
+     exactly as before. */
+  const placeArray = useCallback((spec = null) => {
     const d = cobDraftArray;
     if (!d?.geomId || !(d.count > 0)) return;
     const geo = arrayOutline(d.geomId);
@@ -114,11 +126,41 @@ export default function useFixtureCommands({
       geomId: d.geomId, roomId: d.roomId ?? geo.roomId,
       count: d.count, side: geo.closed ? d.side : 'on',
       offsetFt: geo.closed ? d.offsetFt : 0,
-      watts: clampWatts(d.watts ?? 7), beam: nearestBeam(d.beam ?? 36),
+      watts: clampWatts(spec?.watts ?? d.watts ?? 7),
+      beam: nearestBeam(spec?.beam ?? d.beam ?? 36),
     }, Date.now().toString(36));
     setCobDraftArray(null);
     setSel(clear());
   }, [docActions, cobDraftArray, arrayOutline, setCobDraftArray, setSel]);
+
+  /**
+   * TAKE A GEOMETRY AS THE PATH THIS ARRAY IS SET OUT ON.
+   *
+   * THE OTHER END OF `onGuideDrawn` — the geometry bar's tick commits a guide,
+   * the reducer write lands, and this is what the shape is handed to. It is the
+   * same act as pressing a geometry already on the drawing (see `arrayDown`),
+   * which is why it goes through the same `nextArrayDraft`: one rule for what a
+   * fresh pick does to the count, the side and the distance, whether the path
+   * was drawn a moment ago or has been there all along.
+   *
+   * IT DECLINES WHEN THE ARRAY IS NOT THE GESTURE IN HAND, and that gate is the
+   * reason the geometry domain hands every committed guide over without asking.
+   * Drawing a guide for its own sake — which is what a click on a space raises
+   * the bar for — must not quietly start setting an array out on it.
+   *
+   * NO WATTAGE IS SEEDED HERE. `useCobTool` owns the spec stack and is composed
+   * BELOW this hook, so there is nothing live to read; the draft carries
+   * whatever it had and the tick hands in what the bar is showing — see
+   * `placeArray`, where that staleness is dealt with once for both routes.
+   */
+  const takeArrayGeometry = useCallback((shape) => {
+    if (cobMode !== 'array' || !shape?.id) return;
+    const geo = arrayOutline(shape.id);
+    if (!geo) return;
+    setCobDraftArray((d) => nextArrayDraft(d, {
+      geomId: shape.id, geo, roomId: geo.roomId,
+      watts: d?.watts, beam: d?.beam }));
+  }, [cobMode, arrayOutline, setCobDraftArray]);
 
   /** ONE ARRAY'S SPECIFICATION, from the Analysis panel. Every lamp in it moves
    *  together, because there is only one figure and they all read it. */
@@ -273,13 +315,11 @@ export default function useFixtureCommands({
     setSel(clear());
   }, [docActions, selObjIds, setSel]);
 
-  /** THROW THE RUN AWAY — the cross on the bar. Scoped to the lamps placed since
-   *  the tool was armed and no others; see `cobRun`. */
-  const dropRun = useCallback(() => {
-    const doomed = new Set(cobRun);
-    docActions.removeCobs([...doomed]);
-    setSel((cur) => (doomed.has(idOf(cur, 'cob')) ? clear() : cur));
-  }, [cobRun, docActions, setSel]);
+  /* `dropRun` WAS HERE — the cross on the bar, which removed every lamp placed
+     since the tool was armed. It went with that button: the run was never
+     pending (a lamp is written the moment it is clicked), so the cross was an
+     undo with a worse name and a wider reach, standing permanently beside a
+     button people press twenty times a minute. Ctrl-Z is the undo. */
 
   /** A FAN'S SWEEP. EVERY SELECTED FAN, NOT JUST THE PRIMARY — the chip reads
    *  the primary's sweep, because with three fans selected the only honest
@@ -436,12 +476,13 @@ export default function useFixtureCommands({
 
   return {
     autoplace: { fill: autoplaceIn, set: setAutoplace },
-    arrays: { place: placeArray, setSpec: setArraySpec, setShape: setArrayShape,
+    arrays: { place: placeArray, takeGeometry: takeArrayGeometry,
+              setSpec: setArraySpec, setShape: setArrayShape,
               remove: deleteArray,
               setDraftCount, setDraftSide, setDraftOffset },
     modules: { setSpec: setTrackModuleSpec, isRow: isModuleRow,
                remove: deleteModule, allocateOnTrack },
-    cob: { setSpec: setCobSpec, remove: deleteCob, dropRun },
+    cob: { setSpec: setCobSpec, remove: deleteCob },
     objects: { remove: deleteObjects, setSweep },
     lights: { reset: resetLightMove },
   };

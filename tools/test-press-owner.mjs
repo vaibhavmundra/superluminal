@@ -192,5 +192,35 @@ say('-- 6. the two deliberate exemptions are exemptions, not the rule --');
     'every other tool owns its press with no exemption at all');
 }
 
+// --------------------------------------------------------------------------
+/* --- THE SPOT ARRAY, WHOSE GESTURE HOLDS TWO TOOLS AT ONCE ----------------
+   ARMING THE ARRAY RAISES THE GEOMETRY BAR IN THE GUIDE ROLE — an array has to
+   have a path, and the two ways of getting one are both the shape tool's. So
+   `addTool: 'cob'` and `shapeMenuOn: true` are live TOGETHER for the whole of
+   that flow, which is a combination nothing else on this canvas produces, and
+   the whole gesture rests on this function telling the two apart.
+
+   THE DISTINCTION IS THE ARMED PRIMITIVE AND NOT THE OPEN BAR — which is the
+   line this file's own header calls "the bug" and which is load-bearing here
+   rather than incidental. Unarmed, the array keeps the press, so a cove or a
+   guide already on the drawing can be pressed and taken as the run's path.
+   Armed, the shape tool takes it, because the next press is a drag that draws
+   the rectangle the run will be set out on. */
+console.log('the spot array holds the cob tool and the geometry bar at once');
+{
+  const array = { addTool: 'cob', shapeMenuOn: true };
+  ok(owns({ ...array, shapeTool: null }, 'tool'),
+    'bar open and no primitive armed: the array keeps the press, so an outline '
+    + 'already on the drawing can be pressed and taken as its path');
+  ok(owns({ ...array, shapeTool: 'rect' }, 'shape'),
+    '...and the moment a primitive is armed the shape tool takes it, because '
+    + 'the next press draws the geometry the run is set out on');
+  /* AND NOTHING IS GRABBABLE THROUGH EITHER OF THEM. `shapePointerDown` bails
+     on `canGrab`, which is what stops a press on a cove SELECTING it — and
+     hence what lets it fall through to the array's own handler. */
+  ok(!canGrab({ ...array, shapeTool: null }) && !canGrab({ ...array, shapeTool: 'rect' }),
+    'neither state grabs, so a press on a shape reaches the tool that wants it');
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\nall good');
 process.exit(fail ? 1 : 0);

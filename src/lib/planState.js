@@ -85,12 +85,40 @@ export const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: tru
      Wanting to see one without the other is the ordinary case — you check your
      own fittings against a ceiling the engine filled in, or you look at the
      engine's answer on its own — and one switch could not say it.
-     ON BY DEFAULT, because it is the output of the act that got you here. The
-     first thing a plan does after the pipeline lands is show what was placed;
-     a plan that opened with the layout hidden would read as a run that did
-     nothing. `lights` stays the master over both, so turning THAT off still
-     clears every fitting off the sheet in one press. */
-  autoLights: true,
+     OFF BY DEFAULT NOW, AND IT WAS ON. The old note here argued that a plan
+     opening with the layout hidden "would read as a run that did nothing" —
+     which was true while this was the only way to see the engine's answer. It
+     is not any more: [[suggestGrid]] shows the same answer as a proposal, and
+     that is the honest opening state for a tool whose whole doctrine is that a
+     space starts EMPTY and you design into it. See the header of lib/layout.js,
+     which made that argument first and had this switch defaulting against it.
+     A PLAN SAVED WITH IT ON STILL OPENS WITH IT ON, because `setLayers` merges
+     the saved answers over these — a default is what a plan gets when nobody
+     has said, not a migration. That is why the switch stays reachable in the
+     View menu rather than disappearing with its capsule: a sheet drawn before
+     this change would otherwise have placed fittings on it and no way to take
+     them off short of `lights`, which clears the hand-placed ones too.
+     `lights` STAYS THE MASTER over both, so turning THAT off still clears every
+     fitting off the sheet in one press. */
+  autoLights: false,
+  /* THE SAME ANSWER, PROPOSED RATHER THAN PLACED.
+     `autoLights` draws the engine's grid as FITTINGS: symbols with pools under
+     them, tags beside them and drag bands on them, which is a drawing that says
+     "these are going in". This says the same thing in the conditional: the same
+     positions, the same directional spots, drawn as dotted outlines in ink
+     rather than in the accent, with no wash and nothing to grab. What it is for
+     is the moment before you have decided — you want the engine's opinion on
+     the ceiling while you lay your own fittings over it, and a suggestion has
+     to look unlike the thing it is suggesting or it is just the thing.
+     IT TAKES PRECEDENCE OVER THE SOLID DRAWING OF THE SAME POPULATIONS, which
+     is what makes it a rendering of the answer rather than a second copy of it.
+     See `suggest` in PlanCanvas: a dotted ring under a solid lamp would be one
+     fitting drawn twice, and a switch that visibly does nothing while
+     `autoLights` is on would be a switch nobody trusts.
+     OFF BY DEFAULT, unlike `autoLights`. It is a way of LOOKING at the layout
+     and not the layout, and a plan that opened in it would be a plan that
+     opened proposing rather than answering. */
+  suggestGrid: false,
   electrical: false,
   /* DARK MODE FOR THE DRAWING, AND IT IS A PIXEL INVERSION OF THE SCAN — the
      same thing Cmd-I does in Photoshop, applied to the plan image and nothing
@@ -358,6 +386,12 @@ export function serialiseEditor(doc, { pxPerFt } = {}) {
        Optional on read — see applyEditor — because every plan saved before this
        existed has no key here, and an empty list is the honest reading. */
     manualCobs: s.manualCobs,
+    /* THE AIMED SPOTS SOMEBODY PUT DOWN, in plan FEET with their angle. Same
+       argument as the lamps above — the entry IS the fitting, there is no
+       solver to recompute it from, and losing it loses the work. Optional on
+       read, like its neighbours, because every plan saved before this existed
+       has no key here and an empty list is the honest reading. */
+    manualSpots: s.manualSpots,
     /* WHICH SPACES FILL THEIR OWN GRID. A list of outline ids, and it is kept
        for the reason `ceilingKinds` is rather than the reason `manualCobs` is:
        the LAMPS are already in the column above, so nothing is lost by
@@ -657,6 +691,7 @@ export function applyEditor(p, set) {
   set.setManualCoves?.(p.manualCoves ?? []);
   set.setManualTracks?.(p.manualTracks ?? []);
   set.setManualCobs?.(p.manualCobs ?? []);
+  set.setManualSpots?.(p.manualSpots ?? []);
   set.setAutoSpots?.(p.autoSpots ?? []);
   set.setCobArrays?.(p.cobArrays ?? []);
   /* A MODULE'S HOST FIELD IS `on` AND NOTHING READS `trackId` ANY MORE. A

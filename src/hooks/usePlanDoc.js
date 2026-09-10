@@ -80,6 +80,23 @@ export const DOC_FIELDS = {
   manualCoves: () => ([]),
   manualTracks: () => ([]),
   manualCobs: () => ([]),
+  /* --- THE AIMED SPOTS SOMEBODY PUT DOWN AND POINTED -----------------------
+     A LIST BESIDE `manualCobs` AND NOT PART OF IT, and the reason is the one
+     split this whole app is built around: a recessed COB is an AMBIENT source
+     and an aimed spot is a TASK one. The panel adds them up in two separate
+     rows, the lumen check reads only the ambient side, and every reader of
+     `manualCobs` — the analysis, the schedule, the flows — would have counted
+     an aimed spot as one more downlight lighting the floor beneath it. They
+     are the same PRIMITIVE, which is a different claim: both are free points
+     in plan feet (see lib/point.js), both drag, snap, copy and delete the same
+     way, and neither has a solver behind it.
+     WHAT IT CARRIES THAT A COB DOES NOT is `aim` — the angle, in radians, that
+     the second click of the gesture locks. Everything else is a COB's record.
+     THEY REACH THE DRAWING THROUGH `projectTaskSpotsPx`, in the same shape the
+     placer's own spots arrive in, which is what lets the canvas, the analysis,
+     the schedule and the electrical pass take them without learning a fourth
+     kind of fitting. See planProjection.js. */
+  manualSpots: () => ([]),
   cobArrays: () => ([]),
   trackFixtures: () => ([]),
   /* A LIST OF OUTLINE IDS AND NOT OF OBJECTS, which is why it has its own two
@@ -1410,6 +1427,14 @@ export function usePlanDoc(seed) {
     patchTrack: (id, patch) => dispatch({ type: 'LIST_PATCHED', field: 'manualTracks', id, patch }),
     removeTrack: (id) => dispatch({ type: 'LIST_REMOVED', field: 'manualTracks', id }),
 
+    /* THE AIMED SPOT'S THREE, and they are the generic list actions with a
+       different field — see `manualSpots` in DOC_FIELDS. Nothing about an
+       aimed spot needs a bespoke reducer case: it is added whole by the second
+       click, patched when it is dragged or re-specified, and removed by
+       Delete. */
+    addSpot: (spot) => dispatch({ type: 'LIST_ADDED', field: 'manualSpots', item: spot }),
+    removeSpot: (id) => dispatch({ type: 'LIST_REMOVED', field: 'manualSpots', id }),
+    patchSpot: (id, patch) => dispatch({ type: 'LIST_PATCHED', field: 'manualSpots', id, patch }),
     addCob: (cob) => dispatch({ type: 'LIST_ADDED', field: 'manualCobs', item: cob }),
     removeCob: (id) => dispatch({ type: 'LIST_REMOVED', field: 'manualCobs', id }),
     removeCobs: (ids) => dispatch({ type: 'LIST_REMOVED_MANY', field: 'manualCobs', ids }),

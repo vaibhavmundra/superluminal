@@ -51,6 +51,42 @@ console.log('-- task spots cross into room feet and back to plan pixels --');
     'the target is projected back to the surface centre');
   ok(spots[0]?.segment.a.x === 120 && spots[0]?.segment.b.x === 120,
     'the secondary-grid segment is projected too');
+
+  /* --- AND THE ONES SOMEBODY PLACED AND AIMED THEMSELVES ------------------
+     THEY COME OUT OF THIS SAME PROJECTION, which is the whole design: the
+     canvas, the analysis, the schedule and the electrical pass all read
+     `taskSpotsPx`, and putting hand-placed spots anywhere else would mean
+     teaching four readers about a fourth kind of fitting. So what this checks
+     is that the entry is the SAME SHAPE a placed one has. */
+  const HAND = [{ id: 'mspot-1', roomId: 'room-1', xFt: 4, yFt: 5, aim: 0 }];
+  const both = projectTaskSpotsPx([room], surfaces, [], {}, HAND, 10);
+  ok(both.length === 2, 'a hand-placed spot joins the placer\'s own list');
+  const h = both.find((q) => q.id === 'mspot-1');
+  ok(near(h.x, 40) && near(h.y, 50),
+    `plan feet straight to plan pixels, no room origin: ${h?.x},${h?.y}`);
+  ok(h.roomId === 'room-1' && h.fixture === 'spot' && h.hand === true,
+    'it carries the room, the catalogue line and the flag Delete reads');
+  /* THE THREE FIELDS THE DOWNSTREAM READERS KEY ON. `roomId` is how the
+     analysis and the schedule attribute it, `rejected` being absent is how
+     both know to count it, and `x` being finite is the analysis's own guard. */
+  ok(!h.rejected && Number.isFinite(h.x) && Number.isFinite(h.angle),
+    '...and nothing that would make a counter skip it');
+  /* THE AIM POINT IS DERIVED FROM THE ANGLE, six feet out — see HAND_AIM_FT.
+     Aimed along +x from (4,5) ft at 10 px/ft, that is (100, 50) px. */
+  ok(near(h.target.x, 100) && near(h.target.y, 50),
+    `the target is a fixed reach along the angle: ${h?.target?.x},${h?.target?.y}`);
+
+  /* A ROOM WITH NO TASK SURFACE `continue`s out of the pass above, which is
+     why the hand-placed loop is over the SPOTS and not over the rooms. */
+  const alone = projectTaskSpotsPx([room], [], [], {}, HAND, 10);
+  ok(alone.length === 1 && alone[0].id === 'mspot-1',
+    'and it survives a room the surface pass skipped entirely');
+
+  ok(projectTaskSpotsPx([room], [], [], {},
+        [{ id: 'bad', roomId: 'room-1', xFt: 1, yFt: 2 }], 10).length === 0,
+    'a record with no angle is not a spot and is not drawn');
+  ok(projectTaskSpotsPx([room], [], [], {}, HAND, 0).length === 0,
+    'and nothing is projected before there is a scale');
 }
 
 console.log('\n-- accent sources are merged and filtered in screen space --');

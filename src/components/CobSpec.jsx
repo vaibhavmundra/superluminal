@@ -65,7 +65,16 @@ const VAL = 'text-[11.5px] leading-none text-black tabular-nums '
   + '[font-variant-numeric:tabular-nums] select-none';
 const SEP = <span className="w-px h-5 bg-black/10 mx-1" aria-hidden="true" />;
 
-const CHIP = 'px-[6px] py-[4px] text-[10.5px] rounded-[6px] border cursor-pointer '
+/* `whitespace-nowrap` AND `flex-none` TOGETHER, because either alone leaves the
+   bug. StageBar is `flex-nowrap`, which stops the BAR wrapping and does nothing
+   about a chip: a flex child still shrinks below its content by default, and a
+   shrunk chip breaks its own label across two lines — "On the line" came out as
+   two rows inside one button, which made that row of chips a different height
+   from every other control on the bar. `flex-none` stops the shrink and
+   `whitespace-nowrap` stops the break; the bar grows sideways instead, which is
+   what the note on `flex-nowrap` in StageBar says it is for. */
+const CHIP = 'flex-none whitespace-nowrap '
+  + 'px-[6px] py-[4px] text-[10.5px] rounded-[6px] border cursor-pointer '
   + 'tabular-nums leading-none transition-colors duration-[120ms] '
   + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] '
   + 'focus-visible:outline-black/40';
@@ -74,24 +83,36 @@ const CHIP_OFF = `${CHIP} text-black/70 border-transparent bg-transparent hover:
    picked shape there are visibly the same kind of state. */
 const CHIP_ON = `${CHIP} text-white border-black bg-black hover:bg-black`;
 
-const BTN = 'px-2.5 py-[5px] text-[11px] leading-none rounded-[6px] border '
-  + 'cursor-pointer transition-colors duration-[120ms] whitespace-nowrap '
+/* --- "CHANGE", WHICH IS A WORD AND NOT A BUTTON ---------------------------
+   THE ORDINARY CASE IS THAT YOU AGREE. The bar opens on what the engine would
+   install at the point under the cursor, and for most lamps on most plans the
+   right act is to read two figures and click the ceiling. A slider and eight
+   optic chips standing open for that case is nine controls in the way of the
+   one press anybody came to make — and worse, they made the bar long enough to
+   reach across the drawing.
+   SO THE CONTROLS ARE BEHIND A WORD, and the word is drawn as a word: type in
+   the bar's own caption size with a dotted rule under it, which is what says
+   "this is not just a label" without becoming a tenth button competing with
+   the nine it opens. A solid underline would read as a link to somewhere else;
+   dotted is the convention for a value you can edit in place. */
+const LINK = 'flex-none whitespace-nowrap bg-transparent border-0 p-0 mx-1.5 '
+  + 'text-[10.5px] leading-none tracking-[0.02em] cursor-pointer '
+  + 'underline decoration-dotted decoration-from-font underline-offset-[3px] '
+  + 'transition-colors duration-[120ms] '
   + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] '
   + 'focus-visible:outline-black/40';
-const BTN_QUIET = `${BTN} border-black/12 bg-transparent text-black/75 hover:bg-black/[0.07]`;
-const BTN_SOLID = `${BTN} border-black bg-black text-white hover:bg-black/85`;
 
-/* THE TICK AND THE CROSS, AND THEY ARE ShapeMenu's — same 36px cell, same
-   glyphs, same green and red, because they are being asked the same question at
-   the end of the same kind of gesture: keep what you just made, or throw it
-   away. Two different pictures of one decision would say they were two
-   decisions. */
+/* THE TICK, AND IT IS ShapeMenu's — same 36px cell, same glyph, same green,
+   because it is being asked the same question at the end of the same kind of
+   gesture: keep what you just made. Two different pictures of one decision
+   would say they were two decisions.
+   THE CROSS THAT STOOD BESIDE IT IS GONE. It belonged to the manual run — see
+   the block near the foot of this file — and there is no run to throw away. */
 const ICON = 'flex items-center justify-center w-9 h-9 rounded-[7px] '
   + 'border-0 bg-transparent cursor-pointer p-0 '
   + 'transition-colors duration-[120ms] hover:bg-black/[0.07] '
   + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-black/40';
 const TICK = 'M4 10.6 L8.2 14.6 L16 5.6';
-const CROSS = 'M5 5 L15 15 M15 5 L5 15';
 /* THE BIN, AND IT IS ShapeMenu's — same cell, same weight, same red. An array
    already on the drawing is offered the same two acts a committed shape is, so
    the picture of "remove this object" must not be a second invention. */
@@ -106,15 +127,18 @@ const Glyph = ({ d }) => (
 
 /**
  * `recommended` says the two figures showing are the engine's answer for the
- * point under the cursor and nobody has overruled them. `dirty` says there is a
- * change waiting on one of the two buttons. `placed` is how many lamps this run
- * of the tool has put down, which is what the tick and the cross act on, and
- * `space` is the name of the ceiling it has claimed — null until the first lamp
- * lands. See `cobLock` in App.jsx.
+ * point under the cursor and nobody has overruled them — it latches the chip,
+ * and pressing it when it is not latched is the way back.
+ *
+ * `dirty`, `placed`, `space`, `onThis`, `onAll`, `onKeep` AND `onDiscard` WERE
+ * HERE AND ARE GONE. The first three described a wattage change waiting on a
+ * confirmation and a run of lamps waiting to be kept; neither thing exists any
+ * more — a change on this bar is the choice from now on the moment it is made,
+ * and a lamp is in the schedule the moment it is clicked. See the two blocks
+ * further down where those controls stood.
  */
 export default function CobSpec({
-  stage, watts, beam, recommended = false, dirty = false,
-  placed = 0, space = null,
+  stage, watts, beam, recommended = false,
   /* THE ARRAY BEING SET OUT, or null in manual mode. It carries what has been
      picked and what may be asked about it — see `arrayAsks` in lib/cob.js, which
      decides the controls from the GEOMETRY rather than leaving this bar to work
@@ -128,9 +152,15 @@ export default function CobSpec({
   /* ...AND THE VIEW SWITCHES AT THE NEAR END, on the same terms: whatever this
      bar is currently doing, `lead` is there. See StageBar's three slots. */
   lead = null,
-  onWatts, onBeam, onRecommended, onThis, onAll, onKeep, onDiscard,
+  onWatts, onBeam, onRecommended,
   onCount, onSide, onOffset, onPlaceArray, onDeleteArray,
 }) {
+  /* IS THE SPECIFICATION OPEN? Component state and not the caller's, because
+     nothing outside this bar has an opinion about it: it is not a fact about
+     the drawing, it does not survive the tool being put down, and no other
+     control on this screen changes with it. The bar is unmounted the moment
+     the gesture ends, which closes it for free. */
+  const [specOpen, setSpecOpen] = React.useState(false);
   /* --- THE ONE BAR IN TWO TENSES ------------------------------------------
      `array.editing` SAYS THE RUN ALREADY EXISTS, and everything that differs
      between the two follows from that one fact rather than from a second
@@ -150,6 +180,57 @@ export default function CobSpec({
      a distance, a wattage, eight optics — is identical in both, and two copies
      of it would be two bars to keep in step. */
   const editing = !!array?.editing;
+  /* WHAT THE TICK IS, WORKED OUT HERE AND DRAWN AT THE END OF THE BAR. A
+     variable rather than a branch down there because the two states are one
+     decision — is this run being made, or has it been made — and reading it
+     beside `editing` is where that decision already lives. `null` until a
+     geometry has been taken: there is nothing to place and nothing to delete. */
+  const arrayAction = !array?.picked ? null : (editing ? (
+    /* THE RUN IS ALREADY ON THE DRAWING, so the act at the end of the bar is
+       the only one left: take it off. The geometry it was set out on stays — it
+       was there first, and it is very often a cove's own setting-out line. */
+    <button type="button" title="Delete this array" className={ICON}
+      style={{ color: '#b3261e' }} onClick={() => onDeleteArray?.()}>
+      <Glyph d={BIN} />
+    </button>
+  ) : (
+    /* KEEP THEM. The same tick the shape bar commits with, for the same act:
+       what is on the drawing is a preview until somebody says yes. */
+    <button type="button" title="Place these spots" className={ICON}
+      style={{ color: '#0a7d3c' }} onClick={() => onPlaceArray?.()}>
+      <Glyph d={TICK} />
+    </button>
+  ));
+
+  /* --- THE TWO SPECIFICATION CONTROLS, BUILT ONCE ------------------------
+     THEY APPEAR IN TWO PLACES NOW and they are one control each. Manual placing
+     keeps them behind "Change"; a PLACED array shows them outright, because
+     that bar is already the post-placement one and its whole subject is the run
+     you have selected. Written as values rather than repeated in two branches
+     for the reason the header gives about one component and not two: two copies
+     of a slider and eight chips are two things to keep in step. */
+  const wattControl = (<>
+    {/* A SLIDER AND NOT FIFTY-THREE CHIPS. The optics are a product list and
+        every one of them is a press worth having; 3 to 55 whole watts is a
+        range, and a range is a thing you sweep to. See COB_WATT_RANGE. */}
+    <span className={CAP}>Wattage</span>
+    <input type="range" aria-label="Wattage"
+      min={COB_WATT_RANGE.min} max={COB_WATT_RANGE.max} step={COB_WATT_RANGE.step}
+      value={watts}
+      className="w-[128px] mx-1 accent-black cursor-pointer"
+      onChange={(e) => onWatts?.(Number(e.target.value))} />
+    <span className={`${VAL} w-[38px] text-right`}>{watts} W</span>
+  </>);
+
+  /** THE OPTIC, AS THE EIGHT THAT ARE SOLD. */
+  const beamControl = (<>
+    <span className={CAP}>Beam</span>
+    {BEAM_ANGLES.map((d) => (
+      <button key={d} type="button" aria-pressed={beam === d}
+        className={beam === d ? CHIP_ON : CHIP_OFF}
+        onClick={() => onBeam?.(d)}>{d}°</button>
+    ))}
+  </>);
 
   return (
     /* IT CARRIED `flex-wrap` AND A 92vw CAP, AND BOTH ARE GONE. This is the
@@ -172,10 +253,19 @@ export default function CobSpec({
           has been chosen, and a bar of dead inputs would not say that. */}
       {array && (<>
         {!array.picked ? (
-          <span className={CAP}>Click a geometry, or the space, to set out on</span>
+          /* "OR THE SPACE" CAME OUT OF THIS SENTENCE because that gesture is
+             gone: a press on bare ceiling used to take the room's own outline
+             and put a lamp in each of its corners, and it now takes nothing
+             (see `arrayDown`). A line telling somebody to do a thing the app
+             no longer does is worse than no line. */
+          <span className={CAP}>Draw or press a geometry to set out on</span>
         ) : (<>
-          <span className={CAP}>{array.label}</span>
-          {SEP}
+          {/* THE GEOMETRY'S NAME WAS HERE AND IT IS GONE. It read "Rectangle" —
+              the name of the primitive the run is set out on — and it was the
+              one thing on this bar that was neither a control nor a number: the
+              shape is on the drawing, highlighted, directly above the bar, and
+              a word repeating what you are looking at is a caption on a picture
+              you can see. A control is its own label; so is a shape. */}
           <span className={CAP}>Spots</span>
           {/* --- IT STEPS IN THE GEOMETRY'S OWN UNITS -----------------------
               `min` AND `step` ARE THE SHAPE'S, NOT 1 AND 1. A run on a closed
@@ -221,25 +311,10 @@ export default function CobSpec({
               <span className={CAP}>ft</span>
             </>)}
           </>)}
-          {SEP}
-          {editing ? (
-            /* THE RUN IS ALREADY ON THE DRAWING, so the act at the end of the
-               bar is the only one left: take it off. The geometry it was set out
-               on stays — it was there first, and it is very often a cove's own
-               setting-out line. */
-            <button type="button" title="Delete this array" className={ICON}
-              style={{ color: '#b3261e' }} onClick={() => onDeleteArray?.()}>
-              <Glyph d={BIN} />
-            </button>
-          ) : (
-            /* KEEP THEM. The same tick the shape bar commits with, for the same
-               act: what is on the drawing is a preview until somebody says
-               yes. */
-            <button type="button" title="Place these spots" className={ICON}
-              style={{ color: '#0a7d3c' }} onClick={() => onPlaceArray?.()}>
-              <Glyph d={TICK} />
-            </button>
-          )}
+          {/* THE TICK USED TO STAND HERE and it is at the foot of this file
+              now — see `arrayAction`. It was in the middle of its own bar, with
+              the optics after it, which put the act that ENDS the gesture
+              before two controls that are still part of making it. */}
         </>)}
         {SEP}
       </>)}
@@ -250,92 +325,89 @@ export default function CobSpec({
           instead, the same chip is the way back — the alternative was a second
           button called something like "Reset", which is a word for the thing
           this already is. */}
-      {!editing && (<>
+      {/* --- MANUAL PLACING: THE ANSWER, THEN A WAY TO ARGUE WITH IT ------
+          `!array` AND NOT `!editing`, WHICH IS A NARROWING. The chip says the
+          two figures showing are the engine's answer FOR THE POINT UNDER THE
+          CURSOR and that nobody has overruled them — a sentence about the next
+          lamp you click down. An array is not clicked down lamp by lamp: it is
+          one act on a path, committed by the tick, and every one of its spots
+          is the same figure.
+
+          THE FIGURES ARE READ OUT BESIDE THE CHIP, WHICH IS THE POINT OF THIS
+          BLOCK. "8 W · 36°" is the whole of what the bar has to say in the
+          ordinary case, and it used to be spread across a slider, a number and
+          eight chips — so the answer everybody agrees with was the hardest
+          thing on the bar to read, and the bar was long enough to reach across
+          the drawing. Two figures and a word is the state; the controls that
+          change it come out only when somebody says so.
+
+          THE CHIP IS STILL A CONTROL AND NOT A TAG. Latched while the engine's
+          answer is in force, which is what "we recommend this" looks like when
+          it is true; once something is standing instead, the same chip is the
+          way back. The alternative was a second button called Reset, which is a
+          word for the thing this already is. */}
+      {!array && (<>
         <button type="button" aria-pressed={recommended} disabled={recommended}
           className={(recommended ? CHIP_ON : CHIP_OFF)
             + (recommended ? ' cursor-default' : ' border-black/12')}
           onClick={() => onRecommended?.()}>Recommended</button>
-        {SEP}
+        <span className={`${VAL} ml-1.5 tabular-nums`}>{watts} W · {beam}°</span>
+        <button type="button" className={LINK} aria-expanded={specOpen}
+          style={{ color: specOpen ? '#000' : 'rgba(0,0,0,0.55)' }}
+          onClick={() => setSpecOpen((o) => !o)}>Change</button>
+        {specOpen && (<>
+          {SEP}
+          {wattControl}
+          {SEP}
+          {beamControl}
+        </>)}
       </>)}
 
-      {/* --- THE WATTAGE, AS A SLIDER --------------------------------------
-          A SLIDER AND NOT FIFTY-THREE CHIPS. The optics below are a product list
-          and every one of them is a press worth having; 3 to 55 whole watts is a
-          range, and a range is a thing you sweep to. See COB_WATT_RANGE. */}
-      <span className={CAP}>Wattage</span>
-      <input type="range" aria-label="Wattage"
-        min={COB_WATT_RANGE.min} max={COB_WATT_RANGE.max} step={COB_WATT_RANGE.step}
-        value={watts}
-        className="w-[128px] mx-1 accent-black cursor-pointer"
-        onChange={(e) => onWatts?.(Number(e.target.value))} />
-      <span className={`${VAL} w-[38px] text-right`}>{watts} W</span>
-
-      {SEP}
-
-      {/* --- THE OPTIC, AS THE EIGHT THAT ARE SOLD ------------------------- */}
-      <span className={CAP}>Beam</span>
-      {BEAM_ANGLES.map((d) => (
-        <button key={d} type="button" aria-pressed={beam === d}
-          className={beam === d ? CHIP_ON : CHIP_OFF}
-          onClick={() => onBeam?.(d)}>{d}°</button>
-      ))}
-
-      {/* --- WHICH LAMPS THE CHANGE IS ABOUT -------------------------------
-          ONLY ONCE THERE IS A CHANGE. Two buttons standing on an untouched bar
-          would be two things to decide about before placing a fitting that
-          needed no decision at all — and the ordinary press here is the one on
-          the ceiling, not on this. */}
-      {dirty && !editing && (<>
-        {SEP}
-        <button type="button" className={BTN_QUIET} onClick={() => onThis?.()}>
-          Update this
-        </button>
-        <button type="button" className={`${BTN_SOLID} ml-1.5`} onClick={() => onAll?.()}>
-          Update all next
-        </button>
+      {/* --- AND A PLACED ARRAY SHOWS THEM OUTRIGHT ------------------------
+          NO "CHANGE" HERE, AND THE ASYMMETRY IS THE POINT. Manual placing hides
+          the controls because the ordinary act is to agree and click the
+          ceiling — the specification is in the way of the gesture. A selected
+          array is not mid-gesture: it is on the drawing, and its wattage and
+          optic are the reason you pressed it. Hiding them would put a press in
+          front of the only thing that bar is for.
+          AND NOTHING WHILE ONE IS BEING SET OUT. The wattage is answered
+          afterwards, on the run — see the note in `placeArray`; what the
+          placing bar is for is the two things that decide the RUN, how many and
+          where against the line. */}
+      {array && (<>
+        {editing && (<>{wattControl}{SEP}</>)}
+        {beamControl}
       </>)}
 
-      {/* --- AND THE RUN ITSELF: KEEP IT, OR THROW IT AWAY -----------------
-          GREYED UNTIL THERE IS A RUN TO DECIDE ABOUT, which is ShapeMenu's own
-          rule for the same pair: a tick that silently does nothing is worse than
-          one that visibly cannot yet. The count is printed beside them because
-          the cross is the one press on this bar that destroys work, and it has
-          to say how much — "throw away" is a different proposition at one lamp
-          and at nineteen.
-          BOTH END THE RUN. The tick keeps the lamps and puts the tool down; the
-          cross takes them off the drawing and puts the tool down. Neither is a
-          pause: there is no state in which some lamps are placed and others are
-          pending, because every lamp was real the moment it was clicked. */}
-      {/* THE RUN, AND IT IS MANUAL PLACING'S. An array is committed by its own
-          tick above — it is one act, not a run of them — so a count of loose
-          lamps and a cross that throws them away would be about nothing here. */}
-      {!array && (<>
-      {SEP}
-      {/* WHAT THE TICK AND THE CROSS ARE ABOUT, WHICH IS A COUNT AND A CEILING.
-          The count because the cross destroys work and has to say how much —
-          "throw away" is a different proposition at one lamp and at nineteen.
-          The NAME because from the first lamp onward every other ceiling on the
-          sheet is dead to this tool (see `cobLock`), and the one thing that
-          makes a dead click legible in advance is knowing which room the run
-          belongs to. It is a fact, not an instruction: the pointer already
-          refuses out there, and this says why. */}
-      <span className={`${CAP} tabular-nums`}>
-        {space ? `${space} · ` : ''}{placed} placed
-      </span>
-      <button type="button" title="Keep these placements" disabled={!placed}
-        className={ICON}
-        style={{ color: '#0a7d3c', opacity: placed ? 1 : 0.35,
-                 cursor: placed ? 'pointer' : 'not-allowed' }}
-        onClick={() => onKeep?.()}>
-        <Glyph d={TICK} />
-      </button>
-      <button type="button" title="Throw these placements away" disabled={!placed}
-        className={ICON}
-        style={{ color: '#b3261e', opacity: placed ? 1 : 0.35,
-                 cursor: placed ? 'pointer' : 'not-allowed' }}
-        onClick={() => onDiscard?.()}>
-        <Glyph d={CROSS} />
-      </button>
+      {/* --- THE RUN'S OWN CONTROLS WERE HERE AND THEY ARE GONE ----------
+          A COUNT, A CEILING'S NAME, A TICK AND A CROSS — "Space 1 · 1 placed",
+          keep, throw away. All four described a RUN of manual lamps as a thing
+          with a beginning and an end that had to be committed, and it never was
+          one: every lamp is real the moment it is clicked, written straight
+          through the reducer and in the schedule before the pointer has moved.
+          So the tick kept what was already kept, and the cross was an undo with
+          a worse name standing permanently on the bar — which is what made it
+          the one press here that destroyed work.
+          UNDO IS THE UNDO. Ctrl-Z takes back a lamp, or ten, in the order they
+          were placed, and it is the gesture everybody already has. Putting the
+          tool down is Escape or the next thing you reach for in the rail, which
+          is how every other tool on this screen is put down. */}
+
+      {/* --- THE ARRAY'S OWN ACT, AND IT IS THE LAST THING IN THIS SLOT ------
+          A TICK ENDS A GESTURE, so it goes where the gesture ends: after every
+          control that is still part of making the thing, and immediately before
+          the rule that divides this slot from the scene switches. It sat in the
+          middle — between the side chips and the optics — which read as though
+          the optics were something else the bar also happened to have, rather
+          than as the last question before you commit. The shape bar has always
+          put its tick here; this is the same bar, in the same place, at the end
+          of the same kind of gesture, and the two had no business disagreeing.
+          THE BIN TAKES THE SAME POSITION for a run already on the drawing. It is
+          the one act left on that bar, and an act that finishes with the object
+          belongs where the act that finishes making one does. */}
+      {arrayAction && (<>
+        {SEP}
+        {arrayAction}
       </>)}
     </StageBar>
   );

@@ -4,6 +4,7 @@ import {
   projectDraftArrayPx, projectSelectedArrayPathPx, projectManualCobsPx,
   projectCoveShapesPx, projectDraftShapePx, projectTrackDraftPx,
   projectTrackEditPx, projectShapeEditPx, projectPenDraftPx,
+  projectSuggestedPointsPx,
 } from '../../lib/fixtureProjection.js';
 import { outlineFt as shapeOutlineFt } from '../../lib/ceilingShapes.js';
 
@@ -29,6 +30,34 @@ export function useSceneArrayProjections({
 
   const selArrayPathPx = useMemo(() => projectSelectedArrayPathPx(cobArrays, selArrayId, arrayOutline, pxPerFt), [cobArrays, selArrayId, arrayOutline, pxPerFt]);
   return { projections: { arrayCobsPx, draftArrayPx, selArrayPathPx } };
+}
+
+
+/**
+ * THE SUGGESTED GRID, AS ONE LIST OF POINTS.
+ *
+ * A STAGE OF ITS OWN AND NOT A LINE IN App, because it is a projection like
+ * every other one in this file and App is the orchestrator: it decides the
+ * ORDER these run in and who gets the answer, not how an answer is made. The
+ * whole of the rule — which fields, which gate, what a mark's radius is — lives
+ * in `projectSuggestedPointsPx`.
+ *
+ * `layers` IS THE DERIVED OBJECT AND NOT THE DOCUMENT'S. App narrows the layers
+ * for the steps that take the sheet down to one subject — the wall editor drops
+ * `lights` and `spots` — and a suggestion left snappable under one of those
+ * would be an invisible target catching a corner aimed at a wall. Reading the
+ * derived object gets that for free; reading `doc.layers` would not.
+ *
+ * ONE LIST FOR TWO READERS, which is the reason it is resolved once at all: the
+ * canvas draws these and the snap engine aims at them, and a centre computed
+ * twice is a ring the guide does not catch.
+ */
+export function useSceneSuggestProjections({ rooms, taskSpotsPx, pxPerFt, layers }) {
+  const on = !!layers?.suggestGrid, ambient = !!layers?.lights, spots = !!layers?.spots;
+  const suggestPointsPx = useMemo(
+    () => projectSuggestedPointsPx(rooms, taskSpotsPx, pxPerFt, { on, ambient, spots }),
+    [rooms, taskSpotsPx, pxPerFt, on, ambient, spots]);
+  return { projections: { suggestPointsPx } };
 }
 
 

@@ -61,6 +61,26 @@ export function useStageRect(stage) {
 /** The hairline between two groups of keys in the bar. */
 export const SEP = <span className="w-px h-5 bg-black/10 mx-0.5" aria-hidden="true" />;
 
+/* --- ...AND THE TWO THAT DIVIDE THE BAR ITSELF -----------------------------
+   THE THREE SLOTS ARE NOT THE SAME KIND OF BOUNDARY AS THE ONES INSIDE THEM,
+   and until this existed they were drawn as though they were. A rule inside the
+   middle separates a count from a side from an optic — three questions about
+   one gesture. These two separate the gesture from what the DRAWING SHOWS and
+   from WHERE YOU ARE, which are not part of it at all: the same hairline at the
+   same spacing said the Suggested Grid capsule was one more control in the row,
+   and on a long bar the eye had nothing to group by.
+
+   DARKER AND FURTHER OUT, which is the whole of the change. `black/25` against
+   `black/10` is visible without becoming a line in its own right — this is
+   still punctuation, not a border — and the margin is what does most of the
+   work: pushed out from `mx-0.5` to `mx-2`, the two standing switches read as
+   sitting apart from the middle rather than at the ends of it.
+
+   NOT EXPORTED. A caller reaching for this would be drawing a slot boundary
+   inside its own slot, which is the confusion this exists to remove; `SEP` is
+   the one every bar uses for its own groups. */
+const GROUP_SEP = <span className="w-px h-5 bg-black/25 mx-2" aria-hidden="true" />;
+
 /* --- THE TWO SCENE BUTTONS' OWN SHAPE --------------------------------------
    TYPE AND NOT A MARK, because they are the only things in this bar that are
    not about the next press on the drawing: everything else here arms a tool or
@@ -161,10 +181,12 @@ export default function StageBar({ stage, className = '', label = null,
           neighbour — otherwise a bar with a lead and a tail and no tool in the
           middle draws no rule at all between the two things it is holding. On a
           bar with nothing but the tail, a rule would be a hairline against the
-          left edge. */}
-      {lead && (children || tail) ? SEP : null}
+          left edge.
+          AND THEY ARE `GROUP_SEP` AND NOT `SEP`: these two are the boundaries of
+          the bar's three slots, not divisions inside one. See the note there. */}
+      {lead && (children || tail) ? GROUP_SEP : null}
       {children}
-      {tail && children ? SEP : null}
+      {tail && children ? GROUP_SEP : null}
       {tail}
     </div>
   );

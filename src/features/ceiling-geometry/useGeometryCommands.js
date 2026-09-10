@@ -48,6 +48,18 @@ import { offsetGapFt, trackPtsFromSegments } from './geometryRules.js';
 export function useGeometryCommands({
   state, geometry, docActions, ceilingShapes, manualTracks, trackFixtures,
   setSel, setGuides, allocateOnTrack, standDown,
+  /* WHAT A COMMITTED GUIDE IS HANDED TO, AND WHY IT IS AN ARGUMENT.
+     A guide is a line something else is set out FROM — it builds nothing on its
+     own — so the interesting moment is not that it exists but that whatever was
+     WAITING for one now has it. Today that is the spot array: its gesture opens
+     this bar in the guide role, and the tick has to finish the array's first
+     question rather than merely add a shape to the drawing.
+     THE CALLBACK DECIDES WHETHER IT WANTS IT, and this file does not ask. That
+     is the whole reason it is shaped this way rather than as an `if` in
+     `commitShape`: the geometry domain would otherwise have to know that a COB
+     array exists, which tool is armed and what mode it is in. Same split
+     `allocateOnTrack` already has — see the header. */
+  onGuideDrawn = null,
 }) {
   const { toCommit: shapeToCommit } = geometry.bar;
   const { canFinishOpen } = geometry.panel;
@@ -184,15 +196,28 @@ export function useGeometryCommands({
      diffusers. Keep the id until the shape is visible in `ceilingShapes`, then
      run the allocator once from the following render. Clearing before the call
      also makes this safe under React's development-mode effect replay. */
-  const pendingTrackAllocation = useRef(null);
+  /* --- WHAT HAPPENS TO A SHAPE AFTER THE REDUCER HAS IT --------------------
+     ONE REF AND A DISPATCH ON ROLE, where this was `pendingTrackAllocation` and
+     handled the one case. It is the same problem twice: the tick writes through
+     `docActions` and the consequence needs the shape to be VISIBLE in
+     `ceilingShapes` — a track has to be filled with diffusers, a guide has to be
+     handed to whatever asked for it — so both wait a render rather than reading
+     the draft they were built from. Two refs and two effects would be one
+     mechanism written out twice.
+     NEITHER CONSEQUENCE IS THE GEOMETRY DOMAIN'S. `allocateOnTrack` reads the
+     space analysis and the family catalogue; `onGuideDrawn` belongs to whichever
+     gesture was waiting. Both are handed in. */
+  const pendingCommit = useRef(null);
   useEffect(() => {
-    const id = pendingTrackAllocation.current;
+    const id = pendingCommit.current;
     if (!id) return;
     const shape = ceilingShapes.find((q) => q.id === id);
     if (!shape) return;
-    pendingTrackAllocation.current = null;
-    allocateOnTrack(shape);
-  }, [ceilingShapes, allocateOnTrack]);
+    pendingCommit.current = null;
+    const role = shapeRoleOf(shape);
+    if (role === 'track') allocateOnTrack(shape);
+    else if (role === 'guide') onGuideDrawn?.(shape);
+  }, [ceilingShapes, allocateOnTrack, onGuideDrawn]);
 
   /**
    * KEEP IT. The tick, and the only way a shape gets onto the drawing.
@@ -224,13 +249,18 @@ export function useGeometryCommands({
   const commitShape = useCallback(() => {
     if (!shapeToCommit || !bigEnough(shapeToCommit)) return;
     const shape = sealShape(shapeToCommit, shapeRole);
-    if (shapeRoleOf(shape) === 'track') pendingTrackAllocation.current = shape.id;
+    /* EVERY COMMIT IS RECORDED AND THE EFFECT SORTS OUT WHICH ONES MATTER — see
+       `pendingCommit`. It was gated on `'track'` here, which meant adding a
+       second consequence meant editing this line as well as that effect; the
+       role is read in one place now. A cove records an id nothing collects,
+       which costs one lookup on the next render. */
+    pendingCommit.current = shape.id;
     docActions.addShape(shape);
     closeShapeTool();
     // ONE SELECTION ON THIS CANVAS, exactly as picking one off the sheet does.
     setSel(select('shape', shape.id));
-    // A track is filled after this reducer write is visible; see the pending
-    // allocation effect above.
+    // A track is filled — and a guide handed on — after this reducer write is
+    // visible; see the pending-commit effect above.
   }, [docActions, shapeToCommit, shapeRole, closeShapeTool, setSel]);
 
   /** Pick a primitive off the bar. The polygon is the one that asks a question

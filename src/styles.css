@@ -90,8 +90,8 @@
        of by being pale. Raising the muted scale was the other option and is
        worse: those two tokens are also the body copy on every WHITE screen in
        this app, where #525252 is a correct 7.4:1. */
-  --color-chrome:#2F2F2F;
-  --color-panel:#171717;
+  --color-chrome:#1d1f20;
+  --color-panel:#1d1f20;
   --color-surface:rgba(255,255,255,0.02);
   --color-surface-2:#FAFAFA;
   --color-surface-3:#F2F2F2;

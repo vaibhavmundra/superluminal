@@ -118,7 +118,20 @@ export default function useTaskSpots({
     }
     if (sp.wallId) {
       docActions.dismissArt(sp.wallId);
+      return;
     }
+    /* --- AND A HAND-PLACED ONE IS REMOVED RATHER THAN DISMISSED -----------
+       THE TWO BRANCHES ABOVE ARE ABOUT A FINDING. A spot on a task surface or
+       a picture is DERIVED — the placer made it, and the way to be rid of it
+       is to take away the thing it was made for, which is what dismissing a
+       surface or a picture does. Delete the spot itself and the next render
+       puts it straight back.
+       A HAND-PLACED SPOT HAS NOTHING BEHIND IT. The entry IS the fitting, the
+       same way a `manualCobs` entry is — see `manualSpots` in usePlanDoc — so
+       Delete means delete. `hand` is stamped by the projection rather than
+       inferred from the absence of the other two ids, because "no surface and
+       no wall" is also what a refusal looks like. */
+    if (sp.hand) docActions.removeSpot(sp.id);
     /* `setSel` IS IN THE ARRAY AND WAS NOT, and nothing about when this
        callback is rebuilt has changed: it is App's `useState` setter, handed in
        rather than declared here, and a setter's identity is stable for the life

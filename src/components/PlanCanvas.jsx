@@ -240,6 +240,19 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     isolateId = null,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [], switchboards = [],
+    /* THE SUGGESTED GRID, RESOLVED. Free points in plan pixels, each carrying
+       the radius of the symbol it stands for and — on an aimed one — the angle
+       it looks along. NOT derived here from `plans[].gridLightsPx`, and that is
+       the point of the prop: the snap engine aims at this same list, so a
+       centre computed twice is a ring the guide does not catch. Empty whenever
+       the layer is off, which is where the gate lives. See
+       `projectSuggestedPointsPx` and `suggestPointsPx` in App. */
+    suggestPoints = [],
+    /* THE ADJUSTABLE SPOT BETWEEN ITS TWO CLICKS, in PLAN PIXELS — `{ x, y,
+       angle }` or null. The body is placed and the arrow is following the
+       pointer; the second click writes it and it arrives here as an ordinary
+       entry in `taskSpots` instead. See `spotAim` in App. */
+    spotAiming = null,
     /* WHICH PLATE IS PICKED, AND HOW ONE GETS PICKED. Optional, like every
        other handler here — a canvas given neither draws boards that cannot be
        selected, which is what the read-only sheet wants. A board is DERIVED, so
@@ -774,7 +787,177 @@ const PlanCanvas = forwardRef(function PlanCanvas(
      A `!== false` here would be a second opinion about that, and one that
      disagreed with its own checkbox in the View menu — which reads `layers[k]`
      straight. */
-  const autoLights = layers.lights && layers.autoLights;
+  /* --- ...AND THE THIRD SWITCH, WHICH IS ABOUT HOW AND NOT WHETHER ---------
+     `suggestGrid` DRAWS THE SAME ANSWER IN THE CONDITIONAL. The engine's grid
+     and the directional spots come out as dotted outlines in ink instead of as
+     fittings in the accent: no wash under them, no tag beside them, nothing to
+     grab. See `suggestGhosts` below for the marks themselves and LAYER_DEFAULTS
+     for what the layer is for.
+
+     IT TAKES PRECEDENCE, WHICH IS WHY THE TWO CONSTANTS BELOW SUBTRACT IT. This
+     is a RENDERING of the engine's answer rather than a second copy of it, and
+     the alternative — an independent overlay — is wrong twice over: a dotted
+     ring under a solid lamp is one fitting drawn twice, and with `autoLights`
+     and `spots` both on by default the switch would appear to do nothing at all
+     the first time anybody pressed it.
+
+     `layers.lights` AND `layers.spots` STILL WIN OVER IT. They are the masters
+     over their populations, and a suggestion is still a mark about a fitting —
+     hiding the fittings and leaving their proposals on the sheet would be the
+     layer master failing to clear the drawing, which is its one job. That half
+     of the gate is applied UPSTREAM, where `suggestPoints` is built, so this
+     file only has to know whether the answer is being proposed; the two
+     constants below are the other half, which is about the solid marks.
+
+     SO THIS READS THE LAYER AND NOT THE LIST. `suggestPoints.length` would be
+     the same answer nearly always and wrong in the one case that matters: a
+     ceiling the chunker could make nothing of has no proposals, and reading the
+     list would silently put the placed fittings back on a sheet whose switch
+     says the grid is being suggested. What is drawn then is nothing, which is
+     the honest picture of an engine with no opinion. */
+  const suggest = !!layers.suggestGrid;
+  const autoLights = layers.lights && layers.autoLights && !suggest;
+  /* --- THE AIMED FITTINGS, AND THIS ONE IS PER SPOT AND NOT PER LAYER -----
+     IT WAS `layers.spots && !suggest`, A SINGLE BOOLEAN, and that was right
+     while every entry in `taskSpots` came out of the placer. It does not hold
+     any more: an ADJUSTABLE spot is two clicks on the ceiling and joins the
+     same list on purpose, and a blanket rule drew the fitting somebody had
+     just placed as a dotted proposal the moment the Suggested Grid was on.
+
+     THE RULE IS ABOUT WHERE THE SPOT CAME FROM. `suggestGrid` renders THE
+     ENGINE'S ANSWER in the conditional; a hand-placed spot is not the engine's
+     answer, any more than a hand-placed COB is — and the COBs were never
+     affected only because they were never in a list this layer read. So `hand`
+     is the exemption, stamped by the projection rather than inferred, and its
+     partner is the matching `continue` in `projectSuggestedPointsPx`: one of
+     them keeps the ghost off, the other keeps the fitting on, and a spot drawn
+     by neither or by both is what either half alone produces.
+
+     `layers.spots` IS STILL THE MASTER over both kinds. Turning the layer off
+     clears every aimed fitting off the sheet, placed or proposed. */
+  const spotIsPlaced = (sp) => layers.spots && (!suggest || !!sp?.hand);
+
+  /* --- THE PROPOSAL'S OWN INK ----------------------------------------------
+     WHITE ON THE NEGATIVE, BLACK ON PAPER, and it is neither the accent nor the
+     ramp. Every other fitting on this sheet is cut from `lp-core` and `rim`
+     because the accent means "ours and it emits light" (see `C`), and the whole
+     point of this mark is that nothing has been decided yet — so it is drawn in
+     the sheet's own ink, the way the space outline and the no-light zones are.
+     `C.object` is the white those two already take on a dark ground; `C.ink` is
+     the black they take on a light one. */
+  const suggestInk = layers.invert ? C.object : C.ink;
+  /* THE DOTS THEMSELVES, ONE PATTERN FOR EVERY MARK IN THE LAYER. A round cap
+     on a zero-length dash is a true dot rather than a short dash, which is what
+     separates a proposal from the dashed setting-out lines already on this sheet
+     — the cove strip, the guides, the ghost of an armed object. Stated once so
+     the circle, the arrow and the leader cannot drift apart. */
+  const suggestDots = `${lw * 0.01} ${lw * 3}`;
+  /* HOW HARD THE PROPOSAL PRESSES. Full-strength ink would put the suggestion
+     on the same footing as the walls, which are the one thing on this sheet
+     that is certainly true; much below this and a single dotted ring on a busy
+     scan is not there at all. The fittings a hand HAS placed stay in the accent
+     and keep their pools, so the two populations are told apart by hue and by
+     weight rather than by this number alone. */
+  const SUGGEST_OPACITY = 0.8;
+
+  /* --- THE ENGINE'S ANSWER, PROPOSED --------------------------------------
+     ONE LIST, ONE GROUP, BOTH POPULATIONS. `suggestPoints` arrives resolved —
+     see `projectSuggestedPointsPx` — carrying each mark's centre, the radius of
+     the symbol it stands for and, on an aimed one, the angle it looks along.
+     Nothing here re-derives any of that, and that is the point: the snap engine
+     aims at this same list, so the ring you see and the target the guide
+     catches are one fact rather than two that agree today.
+
+     THE TWO KINDS ARE TOLD APART BY `of` AND SHARE EVERYTHING ELSE. Both are a
+     dotted ring with its centre marked; the aimed one adds the arrow. Drawing
+     them in one pass is what keeps the ring, the ink and the dots from drifting
+     between the two halves of one overlay.
+
+     INERT, ALL OF IT. `pointerEvents="none"` on the group: there is nothing to
+     select, nothing to drag and nothing to delete, because none of this is on
+     the ceiling yet. The centres are reachable by the SNAP and not by the
+     pointer, which is exactly the distinction — you aim a corner at one, you do
+     not pick it up. That is also what keeps the layer from stealing presses
+     meant for the COBs and tracks somebody is laying over it, which is the
+     thing they would be doing while this is on.
+
+     NO TAGS. `layers.labels` names fittings so a schedule can be ordered from
+     the sheet, and there is nothing here to order. */
+  const suggestGhosts = !suggest ? null : (
+    <g pointerEvents="none" opacity={SUGGEST_OPACITY} fill="none" stroke={suggestInk}
+      strokeWidth={lw * 1.6} strokeLinecap="round">
+      {suggestPoints.map((p) => {
+        const R = p.r;
+        /* --- THE CENTRE, DRAWN, BECAUSE IT IS THE THING YOU AIM AT ---------
+           A DOWNLIGHT IS SET OUT TO ITS CENTRE and every other symbol on this
+           sheet leaves that point implicit — the ring is enough, because the
+           fitting is the subject and you read the middle of it by eye. It is
+           not enough here. This layer exists to be MEASURED FROM: the snap
+           engine offers these centres and a rectangle dragged between two of
+           them lands on them exactly, so the point being offered has to be
+           visible or the drawing is asking you to aim at something it has not
+           drawn. A cross rather than a dot: a filled dot inside a dotted ring
+           reads as a lamp — the one thing this mark must not look like — and
+           two short strokes read as a setting-out mark, which is what it is.
+           SCALED TO THE SYMBOL, so a 12 W ring gets a longer cross than a 5 W
+           one and the mark stays in proportion to the thing it is the middle
+           of. SOLID, LIKE THE ARROWHEAD, for the arrowhead's reason: three
+           pixels of dotted line is not a mark.
+           SMALL, AND SMALLER THAN IT FIRST WAS. This began at 0.42R — a cross
+           most of the way across the ring, which turned the whole symbol into a
+           crosshair and read as a target rather than as a light. What the mark
+           has to do is say WHERE the centre is, not draw attention to itself:
+           the ring is the fitting and this is the tick inside it, so a quarter
+           of the radius is enough to be found and little enough to stay out of
+           the way of the spacing being judged. */
+        const arm = R * 0.22;
+        const centre = (
+          <>
+            <line x1={p.x - arm} y1={p.y} x2={p.x + arm} y2={p.y} strokeWidth={lw} />
+            <line x1={p.x} y1={p.y - arm} x2={p.x} y2={p.y + arm} strokeWidth={lw} />
+          </>
+        );
+        /* ONE GLYPH FOR EVERY AMBIENT PROPOSAL, INCLUDING THE ONES A TRACK HAS
+           TAKEN. The placed drawing gives a head in a profile its own rectangle,
+           because there it is an object being set out to a run that is also on
+           the sheet. Here the subject is where the light falls and how far apart
+           the lights are, and a second ghost glyph would be a distinction about
+           hardware nobody has bought. */
+        if (p.of !== 'spot') {
+          return (
+            <g key={p.id}>
+              <circle cx={p.x} cy={p.y} r={R} strokeDasharray={suggestDots} />
+              {centre}
+            </g>
+          );
+        }
+        const ux = Math.cos(p.angle), uy = Math.sin(p.angle);
+        // The same reach the placed spot's annotation has, measured from the rim
+        // of the same circle. See the arrow in the solid spots block.
+        const off = R * 1.15, reach = R * 3.5;
+        const x0 = p.x + ux * off, y0 = p.y + uy * off;
+        const x1 = p.x + ux * reach, y1 = p.y + uy * reach;
+        const head = R * 1.05;
+        const nx = -uy, ny = ux;
+        return (
+          <g key={p.id}>
+            <circle cx={p.x} cy={p.y} r={R} strokeDasharray={suggestDots} />
+            {centre}
+            <line x1={x0} y1={y0} x2={x1} y2={y1} strokeDasharray={suggestDots} />
+            {/* THE HEAD IS SOLID AND THE SHAFT IS NOT, and that is the one place
+                this layer stops dotting. A dotted triangle four pixels across is
+                a smudge, and the head is the half of the arrow that carries the
+                meaning — which way the fitting looks. The same triangle the
+                placed spot draws, so the two are recognisably one annotation in
+                two states. */}
+            <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * 0.55},${y1 - uy * head + ny * head * 0.55}`
+                   + ` L${x1 - ux * head - nx * head * 0.55},${y1 - uy * head - ny * head * 0.55} Z`}
+              fill={suggestInk} stroke="none" />
+          </g>
+        );
+      })}
+    </g>
+  );
 
   return (
     <svg
@@ -1649,6 +1832,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           glow inside each fitting carries it: six feet of live surface would
           have one downlight swallowing every click meant for its neighbours,
           and this mark is not something you can grab. */}
+      {/* NO POOL UNDER A SUGGESTION, WHICH IS WHY BOTH CONSTANTS HERE ARE THE
+          ONES `suggestGrid` HAS ALREADY SUBTRACTED FROM. The wash is this
+          drawing's claim that a fitting is throwing light onto that floor, and
+          a proposal has not been made yet — a dotted outline standing in six
+          feet of glow would be the strongest possible statement that it is
+          going in, said by the one mark on the sheet that cannot be dotted. */}
       {(autoLights || layers.spots) && laid.map((r, ri) => {
         const pools = [];
         // THE GRID AND THE TRACK HEADS — 7 W ambient, 12 W over a pair of
@@ -1680,14 +1869,20 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         //
         // BEHIND `layers.spots`, not `layers.lights`, because the fitting it
         // belongs to is. A pool with no fitting over it is a stain.
-        if (layers.spots) {
-          for (const sp of taskSpots) {
-            if (sp.rejected || sp.roomId !== r.id || sp.x == null) continue;
-            const ft = poolFtFor(sp.fixture || 'spot');
-            if (!ft) continue;
-            const c = sp.target ?? { x: sp.x, y: sp.y };
-            pools.push({ k: sp.id, x: c.x, y: c.y, ft });
-          }
+        /* THE GATE MOVED INSIDE THE LOOP AND IS `spotIsPlaced` NOW. It was one
+           test above it — the layer either drew every pool or none — and that
+           cannot answer for a list holding both the placer's spots and the ones
+           a hand put down. A proposal carries no wash: the pool is this
+           drawing's claim that a fitting is lighting that floor, and nothing
+           has been placed yet. One that a hand put down HAS been placed, so it
+           keeps its pool whatever the Suggested Grid says. */
+        for (const sp of taskSpots) {
+          if (!spotIsPlaced(sp)) continue;
+          if (sp.rejected || sp.roomId !== r.id || sp.x == null) continue;
+          const ft = poolFtFor(sp.fixture || 'spot');
+          if (!ft) continue;
+          const c = sp.target ?? { x: sp.x, y: sp.y };
+          pools.push({ k: sp.id, x: c.x, y: c.y, ft });
         }
         if (!pools.length) return null;
         return (
@@ -3495,8 +3690,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
 
           Drawn above the surfaces and below nothing, since it is the one mark
           on this layer that somebody will order a fitting from. */}
+      {/* `spotIsPlaced` AND NOT `layers.spots`, because while the grid is being
+          SUGGESTED the placer's own spots are drawn as proposals a few hundred
+          lines down — see `suggestGhosts`. Two symbols on one aim point is one
+          fitting drawn twice, and the dotted one would be under the solid one.
+          A HAND-PLACED SPOT IS NEVER ONE OF THOSE and draws here either way. */}
       {layers.spots && taskSpots.map((sp) => {
-        if (sp.rejected) return null;
+        if (!spotIsPlaced(sp) || sp.rejected) return null;
         const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
         const ux = Math.cos(sp.angle), uy = Math.sin(sp.angle);
         // --- A DIRECTIONAL HEAD ON A TRACK -------------------------------
@@ -3684,6 +3884,54 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           </g>
         );
       })}
+
+      {/* --- ...AND THE SAME TWO POPULATIONS PROPOSED RATHER THAN PLACED -----
+          HERE, WHERE THE LAST FITTING IS DRAWN, AND NOT WHERE THE FIRST ONE IS.
+          The two halves of this overlay replace marks from opposite ends of the
+          file — the ambient grid is drawn early, the aimed spots last — and
+          only one of the two positions can hold a single group. It goes at the
+          later one, because a suggestion has to be read against the drawing it
+          is being held up to: under the accents and the surfaces, a dotted ring
+          on a busy ceiling is a ring nobody can find.
+          NOTHING IS DRAWN TWICE. The solid marks these stand in for are already
+          off — see `autoLights` and `spotIsPlaced`, both of which subtract
+          `suggest` — so this is the same answer relocated, not a second copy of
+          it. See `suggestGhosts`. */}
+      {suggestGhosts}
+
+      {/* --- THE ADJUSTABLE SPOT, BETWEEN ITS TWO CLICKS -------------------
+          THE SAME SYMBOL THE PLACED ONE GETS, deliberately, and drawn from the
+          same three figures — a circle, a shaft from its rim and a filled head.
+          What a preview has to promise is the thing that will land, and a
+          second glyph for the half-second before the second click would make
+          the commit look like a change.
+          AT REDUCED STRENGTH, WHICH IS THE ONLY DIFFERENCE. Nothing here is on
+          the ceiling yet: no pool under it, no tag beside it, and nothing to
+          grab. The arrow is the subject — it is the thing the pointer is
+          choosing — so it takes the accent's rim at full weight while the body
+          stands back.
+          INERT, like every other preview on this canvas. The press that
+          commits it is the stage's, and a live shape here would swallow it. */}
+      {spotAiming && (() => {
+        const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
+        const ux = Math.cos(spotAiming.angle), uy = Math.sin(spotAiming.angle);
+        const off = R * 1.15, reach = R * 3.5;
+        const x0 = spotAiming.x + ux * off, y0 = spotAiming.y + uy * off;
+        const x1 = spotAiming.x + ux * reach, y1 = spotAiming.y + uy * reach;
+        const head = R * 1.05;
+        const nx = -uy, ny = ux;
+        return (
+          <g pointerEvents="none" opacity="0.85">
+            <circle cx={spotAiming.x} cy={spotAiming.y} r={R}
+              fill="url(#lp-core)" stroke={rim} strokeWidth={lw * 2} />
+            <line x1={x0} y1={y0} x2={x1} y2={y1}
+              stroke={rim} strokeWidth={lw * 1.9} strokeLinecap="round" />
+            <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * 0.55},${y1 - uy * head + ny * head * 0.55}`
+                   + ` L${x1 - ux * head - nx * head * 0.55},${y1 - uy * head - ny * head * 0.55} Z`}
+              fill={rim} />
+          </g>
+        );
+      })()}
 
       {/* --- alignment guides ------------------------------------------------
           Momentary: they exist only while something is being dragged or

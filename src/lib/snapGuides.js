@@ -6,13 +6,16 @@
 // with something MEANINGFUL, it clicks onto that line and the line briefly
 // draws itself, so you can see what you just aligned to and why it moved.
 //
-// SHAPED FOR MORE OF THEM. Today two sources are wired up — the centre of a
-// room, and the centre of another ceiling object. That is deliberately not
-// special-cased anywhere below: a source is just a function that returns
-// TARGETS, a target is `{ axis, value, span, kind, label }`, and everything
-// after that is the same code however many sources there are. Adding edges,
-// thirds, equal spacing, or the lights themselves is a new entry in
-// `collectTargets` and nothing else.
+// SHAPED FOR MORE OF THEM, AND THE SHAPE HAS HELD. It began with two sources —
+// the centre of a room and the centre of another ceiling object — and the note
+// here predicted that "adding edges, thirds, equal spacing, or the lights
+// themselves is a new entry in `collectTargets` and nothing else". Three of
+// those have since arrived on exactly those terms: the room's own walls, the
+// geometry somebody drew, and now THE LIGHTS. Each is a loop pushing targets and
+// a line in `RANK`; nothing else in this file knows how many sources there are.
+// A source is just something that returns TARGETS, a target is
+// `{ axis, value, span, kind, label }`, and everything after that is the same
+// code however many there are.
 //
 // Each target carries a `span` — the extent along the OTHER axis of whatever it
 // came from — so a guide can be drawn across the thing it belongs to rather
@@ -46,7 +49,7 @@ const bboxOf = (poly) => {
  * moment it started.
  */
 export function collectTargets({ rooms = [], objects = [], points = [],
-                                 shapes = [], exclude = null } = {}) {
+                                 shapes = [], lights = [], exclude = null } = {}) {
   /* `exclude` TAKES ONE ID, A LIST OF THEM, OR A SET. It was a single id
      compared with `===`, which was right while only one object could ever be
      dragged. A multi-selection moves as a group, and a group that can snap to
@@ -152,6 +155,35 @@ export function collectTargets({ rooms = [], objects = [], points = [],
                label: 'aligned' });
   }
 
+  /* --- THE LIGHTS THEMSELVES, WHICH THIS FILE'S HEADER ALREADY PROMISED ----
+     THE ENGINE'S ANSWER IS A SETTING-OUT GRID, and until it was offered here it
+     was the one arrangement on the sheet that could not be worked from. The
+     spacing a planner computes is the most considered geometry on the drawing —
+     it is why the ceiling was chunked — so a rectangle dragged out between two
+     of its centres is the ordinary next act, and by eye it was a guess.
+
+     SHAPED LIKE `object-centre` AND NOT LIKE `point`, for that source's own
+     stated reason: a bare vertex spans itself, so its guide is a stub a few
+     pixels long that says nothing about what was caught. Spanning the fitting's
+     own symbol draws the line across the ring you aimed at.
+
+     A CENTRE AND NOT AN EDGE, which is the one place this differs from the
+     shapes above. A downlight is set out to its centre — that is the figure on
+     every reflected ceiling plan and the number that gets marked on the slab —
+     so its rim is not a line anybody dimensions to and offering one would put
+     two targets a few inches apart on one small circle.
+
+     `exclude` REACHES THIS TOO, for the reason it reaches the others. */
+  for (const l of lights) {
+    if (!l || (skip && skip.has(l.id))) continue;
+    if (!Number.isFinite(l.x) || !Number.isFinite(l.y)) continue;
+    const r = l.r || 0;
+    out.push({ axis: 'x', value: l.x, span: [l.y - r, l.y + r], kind: 'light-centre',
+               label: l.label ?? 'suggested' });
+    out.push({ axis: 'y', value: l.y, span: [l.x - r, l.x + r], kind: 'light-centre',
+               label: l.label ?? 'suggested' });
+  }
+
   return out;
 }
 
@@ -176,8 +208,14 @@ export function collectTargets({ rooms = [], objects = [], points = [],
 /* A LINE SOMEBODY DREW OUTRANKS THE ROOM BEHIND IT. A guide exists to be set
    out against; a wall is there whether anybody wanted it or not. Below the
    path's own points, which are the thing being drawn. */
+/* A SUGGESTED LIGHT SITS BETWEEN THE WALLS AND THE THINGS SOMEBODY DROPPED, and
+   the fraction is the honest place for it rather than a renumbering. It loses to
+   a wall, which is built and is true whatever anybody thinks; it beats a placed
+   fan, because the grid was COMPUTED for this ceiling and a fan is where a hand
+   happened to leave it. It only ever decides an exact tie anyway — see
+   `snapPoint`, where distance settles everything else. */
 const RANK = { point: -1, 'shape-edge': 0, 'room-centre': 1, 'room-edge': 2,
-               'object-centre': 3 };
+               'light-centre': 2.5, 'object-centre': 3 };
 
 export function snapPoint(p, targets, { tol = SNAP_DEFAULTS.tolScreenPx } = {}) {
   let bx = null, by = null;

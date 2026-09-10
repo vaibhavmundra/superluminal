@@ -244,22 +244,54 @@ export function clampContext(r, opt) {
    ought to go — it is the difference between a row that is straight and one
    that is seven pixels out, which nobody can hit by hand and everybody wants.
    The tolerance is the app's own, in SCREEN pixels, so it does not stiffen as
-   you zoom in to place carefully. */
-export function cobAlignTargets(cobsPx, p, exclude = null) {
+   you zoom in to place carefully.
+
+   --- AND THE SUGGESTED GRID, WHICH IS THE ONE ADDITION THE RULE ABOVE ADMITS
+   THE EXCLUSION WAS NEVER ABOUT "EVERYTHING EXCEPT LAMPS". It is about the
+   DRAWING — walls, room centres, somebody's fan — overruling a row that is
+   about itself. A suggested centre is neither of those things. It is the
+   ambient layout this tool exists to argue with, drawn as a proposal, and it is
+   on the sheet ONLY because somebody turned the layer on in order to work
+   against it. "Put my lamp exactly where the planner wanted one" is the whole
+   gesture that layer is for, and by eye it is a guess.
+
+   SO IT IS OFFERED, AND IT COSTS NOTHING WHEN THE LAYER IS OFF: the caller
+   hands an empty list, because the same gate that decides what is DRAWN decides
+   what is aimed at — see `suggestPointsPx`. You cannot catch a centre that is
+   not on the drawing.
+
+   THE SPAN IS BUILT THE WAY THE LAMPS' IS — from the mark to the POINTER, and
+   not across the ghost's own radius the way `collectTargets` does it. Same
+   reason as above: what says "this lamp and that proposal are in line" is the
+   line BETWEEN them, and a two-inch tick beside a dotted ring says nothing.
+   That is exactly why these are built here rather than borrowed from there. */
+export function cobAlignTargets(cobsPx, p, exclude = null, suggestPx = []) {
   const skip = exclude == null ? null
     : exclude instanceof Set ? exclude
     : new Set(Array.isArray(exclude) ? exclude : [exclude]);
   const out = [];
+  const push = (q, kind, label) => {
+    out.push({ axis: 'x', value: q.x, span: [Math.min(q.y, p.y), Math.max(q.y, p.y)],
+               kind, label });
+    out.push({ axis: 'y', value: q.y, span: [Math.min(q.x, p.x), Math.max(q.x, p.x)],
+               kind, label });
+  };
   for (const c of cobsPx) {
     /* A LAMP CANNOT BE ASKED TO LINE UP WITH ITSELF — the same guard
        `collectTargets` states for a dragged object, and without it a drag
        locks solid the moment it starts: the thing under the pointer is within
        nought pixels of its own centre on both axes. */
     if (skip && skip.has(c.id)) continue;
-    out.push({ axis: 'x', value: c.x, span: [Math.min(c.y, p.y), Math.max(c.y, p.y)],
-               kind: 'object-centre', label: 'aligned' });
-    out.push({ axis: 'y', value: c.y, span: [Math.min(c.x, p.x), Math.max(c.x, p.x)],
-               kind: 'object-centre', label: 'aligned' });
+    push(c, 'object-centre', 'aligned');
+  }
+  /* NO `skip` HERE, AND THAT IS NOT AN OVERSIGHT. `exclude` names the LAMP
+     under the pointer, and these are not lamps — nothing in this list can be
+     the thing being dragged, so there is no self-alignment to guard against.
+     A proposal sitting under the lamp you are moving is the one you want to
+     drop back onto, which is the opposite of a lock. */
+  for (const q of suggestPx) {
+    if (!Number.isFinite(q?.x) || !Number.isFinite(q?.y)) continue;
+    push(q, 'light-centre', 'suggested');
   }
   return out;
 }
@@ -535,8 +567,8 @@ export function arrayLanded({ lamps, roomAt }) {
  * offering a choice between two paths with nothing to say which was meant.
  *
  * `null` WHERE THE GEOMETRY HAS GONE. A shape can be deleted from under an
- * array — the geometry is referenced, not owned — and a bar with a label and
- * no path behind it would be a control acting on nothing.
+ * array — the geometry is referenced, not owned — and a bar of controls with no
+ * path behind them would be controls acting on nothing.
  */
 export function arrayBarFor({ array: a, geo, pxPerFt }) {
   if (!a || !geo) return null;
@@ -545,7 +577,7 @@ export function arrayBarFor({ array: a, geo, pxPerFt }) {
   return {
     watts: clampWatts(a.watts), beam: nearestBeam(a.beam),
     array: {
-      editing: true, picked: true, label: geo.label,
+      editing: true, picked: true,
       /* THE COUNT AS THE GEOMETRY CAN PRODUCE IT, not as it happens to be
          stored. A plan saved before the corners mattered, or an array whose
          hexagon has since been resized into a rectangle, would otherwise show
@@ -613,7 +645,7 @@ export function arrayDraftBar({ draft: d, geo, pxPerFt }) {
   const asks = arrayAsks(geo.pts, { closed: geo.closed, isRoom: geo.isRoom,
                                     corners: geo.corners });
   return {
-    picked: true, label: geo.label,
+    picked: true,
     count: d.count, sideId: d.side, offsetFt: d.offsetFt,
     side: asks.side, sides: asks.sides,
     /* THE GEOMETRY'S OWN STEPS — see `arrayQuanta`. A rectangle counts 4, 8,

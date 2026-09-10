@@ -167,7 +167,20 @@ export function projectArtPiecesPx(rooms, wallResults, pxPerFt, artDismissed) {
  * the chunks, the lights and the clearance rules all already live in, and
  * back out to plan pixels for the canvas.
  */
-export function projectTaskSpotsPx(rooms, surfacesPx, artPiecesPx, opt) {
+/* HOW FAR IN FRONT OF A HAND-PLACED SPOT ITS AIM POINT SITS, in plan feet.
+   THE FIGURE IS A DRAWING DECISION AND NOT A PHOTOMETRIC ONE, which is why it
+   is here and named rather than inlined. A placer's spot has a real target —
+   the middle of the table it was put there for — and its `aimFt` is the honest
+   distance to it. A hand-aimed spot has a direction and no target at all, so
+   something has to stand in for one, and what reads correctly on the sheet is a
+   point far enough out that the arrow is unambiguous and near enough that the
+   wash it carries lands where somebody pointed. Six feet is a little over the
+   throw of a 5 W narrow lamp at 2.7 m, which makes the pool and the arrow agree
+   with each other. */
+const HAND_AIM_FT = 6;
+
+export function projectTaskSpotsPx(rooms, surfacesPx, artPiecesPx, opt,
+                                   manualSpots = [], pxPerFt = 0) {
     const out = [];
     for (const r of rooms) {
       if (!r.plan?.ok) continue;
@@ -432,6 +445,53 @@ export function projectTaskSpotsPx(rooms, surfacesPx, artPiecesPx, opt) {
           ptsFt[k] = null;
         });
       }
+    }
+
+    /* --- 4. AND THE ONES SOMEBODY PUT DOWN AND POINTED THEMSELVES ---------
+       LAST, AND OUTSIDE EVERY PASS ABOVE, which is the whole of what makes
+       them hand-placed. Nothing here is solved: the position is where the
+       first click landed and the angle is where the second one locked it, and
+       neither is offered to the segment ledger, the art row's `taken` list or
+       the track absorption. A hand that has aimed a fitting has said the last
+       word on it — the same rule `placeCob` states for a recessed lamp, which
+       is deliberately given none of the wall bands and clearances the engine
+       obeys. See lib/cob.js.
+
+       THEY COME OUT IN THE SAME SHAPE AS A PLACED ONE, and that is the point
+       of putting them here rather than in a list of their own. The canvas
+       draws `taskSpots`, the analysis counts them as task lights, the schedule
+       bills them by `fixture` and the electrical pass loops them back to a
+       plate — four readers, none of which has to learn about a fourth kind of
+       fitting. What they lack is the placer's WORKING: no `segment`, no
+       `grid`, no `via`, no `highlight`, because there is no reasoning to show.
+
+       PLAN FEET STRAIGHT TO PLAN PIXELS. A hand-placed spot is stored the way
+       `manualCobs` are — in the drawing's own feet, so a scale correction moves
+       it with everything else — and that space is shared by every room, so
+       this needs no room origin and no `r.geo`. It is also why the loop is
+       over the SPOTS and not over the rooms: a room with no task surface
+       `continue`s out of the pass above, and a hand-placed spot in one would
+       have been silently dropped.
+
+       `target` IS DERIVED FROM THE ANGLE and not stored. What the hand chose is
+       a DIRECTION; the aim point is a fixed distance along it, and it exists
+       only because three readers want one — the pool goes on it, the arrow
+       points at it, and the absorbed-onto-a-track case re-derives the angle
+       from it. Storing a point instead would make the record say the spot is
+       aimed at a particular spot on the floor, which is not what was said. */
+    for (const sp of manualSpots) {
+      if (!Number.isFinite(sp?.xFt) || !Number.isFinite(sp?.yFt)
+          || !Number.isFinite(sp?.aim) || !(pxPerFt > 0)) continue;
+      const x = sp.xFt * pxPerFt, y = sp.yFt * pxPerFt;
+      const reach = HAND_AIM_FT * pxPerFt;
+      out.push({
+        id: sp.id, roomId: sp.roomId ?? null, fixture: sp.fixture || 'spot',
+        hand: true,
+        x, y,
+        target: { x: x + Math.cos(sp.aim) * reach, y: y + Math.sin(sp.aim) * reach },
+        angle: sp.aim,
+        aimFt: HAND_AIM_FT, far: false,
+      });
     }
     return out;
 

@@ -86,7 +86,14 @@ export const LIGHT_TOOLS = [
     hint: 'Click the two ends of the run.' },
   { id: 'sconce', label: 'Sconce',
     hint: 'Click a wall — the fitting seats itself on it.' },
-  { id: 'spot',   label: 'Directional spot',
+  /* "ADJUSTABLE SPOT" IN THE RAIL AND "DIRECTIONAL SPOT" IN THE SCHEDULE, and
+     the two words are aimed at two readers. The rail is a verb: what this cell
+     lets you DO is aim one, and "adjustable" is what somebody reaching for it
+     is looking for. The BOQ line is a product — see `spot` in boq.js — and a
+     schedule an electrician orders from does not get renamed because a palette
+     did. Only `label` moved; the id is untouched, and every store, selection
+     and analysis row is keyed by that. */
+  { id: 'spot',   label: 'Adjustable spot',
     hint: 'Drag a box round what it should light.',
     /* THE STEP'S HEADING. Only the two tools with a `GESTURE` carry one, and
        that is not a coincidence — arming either of them empties the panel down

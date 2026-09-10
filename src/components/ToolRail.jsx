@@ -116,7 +116,7 @@ function RailCell({ mark, label, on, disabled, title, onClick }) {
    and a tool not in it is called what it is called. */
 const SHORT = {
   'Reverse cove': 'Rev. cove',
-  'Directional spot': 'Spot',
+  'Adjustable spot': 'Adj. spot',
   'LED strip': 'Strip',
   'Cassette AC': 'Cassette',
   'Chandelier': 'Chand.',

@@ -138,7 +138,16 @@ const BTN = `${BTN_SHELL} ${BTN_OFF}`;
 /* THE SAME LATCH ON A BUTTON WHOSE CONTENT IS TEXT. The sides row prints a
    number, and a number in `text-black/80` on a black chip is a number nobody can
    read — so it takes the inversion the marks take. */
-const NUM_SHELL = 'flex items-center justify-center w-7 h-9 rounded-[7px] border-0 '
+/* `flex-none whitespace-nowrap` FOR THE SAME REASON CobSpec's CHIP CARRIES IT,
+   and this bar has the very same three labels in it — Inside / On the line /
+   Outside, which is where it showed. StageBar is `flex-nowrap`, which stops the
+   BAR wrapping and does nothing about a button: a flex child still shrinks below
+   its content, and a shrunk button breaks its own label across two lines, which
+   makes that one control a different height from every other cell on the bar.
+   The digits do not need it and are not harmed by it; one rule for every button
+   here is one fewer thing to get wrong when a longer word arrives. */
+const NUM_SHELL = 'flex flex-none whitespace-nowrap items-center justify-center '
+  + 'w-7 h-9 rounded-[7px] border-0 '
   + 'cursor-pointer p-0 text-[12px] transition-colors duration-[120ms]';
 const NUM_OFF = 'bg-transparent hover:bg-black/[0.07] text-black/80';
 const NUM_ON = 'bg-black hover:bg-black text-white';

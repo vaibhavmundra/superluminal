@@ -43,7 +43,11 @@ import StageBar from './StageBar.jsx';
 const CAP = 'text-[10.5px] leading-none tracking-[0.02em] text-black/55 px-1.5 select-none';
 const SEP = <span className="w-px h-5 bg-black/10 mx-1" aria-hidden="true" />;
 
-const CHIP = 'px-[6px] py-[4px] text-[10.5px] rounded-[6px] border cursor-pointer '
+/* `flex-none whitespace-nowrap` — see the note on CobSpec's CHIP, which this is
+   a copy of. Nothing on this bar is wide enough to have shown it yet; the rule
+   travels with the shape so the next label added here cannot. */
+const CHIP = 'flex-none whitespace-nowrap '
+  + 'px-[6px] py-[4px] text-[10.5px] rounded-[6px] border cursor-pointer '
   + 'tabular-nums leading-none transition-colors duration-[120ms] '
   + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] '
   + 'focus-visible:outline-black/40';

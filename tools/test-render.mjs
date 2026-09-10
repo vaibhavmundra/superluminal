@@ -33,6 +33,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 import { designChunking, planCeilingDesign } from '../src/lib/ceilingDesign.js';
 import { PLAN_OPTIONS } from '../src/lib/settings.js';
+import { projectSuggestedPointsPx } from '../src/lib/fixtureProjection.js';
+import { collectTargets, snapPoint, guideLine } from '../src/lib/snapGuides.js';
+import { pointKind, resolvePoint, FREE } from '../src/lib/point.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
@@ -86,6 +89,20 @@ function room(polygonFt, pick = null) {
         xLines: ch.xLines.map((x) => x * S), yLines: ch.yLines.map((y) => y * S),
       })),
       cellsPx: res.cells.map(rectPx),
+      /* THE CHUNKER'S OWN ANSWER, WHICH IS NOT THE SAME LIST AS `lightsPx`
+         WHENEVER THE PLACEMENT IS SWITCHED OFF. layout.js sets these on every
+         room it lays out, so a fixture without them is a shape the app never
+         hands this component — the same argument the `rect` on the cove accent
+         below already makes. The suggestion layer reads `gridLightsPx`, and
+         with the field absent it would draw nothing and the test would pass by
+         rendering an empty group. */
+      gridCellsPx: res.cells.map(rectPx),
+      gridChunksPx: res.chunks.map((ch) => ({
+        ...rectPx(ch),
+        xLines: ch.xLines.map((x) => x * S), yLines: ch.yLines.map((y) => y * S),
+      })),
+      gridLightsPx: res.lights.map((l) => ({ ...l, ...toPx(l),
+        fixture: l.track ? 'track-ambient' : l.kind })),
       lightsPx: res.lights.map((l) => ({ ...l, ...toPx(l),
         fixture: l.track ? 'track-ambient' : l.kind,
         design: res.chunks[l.kind === 'small' ? l.cell?.chunk : l.chunk]?.design ?? null,
@@ -120,8 +137,24 @@ function room(polygonFt, pick = null) {
   };
 }
 
-const LAYERS = { lights: true, labels: true, cells: true, region: true,
-                 zones: true, spots: true, accents: true, grid: true };
+/* `autoLights` IS IN HERE NOW AND WAS NOT BEFORE, which quietly meant every
+   assertion about the placed ambient fittings was made against a canvas that
+   had never drawn one: PlanCanvas reads `layers.lights && layers.autoLights`,
+   and an absent key is falsy. App always hands over an object merged onto
+   LAYER_DEFAULTS (see `layers` in useViewPrefs), so this is the shape the
+   component is actually given. */
+const LAYERS = { lights: true, autoLights: true, labels: true, cells: true,
+                 region: true, zones: true, spots: true, accents: true, grid: true };
+
+/** A directional spot as `projectTaskSpotsPx` leaves one, aimed to the right. */
+const SPOT = { id: 'sp1', roomId: 'r1', fixture: 'spot', x: 10 * S, y: 8 * S,
+               angle: 0, target: { x: 13 * S, y: 8 * S } };
+
+/** The suggested grid, resolved the way App resolves it for the canvas AND for
+ *  the snap engine — one list, so this test cannot pass on a shape the app
+ *  never builds. */
+const suggestFor = (r, on = true) =>
+  projectSuggestedPointsPx([r], [SPOT], S, { on, ambient: true, spots: true });
 
 const draw = (r, extra = {}) => renderToStaticMarkup(React.createElement(PlanCanvas, {
   width: 1200, height: 900, pxPerFt: S, zoom: 1, layers: LAYERS, toPx,
@@ -201,8 +234,129 @@ say('4. THE OPTION PILL RENDERS WHEN A CHUNK IS PICKED');
   ok(!plain.includes('›'), 'and nothing is drawn when no chunk is picked');
 }
 
-// --- 5. the schedule renders too --------------------------------------
-say('5. THE SCHEDULE RENDERS');
+// --- 5. the suggested grid --------------------------------------------
+say('5. THE SUGGESTED GRID PROPOSES WHAT AUTO PLACE LIGHTS WOULD PUT DOWN');
+{
+  const r = room(box(24, 18));
+  const pts = suggestFor(r);
+  const ambient = pts.filter((p) => p.of === 'ambient');
+  const spots = pts.filter((p) => p.of === 'spot');
+  ok(ambient.length === r.plan.gridLightsPx.length && ambient.length > 0,
+    `one proposal per fitting the engine placed: ${ambient.length}`);
+  ok(spots.length === 1, 'and one per directional spot');
+  /* THE POINT PRIMITIVE'S OWN SHAPE, which is what lets the snap engine and
+     anything else that speaks `point` take these without an adapter. */
+  ok(pts.every((p) => pointKind(p) === FREE && p.on === null && p.u === null),
+    'every entry is a FREE point');
+  ok(pts.every((p) => {
+    const at = resolvePoint(p);
+    return at && Number.isFinite(at.x) && Number.isFinite(at.y) && p.r > 0;
+  }), '...that resolves to a position and carries its symbol radius');
+  ok(new Set(pts.map((p) => p.id)).size === pts.length,
+    '...and the ids are unique, so a second room cannot collide with the first');
+  ok(suggestFor(r, false).length === 0,
+    'and the layer being off empties the list, so nothing invisible is snappable');
+
+  /* --- A SPOT A HAND PUT DOWN IS NEVER A SUGGESTION ----------------------
+     THE REGRESSION THIS GUARDS IS EXACT AND WAS REAL. `taskSpotsPx` used to
+     hold nothing but the placer's answer, so this layer read the whole of it
+     as "what the planner would do". An adjustable spot is two clicks on the
+     ceiling and joins the same list on purpose — and because the suggestion
+     layer takes precedence over the solid drawing of everything it covers, the
+     fitting you had just placed came out as a dotted proposal.
+     BOTH HALVES ARE CHECKED because either alone leaves a spot drawn twice or
+     not at all: the projection must not offer it, and the canvas must draw it
+     solid anyway. */
+  const HAND = { ...SPOT, id: 'mspot-1', hand: true, x: 12 * S, y: 6 * S };
+  const mixed = projectSuggestedPointsPx([r], [SPOT, HAND], S,
+                                         { on: true, ambient: false, spots: true });
+  ok(mixed.length === 1 && mixed[0].id === `sg-${SPOT.id}`,
+    'the placer\'s spot is proposed and the hand-placed one is not');
+
+  const withHand = draw(r, { layers: { ...LAYERS, suggestGrid: true },
+                             taskSpots: [SPOT, HAND],
+                             suggestPoints: suggestFor(r) });
+  /* THE SOLID SYMBOL IS `url(#lp-core)` — the accent ramp every placed fitting
+     is cut from, and the one thing a proposal never carries. With the layer on
+     and one hand-placed spot on the sheet there has to be exactly one. */
+  ok(/fill="url\(#lp-core\)"/.test(withHand),
+    '...and the canvas still draws it as a fitting, in the accent, not dotted');
+  ok(/fill="url\(#lp-throw\)"/.test(withHand),
+    '...keeping its pool too, because it is placed and not proposed');
+
+  const plain = draw(r, { taskSpots: [SPOT] });
+  const sug = draw(r, { layers: { ...LAYERS, suggestGrid: true },
+                        taskSpots: [SPOT], suggestPoints: pts });
+  ok(sug.startsWith('<svg'), 'the canvas renders with the layer on');
+  // The wash is the drawing's claim that a fitting is lighting that floor.
+  ok(/fill="url\(#lp-throw\)"/.test(plain) && !/fill="url\(#lp-throw\)"/.test(sug),
+    'no pool under a proposal — the placed drawing has them, this one does not');
+  ok(/fill="url\(#lp-core\)"/.test(plain) && !/fill="url\(#lp-core\)"/.test(sug),
+    '...and no fitting bodies either: the accent is for what is going in');
+  const rings = (h) => (h.match(/<circle[^>]*stroke-dasharray/g) || []).length;
+  ok(rings(sug) >= pts.length,
+    `a dotted ring for every proposal: ${rings(sug)} for ${pts.length}`);
+  /* THE INK IS ON THE GROUP AND THE DOTS ARE ON ITS CHILDREN, which is why
+     this looks for the wrapper rather than for one circle carrying both. */
+  const ghostGroup = /<g pointer-events="none" opacity="0\.8"[^>]*stroke="([^"]+)"/;
+  ok(ghostGroup.exec(sug)?.[1] === '#000000',
+    "drawn in the sheet's own ink on paper");
+  const night = draw(r, { layers: { ...LAYERS, suggestGrid: true, invert: true },
+                          taskSpots: [SPOT], suggestPoints: pts });
+  ok(ghostGroup.exec(night)?.[1] === '#FFFFFF',
+    '...and in white on the negative, which is the same rule the outlines take');
+
+  /* --- AND THE CENTRES ARE REACHABLE, WHICH IS THE OTHER HALF ------------
+     A PROPOSAL YOU CAN SEE AND CANNOT AIM AT IS A PICTURE. The whole point of
+     resolving the layer once is that this list and the one the canvas drew are
+     the same object, so these assertions are about the marks on the sheet and
+     not about a parallel construction that happens to agree.
+
+     AND THEY GO IN THROUGH THE FULL TARGET SET, exactly as App builds it —
+     rooms, placed objects, drawn shapes AND lights. Testing the lights alone
+     would pass on a `collectTargets` that dropped them the moment anything else
+     was present, and "it snapped in isolation" is not the claim being made. */
+  const asApp = (extra = {}) => collectTargets({
+    rooms: [{ id: 'r1', name: 'Space 1', polygonPx: r.plan.polygonPx }],
+    objects: [{ id: 'fan1', x: 5 * S, y: 5 * S, r: 2 * S }],
+    shapes: [{ id: 'sh1', pts: [{ x: 2 * S, y: 2 * S }, { x: 6 * S, y: 2 * S },
+                                { x: 6 * S, y: 6 * S }, { x: 2 * S, y: 6 * S }] }],
+    lights: pts, ...extra,
+  });
+  const targets = asApp();
+  ok(targets.filter((t) => t.kind === 'light-centre').length === pts.length * 2,
+    'every centre offers an x and a y target, alongside every other source');
+  const p0 = pts[0];
+  const hit = snapPoint({ x: p0.x + 2, y: p0.y - 2 }, targets, { tol: 7 });
+  ok(Math.abs(hit.x - p0.x) < 1e-9 && Math.abs(hit.y - p0.y) < 1e-9,
+    'a corner dragged near a centre lands exactly on it');
+  ok(hit.guides.length === 2 && hit.guides.every((g) => g.kind === 'light-centre'),
+    '...and both guides say what it caught');
+  /* THE GESTURE THE FEATURE WAS ASKED FOR: a rectangle spanned between two
+     proposed centres comes out measuring the distance between them exactly. */
+  const p1 = pts.find((q) => q.of === 'ambient' && q.x !== p0.x && q.y !== p0.y);
+  const c0 = snapPoint({ x: p0.x - 3, y: p0.y + 3 }, targets, { tol: 7 });
+  const c1 = snapPoint({ x: p1.x + 3, y: p1.y - 3 }, targets, { tol: 7 });
+  ok(Math.abs((c1.x - c0.x) - (p1.x - p0.x)) < 1e-9
+      && Math.abs((c1.y - c0.y) - (p1.y - p0.y)) < 1e-9,
+    'a rectangle spanned between two centres is exactly their spacing');
+  const miss = snapPoint({ x: p0.x + 400, y: p0.y + 400 }, targets, { tol: 7 });
+  ok(miss.x === p0.x + 400 && miss.guides.length === 0,
+    'and nothing is pulled from across the room');
+  /* THE SPAN IS THE SYMBOL'S, so the guide draws across the ring you aimed at
+     rather than as a stub of no length. */
+  const gl = guideLine(hit.guides[0], 0);
+  ok(Math.hypot(gl.x2 - gl.x1, gl.y2 - gl.y1) > 0,
+    'the guide it draws spans the fitting it belongs to');
+  /* AND A CENTRE THAT IS NOT ON THE SHEET IS NOT A TARGET, which is the same
+     gate the drawing reads — see `suggestPointsPx`. */
+  ok(!asApp({ lights: suggestFor(r, false) })
+      .some((t) => t.kind === 'light-centre'),
+    'with the layer off there is nothing to aim at');
+}
+
+// --- 6. the schedule renders too --------------------------------------
+say('6. THE SCHEDULE RENDERS');
 {
   const { buildBOQ } = await import('../src/lib/boq.js');
   const r = room(box(24, 18), 'track-4');

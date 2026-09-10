@@ -4,7 +4,7 @@ import { SHAPE_BY_ID, outlineFt as shapeOutlineFt, cornersFt as shapeCornersFt,
          isBuilt as shapeIsBuilt, frameFt as shapeFrameFt, handlesFor,
          editablePath as shapeEditablePath } from './ceilingShapes.js';
 import { MODULE_BY_ID, moduleLenIn } from './magTrack.js';
-import { resolvePoint } from './point.js';
+import { freePoint, resolvePoint } from './point.js';
 import { asPathHost } from './path.js';
 import { arraySpots, arrayPath, throwDiameterFt, DEFAULT_DROP_FT } from './cob.js';
 import { STRIP_OFFSET_FT } from './cove.js';
@@ -343,4 +343,98 @@ export function projectPenDraftPx(pxPerFt, shapeMenuOn, shapeTool, pts, at, isEm
     return { pts: pts.map(toPlanPx), closed: true,
              at: at ? toPlanPx(at) : null };
 
+}
+
+/* --- THE SUGGESTED GRID, AS POINTS ----------------------------------------
+   WHAT THE PLANNER WOULD DO WITH THIS CEILING, RESOLVED ONCE INTO ONE LIST.
+
+   THE POINT OF THE LIST IS THAT THERE IS ONLY ONE OF IT. These marks are drawn
+   by the canvas AND offered to the snap engine, and those are the two readers
+   that must never disagree: a dotted ring whose centre is not where the guide
+   clicks is a drawing that invites you to aim at a lie. Deriving them twice —
+   once in the component from `gridLightsPx`, once in App from the same field —
+   is exactly how that disagreement gets built, so the geometry is settled here
+   and both readers are handed the answer.
+
+   EVERY ENTRY IS A FREE POINT, in the primitive's own shape — see lib/point.js.
+   That is not decoration: `resolvePoint` reads one, `snapPoint` aligns to one,
+   and anything later that learns to take a point takes these without a second
+   adapter. What they are NOT is point RECORDS: nothing here is stored, nothing
+   is dragged, and there is no `pointAdapters` on them, because the position is
+   the ENGINE'S and moving one would be arguing with the layout rather than
+   editing a point. A hand that wants to move a suggested light places a real
+   fitting instead — which is the whole gesture this layer exists to support.
+
+   `gridLightsPx` AND NOT `lightsPx`. The first is the chunker's own answer, kept
+   aside from the blanking that empties the second whenever the auto-placed
+   lights are off — see layout.js. They are off by default, so reading the
+   placed list would give a suggestion layer that shows nothing at all on an
+   ordinary plan, which is the state it exists for.
+
+   THE RADIUS IS THE SYMBOL'S, IN PLAN PIXELS, and it is here rather than in the
+   canvas because two readers need it: the drawing sizes the ring with it and
+   the snap engine spans the guide across it, so a guide stub is as long as the
+   thing it belongs to. The canvas applies no minimum to it — a ghost floored to
+   a legible size while the fitting beside it is not would report a spacing that
+   is not the engine's.
+
+   EMPTY IS THE ANSWER WHEN THE LAYER IS OFF, and that is a rule about SNAPPING
+   as much as about drawing: you may only aim at what is on the sheet. One gate,
+   here, is what keeps the two from drifting — see `suggestPointsPx` in App. */
+const AMBIENT_R_FT = (l) => (l.kind === 'large' ? 0.52 : 0.3)
+  * ((l.fixture || l.kind) === 'small-narrow' ? 0.8 : 1);
+/** A directional spot's symbol, which is one size whatever it is aimed at. */
+const SPOT_R_FT = 0.3;
+
+export function projectSuggestedPointsPx(rooms, taskSpotsPx, pxPerFt,
+                                         { on = false, ambient = true, spots = true } = {}) {
+  if (!on || !(pxPerFt > 0)) return [];
+  const out = [];
+  if (ambient) {
+    for (const r of rooms ?? []) {
+      if (!r.plan?.ok) continue;
+      for (const l of r.plan.gridLightsPx ?? []) {
+        if (!Number.isFinite(l?.x) || !Number.isFinite(l?.y)) continue;
+        out.push(freePoint(l, {
+          /* NAMESPACED, BECAUSE A LIGHT'S ID IS ONLY UNIQUE INSIDE ITS ROOM.
+             The planner numbers from one per layout, so two rooms both have an
+             L1 — see the tag prefix the canvas already puts on them. These ids
+             are React keys and snap-exclude handles, and a duplicate in either
+             is a mark that vanishes or a target that cannot be skipped. */
+          id: `sg-${r.id}-${l.id}`, roomId: r.id, of: 'ambient',
+          r: AMBIENT_R_FT(l) * pxPerFt, fixture: l.fixture || l.kind, angle: null,
+        }));
+      }
+    }
+  }
+  if (spots) {
+    for (const sp of taskSpotsPx ?? []) {
+      /* --- A SPOT A HAND PUT DOWN IS NEVER A SUGGESTION -------------------
+         THIS LIST STOPPED BEING THE ENGINE'S ANSWER ALONE. `taskSpotsPx` used
+         to hold nothing but placed spots — one per task surface the detector
+         found, one per picture — so reading the whole of it as "what the
+         planner would do" was correct. It is not now: an ADJUSTABLE spot is
+         two clicks on the ceiling and joins the same list, in the same shape,
+         on purpose (see the fourth pass in projectTaskSpotsPx).
+         SO IT HAS TO BE FILTERED HERE, and the symptom if it is not is exact:
+         you place a spot, and because this layer takes precedence over the
+         solid drawing of everything it covers, the fitting you just placed
+         comes out as a dotted proposal. A hand-placed spot is no more a
+         suggestion than a hand-placed COB is, and the COBs were never in this
+         layer because they were never in a list it read. */
+      if (sp?.hand) continue;
+      /* A REFUSAL HAS NO POSITION. The placer returns an entry for every
+         surface it was asked about — carrying `rejected`, or `skipped`, or
+         nothing but the surface's id — so that the panel can say why one is
+         missing. Testing the geometry rather than the flag is what catches all
+         three: a point at NaN draws as nothing and snaps to nowhere, silently. */
+      if (sp?.rejected || !Number.isFinite(sp?.x) || !Number.isFinite(sp?.y)
+          || !Number.isFinite(sp?.angle)) continue;
+      out.push(freePoint(sp, {
+        id: `sg-${sp.id}`, roomId: sp.roomId ?? null, of: 'spot',
+        r: SPOT_R_FT * pxPerFt, fixture: sp.fixture || 'spot', angle: sp.angle,
+      }));
+    }
+  }
+  return out;
 }

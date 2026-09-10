@@ -34,12 +34,20 @@ import { trackFixtureFor } from './boq.js';
 
    AND THE SUGGESTIONS ARE BACK NOW, BEHIND A SWITCH — which is exactly what
    this constant said would happen to it. `layers.autoLights` is that switch:
-   the capsule over the drawing labelled Auto Place Lights, threaded down here
-   through `usePlanScene` so that the ENGINE answers to it and not merely the
-   canvas. A layer that gated the drawing alone could not do this job, and that
-   is worth stating because it looked like it could: what such a layer hides and
-   shows is `plan.lightsPx`, and the blanking below has already emptied that —
-   so the switch drew nothing whichever way it was thrown.
+   the Auto-placed lights tick in the View menu, threaded down here through
+   `usePlanScene` so that the ENGINE answers to it and not merely the canvas. A
+   layer that gated the drawing alone could not do this job, and that is worth
+   stating because it looked like it could: what such a layer hides and shows is
+   `plan.lightsPx`, and the blanking below has already emptied that — so the
+   switch drew nothing whichever way it was thrown.
+
+   AND IT IS OFF BY DEFAULT AGAIN, WHICH IS WHAT THIS HEADER ASKED FOR. The
+   switch spent a while defaulting ON — a space lit itself the moment it was
+   taken up, which is the exact opening move the block above calls the wrong
+   one. What changed is that there is now a way to see the engine's opinion
+   WITHOUT taking it: `layers.suggestGrid` draws the same answer as dotted
+   proposals with nothing placed and nothing billed, and that is the capsule
+   over the drawing. The question is asked before it is answered again.
 
    IT IS NOT `layers.lights`, WHICH IS THE MASTER OVER EVERY FITTING ON THE
    SHEET. That one is visibility and nothing else: a hand-placed COB hidden by
@@ -816,7 +824,27 @@ export function layoutRooms(input) {
            the autoplace rule read an area and a short side straight off one of
            these without a division. */
         gridCellsPx: gridCells.map(rectToPx),
-        gridLightsPx: gridLights.map((l) => ({ ...l, ...toPx(l) })),
+        /* AND WHAT EACH OF THE GRID'S OWN FITTINGS WOULD BE BOUGHT AS.
+           `lightFixture` IS THE WRONG READER FOR THIS LIST and that is not a
+           style point. It resolves the cove-band override off `res.chunks`,
+           which is the list the blanking above has just emptied — so with the
+           grid switched off every one of these came back as the room's plain
+           mapping, and the 5 W narrow lamp in the shallow band outside a cove
+           was reported as a 7 W. `gridChunks` is that same list kept aside, so
+           the answer is the one the engine actually gave either way.
+           IT IS HERE BECAUSE THE SUGGESTION LAYER DRAWS FROM IT. A downlight's
+           symbol is sized by the PRODUCT and not by the geometry (see the
+           `fx === 'small-narrow'` in PlanCanvas), so a proposal drawn without
+           this would be the right positions at the wrong sizes — which is the
+           one thing a drawing offered as "what the engine would do" may not be.
+           The track allocator that already reads this list takes positions and
+           cells only and is untouched by the extra field. */
+        gridLightsPx: gridLights.map((l) => {
+          const base = gridChunks[chunkIndexOf(l)]?.coveFixture
+            ?? roomFixture(l.kind, cellSqftOf(l), cellNarrowOf(l));
+          return { ...l, ...toPx(l),
+                   fixture: l.track ? trackFixtureFor(base) : base };
+        }),
         cellsPx: res.cells.map(rectToPx),
         // WHAT EACH LIGHT IS BOUGHT AS, stamped here because this is the one
         // place that knows both the layout and the room's type. The planner

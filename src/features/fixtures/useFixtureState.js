@@ -92,40 +92,41 @@ export default function useFixtureState({ sel, setSel }) {
      use — and a plan reopened holding a half-made intention would be a plan that
      places a lamp somebody decided about last week.
 
-     THE THREE SPECIFICATION SLOTS ARE THREE DIFFERENT LIFETIMES, which is the
-     whole of the two buttons on the card:
+     ONE SPECIFICATION SLOT, AND THERE WERE THREE. `cobDraft` held what the
+     slider was showing and governed nothing until one of two buttons promoted
+     it — to `cobOnce` ("Update this", one lamp then gone) or to `cobStanding`
+     ("Update all next"). All three lifetimes existed to answer a question the
+     bar was asking and no longer asks: did you mean THIS lamp or every lamp
+     from now on. A change made on a bar you opened in order to make it is not
+     ambiguous, so it is the standing choice the moment it is made and the two
+     buttons are gone — see CobSpec, and the handlers in App.
 
-       cobDraft     what the slider and the chips are showing. It has no effect
-                    on anything until one of the buttons is pressed, which is
-                    what makes dragging the slider free.
-       cobOnce      "Update this" — one lamp, then gone.
-       cobStanding  "Update all next" — every lamp from now until it is cleared
-                    by the Recommended chip.
-
-     Null in all three means "ask the engine", which is the default and the thing
-     the card opens on. */
+     `cobStanding` IS THE ONE THAT SURVIVED, and it is the one that had to: a
+     draft that governs nothing is only useful when something can promote it,
+     and a one-shot is only reachable through a button that no longer exists.
+     Null means "ask the engine", which is the default and what the bar opens
+     on; the Recommended chip is what puts it back. */
   const [cobOpen, setCobOpen] = useState(false);
   const [cobMode, setCobMode] = useState(null);
-  const [cobDraft, setCobDraft] = useState(null);
-  const [cobOnce, setCobOnce] = useState(null);
   const [cobStanding, setCobStanding] = useState(null);
-  /* --- THE LAMPS PUT DOWN SINCE THE TOOL WAS PICKED UP -----------------------
-     A LIST OF IDS, AND IT IS WHAT THE TICK AND THE CROSS ON THE BAR ACT ON.
-     Placing is immediate — a lamp appears the moment it is clicked, it is on the
-     drawing, it is in the analysis — and that is deliberate: a tool where twenty
-     fittings are invisible until you confirm them is a tool you cannot judge the
-     ceiling with. What the two buttons decide is whether the RUN stays.
+  /* --- THE LAMPS PUT DOWN SINCE THE TOOL WAS PICKED UP, AND THEY ARE NOT
+     TRACKED ANY MORE. This was a list of ids scoped to one arming of the tool,
+     and the only thing that ever read it was the pair of controls at the end of
+     the bar: a count ("Space 1 · 1 placed"), a tick that kept the run and a
+     cross that took it off the drawing again.
 
-     SCOPED TO THIS ARMING OF THE TOOL AND NOT TO THE PLAN, which is the whole
-     safety of the cross. "Reject all placements" has to mean the ones just made,
-     not every COB anybody ever placed on this drawing — a button that could take
-     out last week's work in one press does not belong beside a button you press
-     twenty times a minute. Cleared when the tool is put down, so the next run
-     starts empty and the cross can never reach back past it.
+     THE RUN WAS NEVER PENDING, WHICH IS WHY THEY WENT. A lamp is written
+     through the reducer the moment it is clicked — on the drawing, in the
+     analysis, in the schedule — deliberately, because a tool where twenty
+     fittings are invisible until you confirm them is a tool you cannot judge a
+     ceiling with. So the tick kept what was already kept, and the cross was an
+     undo with a worse name, standing permanently on the bar and reaching back
+     over as many lamps as the run held. Ctrl-Z is the undo, one lamp at a time
+     and in the order they were placed, and it is the gesture everybody has.
 
-     NOT SAVED. It is a fact about a gesture in flight, and a plan reopened
-     holding one would offer to throw away lamps from a session that ended. */
-  const [cobRun, setCobRun] = useState([]);
+     `cobLock` BELOW IS NOT THIS AND DID NOT GO WITH IT. That one is what stops
+     the second lamp of a run landing in the next room, which is a rule about
+     placing rather than a record of what was placed. */
   /* --- THE SPACE THE RUN BELONGS TO -----------------------------------------
      SET BY THE FIRST LAMP AND HELD UNTIL THE RUN ENDS. Placing a downlight is
      not really an act on a POINT — it is an act on a CEILING: the recommendation
@@ -141,18 +142,38 @@ export default function useFixtureState({ sel, setSel }) {
      wherever the cursor is. A rule you discover by pressing is a bug; a rule the
      cursor states is a boundary.
 
-     THE WAY TO THE NEXT ROOM IS THE TICK, which is what gives that button its
-     second job. Keep the run, and the tool re-arms unlocked on the next press;
-     the cross does the same having thrown the run away. Both were already the
-     way out — this is what they are the way out OF.
+     THE WAY TO THE NEXT ROOM IS TO PUT THE TOOL DOWN AND PICK IT UP. Escape,
+     or the rail cell, or reaching for anything else: all of them run
+     `disarmAdd`, which clears this along with the rest of the gesture, and the
+     next press locks onto whichever ceiling it lands in. It used to be the
+     tick's second job, and that button is gone — see the block above.
 
-     NOT SAVED, like `cobRun` beside it: it is a fact about a gesture in flight. */
+     NOT SAVED: it is a fact about a gesture in flight. */
   const [cobLock, setCobLock] = useState(null);
   /* THE ARRAY BEING SET UP, which is a gesture and not a record: which geometry
      is picked, and what the bar is currently asking about it. It becomes an
      entry in `cobArrays` when the tick is pressed, and is thrown away
      otherwise. */
   const [cobDraftArray, setCobDraftArray] = useState(null);
+  /* --- THE ADJUSTABLE SPOT BETWEEN ITS TWO CLICKS --------------------------
+     `{ xFt, yFt, roomId, aim }` OR NULL, and null is the ordinary state. The
+     gesture is place-then-aim: the first click fixes the BODY, every pointer
+     move afterwards turns it, and the second click locks the angle and writes
+     the fitting. This is the fitting during the half of the gesture where its
+     position is settled and its direction is not.
+
+     A GESTURE AND NOT A RECORD, which is why it is here and not in the
+     document. There is nothing to save: a spot half-aimed when somebody closes
+     the tab is a spot nobody placed, and reopening the plan into the middle of
+     a gesture would be a drawing asking a question its author has forgotten.
+     `disarmAdd` clears it, so Escape and the rail put it away with the tool.
+
+     `aim` IS SEEDED AND NOT LEFT NULL. The pointer is on the body at the
+     instant of the first click, so there is no direction to compute from it —
+     `atan2(0, 0)` is zero, which is at least a real angle — and a spot drawn
+     with no arrow for the one frame before the pointer moves reads as the
+     click having failed. */
+  const [spotAim, setSpotAim] = useState(null);
   /* --- THE ARRAY THAT IS OPEN ------------------------------------------------
      ITS OWN SELECTION, beside `selCobId` rather than inside it, and the reason
      is what a press on one of its lamps MEANS. A hand-placed COB is a fitting
@@ -254,25 +275,28 @@ export default function useFixtureState({ sel, setSel }) {
     lightMoves: () => setLightDrag(null),
     armed: () => { setArmed(null); setGhost(null); },
     module: () => { setTrackMode(null); setModuleSpec(null); },
-    /* THE COB BAR AND THE HALF-MADE CHANGE ON IT — `disarmAdd`'s half of this
-       feature. `cobAt` is the point the bar was answering for, so it has to go
-       with the tool; `cobDraft` is a slider position nobody committed and
-       `cobOnce` was aimed at a lamp that is no longer about to be placed.
-       `cobStanding` DELIBERATELY SURVIVES. "Update all next" is a standing
-       decision about this session's fittings, not about this arming of the tool
-       — somebody who sets 24 W, places four, reaches for the strip tool and
-       comes back is still placing 24 W lamps, and having to say so again would
-       make the button mean "update the next few". The card says which is in
-       force every time it opens, so nothing is hidden.
+    /* THE COB BAR — `disarmAdd`'s half of this feature. `cobAt` is the point
+       the bar was answering for, so it has to go with the tool, and `cobLock`
+       is the ceiling this arming of it claimed.
+       `cobStanding` DELIBERATELY SURVIVES. A wattage set on the bar is a
+       standing decision about this session's fittings, not about this arming of
+       the tool — somebody who sets 24 W, places four, reaches for the strip
+       tool and comes back is still placing 24 W lamps, and having to say so
+       again would make the control mean "the next few". The bar reads out which
+       figures are in force every time it opens, so nothing is hidden.
        THE ARRAY BEING SET UP GOES WITH THE TOOL. It is a geometry picked and a
        count half-typed — a gesture, not a record — and one left behind would
        reappear over a different plan the next time the tool was armed. The
        arrays already PLACED are untouched: those are fittings. */
     cobGesture: () => {
-      setCobAt(null); setCobDraft(null); setCobOnce(null);
-      setCobRun([]); setCobLock(null);
+      setCobAt(null); setCobLock(null);
       setCobDraftArray(null);
     },
+    /* THE HALF-AIMED SPOT, CLEARED WITH THE TOOL. Its own entry rather than a
+       line in `cobGesture`, because the two are different tools: putting the
+       COB down must not throw away a spot mid-aim and vice versa. `disarmAdd`
+       calls both, which is right — it puts EVERY placer down. */
+    spotGesture: () => setSpotAim(null),
   }), []);
 
   /* LISTED MEMBER BY MEMBER RATHER THAN SPREAD, so a reader can see exactly
@@ -285,9 +309,10 @@ export default function useFixtureState({ sel, setSel }) {
     armed, setArmed, ghost, setGhost,
     selCobId,
     cobOpen, setCobOpen, cobMode, setCobMode,
-    cobDraft, setCobDraft, cobOnce, setCobOnce, cobStanding, setCobStanding,
-    cobRun, setCobRun, cobLock, setCobLock, cobAt, setCobAt,
+    cobStanding, setCobStanding,
+    cobLock, setCobLock, cobAt, setCobAt,
     cobDraftArray, setCobDraftArray,
+    spotAim, setSpotAim,
     selArrayId, arrayDrag, setArrayDrag,
     trackMode, setTrackMode, trackAdd, setTrackAdd,
     moduleSpec, setModuleSpec,

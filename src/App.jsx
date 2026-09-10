@@ -33,6 +33,7 @@ import useOutlines from './hooks/useOutlines.js';
 import usePlanScene from './features/scene/usePlanScene.js';
 import { useSceneArchitecture, useSceneOutlines } from './features/scene/useSceneSource.js';
 import { useScenePlanProjections } from './features/scene/useScenePlanProjections.js';
+import { useSceneSuggestProjections } from './features/scene/useSceneFixtureProjections.js';
 import usePlanRecognition from './features/recognition/usePlanRecognition.js';
 import useRoomIntelligence from './features/room-intelligence/useRoomIntelligence.js';
 import useRoomEditing from './features/room-intelligence/useRoomEditing.js';
@@ -499,7 +500,8 @@ export default function App({
     projectType: initialProjectType ?? null,
   });
   const { ceilingMm, materials, fixtureWatts,
-          manualCoves, manualTracks, manualCobs, cobArrays, trackFixtures, autoSpots,
+          manualCoves, manualTracks, manualCobs, manualSpots, cobArrays, trackFixtures,
+          autoSpots,
           ceilingShapes, designPicks, ceilingKinds, chunkPicks,
           accentResults, accentDismissed, manualAccents,
           surfaceResults, surfaceDismissed, manualSurfaces, artDismissed,
@@ -587,8 +589,11 @@ export default function App({
     armed, setArmed, ghost, setGhost,
     selCobId, selArrayId, selModuleId, selLightId,
     cobOpen, setCobOpen, cobMode, setCobMode,
-    cobDraft, setCobDraft, cobOnce, setCobOnce, cobStanding, setCobStanding,
-    cobRun, cobLock,
+    cobStanding, setCobStanding, cobLock,
+    /* THE ADJUSTABLE SPOT BETWEEN ITS TWO CLICKS — see `spotAim`. Read here
+       because the gesture is App's router (`onZonePointerDown` and its move
+       partner) and the drawing of it is a canvas prop. */
+    spotAim, setSpotAim,
     arrayDrag, trackMode, setTrackMode, moduleDrag, lightDrag,
     /* WHICH RUN WAS PRESSED, AND WHAT THE NEXT MODULE WILL BE. The first is
        what opens the module drawer beside the rail and the second is what the
@@ -1545,7 +1550,8 @@ export default function App({
     ceilingShapes, lightMoves, manualTracks, isAdmin,
     /* THE ENGINE'S OWN SWITCH — `autoLights` is not a layer to this hook, it is
        whether the gridding engine places anything at all. See AUTO_GRID in
-       lib/layout.js and `autoLead` below, which is the capsule that flips it. */
+       lib/layout.js; the tick that flips it is Auto-placed lights in the View
+       menu, and it is off by default — see LAYER_DEFAULTS. */
     autoLights: layers.autoLights,
   });
 
@@ -1786,7 +1792,16 @@ export default function App({
 
   const { projections: { surfacesPx, taskSpotsPx, accentZonesPx, wallCellsPx } } = useScenePlanProjections({
     rooms, surfaceResults, surfaceDismissed, manualSurfaces, wallResults, pxPerFt, artDismissed,
-    opt, accentResults, accentDismissed, manualAccents, reverseCoves, shelfStrips, ceilingShapes
+    opt, accentResults, accentDismissed, manualAccents, reverseCoves, shelfStrips, ceilingShapes,
+    manualSpots,
+  });
+
+  /* THE SUGGESTED GRID, WHICH THE CANVAS DRAWS AND THE SNAP ENGINE AIMS AT.
+     BELOW THE SPOTS BECAUSE IT READS THEM, and above `snapTargets`, which is
+     its second consumer. Both halves of the layer come out of this one list —
+     see the hook. */
+  const { projections: { suggestPointsPx } } = useSceneSuggestProjections({
+    rooms, taskSpotsPx, pxPerFt, layers: canvasLayers,
   });
 
   /* --- THE BOARDS, THE BAYS, THE FEEDS, THE FLOWS AND THE SHEET -------------
@@ -1953,8 +1968,7 @@ export default function App({
           setShape: setArrayShape, remove: deleteArray } = fixtureCommands.arrays;
   const { setSpec: setTrackModuleSpec, isRow: isModuleRow,
           remove: deleteModule, allocateOnTrack } = fixtureCommands.modules;
-  const { setSpec: setCobSpec, remove: deleteCob,
-          dropRun: dropCobRun } = fixtureCommands.cob;
+  const { setSpec: setCobSpec, remove: deleteCob } = fixtureCommands.cob;
   /* THE TWO OBJECT COMMANDS ARE ALIASED RATHER THAN REACHED THROUGH THE GROUP,
      because the keydown effect names one of them in its dependency array: the
      group is a fresh object every render and naming IT there would re-bind the
@@ -2328,15 +2342,20 @@ export default function App({
     state: fixtureState, manualCobs, pxPerFt, ceilingMmFor, zoom,
     roomAt, basisFor: cobBasisFor, addTool, roomTypes,
     fanClearance: opt.fanClearance, setGuides,
+    /* THE SAME LIST THE CANVAS DRAWS AND THE GEOMETRY TOOL AIMS AT. The COB
+       tool keeps its own narrow target set on purpose — see `cobAlignTargets` —
+       so it takes this explicitly rather than reaching `snapTargets`. */
+    suggestPoints: suggestPointsPx,
   });
-  /* THE NAMES THIS FILE ALREADY USED. All eight are read by the markup — the
+  /* THE NAMES THIS FILE ALREADY USED. All six are read by the markup — the
      lamps and their throw rings on the canvas, and the bar at the foot of the
-     stage — which is App's. */
+     stage — which is App's. `cobDirty` was a seventh and went with the two
+     buttons it drew: there is no half-made change to be dirty about now that a
+     control on the bar writes straight through. */
   const manualCobsPx = cobTool.cobsPx;
   const cobRoom = cobTool.room;
   const cobShow = cobTool.show;
   const cobInForce = cobTool.inForce;
-  const cobDirty = cobTool.dirty;
   const cobGuide = cobTool.guide;
   const cobBlocked = cobTool.blocked;
 
@@ -2445,6 +2464,11 @@ export default function App({
        fitting session's half, called where the block stood. `cobStanding`
        deliberately survives it; see `reset.cobGesture`. */
     fixtureReset.cobGesture();
+    /* AND THE SPOT BETWEEN ITS TWO CLICKS — see `spotAim`. A body placed and
+       not yet aimed is half a gesture, and putting the tool down is the answer
+       "not that one" rather than "leave it pointing at wherever the pointer
+       happened to be". */
+    fixtureReset.spotGesture();
     /* AND THE GEOMETRY HIGHLIGHT, which belongs to the tool that was offering to
        take it. A lit stroke under no tool is a line claiming a press that would
        now do something else entirely. */
@@ -2513,6 +2537,12 @@ export default function App({
     ceilingShapes, manualTracks, trackFixtures,
     setSel, setGuides,
     allocateOnTrack, standDown: geometryStandDown,
+    /* AND A COMMITTED GUIDE GOES TO WHATEVER ASKED FOR ONE, which today is the
+       spot array: its gesture raises this bar in the guide role and the tick
+       has to finish the array's first question. The command declines a guide
+       drawn for any other reason — see `takeArrayGeometry`. Handed in for
+       `allocateOnTrack`'s reason: the consequence is another domain's. */
+    onGuideDrawn: fixtureCommands.arrays.takeGeometry,
   });
   const {
     abandonShape, closeShapeTool, clearShapeEdit, openShapeTool,
@@ -2915,8 +2945,14 @@ export default function App({
        per call rather than collected here because they are not a fact about the
        drawing: they exist for the length of one path. */
     points,
+    /* THE SUGGESTED GRID'S CENTRES — the same list the canvas draws, so the
+       pen, the primitive marquee and a dragged fitting all catch a proposed
+       centre here exactly as they catch a wall. Already empty when the layer is
+       off, so there is no second condition: a gate restated at the point of use
+       is a gate that can disagree with the one that decides what is drawn. */
+    lights: suggestPointsPx,
     exclude: excludeId,
-  }), [rooms, obstaclesPx, geometry.canvas.coveShapes]);
+  }), [rooms, obstaclesPx, geometry.canvas.coveShapes, suggestPointsPx]);
 
   /** Screen pixels -> plan pixels. The tolerance must not stiffen as you zoom. */
   const snapTol = () => SNAP_DEFAULTS.tolScreenPx / (zoom || 1);
@@ -4185,15 +4221,51 @@ export default function App({
         return;
       }
 
+      /* --- THE ADJUSTABLE SPOT: PLACE IT, THEN POINT IT ------------------
+         IT WAS A DRAG AND IT IS TWO CLICKS, and the old gesture is worth
+         recording because it was reasonable and stopped being so. You dragged
+         a BOX round the thing to be lit; that box became a task surface, and
+         the placer then stood a spot on the ambient grid nearby, aimed back at
+         it. The whole of that rested on there BEING an ambient grid to stand
+         on — and the engine's placement is off by default now (see
+         LAYER_DEFAULTS), so the gesture was asking the layout a question the
+         layout had stopped answering.
+
+         SO THE HAND SAYS BOTH THINGS. First click: the body goes exactly where
+         it landed, which is `placeCob`'s rule for a recessed lamp and for its
+         reason — somebody who has aimed at a point has said everything there
+         is to say about where the fitting goes. Every move after that turns
+         it. Second click: the angle is locked and the fitting is written.
+
+         THE TASK-SURFACE PLACER IS UNTOUCHED. It still runs, it still places a
+         spot for every surface the detector finds and every picture on a wall,
+         and those still answer to the grid — see `projectTaskSpotsPx`. What
+         changed is the one gesture that was pretending to be manual.
+
+         FEET AND NOT PIXELS, like every other hand-placed fitting: a plan
+         reopened after its scale is corrected has its spots where they were set
+         out. See `manualSpots`. */
       if (addTool === 'spot') {
-        // A DRAG, because a spot is placed for an AREA and not at a point.
-        // What the drag produces is a task surface, and the spot then lands on
-        // it by the same secondary-grid logic that serves every surface the
-        // detector finds — which is the point: "put a spot here" means "treat
-        // this as something worth aiming at", and the grid decides where the
-        // fitting actually goes so it stays on a line with the ambient layout.
-        e.currentTarget.setPointerCapture?.(e.pointerId);
-        setDraftZone({ x0: p.x, y0: p.y, x1: p.x, y1: p.y, forSpot: true, roomId: room.id });
+        e.preventDefault();
+        if (!spotAim) {
+          setSpotAim({ xFt: p.x / pxPerFt, yFt: p.y / pxPerFt,
+                       roomId: room.id, aim: 0 });
+          return;
+        }
+        /* THE SECOND CLICK IS THE COMMIT, and it takes the angle off the state
+           rather than recomputing it from this event: the arrow on screen is
+           what was agreed to, and a press that re-derives from its own
+           coordinates would place the fitting at whatever the pointer had
+           moved to between the last frame and the button going down. */
+        docActions.addSpot({
+          id: `mspot-${Date.now().toString(36)}`,
+          roomId: spotAim.roomId,
+          xFt: spotAim.xFt, yFt: spotAim.yFt, aim: spotAim.aim,
+        });
+        /* THE TOOL STAYS ARMED, like the COB's. Spots come in threes over a
+           worktop, and a tool that disarms after one costs a trip to the rail
+           between each. Escape puts it down. */
+        setSpotAim(null);
         return;
       }
     }
@@ -4231,6 +4303,21 @@ export default function App({
     // A LIGHT BEING SLID INSIDE ITS OWN CELL. Same rule as every drag above it:
     // a gesture already in flight owns the pointer until it is released.
     if (lightDrag) { fixtureGestures.move.light(e); return; }
+    /* --- THE ADJUSTABLE SPOT BEING POINTED ------------------------------
+       A GESTURE IN FLIGHT WITH NO BUTTON HELD DOWN, which is the one thing
+       that makes this branch unlike every drag above it. The body is already
+       placed; what the pointer is doing now is choosing a DIRECTION, and it
+       does that with the button up between two clicks. So it sits with the
+       drags rather than below them — it owns the move for as long as it lasts —
+       and it is tested on the state rather than on a captured pointer.
+       IT TURNS AND DOES NOT MOVE. `xFt`/`yFt` are settled; only `aim` is
+       written, which is what the second click will store. */
+    if (spotAim && pxPerFt) {
+      const p = svgPoint(e);
+      setSpotAim((d) => (d ? { ...d,
+        aim: Math.atan2(p.y / pxPerFt - d.yFt, p.x / pxPerFt - d.xFt) } : d));
+      return;
+    }
     // THE DOOR EDITOR FIRST, for the reason given on the press: it owns the
     // canvas outright while it is open.
     if (doorEdit) {
@@ -4327,10 +4414,12 @@ export default function App({
          this file's rubber-band position. */
       if (fixtureGestures.tool.moduleMove(raw)) return;
       if (fixtureGestures.tool.cobMove(raw, inside)) return;
-      // The spot draws an area, so the plain cursor position is the truth; the
-      // grid decides where the fitting goes once the area exists.
+      /* THE PLAIN CURSOR POSITION IS THE TRUTH for a tool that places at a
+         point. The spot's rubber band was tracked on the line below this one
+         and is gone with the box gesture it belonged to — a spot mid-aim is
+         turned by the branch at the top of `onZoneMove`, which owns the move
+         outright and never reaches here. */
       setAddAt(raw);
-      if (draftZone?.forSpot) setDraftZone((d) => (d ? { ...d, x1: raw.x, y1: raw.y } : d));
       return;
     }
     if (!zoneMode || !draftZone) return;
@@ -4427,36 +4516,18 @@ export default function App({
       setCoveFrom(null); setAddAt(null); setCoveNote('');
       return;
     }
-    // A spot's drag makes a SURFACE, not a no-light zone — same gesture, same
-    // rubber band, different destination.
-    if (draftZone?.forSpot) {
-      const r = {
-        x0: Math.min(draftZone.x0, draftZone.x1), x1: Math.max(draftZone.x0, draftZone.x1),
-        y0: Math.min(draftZone.y0, draftZone.y1), y1: Math.max(draftZone.y0, draftZone.y1),
-      };
-      const roomId = draftZone.roomId;
-      setDraftZone(null);
-      const minPx = Math.max(6, (pxPerFt || 0) * 0.5);
-      if (r.x1 - r.x0 >= minPx && r.y1 - r.y0 >= minPx) {
-        docActions.addSurface({
-          id: `mansurf-${Date.now().toString(36)}`, roomId, rect: r,
-          kind: 'custom', label: 'Task area', confidence: 1, source: 'placed',
-        });
-      }
-      /* THE TOOL STAYS ARMED, AND THIS IS THE HALF THAT MAKES THE STEP WORK.
-         It called `disarmAdd()` here — the one-shot every other hand tool has,
-         which is right while the palette it was armed from is still on screen
-         to arm it again. Arming the spot now EMPTIES the panel down to a step
-         (see `stepTool`), so putting the tool away after one box would close
-         that step from underneath somebody halfway through a room: the panel
-         would fill back in, the picture they were following would go, and the
-         Done button would never once be reachable. A step ends when its Done is
-         pressed — or Escape, which still calls `disarmAdd` — exactly as the
-         no-light zone's does. The half-made gesture is cleared either way;
-         `draftZone` went to null above. */
-      setAddAt(null); setAddSnap(null); setAddGhost(null);
-      return;
-    }
+    /* --- THE SPOT'S BOX WAS RELEASED HERE, AND THERE IS NO BOX ANY MORE ---
+       The gesture dragged a rectangle round the thing to be lit, wrote it into
+       `manualSurfaces` as a task area, and let the placer stand a spot on the
+       ambient grid nearby aimed back at it. All of that rested on there BEING
+       an ambient grid, and the engine's placement is off by default now — so
+       the one gesture that called itself manual was the one asking the layout
+       a question it had stopped answering. It is two clicks on the ceiling
+       instead: see the `addTool === 'spot'` branch on the press.
+       THE SURFACES ALREADY DRAWN ARE UNTOUCHED, and so is the DETECTOR that
+       finds most of them. `manualSurfaces` is still read, still projected and
+       still placed against — what went is the only thing that wrote to it by
+       hand. `projectTaskSpotsPx` is unchanged in that half. */
     if (!zoneMode || !draftZone) return;
     const z = {
       x0: Math.min(draftZone.x0, draftZone.x1), x1: Math.max(draftZone.x0, draftZone.x1),
@@ -4863,22 +4934,33 @@ export default function App({
 
   /* --- ...AND THE LAYOUT'S OWN SWITCH AT THE OTHER END OF THE SAME BAR -----
      THE TWO ENDS HOLD THE TWO DRAWINGS. `sceneTail` says whether the WIRING is
-     on the sheet; this says whether the LIGHTING LAYOUT is — the ambient grid
-     the gridding engine computed, as against the COBs, tracks and accents a
+     on the sheet; this says whether the ENGINE'S ANSWER is — the ambient grid
+     and the aimed spots it computed, as against the COBs, tracks and accents a
      hand put down. Both are questions about what is drawn rather than about the
      next press, which is why neither is in the bar's contextual middle, and why
      they take the same shape: a capsule that says ON or OFF in its own track.
+
+     `autoLights` WAS THE CAPSULE HERE AND IT IS NOT ANY MORE. Two switches over
+     the same population is one question too many at the front of the bar: the
+     first asked whether the engine's answer was on the sheet, the second how it
+     was drawn, and between them they had four states of which only three meant
+     anything. What is left is the one that matters — is the planner PROPOSING,
+     or is the ceiling yours? The placement is off by default now (see
+     LAYER_DEFAULTS) and its tick lives in the View menu with every other layer,
+     which is where a switch nobody reaches for every session belongs, and which
+     keeps a sheet saved with it ON from having no way to take it off.
+
      THE SAME GATES AS THE TAIL, TO THE TERM. There is no layout to show without
      a drawing, none while the pipeline is still making one, and a viewer gets
      the sheet as it was left rather than switches over it. Sharing the gate list
      is also what keeps the bar from arriving with one end of it missing.
-     IT IS `layers.autoLights` AND NOT A THIRD STORE. The same key the exports
+     IT IS `layers.suggestGrid` AND NOT A THIRD STORE. The same key the exports
      and PlanCanvas read, so this switch and the drawing cannot disagree — see
      LAYER_DEFAULTS for why the grid stopped being part of `lights`. */
   const autoLead = !source || showTrace || prep || readOnly || sheetOpen ? null : (
-    <SceneSwitch label="Auto Place Lights" on={layers.autoLights}
-      title="Show the ambient layout the planner placed"
-      onClick={toggle('autoLights')} />
+    <SceneSwitch label="Suggested Grid" on={layers.suggestGrid}
+      title="Draw the planner's answer as dotted suggestions instead of fittings"
+      onClick={toggle('suggestGrid')} />
   );
 
   return (
@@ -5505,7 +5587,15 @@ export default function App({
              gesture this build does not implement. */
           cobOpen={cobOpen} cobMode={cobMode} cobSoon={COB_SOON}
           onCob={(m) => {
-            if (m === 'close') { setCobOpen(false); setCobMode(null); disarmAdd(); return; }
+            /* CLOSING THE DRAWER TAKES THE ARRAY'S GEOMETRY BAR WITH IT.
+               That gesture raises one (see below) and `disarmAdd` does not
+               reach it — a bar left standing for a tool that has been put down
+               is a control over nothing. Guarded on the mode so closing the
+               drawer never touches a cove bar somebody opened separately. */
+            if (m === 'close') {
+              if (cobMode === 'array') closeShapeTool();
+              setCobOpen(false); setCobMode(null); disarmAdd(); return;
+            }
             if (m === 'open') { setCobOpen(true); return; }
             /* PICKING A GESTURE PUTS EVERY OTHER MACHINE AWAY, which is the
                rule the rail's own two handlers already follow: one pointer
@@ -5533,6 +5623,15 @@ export default function App({
                on the press would take that away at the moment it starts
                mattering. */
             setAddTool(m ? 'cob' : null);
+            /* --- AND THE ARRAY BRINGS THE GEOMETRY BAR WITH IT --------------
+               AN ARRAY HAS TO HAVE A PATH, and the two ways of getting one are
+               both the shape tool's — the same argument the magnetic track's
+               cell makes a screen below. UNARMED, like the track's, so a cove
+               or guide already on the drawing can still be pressed and taken
+               (`takeableGeometry`); an armed primitive would own every press.
+               AFTER `setAddTool`, because `openShapeTool` stands everything
+               down on its way in and would otherwise disarm the gesture. */
+            if (m === 'array') openShapeTool('guide', { arm: false });
           }}
           /* --- THE MAGNETIC TRACK'S DRAWER -----------------------------
              THE SAME FOUR MESSAGES THE COB CELL TAKES — open, close, a module
@@ -6010,6 +6109,16 @@ export default function App({
                  the hover targets inside the canvas; see `INERT` there. */
               onAccPointerDown={readOnly || armed || addTool ? null : accPointerDown}
               surfaces={surfacesPx} taskSpots={taskSpotsPx}
+              suggestPoints={suggestPointsPx}
+              /* THE SPOT MID-AIM, CONVERTED HERE. The gesture is held in plan
+                 FEET (see `spotAim`) because that is what the second click
+                 stores; the canvas draws pixels. One multiplication, at the
+                 boundary, exactly as every other hand-placed fitting crosses
+                 it. */
+              spotAiming={spotAim && pxPerFt
+                ? { x: spotAim.xFt * pxPerFt, y: spotAim.yFt * pxPerFt,
+                    angle: spotAim.aim }
+                : null}
               selSpotId={readOnly ? null : selSpotId}
               /* ...AND THE SPOT TOOL IS THE EXCEPTION, so a spot can be picked
                  up during the step that places spots. `spotsLive` is the other
@@ -6317,41 +6426,39 @@ export default function App({
                 IT IS PINNED RATHER THAN CARRIED, and that is a fix rather than a
                 preference — see the header of CobSpec for the card that ran away
                 from the cursor.
-                THE FOUR HANDLERS ARE THE FOUR LIFETIMES the state block over
-                `cobDraft` sets out: the slider and the chips write the draft and
-                nothing else, the two buttons promote it to a one-shot or to a
-                standing choice, and the chip clears the lot back to the engine's
-                answer. */}
-            {!readOnly && addTool === 'cob' && (
+                TWO HANDLERS NOW, AND THERE WERE FOUR. The slider and the chips
+                used to write a DRAFT that governed nothing until one of two
+                buttons promoted it — "Update this" or "Update all next" — which
+                was one question too many: a change made on a bar you opened in
+                order to make it is not ambiguous. They write the standing choice
+                straight through, and the chip clears it back to the engine's
+                answer. See CobSpec, where those two buttons stood. */}
+            {/* `!geometry.bar.mode` IS THE ONE-BAR-AT-A-TIME RULE, and it is the
+                array's whole flow. That gesture raises the geometry bar in the
+                guide role, and the two stand in the same place at the foot of
+                the stage; the shape bar wins while it is up for the reason
+                `moduleBarOn` gives — it is about the DRAWING, and this one is
+                about the next press. Committing the guide closes it, and this
+                bar takes the position back carrying a path to ask about.
+                IT COSTS THE MANUAL GESTURE NOTHING. With a tool armed the shape
+                bar's `edit` state is withheld (`otherBar` in `shapeBarMode`),
+                so `geometry.bar.mode` is null unless something opened it. */}
+            {!readOnly && addTool === 'cob' && !geometry.bar.mode && (
               <CobSpec stage={stageRef} lead={autoLead} tail={sceneTail}
                 watts={cobShow.watts} beam={cobShow.beam}
-                recommended={!cobDraft && !cobOnce && !cobStanding}
-                dirty={cobDirty}
-                onWatts={(w) => setCobDraft((d) => ({ ...(d ?? cobInForce),
-                                                      watts: clampWatts(w) }))}
-                onBeam={(b) => setCobDraft((d) => ({ ...(d ?? cobInForce),
-                                                     beam: nearestBeam(b) }))}
-                onRecommended={() => {
-                  setCobDraft(null); setCobOnce(null); setCobStanding(null);
-                }}
-                onThis={() => { setCobOnce(cobDraft); setCobDraft(null); }}
-                onAll={() => { setCobStanding(cobDraft); setCobDraft(null); }}
-                /* THE RUN, AND THE TWO WAYS IT CAN END. Both put the tool down —
-                   see `cobRun`, and the note in CobSpec on why neither is a
-                   pause. The cross removes exactly the ids this arming of the
-                   tool created, so a lamp placed earlier in the session, or on a
-                   previous visit to the plan, is out of its reach. */
-                placed={cobRun.length}
-                space={cobLock
-                  ? rooms.find((r) => r.id === cobLock)?.outline?.name || 'Space'
-                  : null}
-                onKeep={() => {
-                  setCobOpen(false); setCobMode(null); disarmAdd();
-                }}
-                onDiscard={() => {
-                  dropCobRun();
-                  setCobOpen(false); setCobMode(null); disarmAdd();
-                }}
+                recommended={!cobStanding}
+                /* STRAIGHT THROUGH, AND `cobInForce` IS THE BASE. A change here
+                   is the choice from the next lamp on, which is what the second
+                   of the two retired buttons used to mean and the only one of
+                   the two that survived contact with the gesture — see CobSpec.
+                   Based on what is in force rather than on nothing, so setting
+                   a wattage does not silently take the optic back to the
+                   engine's answer for wherever the pointer happens to be. */
+                onWatts={(w) => setCobStanding((d) => ({ ...(d ?? cobInForce),
+                                                         watts: clampWatts(w) }))}
+                onBeam={(b) => setCobStanding((d) => ({ ...(d ?? cobInForce),
+                                                        beam: nearestBeam(b) }))}
+                onRecommended={() => setCobStanding(null)}
                 /* --- THE ARRAY, WHERE THAT IS THE GESTURE --------------------
                    WHAT MAY BE ASKED COMES FROM THE GEOMETRY. `arrayAsks` reads
                    the outline and answers with the controls it can honestly
@@ -6364,7 +6471,21 @@ export default function App({
                 onCount={fixtureCommands.arrays.setDraftCount}
                 onSide={fixtureCommands.arrays.setDraftSide}
                 onOffset={fixtureCommands.arrays.setDraftOffset}
-                onPlaceArray={placeArray} />
+                /* THE TICK, AND IT HANDS IN WHAT THE BAR IS SHOWING. The
+                   draft's own wattage was seeded when the PATH was chosen and
+                   the two controls beside this write the COB spec stack, so
+                   the draft goes stale the moment somebody sets a wattage
+                   after picking a geometry — see `placeArray`. App is the only
+                   thing holding both halves.
+                   ...AND THE GEOMETRY BAR COMES BACK. The tool stays armed and
+                   the draft is cleared, so the next array wants the next path;
+                   without this the gesture would be live with no way to make
+                   one, which is the state this whole flow removed. Ringing
+                   four rooms is four draws and no trip to the rail. */
+                onPlaceArray={() => {
+                  placeArray({ watts: cobShow.watts, beam: cobShow.beam });
+                  openShapeTool('guide', { arm: false });
+                }} />
             )}
             {/* --- THE SAME BAR, ABOUT AN ARRAY ALREADY ON THE DRAWING -------
                 CLICKING ONE OF ITS LAMPS OPENS IT, which is the whole of why
@@ -7062,16 +7183,24 @@ export default function App({
                 and are still worth being able to hide while looking at the
                 layout under one — the tool that made them is retired, the ones
                 already drawn are not. */}
-            {/* `autoLights` IS NOT IN THIS LIST, AND THAT IS DELIBERATE. It is
+            {/* `suggestGrid` IS NOT IN THIS LIST, AND THAT IS DELIBERATE. It is
                 the one layer with a switch of its own on the bar over the
                 drawing (see `autoLead`), beside the electrical toggle it is the
                 pair to, and a second tick for it in here would be the same
                 state said twice in two idioms a screen apart — which is how a
-                checkbox and a capsule come to look like they disagree. Its
-                master `lights` stays here with the rest. */}
+                checkbox and a capsule come to look like they disagree.
+                `autoLights` IS IN IT, AND IT USED TO BE THE OTHER CAPSULE. It
+                came off the bar when the suggestion took that position — see
+                `autoLead` — and a layer with no control at all would have been
+                the wrong way to demote it: it is off by default now, but a plan
+                saved while it was on still opens with placed fittings, and the
+                only other way to clear those is `lights`, which takes the
+                hand-placed ones with them. Directly under its own master, which
+                is what the indent of the pair would say if this list had one. */}
             <div className="px-3 pb-0.5">
               {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
-                ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],
+                ['cells', 'Cell shading'], ['lights', 'Lights'],
+                ['autoLights', 'Auto-placed lights'], ['labels', 'Light tags'],
                 ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
                 ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
                 ['switchboards', 'Switchboards'],

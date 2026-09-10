@@ -274,7 +274,7 @@ section('null is survivable');
 // whose last row was deleted.
 // ---------------------------------------------------------------------------
 
-/* A COMPLETE DOCUMENT. Every one of the sixty-one fields at the value App's own
+/* A COMPLETE DOCUMENT. Every one of the sixty-two fields at the value App's own
    `useState` starts it at, so the round trip is tested over the whole shape
    rather than over whichever fields a fixture happened to mention. A field left
    `undefined` here would round-trip as `[]` or `{}` — applyEditor's `??` doing
@@ -293,7 +293,7 @@ const EMPTY_DOC = {
   accentResults: {}, accentDismissed: [], manualAccents: [],
   surfaceResults: {}, surfaceDismissed: [], manualSurfaces: [], artDismissed: [],
   wallResults: {}, runTrims: {}, runsOff: [],
-  manualCoves: [], manualTracks: [], manualCobs: [], autoSpots: [],
+  manualCoves: [], manualTracks: [], manualCobs: [], manualSpots: [], autoSpots: [],
   cobArrays: [], trackFixtures: [], renderRefs: {},
   boardsOff: [], boardMoves: {}, boardPoints: {}, flowBoards: {}, flowBends: {},
   manualBoards: [], boardKinds: {}, boardHeights: {}, boardOrders: {},
@@ -385,7 +385,7 @@ function rng(seed) {
    nonsense rather than the save contract. */
 function randomAction(r) {
   const room = `o${1 + Math.floor(r() * 3)}`;
-  const pick = Math.floor(r() * 23);
+  const pick = Math.floor(r() * 25);
 
   /* --- domain 2 and 3. The ids are drawn from a small pool ON PURPOSE: a
      remove or a patch that never names a thing that exists would test nothing,
@@ -403,6 +403,14 @@ function randomAction(r) {
   if (pick === 8) return { type: 'LIST_ADDED', field: 'manualCobs',
                            item: { id: `cb${1 + Math.floor(r() * 3)}`, roomId: room,
                                    xFt: 3, yFt: 4, watts: 9, beam: 36, auto: r() < 0.5 } };
+  /* AND THE AIMED SPOT, WHICH IS THE LAMP ABOVE PLUS AN ANGLE — see
+     `manualSpots` in usePlanDoc. Written through the same generic list action,
+     which is the whole reason it needed no reducer case of its own. */
+  if (pick === 23) return { type: 'LIST_ADDED', field: 'manualSpots',
+                            item: { id: `sp${1 + Math.floor(r() * 3)}`, roomId: room,
+                                    xFt: 5, yFt: 6, aim: r() * 6.28 } };
+  if (pick === 24) return { type: 'LIST_REMOVED', field: 'manualSpots',
+                            id: `sp${1 + Math.floor(r() * 3)}` };
   if (pick === 9) return { type: 'COB_SPEC_SET', id: `cb${1 + Math.floor(r() * 3)}`,
                            watts: oneOf([7, 12, 18]), beam: oneOf([24, 36, 60]) };
   if (pick === 10) return { type: 'AUTO_COBS_DROPPED', roomId: room };
@@ -1443,8 +1451,8 @@ section('the reducer owns what it claims to own');
   ok('a new document starts at the defaults',
     same(initialDoc(), {
       ceilingMm: {}, materials: {}, fixtureWatts: {},
-      manualCoves: [], manualTracks: [], manualCobs: [], cobArrays: [],
-      trackFixtures: [], autoSpots: [],
+      manualCoves: [], manualTracks: [], manualCobs: [], manualSpots: [],
+      cobArrays: [], trackFixtures: [], autoSpots: [],
       ceilingShapes: [], designPicks: {}, ceilingKinds: {}, chunkPicks: {},
       accentResults: {}, accentDismissed: [], manualAccents: [],
       surfaceResults: {}, surfaceDismissed: [], manualSurfaces: [], artDismissed: [],
@@ -1476,8 +1484,8 @@ section('the reducer owns what it claims to own');
       zoom: 1, view: 'spaces',
     }),
     JSON.stringify(initialDoc()));
-  ok('...and it is sixty-one fields, which is the whole document',
-    fields.length === 61, `${fields.length} fields`);
+  ok('...and it is sixty-two fields, which is the whole document',
+    fields.length === 62, `${fields.length} fields`);
   /* AND THE DOCUMENT IS NOW EXACTLY WHAT THE FIXTURE DESCRIBES. While the
      migration was in progress the two could differ — a field App still held in
      `useState` was in EMPTY_DOC and not in DOC_FIELDS — and that slack is gone.

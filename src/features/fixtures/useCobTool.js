@@ -22,19 +22,24 @@ import { cobAlignTargets, cobObstacleBlocked, cobWallGuide } from './fixtureRule
  */
 export default function useCobTool({
   state, manualCobs, pxPerFt, ceilingMmFor, zoom, roomAt, basisFor,
-  addTool, roomTypes, fanClearance, setGuides,
+  addTool, roomTypes, fanClearance, setGuides, suggestPoints = [],
 }) {
-  const { cobAt, cobDraft, cobOnce, cobStanding } = state;
+  const { cobAt, cobStanding } = state;
 
   const { projections: { manualCobsPx } } = useSceneManualProjections({
     manualCobs, pxPerFt, ceilingMmFor
   });
 
-  /** THE LAMPS SOMEBODY HAS ALREADY PLACED, AS ALIGNMENT TARGETS — see
+  /** THE LAMPS SOMEBODY HAS ALREADY PLACED, AND THE GRID BEING SUGGESTED — see
    *  `cobAlignTargets`, which carries the whole argument for why a row of
-   *  downlights aligns to ITSELF and not to the drawing. */
+   *  downlights aligns to ITSELF and not to the drawing, and for why the
+   *  suggested centres are the one thing that exclusion was never about.
+   *  `suggestPoints` IS ALREADY EMPTY WHEN THE LAYER IS OFF, so this asks no
+   *  second question about it: one gate decides what is drawn and what can be
+   *  aimed at, and a gate restated here could disagree with it. */
   const cobTargets = useCallback((p, exclude = null) =>
-    cobAlignTargets(manualCobsPx, p, exclude), [manualCobsPx]);
+    cobAlignTargets(manualCobsPx, p, exclude, suggestPoints),
+    [manualCobsPx, suggestPoints]);
 
   /** Where a COB would land, with the guides that say why. One function, called
    *  by the hover and by the click, so the indicator cannot promise a point the
@@ -53,9 +58,11 @@ export default function useCobTool({
    * lib/dragMove.js and enforced once in hooks/useDrag.js. What is left here is
    * the half that is a fact about DOWNLIGHTS.
    *
-   * WHAT IT SNAPS TO IS THE OTHER PLACED LAMPS AND NOTHING ELSE — the same
-   * targets the placing gesture uses, so "level with that one" means one thing
-   * whether you are putting a lamp down or moving it afterwards.
+   * WHAT IT SNAPS TO IS THE OTHER PLACED LAMPS AND THE SUGGESTED GRID — the
+   * same targets the placing gesture uses, so "level with that one" means one
+   * thing whether you are putting a lamp down or moving it afterwards. That
+   * shared function is the point: dropping a lamp onto a proposed centre has to
+   * behave identically to placing one there in the first place.
    *
    * AND THE FROZEN AXIS TAKES NO SNAP AND DRAWS NO GUIDE. A guide is a claim
    * that the point took an alignment, and one drawn for an axis that was held
@@ -76,19 +83,16 @@ export default function useCobTool({
   }, [cobSnap, setGuides]);
 
   /* --- WHAT THE NEXT COB WILL BE --------------------------------------------
-     FOUR ANSWERS STACKED, MOST SPECIFIC FIRST, and the stack IS the feature:
+     TWO ANSWERS STACKED, MOST SPECIFIC FIRST, and it was four:
 
-       the draft       what the bar is showing while somebody drags the slider.
-                       It governs nothing — see the note on `cobDraft` — so it is
-                       deliberately absent from `inForce` below.
-       "this one"      a one-shot, spent by the next click.
-       "all next"      a standing override, until the Recommended chip clears it.
+       the standing    what the bar was last set to, until the Recommended chip
+       choice          clears it back to the engine.
        the engine      what the gridding engine would have installed in the cell
                        under the pointer. See recommendCob in lib/cob.js.
 
      `recommended` IS TRUE ONLY WHEN THE ENGINE IS ANSWERING, which is what the
-     chip on the bar latches on. A one-shot in flight is not a recommendation
-     even though nothing has been placed with it yet. */
+     chip on the bar latches on — and now that the draft and the one-shot are
+     gone it is exactly "nothing standing", which is the honest reading of it. */
   const cobRoom = useMemo(() => (cobAt ? roomAt(cobAt) : null), [cobAt, roomAt]);
   const cobEngine = useMemo(
     () => recommendCob(cobRoom, cobAt, basisFor(cobRoom)),
@@ -126,13 +130,20 @@ export default function useCobTool({
     console.log(line);
   }, [addTool, cobRoom, roomTypes, cobEngine]);
 
-  const cobInForce = cobOnce ?? cobStanding ?? cobEngine;
-  const cobShow = cobDraft ?? cobInForce;
-  /* A DRAFT THAT AGREES WITH WHAT IS ALREADY IN FORCE IS NOT A CHANGE. Dragging
-     the slider away and back must put the two buttons away again, or the bar
-     would be asking somebody to confirm a decision they had just undone. */
-  const cobDirty = !!cobDraft
-    && (cobDraft.watts !== cobInForce.watts || cobDraft.beam !== cobInForce.beam);
+  /* --- WHAT THE NEXT LAMP WILL BE, AND IT IS TWO SLOTS RATHER THAN FOUR ----
+     `cobOnce ?? cobStanding ?? cobEngine` WAS THE STACK, with a fourth value —
+     `cobDraft` — layered over it for DISPLAY only. Both of the extra slots
+     existed to serve the two buttons that used to stand on the bar, and both
+     went with them: a draft that governs nothing is only useful when something
+     can promote it, and a one-shot is only reachable through a button that no
+     longer exists. See the state block in useFixtureState.
+     `show` AND `inForce` ARE NOW THE SAME VALUE and both are still returned. It
+     is not a redundancy worth collapsing: the two names answer different
+     questions — what the bar PRINTS and what the next click WRITES — and the
+     day they diverge again the callers should not have to be found and
+     re-taught which of the two they meant. */
+  const cobInForce = cobStanding ?? cobEngine;
+  const cobShow = cobInForce;
 
   /** THE TWO THINGS WORTH SAYING BEFORE THE CLICK, and neither of them stops it
    *  — see `cobWallGuide`. */
@@ -152,8 +163,8 @@ export default function useCobTool({
     cobsPx: manualCobsPx,
     targets: cobTargets, snap: cobSnap, snapAt: cobSnapAt,
     room: cobRoom, engine: cobEngine,
-    inForce: cobInForce, show: cobShow, dirty: cobDirty,
-    recommended: !cobDraft && !cobOnce && !cobStanding,
+    inForce: cobInForce, show: cobShow,
+    recommended: !cobStanding,
     guide: cobGuide, blocked: cobBlocked,
   };
 }

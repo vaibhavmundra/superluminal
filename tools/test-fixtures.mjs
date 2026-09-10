@@ -25,6 +25,7 @@ import {
   gridSpotsOnTrack, gridSpotsOwnedByTrack, roomForTrackPath,
 } from '../src/features/fixtures/fixtureRules.js';
 import { chunkSpec, WALL_CLEARANCE_FT } from '../src/lib/cob.js';
+import { snapPoint } from '../src/lib/snapGuides.js';
 
 const PPF = 30;
 const polyPx = (x0, y0, x1, y1) => [
@@ -155,6 +156,53 @@ console.log('a row of lamps lines up against itself');
   assert.equal(cobAlignTargets(cobs, { x: 0, y: 0 }, ['a', 'b']).length, 0);
   assert.equal(cobAlignTargets(cobs, { x: 0, y: 0 }, new Set(['b'])).length, 2);
   ok('a lamp cannot be asked to line up with itself — id, array or Set');
+}
+
+// --------------------------------------------------------------------------
+console.log('...and against the grid being suggested to it');
+{
+  const cobs = [{ id: 'a', x: 100, y: 100 }];
+  /* THE SUGGESTED GRID, IN THE SHAPE `projectSuggestedPointsPx` LEAVES IT — a
+     free point carrying the radius of the symbol it stands for. */
+  const ghosts = [{ id: 'sg-r1-L1', of: 'ambient', x: 400, y: 500, r: 9,
+                    on: null, u: null }];
+  const p = { x: 150, y: 260 };
+
+  assert.equal(cobAlignTargets(cobs, p).length, 2);
+  ok('with the layer off the caller hands nothing and nothing changes');
+
+  const t = cobAlignTargets(cobs, p, null, ghosts);
+  assert.equal(t.length, 4);
+  ok('a proposed centre offers a target on both axes, like a placed lamp');
+
+  const gx = t.find((q) => q.kind === 'light-centre' && q.axis === 'x');
+  assert.equal(gx.value, 400);
+  assert.equal(gx.label, 'suggested');
+  ok('...named for what it is, so the guide does not claim a lamp is there');
+
+  /* THE SPAN IS THE LAMPS' SPAN AND NOT `collectTargets`'s. What says these two
+     are in line is the line BETWEEN them; a tick across the ghost's own radius
+     would say nothing. */
+  assert.deepEqual(gx.span, [260, 500]);
+  ok('the span runs from the proposal to the pointer');
+
+  /* THE GESTURE THE WHOLE THING IS FOR: drop a lamp onto a proposed centre. */
+  const near = { x: 403, y: 497 };
+  const hit = snapPoint(near, cobAlignTargets(cobs, near, 'a', ghosts), { tol: 7 });
+  assert.equal(hit.x, 400);
+  assert.equal(hit.y, 500);
+  ok('a lamp dragged near a proposal lands exactly on it');
+
+  /* AND THE EXCLUSION DOES NOT REACH THEM. `exclude` names the LAMP under the
+     pointer; a proposal can never be the thing being dragged, and the one
+     sitting under a lamp you are moving is precisely the one to drop back on. */
+  const under = cobAlignTargets(cobs, p, new Set(['a', 'sg-r1-L1']), ghosts);
+  assert.equal(under.filter((q) => q.kind === 'light-centre').length, 2);
+  ok('...and a proposal is never excluded, so a lamp can be put back on one');
+
+  assert.equal(
+    cobAlignTargets(cobs, p, null, [{ id: 'bad', x: NaN, y: 3 }]).length, 2);
+  ok('a refusal with no position offers nothing to aim at');
 }
 
 // --------------------------------------------------------------------------
@@ -404,8 +452,13 @@ const RECT = {
     geo: RECT, pxPerFt: PPF });
   assert.equal(bar.array.editing, true);
   assert.equal(bar.array.picked, true);
-  assert.equal(bar.array.label, 'Rectangle');
-  ok('a placed array\'s bar is `editing` and `picked`, and carries the label');
+  /* AND IT CARRIES NO LABEL. `arrayOutlineFor` still names the geometry — that
+     is a fact about the outline — but the bar stopped printing it: the shape is
+     on the drawing, highlighted, directly above the bar, and a word repeating
+     what you are looking at is a caption on a picture you can see. A field
+     nothing reads is a field that comes back as a caption somebody re-adds. */
+  assert.equal('label' in bar.array, false);
+  ok('a placed array\'s bar is `editing` and `picked`, and names no geometry');
 
   // A RECTANGLE COUNTS 4, 8, 12 — so a stored 7 prints as 8.
   assert.equal(bar.array.count, 8);

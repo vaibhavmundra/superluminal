@@ -271,6 +271,13 @@ const rect = (id, x, y, wFt, hFt, extra = {}) =>
   // rather than throwing.
   assert.equal(arrayOutlineFor('gone', ctx), null);
   assert.equal(arrayOutlineFor('room:nope', ctx), null);
+  /* `room:` IS STILL READ AND THAT IS NOT AN OVERSIGHT. Nothing MINTS one any
+     more — a press on bare ceiling with the array armed used to take the
+     space's own outline, which put a lamp in each of its corners, and it takes
+     nothing now (see `arrayDown`). But arrays saved before that change carry
+     one, and a reader that dropped the prefix would make those runs vanish off
+     somebody's drawing. The two halves are separate on purpose. */
+  assert.equal(asRoom.isRoom, true);
   assert.equal(arrayOutlineFor(null, ctx), null);
   assert.equal(arrayOutlineFor('s1', { ...ctx, pxPerFt: 0 }), null);
 }
@@ -369,6 +376,21 @@ const rect = (id, x, y, wFt, hFt, extra = {}) =>
   // default to assume.
   assert.equal(shapeBarMode({ ...shut, shapeMenuOn: true, shapeAskSides: true,
                               shapeDraft: sel, selShape: sel }), 'sides');
+
+  /* --- THE SPOT ARRAY'S TWO BAR STATES, WHICH ARE THIS FUNCTION'S ----------
+     ARMING THE ARRAY RAISES THIS BAR IN THE GUIDE ROLE and leaves the cob tool
+     in hand, so `otherBar` is true for the whole of that flow. Both halves of
+     the gesture are decided here, and App draws the array's own bar on
+     `!geometry.bar.mode` — so these two answers ARE which bar is on screen. */
+  // WHILE THE PATH IS BEING MADE: the row of primitives, with a tool in hand.
+  assert.equal(shapeBarMode({ ...shut, shapeMenuOn: true, otherBar: true }), 'pick');
+  // ...AND DRAWING ONE KEEPS IT, so the array's bar cannot appear mid-drag.
+  assert.equal(shapeBarMode({ ...shut, shapeMenuOn: true, shapeTool: 'rect',
+                              shapeSpan: {}, otherBar: true }), 'draw');
+  /* THE TICK CLOSES THE TOOL AND SELECTS THE NEW GUIDE, and `otherBar` is what
+     stops that selection putting the bar straight back up in `edit` — which
+     would leave the array's bar unreachable behind it for ever. */
+  assert.equal(shapeBarMode({ ...shut, selShape: sel, otherBar: true }), null);
 }
 
 // --- the borrowed draft's offset ---------------------------------------------
