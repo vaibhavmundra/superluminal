@@ -82,9 +82,10 @@ import { AUTOPLACE_AT_FRACTION, BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.j
    rather than a fitting id — and the effect below opens those rows and brings
    the first of them into the panel's own scroller.
 
-   WHAT IT MUST NOT DO IS CLOSE ANYTHING. Opening a row is the panel answering a
-   question; closing one somebody opened by hand, because they then clicked a
-   different lamp, is the panel taking something away that was not its to take.
+   A NEW FITTING SELECTION REPLACES THE OPEN DETAIL. Clicking lamp B after lamp
+   A is not a request to compare two expanding forms; it is a new question, and
+   the list answers it with B alone. Rows may still be opened together by hand,
+   but the next press on a fitting closes those and opens only the selected row.
 
    THE ARITHMETIC IS NOT IN THIS FILE. It is all in lib/lumens.js, along with
    every constant it reads — this draws what that returns. See the header there
@@ -152,9 +153,9 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
 
   /* WHICH ROWS ARE OPEN. Local, because it is a fact about how somebody is
      reading this panel right now and nothing outside it has any business
-     knowing — the one outside influence is `highlight`, and that only ever
-     ADDS. Keyed by row key, so a row that stops existing takes its entry out of
-     use rather than opening some other fitting. */
+     knowing — the one outside influence is `highlight`, and a new highlight
+     REPLACES the open set. Keyed by row key, so a row that stops existing takes
+     its entry out of use rather than opening some other fitting. */
   const [open, setOpen] = useState(() => new Set());
   const rowRefs = useRef({});
   /* WHAT WE LAST ANSWERED FOR. The effect below must run when the SELECTION
@@ -169,12 +170,11 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
     if (key === answered.current) return;
     answered.current = key;
     const keys = key.split('|');
-    setOpen((cur) => {
-      /* ADD, NEVER REPLACE — see the note at the top of this file. */
-      const next = new Set(cur);
-      for (const k of keys) next.add(k);
-      return next;
-    });
+    /* REPLACE, because selecting a different fitting makes that fitting the
+       sole subject of the panel. Anything opened by an earlier selection or by
+       hand closes here; manual multi-open remains available until the next
+       selection arrives. */
+    setOpen(new Set(keys));
     /* AFTER THE OPEN HAS PAINTED, or the row is still one line high and the
        scroll lands short of it. One frame is enough: `setOpen` above is
        committed by the time a rAF callback runs. */

@@ -1054,6 +1054,8 @@ sec('13. the layer, the ordering, the legend and the pointer');
 {
   ok('the heatmap layer exists and is OFF by default',
     'heatmap' in LAYER_DEFAULTS && LAYER_DEFAULTS.heatmap === false);
+  ok('the optional beam-angle annotation is OFF by default',
+    'beamAngles' in LAYER_DEFAULTS && LAYER_DEFAULTS.beamAngles === false);
 
   const vite = await createServer({
     server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
@@ -1116,6 +1118,13 @@ sec('13. the layer, the ordering, the legend and the pointer');
   ok('the decorative throw pools are drawn when the heatmap is off',
     off.includes('url(#lp-throw)'));
   ok('...and are gone when it is on', !on.includes('url(#lp-throw)'));
+  const beamed = renderToStaticMarkup(React.createElement(
+    PlanCanvas, { ...canvasProps, heatmapOn: true,
+                  layers: { ...layers, beamAngles: true } }));
+  ok('beam footprints are optional dotted circles over the heatmap',
+    !on.includes('lp-beam-footprint')
+      && beamed.includes('lp-beam-footprint')
+      && beamed.includes('stroke-dasharray'));
 
   ok('the overlay draws nothing without a palette',
     renderToStaticMarkup(React.createElement(HeatmapOverlay,

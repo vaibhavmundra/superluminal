@@ -179,12 +179,16 @@ const lists = (over = {}) => ({
 {
   const base = {
     selCobId: null, selArrayId: null, selModuleId: null,
-    selAccId: null, selSpotId: null, selLightId: null,
+    selAccId: null, selSpotId: null, selLightId: null, selShapeId: null,
     manualCobs: [{ id: 'c1', roomId: 'r1' }],
     cobArrays: [{ id: 'a1', roomId: 'r2' }],
     trackModulesPx: [{ id: 'm1', roomId: 'r3' }],
     accentZonesPx: [{ id: 'z1', roomId: 'r4', type: 'strip' },
-                    { id: 'z2', roomId: 'r5', type: 'sconce' }],
+                    { id: 'z2', roomId: 'r5', type: 'sconce' },
+                    { id: 'cove-1', roomId: 'r8', type: 'strip', kind: 'cove',
+                      shapeId: 'shape-1' },
+                    { id: 'track-strip', roomId: 'r8', type: 'strip',
+                      kind: 'ceiling-strip', shapeId: 'track-1' }],
     taskSpotsPx: [{ id: 's1', roomId: 'r6', fixture: 'spot' },
                   { id: 's2', roomId: 'r7', fixture: 'art-spot' }],
   };
@@ -204,6 +208,10 @@ const lists = (over = {}) => ({
     { keys: ['art-spot'], roomId: 'r7' });
   assert.deepEqual(highlightRows({ ...base, selLightId: 'r9|3,4' }),
     { keys: ['cob'], roomId: 'r9' }, 'a grid light lights the grid’s row');
+  assert.deepEqual(highlightRows({ ...base, selShapeId: 'shape-1' }),
+    { keys: ['cove-1'], roomId: 'r8' }, 'a drawn cove lights its exact run row');
+  assert.deepEqual(highlightRows({ ...base, selShapeId: 'track-1' }),
+    { keys: [], roomId: null }, 'another ceiling shape does not open the cove list');
   assert.deepEqual(highlightRows({ ...base, selCobId: 'c1', selSpotId: 's1' }),
     { keys: ['c1', 'spot'], roomId: 'r6' }, 'two things can be picked at once');
   assert.deepEqual(highlightRows(base), { keys: [], roomId: null });

@@ -133,6 +133,12 @@ export const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: tru
      SERIALISED WITH THE REST, so a sheet reopens showing what it was left
      showing — the same courtesy every other layer gets. */
   heatmap: false,
+  /* THE CONE EACH RECESSED COB CUTS ON THE FLOOR, as a thin dotted circle over
+     the heatmap. Separate from `heatmap` because the field is useful both as a
+     clean reading and as a fixture-by-fixture check. It is saved like every
+     other View choice and starts off, so enabling the heatmap does not add a
+     ceiling full of annotation nobody requested. */
+  beamAngles: false,
   electrical: false,
   /* DARK MODE FOR THE DRAWING, AND IT IS A PIXEL INVERSION OF THE SCAN — the
      same thing Cmd-I does in Photoshop, applied to the plan image and nothing

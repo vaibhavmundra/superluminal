@@ -39,7 +39,7 @@ export default function useLightingAnalysis({
   magTracksPx, trackModulesPx, arrayCobsPx,
   manualCobs, cobArrays, ceilingObjs,
   materials, fixtureWatts, ceilingMmFor,
-  selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId,
+  selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
   docActions, setOptionPick,
 }) {
   const totals = useMemo(() => planTotals(rooms), [rooms]);
@@ -127,9 +127,9 @@ export default function useLightingAnalysis({
   /** WHICH ANALYSIS ROWS THE CURRENT SELECTION IS — see `highlightRows`, which
    *  carries the note on why a row key is not a fitting id. */
   const highlight = useMemo(() => highlightRows({
-    selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId,
+    selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
     manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx,
-  }), [selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId,
+  }), [selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
       manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx]);
 
   /**

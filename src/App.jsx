@@ -22,6 +22,7 @@ import { PLAN_OPTIONS,
    what keeps the hover card and the Analysis panel from disagreeing. */
 import { FAMILY_BY_ID, wattsFor, unitOutput,
          lumensPerWattFor } from './lib/lumens.js';
+import { FIXTURE_BY_ID } from './lib/boq.js';
 /* enumerateChunkings AND findChunking ARE GONE FROM THIS FILE. Both existed to
    run and resolve a second enumeration of the chunkings, on a different room
    from the one the drawing used — see the note in the rooms memo. There is one
@@ -1414,7 +1415,7 @@ export default function App({
 
   /* --- WHICH OF THE THREE PANELS IN THE CHROME IS OPEN ---------------------
      THE PANEL BECAME BARS, AND A BAR HAS NO ROOM FOR A LIST. Share's three file
-     formats, the View section's twelve layer checkboxes and the whole Admin
+     formats, the View section's layer checkboxes and the whole Admin
      block were sections in a 340px scroller; they are now buttons in the top and
      bottom bars that open over the drawing. See Popover.
 
@@ -1923,7 +1924,7 @@ export default function App({
     magTracksPx, trackModulesPx, arrayCobsPx,
     manualCobs, cobArrays, ceilingObjs,
     materials, fixtureWatts, ceilingMmFor,
-    selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId,
+    selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
     docActions, setOptionPick,
   });
   /* THE NAMES THIS FILE ALREADY USED. Six are read by the footer, the Result
@@ -2392,6 +2393,18 @@ export default function App({
     const watts = wattsFor(familyId, (r && fixtureWatts[r.id]) || {}, familyId);
     return { watts, lumens: unitOutput(family, watts, lumensPerWattFor(country)) };
   }, [rooms, roomAt, fixtureWatts, country]);
+
+  /* THE CIRCLE A RECESSED COB'S BEAM CUTS ON THE FLOOR. The heatmap draws the
+     full photometric field, but its dotted beam annotation still has to state
+     the fixture's optic at the room's real mounting height. Catalogue beam and
+     recorded ceiling height meet here because App is the one place that owns
+     both; PlanCanvas only draws the diameter it is handed. */
+  const beamDiameterFtFor = useCallback((roomId, fixtureId) => {
+    const beam = FIXTURE_BY_ID[fixtureId]?.beam;
+    if (!(beam > 0)) return null;
+    const dropFt = (ceilingMmFor(roomId) / 304.8) || DEFAULT_DROP_FT;
+    return throwDiameterFt(beam, dropFt);
+  }, [ceilingMmFor]);
 
   /* --- THE MANUAL DOWNLIGHT'S LIVE MODEL -----------------------------------
      THE FITTING FEATURE'S FOURTH CALL SITE, AND IT IS DOWN HERE BECAUSE
@@ -6419,6 +6432,7 @@ export default function App({
               heatmapLayer={<HeatmapOverlay heatmap={heatmap}
                 night={canvasLayers.invert} />}
               heatmapOn={canvasLayers.heatmap}
+              beamDiameterFtFor={beamDiameterFtFor}
               /* A PLATE CAN BE PICKED AND THROWN AWAY, and that is all it can
                  be — see `deleteBoard` for why there is no drag. Null in the
                  viewer, like every other editing handler here. */
@@ -6791,7 +6805,7 @@ export default function App({
                 replaced wholesale every time a tool claims it, and the key has
                 to survive that — a scale is unreadable without its legend
                 whether or not somebody happens to be drawing a cove at the time.
-                It measures off the same stage and sits at its bottom LEFT, clear
+                It measures off the same stage and sits at its bottom RIGHT, clear
                 of the bar. It draws nothing while the layer is off. */}
             <HeatmapLegend heatmap={heatmap} stage={stageRef} />
             {/* --- THE CARD THAT EXPLAINS THE OPTIONS PILL --------------------
@@ -7445,6 +7459,7 @@ export default function App({
               {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
                 ['cells', 'Cell shading'], ['lights', 'Lights'],
                 ['autoLights', 'Auto-placed lights'], ['labels', 'Light tags'],
+                ['beamAngles', 'Beam angles'],
                 ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
                 ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
                 ['switchboards', 'Switchboards'],

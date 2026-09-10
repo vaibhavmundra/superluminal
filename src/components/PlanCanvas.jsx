@@ -509,7 +509,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        goes. The fittings, their own aperture glows, the strips and every outline
        stay: those are the drawing, and the requirement is that they read ON TOP
        of the field. See the two `heatmapOn` tests below. */
-    heatmapLayer = null, heatmapOn = false,
+    heatmapLayer = null, heatmapOn = false, beamDiameterFtFor = null,
     /* WHAT A FITTING IS RATED AT AND WHAT IT PUTS OUT, for its hover card —
        `(familyId, at) => { watts, lumens }`.
        A FUNCTION AND NOT A TABLE, because both answers are per SPACE and per
@@ -2026,6 +2026,48 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           </g>
         );
       })}
+
+      {/* --- THE COB OPTIC OVER THE HEATMAP ---------------------------------
+          THE FIELD REPLACES THE FILLED THROW POOLS, NOT THE OPTIONAL BEAM
+          ANNOTATION. A heatmap shows the accumulated result of every source
+          and every bounce; it does not show which reflector is fitted to an
+          individual COB. The Beam angles switch in View asks for that second
+          reading explicitly, as a thin dotted circle whose diameter is the
+          cone's stated beam angle at the floor plane.
+
+          GRID COBs take the catalogue optic at this room's recorded ceiling
+          height through `beamDiameterFtFor`. The fallback preserves standalone
+          canvas callers and old render fixtures at the documented nine-foot
+          pool size. Hand-placed COBs already carry their exact `throwFt`,
+          calculated from their own beam and room height by fixtureProjection.
+
+          RECESSED COBs ONLY. A head seated in magnetic track is not a round
+          ceiling cut-out and is deliberately excluded; directed task spots
+          land away from their bodies and have their own target marks. The ring
+          is inert and unclipped so it remains a complete circle that can be
+          read as an angle annotation even when the cone reaches a wall. */}
+      {heatmapOn && layers.beamAngles && layers.lights && !placingGeometry && (
+        <g fill="none" stroke={rim} pointerEvents="none"
+          strokeWidth={lw * 0.65} strokeLinecap="round"
+          strokeDasharray={`${lw * 1.15} ${lw * 3.1}`} opacity="0.72">
+          {autoLights && laid.flatMap((r) => (r.plan.lightsPx ?? [])
+            .filter((l) => !l.track)
+            .map((l) => {
+              const fixture = l.fixture || l.kind;
+              const ft = beamDiameterFtFor?.(r.id, fixture) ?? poolFtFor(fixture);
+              return ft > 0 ? (
+                <circle key={`beam-grid-${r.id}-${l.id}`}
+                  className="lp-beam-footprint"
+                  cx={l.x} cy={l.y} r={(ft / 2) * s} />
+              ) : null;
+            }))}
+          {manualCobs.map((c) => c.throwFt > 0 ? (
+            <circle key={`beam-manual-${c.id}`}
+              className="lp-beam-footprint"
+              cx={c.x} cy={c.y} r={(c.throwFt / 2) * s} />
+          ) : null)}
+        </g>
+      )}
 
       {/* --- THE LOOPING -----------------------------------------------------
           Every flow's wire, board first. See flows.js for what a flow is; this

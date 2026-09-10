@@ -327,7 +327,7 @@ export function fixtureGroups(r, {
  * you what you just asked for.
  */
 export function highlightRows({
-  selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId,
+  selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
   manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx,
 }) {
   const keys = [];
@@ -374,6 +374,21 @@ export function highlightRows({
     /* THE ID IS `<roomId>|<cellKey>` — see where it is set on the canvas. The
        room is the half before the bar, which is the only part this needs. */
     roomId = String(selLightId).split('|')[0] || roomId;
+  }
+  /* A DRAWN COVE IS SELECTED AS CEILING GEOMETRY, while the lights list knows
+     it as the run of tape derived from that geometry. `shapeId` is the stable
+     bridge carried by both closed pocket coves and open cove runs (see
+     projectAccentZonesPx). Resolve the RUN'S OWN id here so a press on one of
+     several coves opens and scrolls to that exact row. A guide or magnetic
+     track has no matching accent run and therefore does not open the lights
+     list merely because it is also a ceiling shape. */
+  if (selShapeId) {
+    const run = accentZonesPx.find((z) => z.shapeId === selShapeId
+      && z.type === 'strip' && z.kind === 'cove' && !z.rejected);
+    if (run) {
+      keys.push(run.id);
+      roomId = run.roomId ?? roomId;
+    }
   }
   return { keys, roomId };
 }
