@@ -40,7 +40,7 @@ export default function TaskSurfacePanel({
 
         {/* One action, and it runs the whole plan — see AccentPanel. */}
         <button
-          className="text-[12px] py-[7px] px-3 rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border mt-2 w-full"
+          className="text-[12px] py-[7px] px-3 rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-100 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border mt-2 w-full"
           disabled={running} onClick={onRun}>
           {running ? 'Working…' : 'Recompute task surfaces for the plan'}
         </button>
@@ -159,7 +159,7 @@ export default function TaskSurfacePanel({
               </div>
             )}
             <button
-              className="text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed mt-1.5 w-full"
+              className="text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed mt-1.5 w-full"
               onClick={onClear}>
               Clear
             </button>

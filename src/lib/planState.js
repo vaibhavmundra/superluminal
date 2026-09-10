@@ -77,6 +77,20 @@ export const STATE_VERSION = 1;
 export const LAYER_DEFAULTS = { plan: true, dim: true, region: false, cells: true,
   lights: true, labels: false, fan: true, zones: true, accents: true,
   objects: true, spots: true, switchboards: true,
+  /* THE SOLVER'S OWN GRID, SEPARATED FROM THE FITTINGS A HAND PUT DOWN.
+     `lights` was one switch over two quite different populations: the ambient
+     layout the gridding engine computes (`plans[i].lightsPx` — thrown away and
+     rebuilt every time a fan moves or a chunking is re-read) and the COBs,
+     tracks and modules somebody placed themselves, which survive all of that.
+     Wanting to see one without the other is the ordinary case — you check your
+     own fittings against a ceiling the engine filled in, or you look at the
+     engine's answer on its own — and one switch could not say it.
+     ON BY DEFAULT, because it is the output of the act that got you here. The
+     first thing a plan does after the pipeline lands is show what was placed;
+     a plan that opened with the layout hidden would read as a run that did
+     nothing. `lights` stays the master over both, so turning THAT off still
+     clears every fitting off the sheet in one press. */
+  autoLights: true,
   electrical: false,
   /* DARK MODE FOR THE DRAWING, AND IT IS A PIXEL INVERSION OF THE SCAN — the
      same thing Cmd-I does in Photoshop, applied to the plan image and nothing

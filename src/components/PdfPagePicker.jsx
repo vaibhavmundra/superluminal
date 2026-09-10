@@ -20,7 +20,7 @@ import React from 'react';
 
 export default function PdfPagePicker({ name, pages, thumbs, onPick, onCancel }) {
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]">
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(0,0,0,.34)] backdrop-blur-[3px]">
       <div className="w-[min(620px,94vw)] bg-surface border border-border rounded-[14px] pt-[22px] px-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]">
         <h2 className="m-0 mb-1.5 text-[17px] tracking-[-0.01em]">Which page is the plan?</h2>
         <p className="text-[11.5px] text-muted leading-normal m-0 mb-4">

@@ -22,7 +22,7 @@ import React from 'react';
 
 export default function BusyModal({ line, note = null }) {
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]">
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(0,0,0,.34)] backdrop-blur-[3px]">
       <div className="w-[min(520px,calc(100vw-40px))] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop">
         <div className="flex items-center gap-[14px] py-[10px] px-0.5 min-h-[74px]">
           <div className="lp-spin w-[22px] h-[22px] flex-none" aria-hidden="true" />

@@ -9,7 +9,7 @@ import { TIER, fmtSqft, fmtPlans } from '../lib/plans.js';
 
 // The old bare `.btn` class, as Tailwind utilities — same split as
 // PlanPicker.jsx / RenderPassPanel.jsx.
-const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] disabled:opacity-100 disabled:cursor-not-allowed';
 const BTN_DEFAULT = 'border-border/10 bg-surface backdrop-blur-[5px] text-white hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border/10';
 
 // ---------------------------------------------------------------------------

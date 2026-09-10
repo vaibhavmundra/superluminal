@@ -175,11 +175,14 @@ export default function ShapeMenu({
      never a second pill beside this one saying it. The caller owns them because
      the caller is the only thing that knows what scenes there are. */
   tail = null,
+  /* ...AND THE VIEW SWITCHES AT THE NEAR END, on the same terms: whatever this
+     bar is currently doing, `lead` is there. See StageBar's three slots. */
+  lead = null,
   onTool, onSides, onCommit, onCancel, onRadius, onDuplicate, onDelete,
   onOffsetSide, onOffsetFt,
 }) {
   return (
-    <StageBar stage={stage} tail={tail} label="Ceiling shapes">
+    <StageBar stage={stage} lead={lead} tail={tail} label="Ceiling shapes">
 
       {mode === 'pick' && SHAPE_TOOLS.map((t) => (
         <button key={t.id} type="button" title={t.label} aria-pressed={tool === t.id}

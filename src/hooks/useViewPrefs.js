@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { clampZoom } from '../lib/planState.js';
+import { useCallback, useMemo, useState } from 'react';
+import { clampZoom, LAYER_DEFAULTS } from '../lib/planState.js';
 
 // ---------------------------------------------------------------------------
 // useViewPrefs — the editor's view state, in one place.
@@ -26,7 +26,33 @@ export default function useViewPrefs({ doc, source, stageRef }) {
      be what it is FOR, which is the list of spaces and what each of them is.
      A saved plan still comes back on whatever tab it was left on: this is the
      default, not an override — see `ui.view` in planState.js. */
-  const { layers, zoom, view } = doc;
+  const { zoom, view } = doc;
+
+  /* --- A COMPLETE SET OF LAYERS, AND THIS IS THE ONE PLACE IT IS MADE ------
+     A MISSING KEY MUST NEVER READ AS OFF, and until this memo existed it did.
+     `layers` reaches the app from three places: the reducer's initial value (a
+     spread of LAYER_DEFAULTS), a saved plan through App's `setLayers` (merged
+     over the same), and — the one nobody defends against — a reducer state
+     that was BUILT BEFORE a key existed and is still in memory. That last one
+     is not hypothetical: adding a layer and reloading the module leaves an open
+     session holding the old shape, and any plan written between the two is
+     saved without the key too.
+     THE FAILURE IS SILENT AND IT IS THE WORST KIND. `undefined && …` is falsy,
+     so a canvas that gates a mark on a key it has not got draws nothing, and
+     the switch that is supposed to explain why shows unticked next to a drawing
+     nobody turned off. That is exactly what happened to `autoLights`: a whole
+     lighting layout invisible, with the ambient grid gone and the accents left
+     behind, because one key was absent from an object that had every other one.
+     SO IT IS MERGED ON THE WAY OUT OF THE DOCUMENT rather than on the way in.
+     Merging on the way in fixes the two restore paths and cannot fix the third,
+     because there is no write to hang it on. Here, every reader — the View
+     menu's ticks, `canvasLayers`, the exports — gets the same complete object,
+     and a layer added tomorrow is on at its default the moment it is added.
+     THE DOCUMENT IS UNTOUCHED, which is what keeps this a defaulting rule and
+     not a migration: `toggleLayer` still patches the stored object, and what
+     gets saved is still the answers somebody actually gave. */
+  const layers = useMemo(
+    () => ({ ...LAYER_DEFAULTS, ...(doc.layers || {}) }), [doc.layers]);
   const [over, setOver] = useState(false);
   // null = not editing. An empty string is a legitimate draft mid-edit, so the
   // two cannot share a value.

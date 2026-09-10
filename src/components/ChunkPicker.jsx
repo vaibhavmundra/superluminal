@@ -19,8 +19,8 @@ const FILL = ['#111111', '#8A8A8A', '#3D3D3D', '#B0B0B0', '#5C5C5C', '#9E9E9E', 
 // Shared `.btn` look: inherits the surrounding font (buttons don't by default),
 // black-on-white with a hairline border, and the hover/active/disabled states
 // every button in this dialog shares.
-const BTN = "[font:inherit] text-[12px] py-[7px] px-3 rounded border border-border bg-surface backdrop-blur-lg text-white cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:text-black hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
-const BTN_PRIMARY = "[font:inherit] text-[12px] py-[7px] px-3 rounded border bg-cta border-cta text-white cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
+const BTN = "[font:inherit] text-[12px] py-[7px] px-3 rounded border border-border bg-surface backdrop-blur-lg text-white cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:text-black hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
+const BTN_PRIMARY = "[font:inherit] text-[12px] py-[7px] px-3 rounded border bg-cta border-cta text-white cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-cta-hover hover:border-cta-hover active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
 
 export default function ChunkPicker({
   options, recommendedId, initialId, onConfirm, onCancel = null,

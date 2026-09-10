@@ -22,7 +22,7 @@ import { supabase, supabaseReady, hasStoredSession } from './supabase.js';
 
 // The old `.btn` / `.btn.primary` / `.btn.secondary` classes, as Tailwind
 // utilities — same split as PlanPicker.jsx / RenderPassPanel.jsx.
-const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] disabled:opacity-100 disabled:cursor-not-allowed';
 const BTN_PRIMARY = 'border-cta bg-cta text-white hover:bg-cta-hover hover:border-cta-hover disabled:hover:bg-surface disabled:hover:border-border';
 const BTN_SECONDARY = 'border-border-strong bg-surface text-ink hover:bg-surface-2 hover:border-ink active:bg-surface-3';
 

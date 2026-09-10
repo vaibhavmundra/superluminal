@@ -73,7 +73,7 @@ export const SCENE = 'flex items-center h-9 px-2.5 rounded-[7px] border-0 '
   + 'bg-transparent cursor-pointer text-[11.5px] leading-none tracking-[-0.01em] '
   + 'text-black/75 whitespace-nowrap transition-colors duration-[120ms] '
   + 'enabled:hover:bg-black/[0.07] enabled:hover:text-black '
-  + 'disabled:opacity-40 disabled:cursor-not-allowed '
+  + 'disabled:opacity-100 disabled:cursor-not-allowed '
   + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] '
   + 'focus-visible:outline-black/40';
 
@@ -116,9 +116,19 @@ export function SceneSwitch({ label, on = false, title = null, onClick }) {
  * `stage` is the scroll container to centre on. `tail` is drawn at the right
  * end after a rule, separated from `children` because it is the part that is
  * there whatever the bar is currently doing.
+ *
+ * `lead` IS THAT SAME ARGUMENT AT THE OTHER END. It holds the switches that are
+ * about what the DRAWING SHOWS rather than about the next press on it, and like
+ * the tail it is there whatever the bar is doing — so it cannot be part of
+ * `children`, which is the contextual middle and is replaced wholesale every
+ * time a different tool claims the bar.
+ *
+ * THE THREE SLOTS ARE THE BAR'S WHOLE GRAMMAR, left to right: what is drawn,
+ * what the next press does, where you are. Two rules, and the reader gets the
+ * grouping without a caption on any of them.
  */
 export default function StageBar({ stage, className = '', label = null,
-                                   tail = null, children = null }) {
+                                   lead = null, tail = null, children = null }) {
   const box = useStageRect(stage);
   if (!box) return null;
 
@@ -145,9 +155,15 @@ export default function StageBar({ stage, className = '', label = null,
          acts on is a press with two meanings. */
       onPointerDown={(e) => e.stopPropagation()}
       aria-label={label ?? undefined}>
+      {lead}
+      {/* THE RULES ONLY WHERE THERE ARE TWO GROUPS TO SEPARATE, and each one
+          asks about everything to its RIGHT rather than about its immediate
+          neighbour — otherwise a bar with a lead and a tail and no tool in the
+          middle draws no rule at all between the two things it is holding. On a
+          bar with nothing but the tail, a rule would be a hairline against the
+          left edge. */}
+      {lead && (children || tail) ? SEP : null}
       {children}
-      {/* THE RULE ONLY WHERE THERE ARE TWO GROUPS TO SEPARATE. On a bar holding
-          nothing but the tail it would be a hairline against the left edge. */}
       {tail && children ? SEP : null}
       {tail}
     </div>

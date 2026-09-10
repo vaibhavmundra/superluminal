@@ -1542,7 +1542,11 @@ export default function App({
     source, pxPerFt, outlines, outlinesPx, litOutlines, enclosedZones, focusId, ceilingObjs,
     accentResults, detections, dismissed, wallResults, useBoundingRect, doors, runTrims,
     manualCoves, runsOff, zones, opt, chunkPicks, roomTypes, projectId, designPicks, ceilingKinds,
-    ceilingShapes, lightMoves, manualTracks, isAdmin
+    ceilingShapes, lightMoves, manualTracks, isAdmin,
+    /* THE ENGINE'S OWN SWITCH — `autoLights` is not a layer to this hook, it is
+       whether the gridding engine places anything at all. See AUTO_GRID in
+       lib/layout.js and `autoLead` below, which is the capsule that flips it. */
+    autoLights: layers.autoLights,
   });
 
   /* --- LIGHTING A SPACE COSTS SOMETHING ------------------------------------
@@ -2796,6 +2800,40 @@ export default function App({
     setSel((cur) => (idOf(cur, 'door') === id ? clear() : cur));
   }, [docActions]);
 
+  /* --- THE SAME THREE WRITES, FOR THE DOOR STEP ON THE OUTLINE SCREEN -----
+     THE STEP MOVED TO THE FRONT OF THE FLOW — see `idScreen` in OutlineTracer
+     for why — and the tracer draws on Konva rather than on the SVG canvas, so
+     it cannot borrow App's pointer pipeline the way the design screen's editor
+     does. What it borrows instead is the WRITES, which is the half that has to
+     agree: a box added here is the same shape doors.js produces, in the same
+     list the scale, the board pass and the schedule all read.
+
+     `addDoorBox` HANDS BACK THE ID so the tracer can select what it just drew;
+     the design screen does the same thing through `setSel`, which is its own
+     selection service and means nothing on the other screen. */
+  const addDoorBox = useCallback((rect) => {
+    const made = {
+      id: `door-hand-${Date.now().toString(36)}`,
+      cls: 'door', conf: 1, rect, openingPx: openingPx(rect), placed: true,
+    };
+    docActions.addDoor(made);
+    return made.id;
+  }, [docActions]);
+
+  const moveDoorBox = useCallback((id, rect) => {
+    docActions.moveDoor(id, { rect, openingPx: openingPx(rect) });
+  }, [docActions]);
+
+  /* CONFIRMING FROM THE TRACER RECORDS THE DECISION AND NOTHING ELSE.
+     Deliberately NOT `electrical.commands.confirmDoors`, which also switches
+     the electrical layer on: that is the right thing when the question was
+     asked BY the wiring switch, and the wrong thing here — there is no layout
+     yet, and turning a layer on now would mean arriving at the design screen
+     with the plates showing before a single light has been placed. */
+  const confirmDoorsOnTracer = useCallback(() => {
+    docActions.setDoorsOk(true);
+  }, [docActions]);
+
   /**
    * The door boxes AS DRAWN — the list, with the box being dragged at where the
    * pointer has it rather than at where it started.
@@ -3790,6 +3828,31 @@ export default function App({
     el.scrollLeft += (r.left + a.px * r.width) - a.clientX;
     el.scrollTop += (r.top + a.py * r.height) - a.clientY;
   }, [zoom]);
+
+  /* --- ...AND IT STARTS THE WAIT AT THE TOP OF IT -------------------------
+     `overflow-hidden` STOPS THE WHEEL BUT DOES NOT REWIND THE BOX. A hidden
+     overflow container keeps whatever `scrollTop` it had — the property is
+     still writable, it is only the gesture that is taken away — so a run
+     started after somebody had scrolled down to look at a far corner of their
+     plan would clip the loader off the top of the visible area and show a black
+     rectangle with nothing in it.
+     A LAYOUT EFFECT, so it lands in the same frame the overflow changes in. As
+     an ordinary effect the browser paints once with the old offset, which is
+     the wait appearing half off screen and snapping into place. */
+  useLayoutEffect(() => {
+    if (!prep) return;
+    const el = stageRef.current;
+    if (!el) return;
+    /* IT RE-RUNS AS THE RUN PROGRESSES — `prep` carries the phase, the detail
+       and the two counts, so it is a fresh object on every tick — and that is
+       harmless rather than merely tolerable: the offset is READ before it is
+       written, so a run that is already at the top costs nothing, and anything
+       that did manage to move the box mid-run gets put back. Depending on
+       `!!prep` instead would trade that for a dependency the linter cannot
+       check against the body. */
+    if (el.scrollTop) el.scrollTop = 0;
+    if (el.scrollLeft) el.scrollLeft = 0;
+  }, [prep]);
 
   /** The middle of the stage, in screen coordinates — the button's stand-in
    *  for a pointer. */
@@ -4798,6 +4861,26 @@ export default function App({
       onClick={flipElectrical} />
   );
 
+  /* --- ...AND THE LAYOUT'S OWN SWITCH AT THE OTHER END OF THE SAME BAR -----
+     THE TWO ENDS HOLD THE TWO DRAWINGS. `sceneTail` says whether the WIRING is
+     on the sheet; this says whether the LIGHTING LAYOUT is — the ambient grid
+     the gridding engine computed, as against the COBs, tracks and accents a
+     hand put down. Both are questions about what is drawn rather than about the
+     next press, which is why neither is in the bar's contextual middle, and why
+     they take the same shape: a capsule that says ON or OFF in its own track.
+     THE SAME GATES AS THE TAIL, TO THE TERM. There is no layout to show without
+     a drawing, none while the pipeline is still making one, and a viewer gets
+     the sheet as it was left rather than switches over it. Sharing the gate list
+     is also what keeps the bar from arriving with one end of it missing.
+     IT IS `layers.autoLights` AND NOT A THIRD STORE. The same key the exports
+     and PlanCanvas read, so this switch and the drawing cannot disagree — see
+     LAYER_DEFAULTS for why the grid stopped being part of `lights`. */
+  const autoLead = !source || showTrace || prep || readOnly || sheetOpen ? null : (
+    <SceneSwitch label="Auto Place Lights" on={layers.autoLights}
+      title="Show the ambient layout the planner placed"
+      onClick={toggle('autoLights')} />
+  );
+
   return (
     /* --- THE DRAWING TAKES THE SCREEN, AND THE CHROME SITS ON THE EDGES ----
        IT WAS THREE COLUMNS, THE LAST OF THEM A 340px PANEL, and the panel was
@@ -4953,12 +5036,16 @@ export default function App({
           )}
           {/* ONLY WHERE THERE ARE OUTLINES TO GO BACK TO. On the upload screen
               and in the viewer there is no stage to step back into, and a link
-              to one would be a control that cannot do what it says. */}
-          {source && !readOnly && (
+              to one would be a control that cannot do what it says.
+              AND NOT ON THE OUTLINE SCREEN ITSELF. A link back to the stage you
+              are standing on is a control with nothing behind it; the way out of
+              this screen is its own foot, which already offers exactly one — the
+              design, or the light. */}
+          {source && !readOnly && !showTrace && (
             <button type="button"
-              title={showTrace ? 'Back to the layout' : 'Back to the space outlines — nothing is discarded'}
-              aria-pressed={showTrace}
-              onClick={() => (showTrace ? backToDesign() : backToOutlines())}
+              title="Back to the space outlines — nothing is discarded"
+              aria-pressed={false}
+              onClick={() => backToOutlines()}
               className={'flex-none inline-flex items-center gap-[7px] h-8 px-2 rounded '
                 + 'border-0 bg-transparent text-[12px] leading-none whitespace-nowrap '
                 + 'cursor-pointer transition-colors duration-[120ms] '
@@ -4966,9 +5053,7 @@ export default function App({
                 + 'focus-visible:outline-offset-2 '
                 /* ONE BACKGROUND CLASS EITHER WAY — see the rail's cells for
                    the emission-order trap that makes two of them a bug. */
-                + (showTrace
-                  ? 'text-ink bg-ink/[0.07]'
-                  : 'text-muted hover:text-ink hover:bg-ink/[0.07]')}>
+                + 'text-muted hover:text-ink hover:bg-ink/[0.07]'}>
               <span aria-hidden="true" className="text-[13px]">←</span>
               Space outlines
             </button>
@@ -5616,7 +5701,18 @@ export default function App({
       )}
 
       <div ref={stageRef}
-        className={'relative overflow-auto col-start-2 row-start-1 '
+        className={'relative col-start-2 row-start-1 '
+          /* --- THE WAIT DOES NOT SCROLL, AND THAT IS A ONE-WORD FIX --------
+             THE LOADER IS `absolute inset-0` INSIDE THIS BOX (see PlanLoader),
+             so it is sized to the stage's VISIBLE area and pinned to the origin
+             of its SCROLLABLE area — which are the same rectangle only while
+             the scroll is at zero. The sheet behind it is the plan at full
+             size, routinely two or three screens tall, so the stage had
+             something to scroll and one flick of the wheel slid the entire wait
+             up and off, leaving the drawing it was covering on show underneath.
+             Nothing is lost by clipping instead: what overflows is the sheet,
+             and the sheet is what the loader exists to cover. */
+          + (prep ? 'overflow-hidden ' : 'overflow-auto ')
           + '[@media(max-width:960px)]:col-start-1 [@media(max-width:960px)]:row-start-2 '
           /* --- AND THE RE-CENTRING IS A GLIDE RATHER THAN A CUT -------------
              THIS IS THE JUMP. The right pad below swings between 18px and
@@ -5726,8 +5822,18 @@ export default function App({
             onMovePoint={movePoint}
             onInsertPoint={insertPoint}
             onRemovePoint={removePoint}
+            /* --- THE DOORS, ASKED ABOUT FIRST -----------------------------
+               `doorsOk` is the document's own decision and is the SAME one the
+               electrical layer is gated on, which is the whole point of asking
+               it here: a plan whose doors were confirmed on this screen never
+               gets asked again by the wiring switch, and "Modify doors" in the
+               foot of the design screen stays as the way back into them. */
+            doorsOk={doorsOk}
+            onConfirmDoors={confirmDoorsOnTracer}
+            onAddDoor={addDoorBox}
+            onMoveDoor={moveDoorBox}
+            onDeleteDoor={deleteDoor}
             detectState={roomState}
-            onRedetect={recognitionCommands.rerunRooms}
             unitId={source.unitId}
             unitCandidates={UNITS}
             onUnitChange={(u) => { docActions.setUnitId(u); }}
@@ -6217,7 +6323,7 @@ export default function App({
                 standing choice, and the chip clears the lot back to the engine's
                 answer. */}
             {!readOnly && addTool === 'cob' && (
-              <CobSpec stage={stageRef} tail={sceneTail}
+              <CobSpec stage={stageRef} lead={autoLead} tail={sceneTail}
                 watts={cobShow.watts} beam={cobShow.beam}
                 recommended={!cobDraft && !cobOnce && !cobStanding}
                 dirty={cobDirty}
@@ -6275,7 +6381,7 @@ export default function App({
                 the press that selects an array disarms every tool anyway, so
                 this is belt and braces rather than a live case. */}
             {!readOnly && addTool !== 'cob' && selArrayBar && (
-              <CobSpec stage={stageRef} tail={sceneTail}
+              <CobSpec stage={stageRef} lead={autoLead} tail={sceneTail}
                 watts={selArrayBar.watts} beam={selArrayBar.beam}
                 array={selArrayBar.array}
                 onWatts={(w) => setArraySpec(selArrayId, { watts: w })}
@@ -6295,7 +6401,7 @@ export default function App({
                 plus, press it and the modules arrive beside the rail cell, pick
                 one and this says what the next press will clip in. */}
             {moduleBarOn && (
-              <ModuleSpec stage={stageRef} tail={sceneTail}
+              <ModuleSpec stage={stageRef} lead={autoLead} tail={sceneTail}
                 label={MODULE_BY_ID[trackMode]?.label ?? 'Module'}
                 watts={moduleSpec.watts} wattList={moduleWattList(trackMode)}
                 beam={moduleSpec.beam}
@@ -6320,9 +6426,15 @@ export default function App({
                 is read in two places. `readOnly` is in here because none of the
                 others is drawn on a viewer's sheet — and neither is the tail,
                 which is null there, so this collapses to nothing on its own. */}
+            {/* EITHER END IS ENOUGH TO EARN THE BAR, which is why the test is
+                an `||` now. It read `&& sceneTail` on the reasoning that the
+                tail is the only thing a plain bar ever holds; there are two
+                standing switches at the two ends of it, both gated the same way
+                (see `autoLead`), and a bar drawn only when one of them survived
+                would be a bar that vanished the day their gates diverged. */}
             {!(!readOnly && (addTool === 'cob' || selArrayBar || geometry.bar.mode))
-              && !moduleBarOn && sceneTail && (
-              <StageBar stage={stageRef} tail={sceneTail} label="Drawing" />
+              && !moduleBarOn && (autoLead || sceneTail) && (
+              <StageBar stage={stageRef} lead={autoLead} tail={sceneTail} label="Drawing" />
             )}
             {/* --- THE CARD THAT EXPLAINS THE OPTIONS PILL --------------------
                 BESIDE THE CANVAS AND NOT INSIDE IT, because it deliberately
@@ -6349,7 +6461,7 @@ export default function App({
                 NOT ON THE READ-ONLY SHEET. Every button on it changes the
                 ceiling. */}
             {!readOnly && geometry.bar.mode && (
-              <ShapeMenu stage={stageRef} tail={sceneTail} mode={geometry.bar.mode}
+              <ShapeMenu stage={stageRef} lead={autoLead} tail={sceneTail} mode={geometry.bar.mode}
                 tool={geometry.status.tool} sides={geometry.bar.sides}
                 sizeLabel={geometry.bar.mode === 'draw' && geometry.bar.toCommit
                   ? shapeSizeLabel(geometry.bar.toCommit)
@@ -6462,8 +6574,14 @@ export default function App({
 
           NOT ON THE UPLOAD SCREEN, and not while the pipeline runs. There is no
           drawing to report on or to set a preference about, and a bar full of
-          controls that cannot do what they claim is worse than no bar. */}
-      {source && !prep && (
+          controls that cannot do what they claim is worse than no bar.
+
+          AND NOT ON THE OUTLINE SCREEN. Every cell in it was already gated off
+          there one at a time — the door count, the View popover, the day/night
+          switch — because none of them is about a plan that has not been lit
+          yet, which left an empty 48px strip along the foot of the drawing. The
+          gate belongs on the bar, not on each of its children. */}
+      {source && !prep && !showTrace && (
         <div className="col-start-2 row-start-2
           [@media(max-width:960px)]:col-start-1 [@media(max-width:960px)]:row-start-3
           h-12 flex-none flex items-center gap-4 px-4 z-[5]
@@ -6944,6 +7062,13 @@ export default function App({
                 and are still worth being able to hide while looking at the
                 layout under one — the tool that made them is retired, the ones
                 already drawn are not. */}
+            {/* `autoLights` IS NOT IN THIS LIST, AND THAT IS DELIBERATE. It is
+                the one layer with a switch of its own on the bar over the
+                drawing (see `autoLead`), beside the electrical toggle it is the
+                pair to, and a second tick for it in here would be the same
+                state said twice in two idioms a screen apart — which is how a
+                checkbox and a capsule come to look like they disagree. Its
+                master `lights` stays here with the rest. */}
             <div className="px-3 pb-0.5">
               {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
                 ['cells', 'Cell shading'], ['lights', 'Lights'], ['labels', 'Light tags'],

@@ -53,10 +53,10 @@ export default class ErrorBoundary extends React.Component {
           </p>
           <pre className="my-3.5 px-3 py-[10px] rounded bg-danger-soft border border-danger-line text-danger-ink text-[11.5px] leading-[1.5] whitespace-pre-wrap break-words max-h-[180px] overflow-auto">{String(error.message || error)}</pre>
           <div className="flex gap-1.5 flex-wrap justify-center mt-[22px]">
-            <button className="text-xs leading-[1.5] px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-40 disabled:cursor-not-allowed" onClick={() => window.location.reload()}>
+            <button className="text-xs leading-[1.5] px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-100 disabled:cursor-not-allowed" onClick={() => window.location.reload()}>
               Reload
             </button>
-            <button className="text-xs leading-[1.5] px-3 py-[7px] rounded border border-border-strong bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed"
+            <button className="text-xs leading-[1.5] px-3 py-[7px] rounded border border-border-strong bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed"
               onClick={() => {
                 const text = `${error.stack || error}\n\n${info?.componentStack || ''}`;
                 navigator.clipboard?.writeText(text);

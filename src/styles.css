@@ -49,9 +49,9 @@
   /* `--text` IS THE BODY COPY COLOUR AND IT IS NOT ON THE INK SCALE. It is what
      `color:var(--text)` resolved to in every rule that asked for it, so it is
      here under the name those rules used rather than folded into `ink`. */
-  --color-text:#e1dccd;
-  --color-muted:#525252;
-  --color-subtle:#7A7A7A;
+  --color-text:#ffffff;
+  --color-muted:#a1a1a1;
+  --color-subtle:#d2d2d2;
   --color-faint:#A8A8A8;
 
   --color-bg:#FAFAFA;
@@ -78,8 +78,10 @@
        belong to the drawing, so it sits on the drawing's own ground. It wore
        #2F2F2F for one revision and read as a second rail.
 
-       THE FLOATING PANELS — `--color-panel`, near-black, and THIS ONE IS
-       ARITHMETIC RATHER THAN TASTE. The window over the plan and the panels the
+       THE FLOATING PANELS — `--color-panel`, near-black. The outline screen's
+       side panel wears it too, and that is not a fourth surface sneaking in:
+       it IS the floating window, one step earlier in the flow, holding the
+       same kind of dense type. THIS ONE IS ARITHMETIC RATHER THAN TASTE. The window over the plan and the panels the
        bars open carry dense type: twelve layer checkboxes, two hundred lines of
        admin readings, a room's finishes and its lumen figures, all of it written
        in `--color-muted` (#525252) and `--color-subtle` (#7A7A7A). #525252 on
@@ -90,10 +92,11 @@
        this app, where #525252 is a correct 7.4:1. */
   --color-chrome:#2F2F2F;
   --color-panel:#171717;
-  --color-surface:rgba(255,255,255,0.05);
+  --color-surface:rgba(255,255,255,0.02);
   --color-surface-2:#FAFAFA;
   --color-surface-3:#F2F2F2;
   --color-grid:#232323;
+  --color-grid-bg:#0a0a0a;
 
   --color-border:#EAEAEA;
   --color-border-strong:#D4D4D4;
@@ -319,12 +322,12 @@
      guides `fill="var(--accent)"` — which is the other reason to keep them
      named rather than inlined. */
   --ink:#000000;            /* text that carries meaning, and the drawing itself */
-  --text:#e1dccd;           /* body copy, on the page's own dark ground */
+  --text:#ffffff;           /* body copy, on the page's own dark ground */
   --text-muted:#525252;     /* secondary text: notes, captions, units */
   --text-subtle:#7A7A7A;    /* tertiary: column heads, disabled, hints */
 
   --bg:#000000;             /* the page behind the sheet */
-  --grid:#232323;           /* the page's own graph paper */
+  --grid:#161616;           /* the page's own graph paper */
 
   --border:#EAEAEA;         /* the hairline. One weight, everywhere. */
   --border-strong:#D4D4D4;  /* ...and the one that has to be seen */
@@ -360,6 +363,36 @@ body{
   background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
   background-size:24px 24px
 }
+
+/* --- ONE SCROLLBAR, AND IT IS THIN AND BLACK -----------------------------
+   THE APP HAD AS MANY SCROLLBARS AS IT HAD ENGINES. Every scroller that was
+   not `.lp-scroll` got the platform default — a fat light-grey bar on macOS
+   over the dashboard, a fat dark one over the editor — so the same list looked
+   like two different components depending on which surface it was standing on.
+   One declaration, inherited, and the whole app has one bar.
+
+   BLACK, WHICH THE TWO GROUNDS AGREE ON. The light screens (dashboard,
+   pricing, login) are #FAFAFA and the editor's panels are `--color-panel`
+   #171717: black is the only thumb that reads as a mark on the first and as a
+   shadow rather than a stripe on the second. A pale thumb would have to be two
+   colours to do the same job.
+
+   BOTH SYNTAXES, AND THEY ARE NOT ALTERNATIVES — see `.lp-scroll` below for
+   the full note. `scrollbar-width` and `scrollbar-color` are INHERITED
+   properties, which is what lets one rule on `html` reach every scroller in
+   the document; the `::-webkit-scrollbar` pseudo-elements are not inherited,
+   so those go on `*`.
+
+   `scrollbar-gutter` IS DELIBERATELY NOT SET. Reserving the track everywhere
+   would inset the content of every panel by 7px whether or not it scrolls. */
+html{
+  scrollbar-width:thin;
+  scrollbar-color:#000000 transparent
+}
+*::-webkit-scrollbar{width:7px;height:7px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-corner{background:transparent}
+*::-webkit-scrollbar-thumb{background:#000000;border-radius:4px}
 
 /* body::after {
   content: "";
@@ -881,28 +914,25 @@ input:focus,select:focus,textarea:focus{
 }
 /* --- A CAPPED LIST THAT ADMITS IT SCROLLS ---------------------------------
    The panel's space list gets this once a plan has more spaces than fit. A
-   scroll box with an invisible scrollbar is a list that looks truncated, so the
-   bar is deliberately VISIBLE — thin, low-contrast, and a little stronger while
-   the pointer is in the box.
+   scroll box with an invisible scrollbar is a list that looks truncated, so
+   the bar has to be visible — and now it is visible because EVERY bar in the
+   app is, which is the change that emptied this rule out.
 
-   BOTH SYNTAXES, because they are not alternatives: `scrollbar-width` and
-   `scrollbar-color` are the standard properties Firefox implements, and the
-   `::-webkit-scrollbar` pseudo-elements are what WebKit and Chromium read.
-   Whichever engine is running ignores the other half.
+   THE THUMB IS BLACK AND IT IS NOT THIS CLASS'S CHOICE ANY MORE. It was a
+   pale one — the page's text colour at 26% — from when this was the app's ONLY
+   styled scrollbar and had to be visible against a frosted panel on its own.
+   There is a document-wide bar now (see the rule under `body`), and a class
+   that kept its own colour would be the one list in the app whose scrollbar
+   did not match the rest. So all this class still contributes is the box
+   behaviour: it scrolls, and the scroll stops at its own edge.
 
-   The thumb is the page's own text colour at low alpha rather than `--border`:
-   this panel is frosted glass over a black ground, and #EAEAEA at full strength
-   reads as a bright bar rather than as a hint. */
+   `overscroll-behavior:contain` IS THE HALF WORTH KEEPING. Without it, hitting
+   the bottom of a capped list hands the wheel to the page behind it, which on
+   this screen means the drawing pans away under a list you were reading. */
 .lp-scroll{
   overflow-y:auto;
-  overscroll-behavior:contain;
-  scrollbar-width:thin;
-  scrollbar-color:rgba(225,220,205,.26) transparent
+  overscroll-behavior:contain
 }
-.lp-scroll::-webkit-scrollbar{width:7px}
-.lp-scroll::-webkit-scrollbar-track{background:transparent}
-.lp-scroll::-webkit-scrollbar-thumb{background:rgba(225,220,205,.26);border-radius:4px}
-.lp-scroll:hover::-webkit-scrollbar-thumb{background:rgba(225,220,205,.4)}
 
 /* --- THE FLOATING WINDOW: HOW IT ARRIVES, AND HOW IT IS CARRIED -----------
    THE WINDOW IS ALWAYS MOUNTED NOW, and that is the whole reason this class

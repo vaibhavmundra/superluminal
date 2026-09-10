@@ -54,6 +54,20 @@ export default function useFixtureCommands({
         mod.x >= q.x0 && mod.x <= q.x1 && mod.y >= q.y0 && mod.y <= q.y1);
       if (cell) ownedCells.add(lightKey(room.id, cell.id));
     }
+    /* AND THE CELLS THE GRIDDING ENGINE HAS ALREADY FILLED ITSELF. With Auto
+       Place Lights on, the layout puts its own fitting in every cell it cut
+       (see AUTO_GRID in lib/layout.js), and those are not in `manualCobs` — so
+       the skip in `autoplaceCobs`, which asks whether a HAND-PLACED lamp stands
+       in the cell, does not see them. Without this the two mechanisms fill the
+       same ceiling: one engine downlight and one autoplaced COB in the middle
+       of every box, drawn on top of each other and billed twice.
+       ONE FITTING SERVES MORE THAN ONE CELL, which is why the claim comes off
+       `l.cells` rather than the one cell it is centred in — a large lamp
+       promoted over a pair of boxes owns both of them, and the second would
+       otherwise read as empty. */
+    for (const l of room.plan.lightsPx ?? []) {
+      for (const id of l.cells ?? []) ownedCells.add(lightKey(room.id, id));
+    }
     const filled = autoplaceCobs({
       room, list: manualCobs, pxPerFt, basis: cobBasisFor(room),
       ownedCells,

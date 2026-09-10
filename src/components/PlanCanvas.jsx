@@ -758,6 +758,24 @@ const PlanCanvas = forwardRef(function PlanCanvas(
 
   const points = (poly) => poly.map((p) => `${p.x},${p.y}`).join(' ');
 
+  /* --- THE SOLVER'S GRID, BEHIND TWO SWITCHES AND NOT ONE ------------------
+     `plans[i].lightsPx` IS THE AUTO-PLACED SET and nothing else in this file
+     is — see the note at `manualCobs` for the distinction the layout draws
+     between what the gridding engine computed and what a hand put down. So the
+     ambient fittings answer to `autoLights` as well as to `lights`.
+     NESTED RATHER THAN PARALLEL. `lights` stays the master over every fitting
+     on the sheet, which is what keeps one press able to clear the drawing of
+     all of them; `autoLights` narrows that to the engine's own answer, so you
+     can hold your own COBs and tracks up against an empty ceiling.
+     A PLAIN READ, like its twelve siblings, and that is safe for the reason
+     LAYER_DEFAULTS exists: the reducer starts from a spread of it and
+     `setLayers` MERGES a saved plan's answer over it, so a sheet written before
+     this key existed arrives here carrying the default rather than `undefined`.
+     A `!== false` here would be a second opinion about that, and one that
+     disagreed with its own checkbox in the View menu — which reads `layers[k]`
+     straight. */
+  const autoLights = layers.lights && layers.autoLights;
+
   return (
     <svg
       ref={ref}
@@ -1631,12 +1649,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           glow inside each fitting carries it: six feet of live surface would
           have one downlight swallowing every click meant for its neighbours,
           and this mark is not something you can grab. */}
-      {(layers.lights || layers.spots) && laid.map((r, ri) => {
+      {(autoLights || layers.spots) && laid.map((r, ri) => {
         const pools = [];
         // THE GRID AND THE TRACK HEADS — 7 W ambient, 12 W over a pair of
         // cells, 5 W narrow in a wet room. A ceiling light points straight
         // down, so its pool is centred on the fitting.
-        if (layers.lights) {
+        // BEHIND `autoLights`: these are the pools of the fittings the layout
+        // placed, and a wash with no symbol over it is a stain.
+        if (autoLights) {
           for (const l of r.plan.lightsPx) {
             const ft = poolFtFor(l.fixture || l.kind);
             if (ft) pools.push({ k: l.id, x: l.x, y: l.y, ft });
@@ -1897,7 +1917,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           one, because L1 in the kitchen and L1 in the hall are two fittings and
           a schedule that calls them both L1 is a schedule nobody can order
           from. */}
-      {layers.lights && laid.map((r) => (
+      {autoLights && laid.map((r) => (
         <g key={'l' + r.id}>
           {r.plan.lightsPx.map((l0, li) => {
             /* --- THE ONE IN FLIGHT, DRAWN WHERE THE POINTER HAS IT -----------

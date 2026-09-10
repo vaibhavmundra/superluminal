@@ -36,8 +36,8 @@ export default function NewProjectDialog({ onCreate, onCancel, busy = false }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel?.(); }}>
-      <form className="w-[min(620px,94vw)] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop" onSubmit={submit}>
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(0,0,0,.34)] backdrop-blur-[3px]" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel?.(); }}>
+      <form className="w-[min(620px,94vw)] bg-black backdrop-blur-[30px] backdrop-saturate-[1.8] border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop" onSubmit={submit}>
         <h2 className="m-0 mb-1.5 text-[17px] tracking-[-0.01em]">New project</h2>
         <p className="text-[11.5px] text-muted leading-normal m-0 mb-[18px]">
           A project holds every plan for one building. The category decides what
@@ -67,10 +67,10 @@ export default function NewProjectDialog({ onCreate, onCancel, busy = false }) {
         </div>
 
         <div className="flex justify-end gap-2 mt-6">
-          <button type="button" className="text-xs px-3 py-[7px] rounded border border-border/10 bg-surface backdrop-blur-[5px] text-white cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
+          <button type="button" className="text-xs px-3 py-[7px] rounded border border-border/10 bg-surface backdrop-blur-[5px] text-white cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-white bg-white text-black cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-40 disabled:cursor-not-allowed" disabled={!ready}>
+          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-white bg-white text-black cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-100 disabled:cursor-not-allowed" disabled={!ready}>
             {busy ? 'Creating…' : 'Create project'}
           </button>
         </div>

@@ -34,7 +34,7 @@ const CALLS = [
 // Shared `.btn` look: inherits the surrounding font (buttons don't by default),
 // black-on-white with a hairline border, and the hover/active/disabled states
 // every button in this dialog shares.
-const BTN = "[font:inherit] text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
+const BTN = "[font:inherit] text-[12px] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer transition-[background,border-color,color] duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border";
 
 /** Copy, with the button saying so for a beat. A copy that gives no feedback is
  *  one people press three times. */
@@ -61,7 +61,7 @@ export default function PromptTranscript({ transcript = null, roomName = null, o
   const call = transcript?.[tab] ?? null;
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(0,0,0,.34)] backdrop-blur-[3px]" onClick={onClose}>
       <div className="w-[min(620px,94vw)] max-h-[88vh] flex flex-col overflow-hidden bg-surface border border-border rounded-[14px] p-[20px_20px_18px] shadow-[0_18px_50px_rgba(20,20,40,.18)]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-[14px] flex-none">
           <div>
@@ -77,7 +77,7 @@ export default function PromptTranscript({ transcript = null, roomName = null, o
         <div className="flex gap-1.5 mt-[14px] flex-none" role="tablist">
           {CALLS.map(([k, label]) => (
             <button key={k} role="tab" aria-selected={tab === k}
-              className={`flex-1 px-[10px] py-[7px] rounded-lg [font:inherit] text-[11.5px] text-left cursor-pointer border disabled:opacity-40 disabled:cursor-default ${tab === k ? 'border-accent bg-accent-soft text-ink' : 'border-border bg-surface text-muted'}`}
+              className={`flex-1 px-[10px] py-[7px] rounded-lg [font:inherit] text-[11.5px] text-left cursor-pointer border disabled:opacity-100 disabled:cursor-default ${tab === k ? 'border-accent bg-accent-soft text-ink' : 'border-border bg-surface text-muted'}`}
               disabled={!transcript?.[k]}
               title={transcript?.[k] ? '' : 'This call was not made on the last run.'}
               onClick={() => setTab(k)}>{label}</button>

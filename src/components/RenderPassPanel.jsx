@@ -15,7 +15,7 @@ const BTN_DEFAULT = 'border-border bg-none text-white hover:text-black hover:bg-
    `bg-*` sets background-COLOUR and cannot override a background-IMAGE, so a
    dead button kept the full ramp under it. `BTN_BASE` only sets the cursor for
    the disabled state, so the dimming is declared here with the colour it dims. */
-const BTN_PRIMARY = 'border-white bg-white text-black hover:bg-text hover:border-text disabled:opacity-40';
+const BTN_PRIMARY = 'border-white bg-white text-black hover:bg-text hover:border-text disabled:opacity-100';
 
 // ---------------------------------------------------------------------------
 // RenderPassPanel — upload a couple of views of a space, get the wall features

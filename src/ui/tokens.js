@@ -24,7 +24,7 @@
 /* --- buttons. A shape, a size, and one of three colourways. --------------- */
 const BTN_SHAPE = 'leading-[1.5] rounded border cursor-pointer '
   + 'transition-[background-color,border-color,color] duration-[120ms] '
-  + 'disabled:opacity-40 disabled:cursor-not-allowed';
+  + 'disabled:opacity-100 disabled:cursor-not-allowed';
 const BTN_QUIET = 'bg-surface text-white border-border/10 hover:bg-surface-2 hover:text-black '
   + 'hover:border-border-strong active:bg-surface-3 '
   + 'disabled:hover:bg-surface disabled:hover:border-border';

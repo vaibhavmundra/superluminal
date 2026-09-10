@@ -11,7 +11,7 @@ export default function usePlanScene({
   source, pxPerFt, outlines, outlinesPx, litOutlines, enclosedZones, focusId, ceilingObjs,
   accentResults, detections, dismissed, wallResults, useBoundingRect, doors, runTrims, manualCoves,
   runsOff, zones, opt, chunkPicks, roomTypes, projectId, designPicks, ceilingKinds, ceilingShapes,
-  lightMoves, manualTracks, isAdmin
+  lightMoves, manualTracks, isAdmin, autoLights
 }) {
   // THE RED-CIRCLE FAN DETECTOR IS GONE.
   //
@@ -93,14 +93,22 @@ export default function usePlanScene({
    * the recommendation and says so, and the picker is somewhere to go rather
    * than a gate to get through.
    */
+  /* `autoLights` IS IN HERE WITH THE GEOMETRY AND NOT IN A LAYER PROP, and it
+     is the one input on this list that is a VIEW answer rather than a fact
+     about the plan. It has to be: the switch turns the gridding engine on and
+     off (see AUTO_GRID in layout.js), so flipping it is a different layout of
+     the same rooms, and a memo that did not name it would go on serving the
+     answer from before the press. What that costs is a re-layout per flip,
+     which is the same cost a re-chunk or a moved fan already pays. */
   const rooms = useMemo(() => layoutRooms({
     source, pxPerFt, litOutlines, useBoundingRect, ceilingObstaclesPx, zoneList,
     zones, reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes,
     projectId, designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks,
-    isAdmin,
+    isAdmin, autoLights,
   }), [source, pxPerFt, litOutlines, useBoundingRect, ceilingObstaclesPx, zoneList, zones,
       reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes, projectId,
-      designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks, isAdmin]);
+      designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks, isAdmin,
+      autoLights]);
 
   const drawnZones = useMemo(() => buildDrawnZones({ zones, rooms, enclosedZones }), [zones, rooms, enclosedZones]);
 

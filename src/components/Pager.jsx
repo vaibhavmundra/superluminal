@@ -29,7 +29,7 @@ export default function Pager({ page, pages, total, perPage, noun = 'row', onPag
 
   const btn = 'font-sans text-xs leading-[1.5] py-[7px] px-3 rounded border border-border bg-surface text-ink cursor-pointer ' +
     'transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 ' +
-    'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
+    'disabled:opacity-100 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
   return (
     <nav className="flex items-center justify-center gap-4 mt-6 mb-2" aria-label="Pagination">
       <button className={btn} disabled={page <= 1} onClick={() => onPage(page - 1)}>

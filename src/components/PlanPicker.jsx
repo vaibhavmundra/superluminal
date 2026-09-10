@@ -5,7 +5,7 @@ import { TIERS, tierHeadline } from '../lib/plans.js';
 // two mutually-exclusive strings (rather than one merged string with both
 // hover variants present) so Tailwind's generated CSS order can't decide
 // which hover colour wins when both would otherwise apply.
-const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] w-full justify-center disabled:opacity-40 disabled:cursor-not-allowed';
+const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] w-full justify-center disabled:opacity-100 disabled:cursor-not-allowed';
 const BTN_DEFAULT = 'border-border/10 bg-surface backdrop-blur-[5px] text-white hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border/10';
 // THE FEATURED TIER'S BUTTON GLOWS, and it is the only paid act in the app that
 // does. It was a flat gold fill, which put the ramp in three places on one card

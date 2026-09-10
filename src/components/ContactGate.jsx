@@ -31,11 +31,11 @@ const LABEL = 'text-[10px] tracking-[0.11em] uppercase text-subtle';
 const NOTE = 'text-[11.5px] text-muted leading-[1.5]';
 const BTN_WHITE = 'text-xs px-3 py-[7px] rounded border border-white bg-white text-black '
   + 'cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text '
-  + 'disabled:opacity-40 disabled:cursor-not-allowed';
+  + 'disabled:opacity-100 disabled:cursor-not-allowed';
 const BTN_QUIET = 'text-xs px-3 py-[7px] rounded border border-border/10 bg-surface '
   + 'backdrop-blur-[5px] text-white cursor-pointer transition-colors duration-[120ms] '
   + 'hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 '
-  + 'disabled:opacity-40 disabled:cursor-not-allowed';
+  + 'disabled:opacity-100 disabled:cursor-not-allowed';
 
 export function ContactDialog({ onSaved, onCancel }) {
   const { profile, saveContact } = useAuth();
@@ -112,7 +112,7 @@ export function ContactDialog({ onSaved, onCancel }) {
   useEscapeClaim(!busy, () => onCancel?.(), 'contact-gate');
 
   return (
-    <div className="fixed inset-0 z-[70] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]"
+    <div className="fixed inset-0 z-[70] grid place-items-center bg-[rgba(0,0,0,.34)] backdrop-blur-[3px]"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel?.(); }}>
       <form className="w-[min(480px,94vw)] bg-black/80 backdrop-blur-lg backdrop-saturate-[1.8]
         border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop"

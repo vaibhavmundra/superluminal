@@ -17,6 +17,7 @@ import { buildSnapIndex, snapAt } from '../lib/snap.js';
 import { outlineStats, validateOutline } from '../lib/outline.js';
 import { REFERENCES, describeScale } from '../lib/scale.js';
 import { parseDoorWidth } from '../lib/doors.js';
+import { SB_COLOUR } from '../lib/electrical.js';
 
 // ---------------------------------------------------------------------------
 // OutlineTracer — draw the room over the plan, and let the plan hold the cursor.
@@ -110,7 +111,7 @@ const TRACED_LAYER = 'outlines traced';
 // ---------------------------------------------------------------------------
 const BTN_SHAPE = 'leading-[1.5] rounded border cursor-pointer '
   + 'transition-[background-color,border-color,color] duration-[120ms] '
-  + 'disabled:opacity-40 disabled:cursor-not-allowed';
+  + 'disabled:opacity-100 disabled:cursor-not-allowed';
 /* WORD FOR WORD THE PLANNING SCREEN'S PAIR (see App.jsx), because these two
    panels are the same panel two steps apart and they had drifted into two
    different themes. The quiet one was `bg-surface text-ink border-border` — ink
@@ -155,7 +156,6 @@ const BTN = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_QUIET}`;
 const BTN_FULL = `${BTN} w-full`;
 const BTN_PRIMARY = `text-[12px] px-3 py-[7px] ${BTN_SHAPE} ${BTN_WHITE}`;
 const BTN_PRIMARY_FULL = `${BTN_PRIMARY} w-full`;
-const BTN_TINY = `text-[11px] px-[5px] py-0 ${BTN_SHAPE} ${BTN_QUIET}`;
 /* One of the three door widths: full width in the grid, and centred. */
 const BTN_DOOR = `text-[12px] w-full px-1 py-[7px] text-center ${BTN_SHAPE} ${BTN_QUIET}`;
 const BTN_DOOR_CTA = `text-[12px] w-full px-1 py-[7px] text-center ${BTN_SHAPE} ${BTN_WHITE}`;
@@ -239,11 +239,11 @@ const ROW_PICK = 'cursor-pointer hover:bg-white/5 focus:outline-none '
 const PICK = 'grid grid-cols-[10px_minmax(0,1fr)_auto] gap-[7px] items-center w-full '
   + 'border-0 bg-none p-0 text-left cursor-[inherit]';
 const NAME = 'font-sans text-[11px] text-text overflow-hidden text-ellipsis whitespace-nowrap';
-const META = 'flex justify-between items-center gap-1.5 text-[10px] text-subtle mt-[3px] '
-  + 'tabular-nums [&>span]:flex [&>span]:items-center [&>span]:gap-[5px]';
+/* `META` AND `MINI` WENT WITH THE ROW'S SECOND LINE — see the note at the row
+   itself. They dressed the dimensions, the corner count and the square toggle,
+   and there is nothing left in the list that is not the dot, the name or the
+   area. */
 const COUNT = 'font-sans text-[10px] text-subtle';
-const MINI = 'flex items-center gap-[3px] text-[10px] text-subtle cursor-pointer '
-  + '[&>input]:w-[11px] [&>input]:h-[11px] [&>input]:m-0';
 
 /* THE DXF'S LAYERS: a checkbox, a name, a count. */
 const LAYER_SHAPE = 'grid grid-cols-[14px_minmax(0,1fr)_auto_auto] gap-[7px] items-center '
@@ -263,6 +263,12 @@ const ftin = (v) => {
   return i === 12 ? `${f + 1}'0"` : `${f}'${i}"`;
 };
 const flat = (pts) => pts.flatMap((p) => [p.x, p.y]);
+
+/** A rect carried by a delta. Doors are moved, never resized — see the note on
+    the corner marks: they say WHICH box is selected, they are not grips. */
+const shiftRect = (r, dx, dy) => ({
+  x0: r.x0 + dx, x1: r.x1 + dx, y0: r.y0 + dy, y1: r.y1 + dy,
+});
 
 /** A closed polygon's edges, as segments the snap index understands. */
 const edgesOf = (pts, layer) => pts.map((p, i) => {
@@ -291,10 +297,18 @@ export default function OutlineTracer({
   source, pxPerFt, outlines, selectedId, onSelect, onCommit,
   onUpdateOutline, onDeleteOutline, onConfirm,
   onMovePoint, onInsertPoint, onRemovePoint, onProceed,
-  detectState = null, onRedetect = null,
+  detectState = null,
   unitId, unitCandidates, onUnitChange,
   scale: scaleUI, invert = false,
   litIds = [], dirtyIds = [], onBackToDesign = null,
+  /* --- THE DOOR STEP, WHICH NOW STANDS IN FRONT OF EVERYTHING ELSE --------
+     `doorsOk` is the document's, and it is the same decision the wiring is
+     gated on — see `doorsOk` in App.jsx. Until it is answered this screen is
+     the door step and nothing else, so the four handlers below are what the
+     step writes with. A caller that passes no `onConfirmDoors` gets the old
+     behaviour: the step never appears. */
+  doorsOk = true, onConfirmDoors = null,
+  onAddDoor = null, onMoveDoor = null, onDeleteDoor = null,
 }) {
   const wrapRef = useRef(null);
   const stageRef = useRef(null);
@@ -376,16 +390,58 @@ export default function OutlineTracer({
   // pointer reads as part of the drawing rather than as something you can grab.
   const [hoverSpace, setHoverSpace] = useState(null);
 
+  /* --- THE DOOR STEP'S THREE PIECES OF GESTURE STATE ----------------------
+     `doorBand` is a box being swept out and does not exist yet; `doorMove` is
+     an existing box under the hand, and it carries the LIVE RECT for the same
+     reason App's own door drag does — writing a move into the document on
+     every pointer frame would re-run the scale off a box that is still
+     moving; `doorSel` is which box the keyboard and the × are about. */
+  const [doorBand, setDoorBand] = useState(null);
+  const [doorMove, setDoorMove] = useState(null);
+  const [doorSel, setDoorSel] = useState(null);
+
   const ortho = orthoLock && !shift;
   const panMode = space;
   const tracing = draft.length > 0;
+
+  /* --- THE DOORS ARE IDENTIFIED BEFORE ANYTHING ELSE IS ASKED -------------
+     THE ORDER WAS WRONG AND IT WAS WRONG IN A WAY THAT COST THE ANSWER TWICE.
+     The first thing this screen did was hand somebody the detector's doors and
+     ask them to pick one as a ruler — a question that treats the set as
+     finished — and then, three steps later on the design screen, the wiring
+     asked whether that same set was complete and made them go through it again
+     under "Modify doors". Two passes over one list, in the wrong order: the
+     ruler was chosen out of a set nobody had checked.
+
+     SO THE STEP MOVES TO THE FRONT. Confirm the doors, then take the scale off
+     one of them. It costs nothing extra — the boxes are already on the drawing
+     at that moment, which is when they are cheapest to look at — and it buys
+     the two things downstream needs: a complete set for the switchboards, and
+     a ruler chosen from a set somebody has read.
+
+     AND THE SCALE STEP IS SKIPPED WHEN THERE IS NOTHING TO SET. A DXF states
+     its own scale, so it goes straight from here to the outlines; an image
+     goes on to the door/measure pair. That is the whole sequence.
+
+     RASTER ONLY, and that is not an omission. The door detector does not run
+     on a DXF (see useDoorRecognition) — there is nothing to confirm, and a
+     step that opened on "0 boxes on the plan" would be asking somebody to
+     draw every door in the building before they had seen a single space. The
+     wiring's own "Modify doors" still covers that case, where it always did.
+
+     `onConfirmDoors` IS THE FEATURE SWITCH. A caller that does not pass it —
+     the read-only viewer, anything embedding this for tracing alone — never
+     sees the step. */
+  const idScreen = isRaster && !doorsOk && !!onConfirmDoors;
+
   // On an image, clicking the plan sets the measuring line rather than a corner.
-  const measuring = isRaster && scaleUI?.mode === 'ref' && !panMode && !measureDone;
+  const measuring = isRaster && scaleUI?.mode === 'ref' && !panMode && !measureDone
+    && !idScreen;
   // The doors are live targets only while the door mode is the one being used
   // AND the scale is not settled — once it is, they are twelve blue rectangles
   // sitting on top of the drawing you are trying to trace.
   const pickingDoor = isRaster && scaleUI?.mode === 'door' && !panMode
-    && !!(scaleUI.doors || []).length && !hasScale;
+    && !!(scaleUI.doors || []).length && !hasScale && !idScreen;
   /** The door the user clicked, if it is still in the list. */
   const picked = (scaleUI?.doors || []).find((d) => d.id === scaleUI?.pick?.id) || null;
   const customParsed = useMemo(() => parseDoorWidth(customMm), [customMm]);
@@ -399,7 +455,7 @@ export default function OutlineTracer({
   // again. The text is kept, because the next door is very often the same width.
   const pickedId = scaleUI?.pick?.id ?? null;
   useEffect(() => { setCustomOpen(false); }, [pickedId]);
-  const canTrace = hasScale && !measuring && !pickingDoor;
+  const canTrace = hasScale && !measuring && !pickingDoor && !idScreen;
   // THE DOOR SCREEN IS A SCREEN OF ITS OWN, and that is the point of this flag.
   // Before the scale exists there is exactly one thing to do — name a door —
   // and everything belonging to tracing is inert: the spaces cannot be drawn
@@ -407,7 +463,16 @@ export default function OutlineTracer({
   // the trace controls refuse the first click. A panel that offers six
   // sections when five of them do nothing is a panel nobody reads, so they are
   // put away until there is a ruler.
-  const doorScreen = isRaster && scaleUI?.mode === 'door' && !hasScale;
+  const doorScreen = isRaster && scaleUI?.mode === 'door' && !hasScale && !idScreen;
+
+  /* THE TWO FULL-PANEL STEPS, AS ONE NAME. Both take the panel over completely
+     and both make everything below them inert, so every gate that used to read
+     `!doorScreen` means `!stepScreen` now. */
+  const stepScreen = doorScreen || idScreen;
+
+  /** The door detector, still out. Nothing on the step is answerable until it
+      is back, because the set it is about to hand over is the set. */
+  const looking = scaleUI?.doorState?.status === 'running';
 
   // Every layer of a newly loaded plan starts visible. Held in state because
   // the user turns layers off to stop the cursor catching a sofa corner, and
@@ -423,7 +488,25 @@ export default function OutlineTracer({
 
   // The last snap from before the door screen came up would otherwise sit there
   // frozen on the plan, glyph and all.
-  useEffect(() => { if (doorScreen) setSnap(null); }, [doorScreen]);
+  useEffect(() => { if (stepScreen) setSnap(null); }, [stepScreen]);
+
+  /* LEAVING THE DOOR STEP PUTS ITS GESTURES DOWN. A box left selected would
+     keep the × floating over a drawing that is now about spaces, and a band
+     half swept when the step was answered would commit on the next release. */
+  useEffect(() => {
+    if (idScreen) return;
+    setDoorBand(null); setDoorMove(null); setDoorSel(null);
+  }, [idScreen]);
+
+  /* THE DOOR BOXES AS DRAWN. The list, with the box being moved at where the
+     pointer has it rather than at where it started — the same gap `doorDrag`
+     closes on the design screen, and for the same reason: the rect is local
+     until the release. */
+  const doorBoxes = useMemo(() => {
+    const list = scaleUI?.doors || [];
+    if (!doorMove) return list;
+    return list.map((d) => (d.id === doorMove.id ? { ...d, rect: doorMove.rect } : d));
+  }, [scaleUI?.doors, doorMove]);
 
   // The outlines as they look RIGHT NOW. Identical to the props except for the
   // one corner being dragged, which is local until the drag ends.
@@ -524,8 +607,74 @@ export default function OutlineTracer({
   // the crosshair, the glyph under the cursor, the dotted alignment guides, and
   // a pill reading "lined up with a corner" about a corner nobody is placing.
   const onMouseMove = () => {
+    /* THE DOOR STEP OWNS THE POINTER OUTRIGHT while it is up — one pipeline,
+       one owner, the same rule the design screen's door editor states. */
+    if (idScreen) {
+      if (panMode || midPan) return;
+      const c = cursorAt();
+      if (!c) return;
+      if (doorMove) {
+        setDoorMove((m) => {
+          if (!m) return m;
+          const dx = c.x - m.ox, dy = c.y - m.oy;
+          /* `moved` IS WHAT DECIDES WHETHER THE RELEASE WRITES ANYTHING. A
+             click on a box to select it is a press and a release with a
+             pixel of hand-shake between them, and committing that would put
+             a revision on the document for every box anybody looked at. */
+          return { ...m, rect: shiftRect(m.from, dx, dy),
+                   moved: m.moved || Math.hypot(dx, dy) > px(2) };
+        });
+        return;
+      }
+      if (doorBand) setDoorBand((b) => (b ? { ...b, x1: c.x, y1: c.y } : b));
+      return;
+    }
     if (!panMode && !midPan && !drag && !doorScreen) recomputeSnap();
   };
+
+  /* --- THE DOOR STEP'S RELEASE, AND THE ONE WRITE IT MAKES ----------------
+     A MOVE COMMITS HERE AND NOWHERE ELSE, for the reason `doorMove` exists.
+     A NEW BOX IS A DOOR LIKE ANY OTHER — the parent gives it its id, its
+     opening and its `placed` mark; this side only says where it is.
+     THE HALF-FOOT FLOOR is the design screen's, to the pixel: a press with a
+     twitch in it is a click on empty plan, which has already done what it
+     meant to do — cleared the selection — and a two-pixel sliver on the sheet
+     is a door as far as everything downstream is concerned. */
+  const onMouseUp = () => {
+    if (!idScreen) return;
+    if (doorMove) {
+      const m = doorMove;
+      setDoorMove(null);
+      if (m.moved) onMoveDoor?.(m.id, m.rect);
+      return;
+    }
+    if (!doorBand) return;
+    const b = doorBand;
+    setDoorBand(null);
+    const r = {
+      x0: Math.min(b.x0, b.x1), x1: Math.max(b.x0, b.x1),
+      y0: Math.min(b.y0, b.y1), y1: Math.max(b.y0, b.y1),
+    };
+    const minPx = Math.max(6, (pxPerFt || 0) * 0.5);
+    if (r.x1 - r.x0 < minPx || r.y1 - r.y0 < minPx) return;
+    const id = onAddDoor?.(r);
+    if (id) setDoorSel(id);
+  };
+
+  /* ON THE WINDOW, AND FOR THE REASON THE PAN'S LISTENERS ARE. A box swept out
+     to the edge of the canvas is the ordinary case — a door on the boundary of
+     the drawing — and a release that only counts inside the stage would leave
+     that gesture running with the button already up, so the next press
+     anywhere would drop a box the size of the plan. The ref keeps the listener
+     bound once per step rather than once per pointer frame. */
+  const upRef = useRef(onMouseUp);
+  upRef.current = onMouseUp;
+  useEffect(() => {
+    if (!idScreen) return;
+    const up = (ev) => { if (ev.button === 0) upRef.current(); };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, [idScreen]);
 
   /**
    * MIDDLE-BUTTON PAN.
@@ -641,6 +790,18 @@ export default function OutlineTracer({
     // on a finished outline.
     if (startMidPan(e)) return;
     if (panMode || e.evt.button !== 0) return;
+    /* THE DOOR STEP, AHEAD OF EVERYTHING. A press that reaches the stage on
+       this step landed on the plan rather than on a box — the boxes cancel
+       their own bubbling — so it is either a new box being started or the
+       selection being dropped. Both, in that order: the band is only a box
+       once it has been dragged past the floor above. */
+    if (idScreen) {
+      const c = cursorAt();
+      if (!c) return;
+      setDoorSel(null);
+      setDoorBand({ x0: c.x, y0: c.y, x1: c.x, y1: c.y });
+      return;
+    }
     // A mousedown on a grip is the start of a drag, not a corner being placed.
     // The click handler cancels bubbling; mousedown is a separate event and has
     // to be turned away by name.
@@ -698,6 +859,12 @@ export default function OutlineTracer({
   // rebind three window listeners on every corner clicked.
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  /* THE DOOR STEP'S TWO, THROUGH REFS FOR THE SAME REASON. Taking either as a
+     dependency would rebind three window listeners on every box clicked. */
+  const idScreenRef = useRef(idScreen);
+  idScreenRef.current = idScreen;
+  const doorSelRef = useRef(doorSel);
+  doorSelRef.current = doorSel;
   /* --- ESCAPE THROWS THE TRACE AWAY AND KEEPS THE SCREEN --------------------
      ONE OF THE THREE FLOWS THAT REFUSE TO EXIT. Everywhere else in the app
      Escape stands the whole editor down; here it clears the corners placed so
@@ -706,7 +873,11 @@ export default function OutlineTracer({
      the plan you were working over.
      CLAIMED FROM THE HATCH rather than listened for below, so the exemption
      lives next to the state it is about. See src/lib/escapeHatch.js. */
-  useEscapeClaim(true, () => { setDraft([]); setProblem(''); }, 'tracer');
+  useEscapeClaim(true, () => {
+    /* ON THE DOOR STEP IT DROPS THE GESTURE, not a trace there is none of. */
+    if (idScreen) { setDoorBand(null); setDoorMove(null); setDoorSel(null); return; }
+    setDraft([]); setProblem('');
+  }, 'tracer');
   useEffect(() => {
     const down = (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
@@ -714,6 +885,15 @@ export default function OutlineTracer({
       if (e.code === 'Space') { setSpace(true); e.preventDefault(); }
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault();
+        /* ON THE DOOR STEP THE KEY IS ABOUT THE SELECTED BOX, and about
+           nothing else — there is no draft and no outline to be about. The ×
+           off the box's corner does the same thing for a hand that never
+           learned the key; see the note there on why both exist. */
+        if (idScreenRef.current) {
+          if (doorSelRef.current) onDeleteDoor?.(doorSelRef.current);
+          setDoorSel(null);
+          return;
+        }
         // TWO MEANINGS, SETTLED BY WHETHER A TRACE IS IN PROGRESS — and that is
         // the only reading that is never ambiguous. Mid-trace this key undoes
         // the last corner and is pressed constantly; with no draft it removes
@@ -748,7 +928,7 @@ export default function OutlineTracer({
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', blur);
     };
-  }, [finish, fit, selectedId, onDeleteOutline]);
+  }, [finish, fit, selectedId, onDeleteOutline, onDeleteDoor]);
 
   const onWheel = (e) => {
     e.evt.preventDefault();
@@ -788,7 +968,8 @@ export default function OutlineTracer({
     return m?.a && m?.b ? Math.hypot(m.b.x - m.a.x, m.b.y - m.a.y) : 0;
   })();
 
-  const headline = measuring ? 'Measure the plan'
+  const headline = idScreen ? 'Check the doors'
+    : measuring ? 'Measure the plan'
     : doorScreen ? 'Pick a door'
     : !hasScale ? 'Set the scale first'
     : tracing ? 'Tracing…'
@@ -798,23 +979,21 @@ export default function OutlineTracer({
   return (
     <div className="max-w-[1400px] mx-auto">
       <div className="mb-4">
-        <h2 className="font-display mt-0 mx-0 mb-1.5 text-[19px] leading-none
-          tracking-[-0.025em] uppercase text-white whitespace-nowrap">{headline}</h2>
+        <h2 className=" mt-2 mx-0 mb-3 text-[26px] 
+          text-white whitespace-nowrap">{headline}</h2>
         <p className="m-0 text-muted max-w-[78ch]">
-          {measuring
+          {idScreen
+            ? <>Every switchboard is placed beside a door, and the scale comes off
+                one — so the set has to be right before either. Add what was
+                missed, throw out what is not a door.</>
+            : measuring
             ? <>Click the two ends of something you can name, then say what it is.</>
             : doorScreen
               ? <>A door is a known width, so one of them gives the whole drawing
                   its scale. Click one on the plan.</>
             : !hasScale
-              ? <>Set the scale on the right first — an image does not say how big it is.</>
-              : outlines.length
-                ? <>Drag a corner to move it — free angle, snapping to walls and
-                    to the other corners. <b>Shift</b> holds it square.
-                    Click an edge's diamond to add a corner, right-click one to
-                    remove it.</>
-                : <>Click the corners. <b>Shift</b> releases the right-angle lock,
-                  <b> Backspace</b> undoes one, <b>Enter</b> closes.</>}
+              && <>Set the scale on the right first — an image does not say how big it is.</>
+              }
         </p>
       </div>
 
@@ -831,6 +1010,10 @@ export default function OutlineTracer({
                itself. Plain default over the rest of the plan — `not-allowed`
                reads as "this screen is broken" when it is simply waiting. */
             : doorScreen ? 'default'
+            /* THE DOOR STEP IS A DRAWING GESTURE, and the crosshair is what
+               says so before anybody presses. The boxes set their own cursor
+               over themselves. */
+            : idScreen ? 'crosshair'
             : canTrace || measuring ? 'crosshair' : 'not-allowed' }}>
           <Stage
             ref={stageRef}
@@ -885,7 +1068,7 @@ export default function OutlineTracer({
 
             {/* the outlines: traced by hand, or proposed by the detector */}
             <Layer listening={!tracing}>
-              {(doorScreen ? [] : stats).map(({ o, st }, i) => {
+              {(stepScreen ? [] : stats).map(({ o, st }, i) => {
                 const col = FILL[i % FILL.length];
                 const on = o.id === selectedId;
                 // A proposal is drawn DASHED until it has been touched or
@@ -924,7 +1107,7 @@ export default function OutlineTracer({
                 takes the pointer at the edges, which is precisely where every
                 corner is. Hidden while a trace is in progress: mid-trace every
                 click belongs to the draft. */}
-            {showGrips && !tracing && hasScale && (
+            {showGrips && !tracing && hasScale && !stepScreen && (
               <Layer>
                 {liveOutlines.map((o, i) => {
                   const col = FILL[i % FILL.length];
@@ -1085,8 +1268,11 @@ export default function OutlineTracer({
                 the boxes drew perfectly, the cursor never changed, and clicking
                 one did nothing at all. Same family as the sconce whose grab area
                 was painted under its own symbol — a control that looks right and
-                is not reachable. Last inside the Stage, so it also paints on
-                top. */}
+                is not reachable. Second from last inside the Stage, under the
+                door STEP's layer below — and the two never show together, so
+                the order between them is a reading convenience rather than a
+                rule: they are the two things done to a door box, in the order
+                they are done. */}
             <Layer listening={pickingDoor}>
                 {/* THE DOORS, offered as things to click.
                     Filled with the primary colour rather than merely outlined —
@@ -1135,6 +1321,112 @@ export default function OutlineTracer({
                   );
                 })}
             </Layer>
+
+            {/* --- THE DOOR STEP'S OWN LAYER ---------------------------
+                THE DESIGN SCREEN'S VOCABULARY, DRAWN IN KONVA. The same
+                switchboard blue, the same light wash, the same corner marks on
+                the selected box and the same × off its top-right — because it
+                is the same question asked about the same objects, and teaching
+                two gestures for one job is how somebody learns neither. See
+                the door editor in PlanCanvas for the original.
+                LISTENING ONLY WHILE THE STEP IS UP. Off it, these are twelve
+                blue rectangles over a drawing somebody is trying to trace, and
+                a layer that answers the pointer would eat every corner click
+                that happened to land on one. */}
+            <Layer listening={idScreen}>
+              {idScreen && doorBoxes.map((d) => {
+                if (!d.rect) return null;
+                const r = d.rect;
+                const on = d.id === doorSel;
+                return (
+                  <Group key={'de' + d.id}>
+                    <Rect
+                      x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0}
+                      fill={SB_COLOUR} opacity={on ? 0.18 : 0.10}
+                      onMouseEnter={(e) => {
+                        const st = e.target.getStage(); if (st) st.container().style.cursor = 'move';
+                      }}
+                      onMouseLeave={(e) => {
+                        const st = e.target.getStage(); if (st) st.container().style.cursor = '';
+                      }}
+                      /* THE WHOLE BOX IS THE MOVE HANDLE, which is why the ×
+                         is outside it. `cancelBubble` is what keeps this press
+                         off the stage below, where it would start sweeping a
+                         second box out from inside the first. */
+                      onMouseDown={(e) => {
+                        if (e.evt.button !== 0) return;   // middle is the pan
+                        e.cancelBubble = true;
+                        const c = cursorAt();
+                        if (!c) return;
+                        setDoorSel(d.id);
+                        setDoorMove({ id: d.id, from: r, rect: r,
+                                      ox: c.x, oy: c.y, moved: false });
+                      }} />
+                    {/* THE STROKE IS ITS OWN SHAPE AND DOES NOT LISTEN, so the
+                        fill above is the single hit target for the box. */}
+                    <Rect listening={false}
+                      x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0}
+                      stroke={SB_COLOUR} strokeWidth={on ? 2.6 : 1.7}
+                      strokeScaleEnabled={false} />
+                    {/* THE CORNERS, ON THE SELECTED ONE ONLY. Not resize grips
+                        and deliberately not drawn as any: they say which box
+                        the keyboard and the × are about. */}
+                    {on && [[r.x0, r.y0], [r.x1, r.y0], [r.x1, r.y1], [r.x0, r.y1]]
+                      .map(([cx, cy], k) => (
+                        <Rect key={k} listening={false}
+                          x={cx} y={cy} width={px(5)} height={px(5)}
+                          offsetX={px(2.5)} offsetY={px(2.5)}
+                          fill="#fff" stroke={SB_COLOUR} strokeWidth={1.4}
+                          strokeScaleEnabled={false} />
+                      ))}
+                    {/* ...AND THE ONE WAY TO THROW IT AWAY WITH A MOUSE.
+                        Delete and Backspace do the same thing and are what a
+                        hand on a keyboard reaches for; this is here because a
+                        step somebody is walked through cannot hide its only
+                        destructive act behind a shortcut nobody was told
+                        about. OUTSIDE THE BOX, because every pixel inside it
+                        drags. */}
+                    {on && onDeleteDoor && (
+                      <Group
+                        x={r.x1 + px(9)} y={r.y0 - px(9)}
+                        onMouseEnter={(e) => {
+                          const st = e.target.getStage(); if (st) st.container().style.cursor = 'pointer';
+                        }}
+                        onMouseLeave={(e) => {
+                          const st = e.target.getStage(); if (st) st.container().style.cursor = '';
+                        }}
+                        onMouseDown={(e) => {
+                          if (e.evt.button !== 0) return;
+                          e.cancelBubble = true;
+                          onDeleteDoor(d.id);
+                          setDoorSel(null);
+                        }}>
+                        <Circle radius={px(8)} fill="#fff"
+                          stroke={SB_COLOUR} strokeWidth={1.6} strokeScaleEnabled={false} />
+                        <Line points={[-px(3.4), -px(3.4), px(3.4), px(3.4)]}
+                          stroke={SB_COLOUR} strokeWidth={1.7}
+                          strokeScaleEnabled={false} lineCap="round" listening={false} />
+                        <Line points={[px(3.4), -px(3.4), -px(3.4), px(3.4)]}
+                          stroke={SB_COLOUR} strokeWidth={1.7}
+                          strokeScaleEnabled={false} lineCap="round" listening={false} />
+                      </Group>
+                    )}
+                  </Group>
+                );
+              })}
+
+              {/* The box being swept out. Same wash, no marks: it is not a
+                  state, it is a gesture in progress. */}
+              {idScreen && doorBand && (
+                <Rect listening={false}
+                  x={Math.min(doorBand.x0, doorBand.x1)}
+                  y={Math.min(doorBand.y0, doorBand.y1)}
+                  width={Math.abs(doorBand.x1 - doorBand.x0)}
+                  height={Math.abs(doorBand.y1 - doorBand.y0)}
+                  fill={SB_COLOUR} opacity={0.14}
+                  stroke={SB_COLOUR} strokeWidth={2} strokeScaleEnabled={false} />
+              )}
+            </Layer>
           </Stage>
 
           {/* Only what changes as you work. The keyboard reference that used to
@@ -1142,7 +1434,7 @@ export default function OutlineTracer({
               was static text taking up a third of the bar. */}
           <div className={HUD}>
             {midPan && <span className={CHIP_ON}>panning</span>}
-            {!doorScreen && <>
+            {!stepScreen && <>
             {!ortho && <span className={CHIP}>free angle</span>}
             {drag && <span className={CHIP_ON}>{shift ? 'nudging · square' : 'nudging · free'}</span>}
             {(drag?.snap || (!drag && snap)) && (
@@ -1154,16 +1446,97 @@ export default function OutlineTracer({
 
         {/* `door-only` MADE THIS PANEL A COLUMN so the one question in it could
             sit in the middle. Same rule, now on the element that has it. */}
-        {/* THE SAME GLASS AS THE LAYOUT SCREEN'S RIGHT PANEL, down to the
-            saturation and the 5px blur: this IS that panel, one step earlier. */}
-        <div className={'bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] '
+        {/* THE SAME SURFACE AS THE LAYOUT SCREEN'S FLOATING WINDOW, and now
+            literally the same token: this IS that panel, one step earlier, so
+            `--color-panel` paints both. It was `bg-grid` (#232323) against the
+            window's `bg-panel` (#171717) — two near-blacks a step apart for one
+            panel, which reads as the thing changing colour when you move
+            between the two screens rather than as two surfaces.
+            THE BLUR AND THE SATURATION WENT WITH IT. `--color-panel` is opaque,
+            so a backdrop filter under it composites against nothing. */}
+        <div className={'bg-panel '
           + 'border border-border/10 rounded-[12px] p-3.5 overflow-auto '
           + 'max-h-[calc(100vh-260px)] [@media(max-width:1080px)]:max-h-none '
-          + (doorScreen
+          + (stepScreen
             ? 'h-[calc(100vh-262px)] [@media(max-width:1080px)]:h-auto flex flex-col'
             : '')}>
+
+          {/* --- IDENTIFY THE DOORS, AND THE PANEL HOLDS NOTHING ELSE -------
+              THE DESIGN SCREEN'S DOOR STEP, WORD FOR WORD AND PICTURE FOR
+              PICTURE. It is the same question about the same boxes, moved to
+              the front of the flow (see `idScreen`), and asking it in a second
+              voice here would make one job read as two.
+              THE QUESTION IS ONE LINE AND THE CARD UNDER IT IS THE
+              INSTRUCTION: what to do is a sentence, HOW to do it is a picture
+              of the gesture. Somebody who has drawn one of these before does
+              not read the card, and somebody who has not cannot be told "draw
+              a box" in words that mean anything until they have seen it. */}
+          {idScreen && (
+            <div className={`${SEC} flex-1 flex flex-col min-h-0`}>
+              <div className="flex-1 flex flex-col items-center justify-center gap-4
+                text-center px-1 py-6">
+                <p className="m-0 text-[17px] leading-[1.32] tracking-[-0.02em]
+                  text-white max-w-[22ch]">Please confirm that all doors are identified</p>
+
+                {/* THE GESTURE, DRAWN — the door editor's own graphic, because
+                    it is the same gesture: a dashed box with a live corner and
+                    the pointer sweeping it out, over the plan's mark for a
+                    door, in the switchboard's blue. */}
+                <div className="flex flex-col items-center gap-2 px-4 pt-3.5 pb-3
+                  border border-border/10 rounded-[10px] bg-white/5 text-center">
+                  <svg viewBox="0 0 72 46" aria-hidden="true"
+                    className="w-[72px] h-[46px] block overflow-visible">
+                    <g stroke="var(--text-subtle)" strokeWidth="1.3" fill="none"
+                      strokeLinecap="round" opacity="0.75">
+                      <path d="M11 30h4M39 30h5" />
+                      <path d="M15 30V12" />
+                      <path d="M15 12a18 18 0 0 1 18 18" />
+                    </g>
+                    <rect x="7" y="7" width="44" height="28" rx="2"
+                      fill={SB_COLOUR} fillOpacity="0.10"
+                      stroke={SB_COLOUR} strokeWidth="1.4" strokeDasharray="4 3" />
+                    <circle cx="7" cy="7" r="2" fill={SB_COLOUR} />
+                    <g transform="translate(51 35)">
+                      <path d="M0,0 L0,15 L4,11.2 L6.8,17.6 L9.6,16.4 L6.8,10.2 L12,10 Z"
+                        fill={SB_COLOUR} stroke="#fff" strokeWidth="1.1"
+                        strokeLinejoin="round" />
+                    </g>
+                  </svg>
+                  <p className="m-0 text-[11px] leading-[1.5] text-subtle max-w-[30ch]">
+                    Draw a box over a door that was missed. Click one to drag it,
+                    or to remove it.
+                  </p>
+                </div>
+
+                {/* THE COUNT, AND IT IS THE ONLY NUMBER HERE. What is being
+                    asked is whether the set is complete, and the one thing
+                    nobody can see by looking at the plan is how many boxes are
+                    on it — a door under a fitting, off the fold, or twice. */}
+                {/* ...AND THE ANSWER IS NOT OFFERED UNTIL THERE IS ONE TO
+                    GIVE. "There are no doors" over a search that has not come
+                    back is the app inviting somebody to confirm an empty set
+                    it is about to fill in underneath them — and a button
+                    disabled instead would be a dead control, because a
+                    disabled button on this panel is drawn at full strength.
+                    So while the detector is out, the line IS the state and
+                    there is nothing to press. */}
+                {looking ? (
+                  <p className={`${N} m-0`}>Looking for doors…</p>
+                ) : (<>
+                  <p className={`${N} m-0`}>
+                    {doorBoxes.length} box{doorBoxes.length === 1 ? '' : 'es'} on the plan
+                  </p>
+                  <button className={`${BTN_PRIMARY} w-full`}
+                    onClick={() => onConfirmDoors?.()}>
+                    {doorBoxes.length ? 'These are all the doors' : 'There are no doors'}
+                  </button>
+                </>)}
+              </div>
+            </div>
+          )}
+
           {/* --- the scale, on an image ------------------------------------ */}
-          {isRaster && scaleUI && (
+          {isRaster && scaleUI && !idScreen && (
             <div className={SEC + (doorScreen ? ' flex flex-col flex-1 min-h-0' : '')}>
               <h3 className={H3}>Scale{hasScale ? '' : ' — needed first'}</h3>
               <div className={SEG}>
@@ -1293,23 +1666,6 @@ export default function OutlineTracer({
                   )}
                 </>)}
 
-                {/* WHAT THE OTHER DOORS WOULD MEASURE at the chosen scale. The
-                    one way this can go wrong is naming the wrong door — a 750
-                    called a 1200 — and the tell is that every other door on the
-                    plan then comes out an implausible width. Cheap to show,
-                    and it is the only check available without a dimension
-                    string on the drawing. */}
-                {hasScale && scaleUI.doors.length > 1 && (
-                  <div className={`${KV} mt-2 items-start`}>
-                    <span>Other doors</span>
-                    <b style={{ textAlign: 'right' }}>
-                      {scaleUI.doors.filter((d) => d.id !== scaleUI.pick?.id)
-                        .slice(0, 4)
-                        .map((d) => `${Math.round(d.openingPx / pxPerFt * 304.8 / 25) * 25}`)
-                        .join(' · ')} mm
-                    </b>
-                  </div>
-                )}
               </>)}
 
               {scaleUI.mode === 'ref' && (<>
@@ -1347,14 +1703,14 @@ export default function OutlineTracer({
                 )}
               </>)}
 
-              {!doorScreen && (
-                <div className={`${KV} mt-2.5`}>
-                  <span>Scale</span><b>{hasScale ? describeScale(pxPerFt) : 'not set'}</b></div>
-              )}
-              {hasScale && (
-                <div className={KV}><span>Plan measures</span>
-                  <b>{ftin(widthFt)} × {ftin(heightFt)}</b></div>
-              )}
+              {/* NO SCALE READOUT AND NO PLAN SIZE HERE ANY MORE. Both were
+                  standing figures on a screen whose whole job is the list of
+                  spaces: "24.3 px/ft" is the app's own arithmetic shown back,
+                  and the plan's overall size is the one measurement nobody is
+                  on this screen to take. The scale is still SETTABLE — the two
+                  tabs above are untouched — it just stops narrating itself.
+                  A DXF states its size in "The file" below, which is where a
+                  fact about the file belongs. */}
             </div>
           )}
 
@@ -1366,7 +1722,7 @@ export default function OutlineTracer({
               subject, one place. It also renders now without a detectState,
               which the tally-only version could not: a plan traced entirely by
               hand still has spaces to list. */}
-          {(detectState || stats.length > 0) && !doorScreen && (
+          {(detectState || stats.length > 0) && !stepScreen && (
             <div className={SEC}>
               <h3 className={H3}>Spaces on the plan</h3>
               {detectState?.status === 'running' && (
@@ -1382,9 +1738,7 @@ export default function OutlineTracer({
                   {detectState.dropped > 0 && (
                     <div className={KV}><span>Discarded</span><b>{detectState.dropped}</b></div>
                   )}
-                  <p className={NOTE}>Drag any corner to put it on the wall. The
-                    grip snaps like the cursor does. A dashed outline is one
-                    nobody has looked at yet.</p>
+                  <p className={NOTE}></p>
                 </>) : detectState.returned > 0 ? (
                   <p className={NOTE}>Nothing new — the {detectState.returned} space
                     {detectState.returned > 1 ? 's' : ''} it found {detectState.returned > 1 ? 'are' : 'is'}
@@ -1472,47 +1826,48 @@ export default function OutlineTracer({
                         {o.detected && !o.reviewed ? 'found · ' : ''}{Math.round(st.areaSqft)} sqft
                       </span>
                     </div>
-                    <div className={META}>
-                      <span>{ftin(st.widthFt)} × {ftin(st.heightFt)} · {st.corners} cnr
-                        {/* WHICH ROWS THE FOOT'S OFFER IS ABOUT. A button that
-                            says "relight 2 changed spaces" and a list that does
-                            not say WHICH two is a button you have to trust; the
-                            mark is what makes the count checkable. Only shown
-                            over an existing design — before there is one, every
-                            outline is unlit and a column of "not lit" says
-                            nothing. */}
-                        {hasLayout && (dirtyIds.includes(o.id) && litIds.includes(o.id)
-                          ? <> · <b className="text-white">changed</b></>
-                          : !litIds.includes(o.id) ? <> · not lit</> : null)}
-                      </span>
-                      <span onClick={(e) => e.stopPropagation()}>
-                        <label className={MINI} title="Force right angles on this outline">
-                          <input type="checkbox" className="lp-check" checked={o.rectify}
-                            onChange={(e) => onUpdateOutline(o.id, { rectify: e.target.checked })} />
-                          square
-                        </label>
-                        <button className={BTN_TINY} title="Rename"
-                          onClick={() => setRenaming(o.id)}>✎</button>
-                      </span>
-                    </div>
-                    {o.enclosingPx?.length > 0 && (
-                      <p className={`${NW} mt-0.5`}>
-                        {o.enclosingPx.length} space{o.enclosingPx.length > 1 ? 's sit' : ' sits'} wholly
-                        inside this one, so it cannot be subtracted — the inner
-                        {o.enclosingPx.length > 1 ? ' spaces are' : ' space is'} held out of this
-                        ceiling instead. Drag a corner of the inner space out to a wall and it
-                        will be subtracted properly.
-                      </p>
-                    )}
-                    {o.note && !o.enclosingPx?.length && (
-                      <p className={`${N} mt-0.5`}>{o.note}</p>
-                    )}
-                    {o.rectify && st.movedFt > 0.08 && (
-                      <p className={`${N} mt-0.5`}>
-                        Squaring moved a corner {(st.movedFt * 12).toFixed(0)}″ — the dashed
-                        line on the plan is what you clicked.
-                      </p>
-                    )}
+                    {/* --- A NAME AND AN AREA, AND THAT IS THE WHOLE ROW ---
+                        THE SECOND LINE IS GONE. It carried the width × height,
+                        the corner count, a "square" checkbox and a rename
+                        pencil — four things about how an outline was MADE,
+                        stacked under the two things that say WHICH outline it
+                        is. On this screen the list is a way of pointing at a
+                        space on the drawing, and every one of those four was
+                        answering a question nobody asks while pointing.
+                        WHAT IS LOST AND WHERE IT WENT. The dimensions and the
+                        corner count are on the drawing itself the moment a row
+                        is selected — that is what selecting one is for.
+                        Renaming is still here, on a double-click of the name,
+                        which is the same gesture it always was; the pencil was
+                        a second door onto it. Squaring stays a property of the
+                        outline and stays honoured, it is simply no longer
+                        toggled from a 10px checkbox in a list.
+                        THE lit/changed MARK WENT WITH THE LINE. The foot names
+                        its own counts and the button says what it will relight;
+                        a per-row echo of that was the same fact twice. */}
+                    {/* --- AND NEITHER NOTE IS THE READER'S BUSINESS -------
+                        THE BOOLEAN PASS WAS REPORTING ITS OWN WORKING. `o.note`
+                        is assembled in roomBooleans.js and reads "1 room
+                        subtracted, 2 offcuts dropped" or "could not be
+                        subtracted (…)" — the log of how one polygon was cut out
+                        of another, printed under a room's name. Subtraction is
+                        an implementation detail of turning overlapping
+                        proposals into disjoint spaces; whether it succeeded
+                        changes nothing anybody does on this screen, and naming
+                        a failure they cannot act on only asks them to worry
+                        about it.
+                        THE ENCLOSING WARNING WENT WITH IT, and it is the same
+                        subject in longer form — "N spaces sit wholly inside
+                        this one, so it cannot be subtracted". What it asked for
+                        was a corner dragged out to a wall to make the geometry
+                        subtractable, which is the user doing the pass's job for
+                        it. The inner spaces are held out of the ceiling either
+                        way, so the drawing is right whether or not anybody
+                        reads this.
+                        THE DATA IS UNTOUCHED. `enclosingPx` still becomes the
+                        no-light zones downstream — see roomsDetect.js — and
+                        `note` still rides in `why`, which is where the working
+                        belongs: the admin panel. */}
                   </div>
                 ))}
                 </div>
@@ -1522,16 +1877,22 @@ export default function OutlineTracer({
                   onChange={(e) => setShowGrips(e.target.checked)} />
                 Show corner grips
               </label>
-              {onRedetect && (
-                <button className={`${BTN_FULL} mt-1.5`}
-                  disabled={detectState?.status === 'running'}
-                  onClick={onRedetect}>Look again</button>
-              )}
             </div>
           )}
 
           {/* --- tracing --------------------------------------------------- */}
-          {!doorScreen && (<>
+          {!stepScreen && (<>
+          {/* --- AND ONLY WHEN IT HAS SOMETHING IN IT ----------------------
+              THE IDLE STATE WAS A HEADING OVER A SENTENCE. "Trace" and then
+              "Start tracing with cursor to add another space" — a section that
+              held no control, took the height of one, and described a gesture
+              that works whether or not it is described. Tracing is what a click
+              on the drawing already does; the section is worth its space once
+              there is a draft to undo, close or start over, and not before.
+              THE OTHER THREE BRANCHES ARE REAL and keep it open: the scale is
+              not set, a measurement is being taken, or the last close was
+              refused. Each of those is a thing the panel has to say. */}
+          {(tracing || !hasScale || measuring || problem) && (
           <div className={SEC}>
             <h3 className={H3}>{tracing ? `Tracing — ${draft.length} corner${draft.length > 1 ? 's' : ''}` : 'Trace'}</h3>
             {tracing ? (
@@ -1551,11 +1912,10 @@ export default function OutlineTracer({
               <p className={NOTE}>{scaleUI?.measure?.b
                 ? <>Press <b>Use this measurement</b> to go back to tracing.</>
                 : <>Click the two ends of your reference on the plan.</>}</p>
-            ) : (
-              <p className={NOTE}>Start tracing with cursor to add another space</p>
-            )}
+            ) : null}
             {problem && <p className={NOTE_WARN}>{problem}</p>}
           </div>
+          )}
 
           {/* --- snapping -------------------------------------------------- */}
           <div className={SEC}>
@@ -1663,7 +2023,12 @@ export default function OutlineTracer({
       <div className="sticky bottom-0 mt-[18px] flex items-center gap-3.5
         px-0.5 py-3.5">
         <div className="flex-1 text-muted text-[12px]">
-          {measuring
+          {idScreen
+            ? <>{doorMove ? <>Moving a door box.</>
+                : doorBand ? <>Drawing a door box.</>
+                : doorSel ? <>A box is selected — drag it, or press Delete.</>
+                : <>Draw a box over any door that was missed.</>}</>
+            : measuring
             ? <>{scaleUI?.measure?.b
                   ? <>Measured {Math.round(measureLen)} px — that makes it
                       {' '}{describeScale(pxPerFt)}. Check the reference in the panel is
@@ -1698,11 +2063,21 @@ export default function OutlineTracer({
                                 lit yet. Nothing already lit has changed.</>
                             : <>Nothing has changed. The design is as you left it.</>}</>
                   : outlines.length
-                    ? <>{outlines.length} outline{outlines.length > 1 ? 's' : ''} on the plan.
-                        Nudge the corners, then light the lot.</>
+                    /* NOTHING TO SAY WHEN THE LIST ALREADY SAYS IT. This read
+                       "N outlines on the plan. Nudge the corners, then light
+                       the lot." — a count the panel prints beside every row,
+                       followed by an instruction for two gestures that are
+                       already the only two gestures on the screen. The foot
+                       still speaks for every state where something is HAPPENING
+                       (measuring, picking a door, tracing, dragging a corner,
+                       a space selected); standing still, it is quiet. */
+                    ? null
                     : <>Nothing traced yet. Click a corner on the plan to start.</>}
         </div>
-        {measuring ? (
+        {/* NO BUTTON IN THE FOOT ON THE DOOR STEP. The panel's own full-width
+            answer is the one act on that screen, and a second copy of it down
+            here would be two primaries in one corner. */}
+        {idScreen ? null : measuring ? (
           <button className={BTN_PRIMARY} disabled={!scaleUI?.measure?.b}
             onClick={() => setMeasureDone(true)}>
             Use this measurement →

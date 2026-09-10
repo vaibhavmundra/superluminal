@@ -34,7 +34,7 @@ export default function ProjectTypeDialog({ planName, onPick, busy = null, note 
   // split: the alternative is a copy of the markup here that drifts.
   if (busy) return <BusyModal line={busy} note={note} />;
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]">
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(0,0,0,.34)] backdrop-blur-[3px]">
       <div className="w-[min(520px,calc(100vw-40px))] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-pop">
         <>
           <h2 className="m-0 mb-1.5 text-[17px] tracking-[-0.01em]">What are you planning?</h2>

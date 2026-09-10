@@ -29,10 +29,23 @@ import { trackFixtureFor } from './boq.js';
    the ambient level it needs. A room that lights itself the instant you open it
    has answered the question before it was asked.
 
-   So a space now starts EMPTY, and the question the panel asks is what the room
-   IS: how high the ceiling is, and what the three surfaces are finished in.
-   Suggestions come back later, and when they do it is this constant that turns
-   them on.
+   So a space starts EMPTY, and the question the panel asks is what the room IS:
+   how high the ceiling is, and what the three surfaces are finished in.
+
+   AND THE SUGGESTIONS ARE BACK NOW, BEHIND A SWITCH — which is exactly what
+   this constant said would happen to it. `layers.autoLights` is that switch:
+   the capsule over the drawing labelled Auto Place Lights, threaded down here
+   through `usePlanScene` so that the ENGINE answers to it and not merely the
+   canvas. A layer that gated the drawing alone could not do this job, and that
+   is worth stating because it looked like it could: what such a layer hides and
+   shows is `plan.lightsPx`, and the blanking below has already emptied that —
+   so the switch drew nothing whichever way it was thrown.
+
+   IT IS NOT `layers.lights`, WHICH IS THE MASTER OVER EVERY FITTING ON THE
+   SHEET. That one is visibility and nothing else: a hand-placed COB hidden by
+   it is still in the schedule, and the engine's grid has to behave the same
+   way. So placement follows `autoLights` on its own, and the canvas keeps
+   nesting the two — see PlanCanvas.
 
    IT SUPPRESSES THE ANSWER, NOT THE MACHINE. `planCeilingDesign` still runs and
    is still handed everything it always was — it is what produces the room's
@@ -47,15 +60,19 @@ import { trackFixtureFor } from './boq.js';
    never came from the grid. A tool in the rail that did nothing would be worse
    than no tool.
    --------------------------------------------------------------------------- */
-const AUTO_GRID = false;
-
 export function layoutRooms(input) {
   const {
     source, pxPerFt, litOutlines, useBoundingRect, ceilingObstaclesPx, zoneList,
     zones, reverseCoveZones, chunkOpt, chunkPicks, opt, enclosedZones, roomTypes,
     projectId, designPicks, ceilingKinds, ceilingShapes, lightMoves, manualTracks,
-    isAdmin,
+    isAdmin, autoLights,
   } = input;
+  /* THE SWITCH, READ ONCE PER LAYOUT — see the memo at the top of this file.
+     A PLAIN BOOLEAN CAST AND NOT `!== false`, because the caller hands in a
+     layer out of an object that has been merged over LAYER_DEFAULTS, so the key
+     is always present and always an answer somebody gave. See `layers` in
+     useViewPrefs for why that merge is the thing that makes this safe. */
+  const AUTO_GRID = !!autoLights;
     if (!source || !pxPerFt || !litOutlines.length) return [];
     const out = [];
 

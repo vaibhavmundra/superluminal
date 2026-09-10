@@ -76,7 +76,7 @@ export default function Paywall({ refusal, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]"
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(0,0,0,.34)] backdrop-blur-[3px]"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>
       <div className="w-[min(760px,94vw)] bg-surface border border-border rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]">
         {done ? (

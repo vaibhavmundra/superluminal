@@ -42,7 +42,7 @@ const LAYER_ROWS = [
 const SEC = 'border-t border-border pt-3.5 mt-2.5 first-of-type:border-t-0 first-of-type:mt-0 first-of-type:pt-0';
 const SEC_H3 = 'm-0 mb-2.5 text-[10px] tracking-[0.11em] uppercase text-subtle';
 const NOTE = 'text-[11.5px] text-muted leading-[1.5] mt-2';
-const BTN = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
+const BTN = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
 
 /* THE UPLOAD'S OWN KIND, from its own name — DXF, PDF, JPG, whatever they
    brought. Said rather than assumed, because "the original" is a different file

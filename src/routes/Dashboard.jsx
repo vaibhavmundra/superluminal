@@ -88,7 +88,7 @@ export default function Dashboard() {
   return (
     <div className="grid grid-cols-[56px_1fr] h-full">
       <ProfileRail />
-      <div className="overflow-y-auto pt-[26px] px-[30px] pb-[60px] w-full"
+      <div className="overflow-y-auto pb-[60px] w-full"
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files?.[0]); }}
@@ -100,30 +100,32 @@ export default function Dashboard() {
             silently refused a dropped drawing. The measure belongs to the
             content: 1180px, centred, so it sits under the eye instead of
             hugging the rail on a wide display. */}
-        <div className="w-full max-w-[1180px] mx-auto">
-          <header className="flex items-end justify-between gap-5 mt-[6px] mb-[26px]">
-            <div>
-              <h1 className="m-0 text-[26px] tracking-[-0.03em]">Projects</h1>
-              <p className="mt-1.5 mb-0 text-muted text-[12.5px]">
-                {projects == null ? 'Loading…'
-                  : projects.length ? `${projects.length} project${projects.length > 1 ? 's' : ''}`
-                  : 'A project holds every plan for one building.'}
-              </p>
-            </div>
-            <div className="flex gap-1.5 flex-wrap">
-              {/* THE ACCENT RAMP, because starting a project is the one thing this
-                  screen is for. It was demoted to a quiet button back when a black
-                  "drop a drawing" CTA sat beside it; the recent strip and that
-                  second CTA are both gone, so there is no longer a competing act
-                  for it to defer to.
-                  AND IT KEEPS THE BLUR. The ramp is a background IMAGE, so the
-                  glass under it still reads at the edges — a solid pill would be
-                  the one opaque object on a frosted page. */}
-              <button className="text-[12px] px-3 py-[7px] rounded border border-white bg-white text-black hover:bg-text hover:border-text cursor-pointer transition-colors duration-[120ms]" onClick={() => setNewProject(true)}>
-                <span className="text-[1.18em] leading-none relative top-[0.055em] mr-px" aria-hidden="true">+</span> New Project
-              </button>
-              <input ref={fileRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
-                onChange={(e) => upload(e.target.files?.[0])} />
+        <div className="w-full">
+          <header className=" bg-[#0a0a0a]  mb-[26px] px-8 py-8 border-b border-border/10">
+            <div className='flex items-center justify-between gap-5'>
+              <div>
+                <h1 className="m-0 text-[36px] text-white tracking-[-0.03em]">Projects</h1>
+                <p className="mt-1.5 mb-0 text-white text-[12.5px]">
+                  {projects == null ? 'Loading…'
+                    : projects.length ? `${projects.length} project${projects.length > 1 ? 's' : ''}`
+                    : 'A project holds every plan for one building.'}
+                </p>
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {/* THE ACCENT RAMP, because starting a project is the one thing this
+                    screen is for. It was demoted to a quiet button back when a black
+                    "drop a drawing" CTA sat beside it; the recent strip and that
+                    second CTA are both gone, so there is no longer a competing act
+                    for it to defer to.
+                    AND IT KEEPS THE BLUR. The ramp is a background IMAGE, so the
+                    glass under it still reads at the edges — a solid pill would be
+                    the one opaque object on a frosted page. */}
+                <button className="text-[12px] px-3 py-[7px] rounded border border-white bg-white text-black hover:bg-text hover:border-text cursor-pointer transition-colors duration-[120ms]" onClick={() => setNewProject(true)}>
+                  <span className="text-[1.18em] leading-none relative top-[0.055em] mr-px" aria-hidden="true">+</span> New Project
+                </button>
+                <input ref={fileRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
+                  onChange={(e) => upload(e.target.files?.[0])} />
+              </div>
             </div>
           </header>
 
@@ -155,10 +157,10 @@ export default function Dashboard() {
               thing this account actually has in it, with the list itself pushed
               under the fold on a laptop. So the claim is dropped and the
               invitation sits at its natural height instead. */}
-          <section className={'mb-[34px]'
+          <section className={'mb-[34px] max-w-[1180px] mx-auto'
             + (projects?.length === 0 && !shared?.length
               ? ' min-h-[min(58vh,560px)] flex items-center justify-center' : '')}>
-            {projects?.length !== 0 && <h3 className="m-0 mb-3 text-[10px] tracking-[0.11em] uppercase text-subtle">All projects</h3>}
+            {projects?.length !== 0 && <h3 className="m-0 mb-3 text-[10px] tracking-[0.11em] uppercase text-white">All projects</h3>}
             {projects == null ? (
               <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3.5">{[0, 1, 2].map((i) => <div key={i} className="h-[150px] rounded-lg bg-white/5 border border-border/10 backdrop-blur-[5px] animate-[sl-breathe_1.6s_ease-in-out_infinite]" />)}</div>
             ) : projects.length === 0 ? (
@@ -185,7 +187,7 @@ export default function Dashboard() {
             ) : (
               <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3.5">
                 {projects.map((p) => (
-                  <article key={p.id} className="bg-surface backdrop-blur-[5px] border border-border/10 rounded-lg overflow-hidden cursor-pointer flex flex-col transition-[border-color,background-color,box-shadow] duration-[120ms] hover:bg-white/10 hover:border-border/10 hover:shadow-pop focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                  <article key={p.id} className="bg-surface pt-20 backdrop-blur-[5px] border border-border/10 rounded-lg overflow-hidden cursor-pointer flex flex-col transition-[border-color,background-color,box-shadow] duration-[120ms] hover:bg-white/10 hover:border-border/10 hover:shadow-pop focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
                     onClick={() => nav(`/projects/${p.id}`)} role="button" tabIndex={0}
                     onKeyDown={(e) => { if (e.key === 'Enter') nav(`/projects/${p.id}`); }}>
                     <div className="py-[13px] px-3.5 pt-[15px] flex-1">
@@ -229,7 +231,7 @@ export default function Dashboard() {
               you can only read, and finding that out by trying to move a fitting
               is finding it out too late. */}
           {shared?.length > 0 && (
-            <section className="mb-[34px]">
+            <section className="mb-[34px] max-w-[1180px] mx-auto">
               <h3 className="m-0 mb-3 text-[10px] tracking-[0.11em] uppercase text-subtle">
                 Shared with me
               </h3>

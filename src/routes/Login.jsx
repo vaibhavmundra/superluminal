@@ -143,7 +143,7 @@ export default function Login() {
                 placeholder="you@studio.com" value={email}
                 className="h-field-h px-3.5 py-0 text-[14px]"
                 onChange={(e) => setEmail(e.target.value)} />
-              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-white bg-white text-black inline-flex items-center justify-center cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-40 disabled:cursor-not-allowed mt-2 w-full"
+              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-white bg-white text-black inline-flex items-center justify-center cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-100 disabled:cursor-not-allowed mt-2 w-full"
                 type="submit" disabled={busy || !email.trim()}>
                 {busy ? 'Sending…' : 'Send the code'}
               </button>
@@ -164,7 +164,7 @@ export default function Login() {
                 autoComplete="one-time-code" maxLength={6} placeholder="••••••"
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
-              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-white bg-white text-black inline-flex items-center justify-center cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-40 disabled:cursor-not-allowed mt-2 w-full"
+              <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-white bg-white text-black inline-flex items-center justify-center cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-100 disabled:cursor-not-allowed mt-2 w-full"
                 type="submit" disabled={busy || code.length < 6}>
                 {busy ? 'Checking…' : 'Continue'}
               </button>

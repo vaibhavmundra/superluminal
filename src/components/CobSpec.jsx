@@ -125,6 +125,9 @@ export default function CobSpec({
      contextual bar in particular, and they are on whichever one happens to be up
      so that there is never a second pill beside this one saying it. */
   tail = null,
+  /* ...AND THE VIEW SWITCHES AT THE NEAR END, on the same terms: whatever this
+     bar is currently doing, `lead` is there. See StageBar's three slots. */
+  lead = null,
   onWatts, onBeam, onRecommended, onThis, onAll, onKeep, onDiscard,
   onCount, onSide, onOffset, onPlaceArray, onDeleteArray,
 }) {
@@ -154,7 +157,7 @@ export default function CobSpec({
        optics — so it was the one that hit the cap and split, and a contextual
        bar in two rows is a bar whose buttons move under your finger as you use
        it. It grows sideways instead; see the note on `flex-nowrap` in StageBar. */
-    <StageBar stage={stage} tail={tail} label="Downlight">
+    <StageBar stage={stage} lead={lead} tail={tail} label="Downlight">
 
       {/* --- WHAT THE ARRAY IS BEING SET OUT ON, AND HOW ------------------
           AHEAD OF THE SPECIFICATION, because it is the question that comes

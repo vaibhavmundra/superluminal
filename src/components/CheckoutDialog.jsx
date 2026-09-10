@@ -64,7 +64,7 @@ export default function CheckoutDialog({ tier, defaults = {}, busy = false, erro
   };
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(20,20,28,.34)] backdrop-blur-[3px]"
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(0,0,0,.34)] backdrop-blur-[3px]"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel?.(); }}>
       <form className="w-[min(420px,94vw)] bg-surface border border-border rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]" onSubmit={submit}>
 
@@ -125,10 +125,10 @@ export default function CheckoutDialog({ tier, defaults = {}, busy = false, erro
         {error && <p className="text-[11.5px] leading-[1.5] text-danger-ink border-l-2 border-danger pl-[9px] mt-[14px]">{error}</p>}
 
         <div className="flex justify-end gap-2 mt-6">
-          <button type="button" className="text-xs px-3 py-[7px] rounded border border-border-strong bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
+          <button type="button" className="text-xs px-3 py-[7px] rounded border border-border-strong bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-40 disabled:cursor-not-allowed" disabled={!ready}>
+          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-100 disabled:cursor-not-allowed" disabled={!ready}>
             {busy ? 'Opening…' : `Pay ${price} and continue`}
           </button>
         </div>

@@ -28,9 +28,9 @@ const NOTE_WARN = 'text-[11.5px] leading-[1.5] text-muted border-l-2 border-bord
 const NOTE_ERR = 'text-[11.5px] leading-[1.5] text-danger-ink border-l-2 border-danger pl-[9px]';
 const KV = 'flex justify-between text-[11.5px] py-[3px] text-muted';
 const KV_B = 'text-ink tabular-nums';
-const BTN = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
-const BTN_PRIMARY = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-40 disabled:cursor-not-allowed';
-const BTN_TINY = 'border border-border rounded bg-surface text-ink cursor-pointer px-[5px] py-0 text-[11px] leading-[1.5] transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
+const BTN = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-border bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
+const BTN_PRIMARY = 'text-xs leading-[1.5] px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-100 disabled:cursor-not-allowed';
+const BTN_TINY = 'border border-border rounded bg-surface text-ink cursor-pointer px-[5px] py-0 text-[11px] leading-[1.5] transition-colors duration-[120ms] hover:bg-surface-2 hover:border-border-strong active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed disabled:hover:bg-surface disabled:hover:border-border';
 
 export default function AccentPanel({
   rooms = [], roomId, onRoomChange, sent = null,
