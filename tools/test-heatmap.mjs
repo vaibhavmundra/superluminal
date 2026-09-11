@@ -49,6 +49,7 @@ import { buildRoomGeometry, solveRoom, directPass } from '../src/features/heatma
 import { MAX_BOUNCES, BOUNCE_STOP } from '../src/features/heatmap/reflection.js';
 import { buildRoomEmitters, indexAnalysisRows,
          inwardOfRun } from '../src/features/heatmap/emitters.js';
+import { gridRowKey } from '../src/features/lighting-planner/lightingRules.js';
 import { colourFor, parseColour, readHeatmapPalette, heatmapOpacity,
          HEATMAP_OPACITY, HEATMAP_OPACITY_NIGHT } from '../src/features/heatmap/colours.js';
 import { HEATMAP_BANDS, HEATMAP_PLANE, HEATMAP_TARGET_LUX,
@@ -802,6 +803,36 @@ sec('12. the adapter reads the app\'s own lists and invents nothing');
   const placed = sources.find((s) => s.profileId === 'cob' && s.beamDeg === 24);
   ok('a hand-placed lamp takes its own beam and its own row\'s output',
     placed && placed.lm === 900);
+
+  /* --- AND A GRID LAMP TAKES ITS OWN ROW TOO, WHICH IT DID NOT ------------
+     THIS BLOCK READ ONE FIGURE FOR THE WHOLE GRID — `perUnitOf(rows, 'cob')`,
+     hoisted out of the loop — which was right exactly as long as one row covered
+     every downlight in the room. Each has its own row now, keyed by its cell
+     (see `gridRowKey`), so a lamp somebody set to 12 W throws what it draws and
+     the ones beside it do not change with it. That is the whole of the bug this
+     guards: setting one downlight's wattage moved all of them.
+     THE FIXTURE ABOVE CARRIES NO `cellKey`, so it exercises the fallback to the
+     shared row; this one names two cells and gives them different outputs. */
+  const named = buildRoomEmitters({
+    room: { ...room, geo: { ...room.geo, fansInRoom: [] },
+      plan: { ok: true, lightsPx: [
+        { id: 'A', cellKey: '0,0,6,7', fixture: 'small', x: ftPx(5), y: ftPx(4) },
+        { id: 'B', cellKey: '6,0,12,7', fixture: 'small', x: ftPx(15), y: ftPx(4) },
+        { id: 'C', fixture: 'small', x: ftPx(5), y: ftPx(9) }] } },
+    analysis: { rows: [
+      { key: gridRowKey('0,0,6,7'), familyId: 'cob', count: 1, metres: null,
+        totalOutput: 525, beam: null },
+      { key: gridRowKey('6,0,12,7'), familyId: 'cob', count: 1, metres: null,
+        totalOutput: 900, beam: null },
+      { key: 'cob', familyId: 'cob', count: 1, metres: null,
+        totalOutput: 300, beam: null }] },
+    metresPerPx, ceilingMm: 2700,
+  }).filter((q) => q.profileId === 'cob');
+  ok('two grid lamps at two wattages throw two different outputs',
+    named.length === 3 && named[0].lm === 525 && named[1].lm === 900,
+    named.map((q) => q.lm).join(','));
+  ok('...and a lamp the grid could not name falls back to the shared row',
+    named[2].lm === 300);
   const spot = sources.find((s) => s.profileId === 'spot');
   ok('a spot is AIMED, at the point the placer chose',
     spot.aim && spot.aim.z < 0 && spot.aim.x > 0 && spot.aim.y > 0);

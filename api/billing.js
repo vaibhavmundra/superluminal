@@ -76,6 +76,121 @@ const REGIONAL_PRICES = {
             display: '$10' },
 };
 
+/* --- A TEMPORARY HOOK: WHO IS TRYING TO SUBSCRIBE, AND FROM WHERE ----------
+ *
+ * IT IS MARKET RESEARCH AND IT SAYS SO. Nothing downstream reads it, no column
+ * records it and no behaviour depends on it: it exists so the owner can see
+ * which market the buyers are actually in before committing to the pricing. It
+ * is meant to be removed, which is why it is one function and one constant
+ * rather than a feature threaded through the module.
+ *
+ * THE OFF SWITCH IS AN ENV VAR AND NOT A CODE CHANGE, which is the whole of what
+ * makes "temporary" true. `SUBSCRIBE_ALERT_TO=` — set and empty — stops it dead
+ * on the next deploy; unset, it goes to the address below. `??` and not `||`, so
+ * an empty string is the OFF answer rather than a missing one that falls back to
+ * the default and cannot be turned off at all.
+ */
+const ALERT_TO = (process.env.SUBSCRIBE_ALERT_TO ?? 'vaibhav@designopolis.co.in').trim();
+const ALERT_FROM = process.env.RESEND_FROM_EMAIL
+  || 'Super Luminal <hello@superluminal.design>';
+const RESEND_KEY = process.env.RESEND_API_KEY || '';
+
+const escHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+
+/**
+ * WHAT THE NOTICE SAYS — pure, so it can be checked without a network.
+ *
+ * ONE LINE PER FACT AND THE PRICE IN THE SUBJECT, because the subject line is
+ * the whole of what this is for: a phone showing "Subscribe attempt — ₹499
+ * (india)" has already answered the question on the lock screen.
+ *
+ * A MISSING PHONE SAYS SO RATHER THAN LEAVING A BLANK. The field is optional at
+ * the checkout (see CheckoutDialog), and an empty line beside "Phone" reads as
+ * a bug in this email rather than as a person who did not type one.
+ */
+function subscribeAlert({ name, email, contact, pricing, mode, userId, at }) {
+  const price = `${pricing.display} / month`;
+  const where = pricing.country ? `${pricing.market} (${pricing.country})` : pricing.market;
+  const rows = [
+    ['Email', email || 'not given'],
+    ['Phone', contact || 'not given'],
+    ['Name', name || 'not given'],
+    ['Price', `${price} — ${pricing.currency}`],
+    ['Market', where],
+    ['Checkout', mode],
+    ['Account', userId || 'unknown'],
+    ['When', at],
+  ];
+  return {
+    subject: `Subscribe attempt — ${pricing.display} (${pricing.market})`,
+    text: 'Someone just tried to start a Studio subscription.\n\n'
+      + rows.map(([k, v]) => `${k}: ${v}`).join('\n')
+      + '\n\nThis is the temporary market-research notice. '
+      + 'Set SUBSCRIBE_ALERT_TO to an empty value to stop it.',
+    html: `<p>Someone just tried to start a Studio subscription.</p>`
+      + `<table cellpadding="4" style="border-collapse:collapse;font:14px system-ui">`
+      + rows.map(([k, v]) =>
+          `<tr><td style="color:#666">${escHtml(k)}</td><td><strong>${escHtml(v)}</strong></td></tr>`).join('')
+      + `</table>`
+      + `<p style="color:#666;font-size:12px">Temporary market-research notice. `
+      + `Set <code>SUBSCRIBE_ALERT_TO</code> to an empty value to stop it.</p>`,
+  };
+}
+
+/**
+ * ...AND SEND IT. IT CANNOT FAIL A CHECKOUT AND IT CANNOT SLOW ONE DOWN MUCH.
+ *
+ * EVERY ERROR IS SWALLOWED. Somebody is standing at a payment form; a Resend
+ * outage, a bad key or a DNS blip must not be the reason they cannot pay. The
+ * failure is logged and the checkout carries on, because the notice is worth
+ * strictly less than the sale it is telling us about.
+ *
+ * AWAITED, AND NOT FIRED AND FORGOTTEN. A promise left running after a
+ * serverless function has answered is a promise the platform may freeze — so a
+ * fire-and-forget notice is one that silently does not arrive, which for a hook
+ * whose entire output is "did anyone try" is the one failure that matters.
+ * FIVE SECONDS, which is well inside the two Razorpay round trips this sits in
+ * front of, and short enough that a hung Resend costs a pause rather than a
+ * timeout.
+ *
+ * BEFORE THE RAZORPAY CALLS AND NOT AFTER, which is the placement that answers
+ * the question being asked. "Someone tried" is true the moment they press the
+ * button; a notice sent after the subscription is created would miss exactly the
+ * attempts that failed — no plan id, payments not switched on, Razorpay down —
+ * and those are the ones the owner most needs to see.
+ */
+async function notifySubscribeAttempt(details) {
+  if (!ALERT_TO || !RESEND_KEY) return;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 5000);
+  try {
+    const mail = subscribeAlert(details);
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: ALERT_FROM,
+        to: [ALERT_TO],
+        // SO A REPLY GOES TO THE PERSON RATHER THAN TO THE APP, which is the one
+        // thing the owner will want to do with this email.
+        ...(details.email ? { reply_to: details.email } : {}),
+        subject: mail.subject, text: mail.text, html: mail.html,
+      }),
+      signal: ctl.signal,
+    });
+    if (!res.ok) {
+      console.warn('[billing] subscribe alert not sent:', res.status,
+        (await res.text()).slice(0, 200));
+    }
+  } catch (err) {
+    console.warn('[billing] subscribe alert failed:', err?.message || err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Vercel supplies an ISO country code. Missing locally means global/USD. */
 function pricingFor(req) {
   const raw = req?.headers?.['x-vercel-ip-country']
@@ -332,6 +447,15 @@ async function checkoutAction(user, body, pricing) {
   // reason verifyAction is allowed to believe them.
   const notes = { owner: user.id, tier: 'studio', market: pricing.market,
                   currency: pricing.currency, email, app: 'super-luminal' };
+
+  /* THE TEMPORARY MARKET-RESEARCH NOTICE — see `notifySubscribeAttempt`, which
+     carries the argument for why it is awaited and why it is HERE rather than
+     after the subscription exists. Nothing below it depends on it and it cannot
+     throw. */
+  await notifySubscribeAttempt({
+    name, email, contact, pricing, mode: RZP_MODE, userId: user.id,
+    at: new Date().toISOString(),
+  });
 
   if (RZP_MODE === 'subscription') {
     const planId = PLAN_IDS[pricing.market];
@@ -902,5 +1026,10 @@ export default async function handler(req, res) {
 
 // Exported for tools/test-billing.mjs, which exercises the signature and the
 // month arithmetic without a network.
-export const __test = { hmac: (p) => hmac(p), sameSig, addMonth, amountMinor, tierOf,
+/* `subscribeAlert` IS IN HERE AND THE SENDER IS NOT. The body is pure and is
+   asserted in tools/test-billing.mjs; the sender is a `fetch` that swallows
+   every error by design, so there is nothing for a test to hold it to that the
+   swallowing does not already guarantee. */
+export const __test = { subscribeAlert,
+  hmac: (p) => hmac(p), sameSig, addMonth, amountMinor, tierOf,
                         pricingFor, pricingForPlan, RELEASE_WINDOW_MS };

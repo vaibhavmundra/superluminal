@@ -67,7 +67,7 @@ export default function CheckoutDialog({ tier, pricing = null, defaults = {}, bu
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-[rgba(0,0,0,.34)] backdrop-blur-[3px]"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel?.(); }}>
-      <form className="w-[min(420px,94vw)] bg-surface border border-border rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]" onSubmit={submit}>
+      <form className="w-[min(420px,94vw)] bg-black border border-border rounded-[14px] px-[22px] pt-[22px] pb-5 shadow-[0_18px_50px_rgba(20,20,40,.18)]" onSubmit={submit}>
 
         {/* THE MASTHEAD. Centred, above everything, and the two lines are a
             hierarchy rather than a stack: the mark is what the user came for,
@@ -87,13 +87,9 @@ export default function CheckoutDialog({ tier, pricing = null, defaults = {}, bu
             and then "Designopolis logo" has read a caption and a filename. */}
         <div className="flex flex-col items-center gap-[7px] pt-0.5 pb-[18px] mb-[18px] border-b border-border">
           <Logo width={126} />
-          <span className="flex items-center gap-2">
-            <i className="not-italic text-[9.5px] tracking-[0.1em] uppercase text-faint">A product of</i>
-            <img src={HOUSE} alt="Designopolis" className="w-[84px] h-auto block" />
-          </span>
         </div>
 
-        <div className="flex items-start justify-between gap-4 bg-surface-3 rounded px-[14px] py-3 mb-5">
+        <div className="flex items-start justify-between gap-4 bg-black rounded px-[14px] py-3 mb-5">
           <div>
             <b className="block text-[13px] leading-[1.35]">{tier.name}</b>
             <span className="text-[11px] text-muted leading-[1.4]">{fmtAllowance(tier)}</span>
@@ -126,10 +122,10 @@ export default function CheckoutDialog({ tier, pricing = null, defaults = {}, bu
         {error && <p className="text-[11.5px] leading-[1.5] text-danger-ink border-l-2 border-danger pl-[9px] mt-[14px]">{error}</p>}
 
         <div className="flex justify-end gap-2 mt-6">
-          <button type="button" className="text-xs px-3 py-[7px] rounded border border-border-strong bg-surface text-ink cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 hover:border-ink active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
+          <button type="button" className="text-xs px-3 py-[7px] rounded bg-none text-white cursor-pointer transition-colors duration-[120ms] active:bg-surface-3 disabled:opacity-100 disabled:cursor-not-allowed" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-cta bg-cta text-white cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-100 disabled:cursor-not-allowed" disabled={!ready}>
+          <button type="submit" className="text-xs px-3 py-[7px] rounded border border-cta bg-white text-black cursor-pointer transition-colors duration-[120ms] hover:bg-cta-hover hover:border-cta-hover disabled:opacity-100 disabled:cursor-not-allowed" disabled={!ready}>
             {busy ? 'Opening…' : `Pay ${price} and continue`}
           </button>
         </div>

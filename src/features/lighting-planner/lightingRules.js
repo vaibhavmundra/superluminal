@@ -65,6 +65,23 @@ export function planTotals(rooms) {
 }
 
 /**
+ * THE ROW ONE OF THE GRID'S OWN DOWNLIGHTS IS.
+ *
+ * ONE FUNCTION SO THE TWO ENDS CANNOT DISAGREE. `fixtureGroups` builds the row
+ * and `highlightRows` has to name the same one from a selection on the drawing;
+ * two places composing the same string is how they come apart, and the symptom
+ * would be a lamp you can press that opens nothing.
+ *
+ * PREFIXED, because this key is STORED. It is what a chosen wattage is written
+ * against in `fixtureWatts` (see ROW_WATTS_SET), so it ends up in a saved plan
+ * beside a room's cove runs and its family choices — and `12.000,4.000,...`
+ * standing alone in that file says nothing about what it names.
+ *
+ * See `cellKey` in lib/planner.js for why the CELL and not the light.
+ */
+export const gridRowKey = (cellKey) => `cob@${cellKey}`;
+
+/**
  * WHAT IS ON THIS CEILING, COUNTED BY FAMILY — the input to the lumen model.
  *
  * COUNTING IS HERE AND THE ARITHMETIC IS IN lib/lumens.js, and the split is
@@ -93,6 +110,10 @@ export function planTotals(rooms) {
 export function fixtureGroups(r, {
   accentZonesPx, taskSpotsPx, cobArrays, arrayCobsPx,
   magTracksPx, trackModulesPx, manualCobs, pxPerFt,
+  /* WHAT THIS ROOM HAS ALREADY CHOSEN, which this function needs for exactly one
+     reason: a grid light's row opens at the figure the ROOM was set to before
+     these rows existed. See `gridRowKey` and the block that builds them. */
+  roomWatts = {},
 }) {
   const g = new Map();
   /* `key` IS THE ROW'S IDENTITY and `familyId` is what it is made of — see
@@ -151,8 +172,66 @@ export function fixtureGroups(r, {
      AND EACH OPENS AT ITS OWN CATALOGUE WATTAGE. A spot is a 5 W lamp and the
      grid's is 7 W — one row at one figure had to be wrong about one of them.
      See `defaultWatts` on the group and the note in `wattsFor`. */
-  const grid = r.plan?.ok ? r.plan.lights.length : 0;
-  if (grid) bump('cob', 'cob', grid, 0);
+  /* --- ...AND THE GRID'S OWN DOWNLIGHTS, ONE ROW EACH ---------------------
+     IT WAS ONE ROW FOR THE WHOLE GRID, AND THAT IS THE BUG THIS FIXES. Twelve
+     downlights were bumped as a single `cob` row on the counted-family rule —
+     "twelve COBs are one decision about COBs" — and the wattage chips under that
+     row wrote one figure into `fixtureWatts[roomId].cob`. So setting one lamp to
+     12 W set all twelve, because there was only ever one number and no way for a
+     second to exist. Reported as the engine changing every light in the room.
+
+     SO THE ROW IS THE FITTING, which is the rule this file already applies to a
+     hand-placed COB, to a module on a run and to a decorative lamp: a thing you
+     point at and specify on its own. Press a downlight on the drawing and the
+     panel opens the row that is about THAT lamp — `highlightRows` resolves the
+     same key from the same cell, which is what keeps the two ends together.
+
+     THE KEY IS THE CELL'S GEOMETRY AND NOT THE LIGHT'S ID, and that is the whole
+     of why this is safe to store. A light's `id` is an index into an array
+     rebuilt on every layout: add a fan, draw a cove, change the target cell size
+     and lamp 14 is a different piece of ceiling, so a wattage stored against it
+     would land on whatever lamp fell into that slot. `cellKey` is the rectangle
+     — see planner.js — so a cell that is still there keeps what was done to it
+     and one that is gone loses it, which is exactly the rule `lightMoves`
+     already follows for a position somebody dragged.
+
+     AND A LIGHT THE GRID CANNOT NAME KEEPS THE SHARED ROW. `cellKey` is null
+     where a light has no cell of its own, and a fitting with no stable handle
+     cannot carry an override — there is nowhere to put it that would survive the
+     next layout. It still has to be COUNTED, because it is a real lamp on a real
+     ceiling, so those fall together into the `cob` row this block used to be.
+
+     IT OPENS AT ITS OWN CATALOGUE FIGURE, which is a correction that comes free
+     with the split: a room mixing small lamps with a large one reported every
+     one of them at the family's 7 W, because one row could state only one figure.
+     A large downlight is a 12 W 60-degree fitting and a wet room's is 5 W at 30
+     — see FIXTURES in lib/boq.js — and each row now says so.
+     ...UNLESS THE ROOM WAS ALREADY SET, in which case that is the default. A
+     plan saved when this was one row holds `fixtureWatts[roomId].cob`, and a
+     reopened plan whose lamps all jumped back to the catalogue would be this
+     change quietly rewriting somebody's specification. The old figure is what
+     every lamp in that room falls back to, and any lamp set individually from
+     now on stores its own. */
+  const lightsPx = (r.plan?.ok && r.plan.lightsPx) || [];
+  const plain = r.plan?.ok ? r.plan.lights.length : 0;
+  if (plain && !lightsPx.length) bump('cob', 'cob', plain, 0);
+  let unnamed = 0;
+  for (const l of lightsPx) {
+    if (!l.cellKey) { unnamed += 1; continue; }
+    const key = gridRowKey(l.cellKey);
+    bump(key, 'cob', 1, 0);
+    const row = g.get(key);
+    row.label = 'Recessed COB';
+    row.cellKey = l.cellKey;
+    /* THE CATALOGUE LINE'S FIGURE, WITH THE ROOM'S OLD CHOICE IN FRONT OF IT.
+       `defaultWatts` is what the row reads with nothing stored against its own
+       key AND what "back to the default stores nothing" is measured against —
+       see `wattsFor` and ROW_WATTS_SET. Both have to be this number or a lamp
+       set back to what it already showed would write an override instead of
+       clearing one. */
+    row.defaultWatts = roomWatts.cob ?? FIXTURE_BY_ID[l.fixture]?.watts ?? null;
+  }
+  if (unnamed) bump('cob', 'cob', unnamed, 0);
 
   for (const sp of taskSpotsPx) {
     if (sp.roomId !== r.id || sp.rejected || sp.x == null) continue;
@@ -421,15 +500,22 @@ export function highlightRows({
       roomId = sp.roomId ?? roomId;
     }
   }
-  /* AND A GRID LIGHT LIGHTS THE GRID'S ROW. They are one row for the lot, so
-     clicking one of twelve marks the decision all twelve share — which is the
-     honest answer to "what is this fitting" for a lamp whose wattage cannot be
-     set on its own. */
+  /* AND A GRID LIGHT LIGHTS ITS OWN ROW, WHICH IT DID NOT. It pushed `'cob'` —
+     the one row the whole grid shared — so pressing any of twelve downlights
+     opened the same figure, and setting it there set all twelve. Each has its
+     own row now (see `fixtureGroups`), so this resolves the row for the lamp
+     that was actually pressed.
+     THE ID IS `<roomId>|<cellKey>`, which is exactly the pair this needs and is
+     set where the light is picked up on the canvas. The cell is the half after
+     the bar — and it is the half that names the row, through `gridRowKey`, so
+     this cannot drift from the block that built it.
+     A LAMP THE GRID COULD NOT NAME STILL OPENS THE SHARED ROW. `cellKey` is
+     null on a light with no cell of its own; those are counted together under
+     `cob` and that is the row to open for them. */
   if (selLightId) {
-    keys.push('cob');
-    /* THE ID IS `<roomId>|<cellKey>` — see where it is set on the canvas. The
-       room is the half before the bar, which is the only part this needs. */
-    roomId = String(selLightId).split('|')[0] || roomId;
+    const [room, cell] = String(selLightId).split('|');
+    keys.push(cell ? gridRowKey(cell) : 'cob');
+    roomId = room || roomId;
   }
   /* A DRAWN COVE IS SELECTED AS CEILING GEOMETRY, while the lights list knows
      it as the run of tape derived from that geometry. `shapeId` is the stable

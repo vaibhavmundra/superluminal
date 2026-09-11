@@ -18,7 +18,7 @@
  */
 import assert from 'node:assert/strict';
 import {
-  planTotals, fixtureGroups, highlightRows, troubleLines,
+  planTotals, fixtureGroups, highlightRows, troubleLines, gridRowKey,
   PREP_STEPS, stepsWanted, advanceTo, noteOn, allDone, withFails,
   loaderShapes, chunkOptionPicks,
 } from '../src/features/lighting-planner/lightingRules.js';
@@ -97,8 +97,54 @@ const lists = (over = {}) => ({
   assert.equal(by.get('sconce').count, 2, 'sold by the piece: one row for the lot');
   assert.ok(!by.has('z5'), 'another room’s run is not in this room');
   assert.ok(!by.has('z6'), 'a rejected run is not a fitting');
-  assert.equal(by.get('cob').count, 3, 'the ambient grid is one row');
+  /* THE GRID'S LAMPS CARRY NO CELL IN THIS FIXTURE, so they keep the shared row
+     — which is the rule for a lamp the grid cannot name. The block below is the
+     one that exercises the named ones. */
+  assert.equal(by.get('cob').count, 3, 'lamps with no cell of their own share a row');
   ok('fixtureGroups splits linear runs per run and counts pieces together');
+}
+
+/* --- EVERY DOWNLIGHT THE GRID CAN NAME IS ITS OWN ROW ----------------------
+   THIS IS THE ONE THE BUG WAS REPORTED AGAINST: "if I change one COB light's
+   wattage, then all others in that room change their wattage." They were one
+   row — twelve lamps, one set of chips, one entry in `fixtureWatts` — so there
+   was only ever one number and no second one could exist. */
+{
+  const cells = ['0,0,6,7', '6,0,12,7', '0,7,6,14'];
+  const r = room({ lights: [{}, {}, {}] });
+  r.plan.lightsPx = cells.map((cellKey, i) => ({
+    id: 'L' + i, cellKey, fixture: i === 2 ? 'large' : 'small' }));
+  const by = new Map(fixtureGroups(r, lists()).map((q) => [q.key, q]));
+
+  assert.ok(!by.has('cob'), 'the shared row is gone when every lamp can be named');
+  for (const c of cells) assert.equal(by.get(gridRowKey(c)).count, 1, `${c} is its own row`);
+  assert.equal(by.get(gridRowKey(cells[0])).familyId, 'cob', 'one family still');
+
+  /* EACH OPENS AT ITS OWN CATALOGUE FIGURE, which is a correction the split
+     brings with it: one row could state only one number, so a room mixing small
+     lamps with a large one reported every one of them at the family's 7 W. */
+  assert.equal(by.get(gridRowKey(cells[0])).defaultWatts, 7, 'a small lamp is a 7 W line');
+  assert.equal(by.get(gridRowKey(cells[2])).defaultWatts, 12, '...and a large one is 12 W');
+
+  /* ...UNLESS THE ROOM WAS ALREADY SET. A plan saved when this was one row holds
+     `fixtureWatts[roomId].cob`, and every lamp in it falls back to that figure —
+     a reopened plan whose lamps jumped to the catalogue would be this change
+     quietly rewriting somebody's specification. */
+  const old9 = new Map(fixtureGroups(r, lists({ roomWatts: { cob: 9 } }))
+    .map((q) => [q.key, q]));
+  for (const c of cells) {
+    assert.equal(old9.get(gridRowKey(c)).defaultWatts, 9,
+      'a plan saved at room level reopens at that figure');
+  }
+
+  /* AND A LAMP WITH NO CELL FALLS BACK TO THE SHARED ROW ALONGSIDE THEM. */
+  const mixed = room({ lights: [{}, {}] });
+  mixed.plan.lightsPx = [{ id: 'A', cellKey: '0,0,6,7', fixture: 'small' },
+                         { id: 'B', cellKey: null, fixture: 'small' }];
+  const bm = new Map(fixtureGroups(mixed, lists()).map((q) => [q.key, q]));
+  assert.equal(bm.get(gridRowKey('0,0,6,7')).count, 1);
+  assert.equal(bm.get('cob').count, 1, 'the unnamed one is still counted');
+  ok('fixtureGroups gives every named downlight a row of its own');
 }
 
 {
@@ -258,8 +304,18 @@ const lists = (over = {}) => ({
     { keys: ['spot'], roomId: 'r6' });
   assert.deepEqual(highlightRows({ ...base, selSpotId: 's2' }),
     { keys: ['art-spot'], roomId: 'r7' });
+  /* A GRID LIGHT LIGHTS ITS OWN ROW, AND IT USED TO LIGHT THE GRID'S. It pushed
+     `'cob'` — the row the whole grid shared — so pressing any of twelve
+     downlights opened one figure and setting it there set all twelve. The cell
+     names the row now; see `gridRowKey`, which both ends call so they cannot
+     compose it differently. */
   assert.deepEqual(highlightRows({ ...base, selLightId: 'r9|3,4' }),
-    { keys: ['cob'], roomId: 'r9' }, 'a grid light lights the grid’s row');
+    { keys: [gridRowKey('3,4')], roomId: 'r9' }, 'a grid light lights its own row');
+  /* ...AND A LAMP THE GRID COULD NOT NAME STILL OPENS THE SHARED ONE. A light
+     with no cell of its own has nowhere to store an override, so it is counted
+     under `cob` — and that is the row to open for it. */
+  assert.deepEqual(highlightRows({ ...base, selLightId: 'r9|' }),
+    { keys: ['cob'], roomId: 'r9' }, 'an unnamed lamp keeps the shared row');
   assert.deepEqual(highlightRows({ ...base, selShapeId: 'shape-1' }),
     { keys: ['cove-1'], roomId: 'r8' }, 'a drawn cove lights its exact run row');
   assert.deepEqual(highlightRows({ ...base, selShapeId: 'track-1' }),

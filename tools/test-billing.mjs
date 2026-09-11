@@ -64,6 +64,32 @@ ok('unknown Razorpay plans are rejected', billing.pricingForPlan('plan_other') =
 ok('Studio amounts are fixed in minor units',
   billing.amountMinor('studio', 'INR') === 49900 && billing.amountMinor('studio', 'USD') === 1000);
 
+/* --- THE TEMPORARY MARKET-RESEARCH NOTICE --------------------------------
+   IT IS MEANT TO BE REMOVED, so what is pinned is the two things that would be
+   silently wrong if it were not: that BOTH markets produce one, and that the
+   person's own details are in it. The sending is not tested — it is a `fetch`
+   that swallows every error by design — but the body is pure and is. */
+console.log('\nsubscribe alert (temporary hook)');
+const alertOf = (pricing, over = {}) => billing.subscribeAlert({
+  name: 'Asha Rao', email: 'asha@studio.in', contact: '919812345678',
+  pricing, mode: 'subscription', userId: 'u-123', at: '2026-09-11T10:04:00.000Z',
+  ...over });
+const inAlert = alertOf(india);
+const glAlert = alertOf(global);
+ok('the ₹499 button produces a notice naming its market',
+  inAlert.subject === 'Subscribe attempt — ₹499 (india)');
+ok('...and so does the $10 one',
+  glAlert.subject === 'Subscribe attempt — $10 (global)');
+ok('the notice carries the email and the phone — the whole point of it',
+  inAlert.text.includes('asha@studio.in') && inAlert.text.includes('919812345678'));
+ok('...and says so plainly when no phone was typed',
+  alertOf(global, { contact: '' }).text.includes('Phone: not given'));
+ok('the country rides along with the market',
+  inAlert.text.includes('india (IN)'));
+/* THE HTML IS MAIL AND THE NAME IS TYPED BY THE PERSON, so it is escaped. */
+ok('a typed name cannot inject markup into the email',
+  !alertOf(global, { name: '<script>x</script>' }).html.includes('<script>'));
+
 console.log('\nidentity and idempotency helpers');
 const outline = { planId: 'p1', points: [[0, 0], [10, 0], [10, 10]], pxPerFt: 10, sqft: 100 };
 ok('the same outline has the same fingerprint',

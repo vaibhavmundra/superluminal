@@ -105,9 +105,9 @@ export default function Home() {
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); accept(e.dataTransfer.files?.[0]); }}
       >
-        <h1 className="mb-[10px] text-[clamp(34px,4.4vw,72px)] leading-[1.04] tracking-[-0.035em] max-w-[22ch]">AI powered lighting layouts<br />in minutes</h1>
+        <h1 className="mb-[10px] text-[clamp(34px,4.4vw,72px)] leading-[1.04] tracking-[-0.035em] max-w-[22ch]">Create perfect lighting layouts,<br />every time</h1>
         <p className="mb-[26px] text-subtle max-w-[56ch] text-lg leading-[1.6]">
-          Developed by lighting designers. Superluminal turns any floor plan into a functional lighting layout in minutes.
+          The simplest tool to visualise how much lighting your project needs. Specify with confidence.
         </p>
 
         <div className="flex flex-col items-center gap-3">

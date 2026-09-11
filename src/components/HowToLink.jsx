@@ -32,7 +32,40 @@ import { useEscapeClaim } from '../hooks/useEscapeHatch.js';
 // the menu items get, and the icon carries the recognition on its own.
 // ---------------------------------------------------------------------------
 
-const VIDEO_ID = 'zHTkpmv6fB4';
+/* ===========================================================================
+   THE TWO THINGS ANYONE EVER NEEDS TO EDIT IN THIS FILE.
+   ===========================================================================
+
+   THE VIDEO, IN ONE PLACE. Everything below is built out of this id — the watch
+   link, the modal's player and the panel's inline player — so re-cutting the
+   walkthrough is a one-word change here and nothing else anywhere. That was
+   already true and it was true quietly, buried between two paragraphs of prose;
+   it is a named block now because "where do I change the video" is the question
+   this file gets asked and it should be answerable by looking at the top of it.
+
+   TAKE IT OUT OF A YOUTUBE URL: the id is what follows `watch?v=` (or the last
+   path segment of a `youtu.be/...` link), before any `&`. From
+   `https://www.youtube.com/watch?v=zHTkpmv6fB4&t=12s` the id is `zHTkpmv6fB4`. */
+export const VIDEO_ID = 'zHTkpmv6fB4';
+
+/**
+ * IS THE WALKTHROUGH BEING OFFERED AT ALL?
+ *
+ * `false` HIDES IT EVERYWHERE AND REMOVES NOTHING. Every call site is untouched
+ * and every line of this file still exists; the two components simply render
+ * nothing, so turning it back on is this one word and no markup to put back.
+ * That is the whole reason it is a flag rather than four deleted elements: a
+ * video that is being re-cut should not be on offer in the meantime, and the
+ * screens it sits on should not have to be rebuilt to say so.
+ *
+ * WHAT IT COVERS IS ALL FOUR PLACES, not the two that prompted it — the home
+ * page's upload button, both empty states' "choose a drawing" button, and the
+ * player in the outlines panel. They all play the same cut, so a stale one is
+ * stale in all four; leaving two of them offering it would be the flag telling
+ * half the truth. See the headers below for what each one is and why it is
+ * where it is.
+ */
+export const HOW_TO_SHOWN = false;
 /** Where a real click, a middle-click or a ⌘-click still goes. */
 const WATCH = `https://www.youtube.com/watch?v=${VIDEO_ID}`;
 /**
@@ -118,6 +151,14 @@ export default function HowToLink({ className = '' }) {
   }, [open]);
   /* A MODAL: Escape closes the card and stops there. src/lib/escapeHatch.js. */
   useEscapeClaim(open, () => setOpen(false), 'how-to');
+
+  /* HIDDEN, AND THE GUARD IS BELOW THE HOOKS RATHER THAN AT THE TOP. Returning
+     early before `useState` and `useEscapeClaim` would change how many hooks
+     this component calls depending on a constant, which is the one thing React
+     will not have — and a flag that is flipped back on while the app is running
+     would land on a component whose hook order had just changed. Three hooks
+     on a render that draws nothing cost nothing. See `HOW_TO_SHOWN`. */
+  if (!HOW_TO_SHOWN) return null;
 
   return (
     <>
@@ -241,6 +282,8 @@ export default function HowToLink({ className = '' }) {
  *   sits and what it does in its parent's layout, the same way `HowToLink` does.
  */
 export function HowToVideo({ className = '' }) {
+  /* NO HOOKS IN HERE, so the guard is simply first. See `HOW_TO_SHOWN`. */
+  if (!HOW_TO_SHOWN) return null;
   return (
     /* THE PANEL'S OWN GLASS — except the panel IS glass, so this is not a card
        on it. `bg-white/5` over `bg-white/5` is two coats of the same paint and

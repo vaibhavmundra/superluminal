@@ -77,8 +77,14 @@ export default function useLightingAnalysis({
   const groupsFor = useCallback((r) => fixtureGroups(r, {
     accentZonesPx, taskSpotsPx, cobArrays, arrayCobsPx,
     magTracksPx, trackModulesPx, manualCobs, pxPerFt,
+    /* THE SAME MAP `analyseSpace` RESOLVES THE ROWS AGAINST, handed in one step
+       earlier for one reason: a grid downlight's row opens at whatever the ROOM
+       was set to before each lamp had a row of its own. That is a per-room
+       legacy figure rather than a per-row one, so the only place that can apply
+       it is the one deciding what the rows ARE. See the grid block. */
+    roomWatts: fixtureWatts[r.id] ?? {},
   }), [accentZonesPx, taskSpotsPx, pxPerFt, manualCobs, cobArrays, arrayCobsPx,
-       magTracksPx, trackModulesPx]);
+       magTracksPx, trackModulesPx, fixtureWatts]);
 
   /**
    * IS THIS SPACE BRIGHT ENOUGH — the Analysis section of the space detail.

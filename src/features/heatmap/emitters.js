@@ -59,6 +59,7 @@
 import { pointInPolygon } from '../../lib/geometry.js';
 import { FIXTURE_BY_ID } from '../../lib/boq.js';
 import { MODULE_BY_ID, moduleLenFt } from '../../lib/magTrack.js';
+import { gridRowKey } from '../lighting-planner/lightingRules.js';
 import { M_PER_FT } from './grid.js';
 import { profileFor, PROFILE_FOR_FAMILY, DISTRIBUTION_PROFILES,
          ART_AIM_MM } from './profiles.js';
@@ -213,14 +214,20 @@ export function buildRoomEmitters({
      THE OPTIC COMES OFF THE CATALOGUE LINE and the lumens off the row: a 7 W
      36-degree lamp in a living space, a 5 W 30-degree one in a wet room, a 12 W
      60-degree one over a pair of cells. See FIXTURES in lib/boq.js. */
-  const gridLm = perUnitOf(rows, 'cob');
-  if (gridLm > 0) {
-    for (const l of room.plan?.lightsPx ?? []) {
-      if (!Number.isFinite(l?.x) || !Number.isFinite(l?.y)) continue;
-      push({ profileId: 'cob', lm: gridLm,
-             beamDeg: FIXTURE_BY_ID[l.fixture]?.beam ?? null,
-             geom: { kind: 'point', p: atCeiling(l) } });
-    }
+  /* ITS OWN ROW AND ITS OWN OUTPUT. This read one figure for the whole grid,
+     which was right exactly as long as one row covered it. Each downlight is its
+     own row now — keyed by its cell, see `gridRowKey` — so a lamp somebody set
+     to 12 W throws what it draws and the four beside it do not change with it.
+     FALLING BACK TO THE SHARED ROW, which is not belt and braces: a light the
+     grid could not name has no key of its own and is counted under `cob` (the
+     same block decides both), so that is the row its output is in. */
+  for (const l of room.plan?.lightsPx ?? []) {
+    if (!Number.isFinite(l?.x) || !Number.isFinite(l?.y)) continue;
+    const lm = perUnitOf(rows, l.cellKey ? gridRowKey(l.cellKey) : null, 'cob');
+    if (!(lm > 0)) continue;
+    push({ profileId: 'cob', lm,
+           beamDeg: FIXTURE_BY_ID[l.fixture]?.beam ?? null,
+           geom: { kind: 'point', p: atCeiling(l) } });
   }
 
   /* --- 2. THE AIMED SPOTS --------------------------------------------------
