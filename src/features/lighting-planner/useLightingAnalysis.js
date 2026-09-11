@@ -206,8 +206,16 @@ export default function useLightingAnalysis({
        which is the rule `runMetres` exists to enforce — and each module names
        its own catalogue line. See `magTracksPx`. */
     magTracks: magTracksPx,
+    /* AND EACH MODULE'S OWN WATTAGE AND OPTIC WITH IT, which is what was
+       missing: only the room and the catalogue line were handed over, so the
+       schedule billed every diffuser at the catalogue's 18 W however it was
+       specified on the drawing — and a hand-placed one opens at 10 W. A module
+       carries its figures on itself (see `placeModule`) exactly as a
+       hand-placed COB does, and `buildBOQ` gives it a line per specification
+       for the same reason. */
     modules: trackModulesPx.map((m) => ({
-      roomId: m.roomId, fixture: MODULE_BY_ID[m.kind]?.fixture ?? null })),
+      roomId: m.roomId, fixture: MODULE_BY_ID[m.kind]?.fixture ?? null,
+      watts: m.watts, beam: m.beam })),
     /* --- AND EVERY DOWNLIGHT A HAND PUT DOWN, WHICH WAS NOT BEING BILLED ----
        THE SCHEDULE HAD NO COBs IN IT AT ALL. `rooms` carries what the gridding
        ENGINE placed and nothing else; a lamp clicked onto the ceiling lives in

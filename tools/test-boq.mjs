@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import zlib from 'zlib';
-import { buildBOQ, boqTable, boqSheets, cobLineId,
+import { buildBOQ, boqTable, boqSheets, cobLineId, moduleLineId,
          FIXTURES, FIXTURE_BY_ID, runMetres } from '../src/lib/boq.js';
 import { setRunEnd, moveRun } from '../src/lib/accentPlace.js';
 import { boqToCSV, boqToXLSX, boqToPDF, crc32, cellRef, isNumeric,
@@ -594,6 +594,93 @@ console.log('\n-- a reverse cove is its own product, on the same tape --');
            { roomId: 'r1', watts: 0, beam: 0 }] });
   ok(!bad.lines.some((l) => l.id.startsWith('cob-')),
     'a lamp with a null, missing or zero figure is dropped rather than billed');
+}
+
+/* --- THE MODULES ON A MAGNETIC TRACK, AT THE WATTAGE THEY WERE SPECIFIED AT --
+   THE SCHEDULE BILLED EVERY DIFFUSER AT THE CATALOGUE'S 18 W. A module carries
+   its own figures — see `placeModule` — and only the room and the catalogue
+   line were ever handed over, so changing a diffuser's wattage moved the
+   drawing and the Analysis panel and left the BOQ saying 18 W. It is the COB's
+   rule now: one line per specification, with the catalogue's own line kept for
+   a module that matches it. See `moduleLine`. */
+console.log('\n-- a track module bills at its own specification --');
+{
+  const empty = (id, name) => ({ id, outline: { name },
+    plan: { ok: true, stats: { areaSqft: 200 }, lights: [] }, tracks: [] });
+  /* WHAT THE ALLOCATOR ACTUALLY PRODUCES: 5 W at the corners of a rail and a
+     10 W in the middle of it, plus one clipped on by hand at the catalogue's
+     18 W. And two spots — one at the catalogue's 5 W / 30°, one re-specified —
+     because a module's OPTIC is settable too. */
+  const b = buildBOQ({
+    rooms: [empty('r1', 'Living'), empty('r2', 'Bed')],
+    magTracks: [{ id: 't1', roomId: 'r1', lengthFt: 10, corners: 2 },
+                { id: 't2', roomId: 'r2', lengthFt: 6, corners: 0 }],
+    modules: [
+      { roomId: 'r1', fixture: 'track-diffuser', watts: 5, beam: null },
+      { roomId: 'r1', fixture: 'track-diffuser', watts: 5, beam: null },
+      { roomId: 'r1', fixture: 'track-diffuser', watts: 10, beam: null },
+      { roomId: 'r1', fixture: 'track-diffuser', watts: 18, beam: null },
+      { roomId: 'r2', fixture: 'track-diffuser', watts: 5, beam: null },
+      { roomId: 'r2', fixture: 'track-spot', watts: 5, beam: 30 },
+      { roomId: 'r2', fixture: 'track-spot', watts: 9, beam: 24 },
+      // the wall washer, which is declared and not specified yet
+      { roomId: 'r2', fixture: null, watts: 12, beam: null },
+    ],
+    pxPerFt: PX, plan: 'modules',
+  });
+  const line = (id) => b.lines.find((l) => l.id === id);
+  const d5 = moduleLineId('track-diffuser', 5, null);
+  const d10 = moduleLineId('track-diffuser', 10, null);
+  const s24 = moduleLineId('track-spot', 9, 24);
+
+  ok(line(d5)?.qty === 3, `the 5 W diffusers are their own line: ${line(d5)?.qty}`);
+  ok(line(d5)?.watts === 5 && line(d5)?.load === 15,
+    `at 5 W apiece, and the load says so: ${line(d5)?.load} W`);
+  ok(line(d10)?.qty === 1 && line(d10)?.watts === 10,
+    'the same product at another wattage is another line');
+  ok(line('track-diffuser')?.qty === 1 && line('track-diffuser').watts === 18,
+    'and one specified at the catalogue figure stays on the catalogue line');
+  ok(/5 W/.test(line(d5)?.label ?? '') && !/°/.test(line(d5)?.label ?? ''),
+    `the wattage is in the description and no beam is invented: "${line(d5)?.label}"`);
+
+  ok(line('track-spot')?.qty === 1,
+    'a spot at the catalogue 5 W / 30° is the catalogue line');
+  ok(line(s24)?.qty === 1 && line(s24)?.watts === 9 && line(s24)?.beam === 24,
+    'and one re-specified carries both its figures');
+
+  /* AND THEY REACH THE FOOT OF THE SHEET, which is the half that matters: a
+     load computed off the catalogue was wrong by the difference. */
+  ok(b.totals.watts === 5 + 5 + 10 + 18 + 5 + 5 + 9,
+    `the connected load is what is on the drawing: ${b.totals.watts} W`);
+  /* THE WALL WASHER IS ON NEITHER — it is declared and not specified (see
+     TRACK_MODULES), and a schedule that priced it would be pricing a product
+     nobody has chosen. The count is the seven modules plus the two corner
+     joins, which are a countable line of their own. */
+  ok(b.totals.fittings === 9,
+    `the washer is billed on no line: ${b.totals.fittings} fittings`);
+  ok(b.lines.every((l) => (l.watts ?? 0) !== 12 || l.unit === 'm'),
+    '...and no 12 W line was invented for it');
+  ok(b.rooms[0].qty[d5] === 2 && b.rooms[1].qty[d5] === 1,
+    'and each space counts its own');
+  ok(boqTable(b).some((r) => r[1] === line(d5).label),
+    'the exported grid carries the derived line, like any other');
+
+  /* THE DERIVED ROWS SIT UNDER THE PRODUCT THEY SPECIFY, so a reader scanning
+     for diffusers finds all of them together rather than in two places. */
+  const ids = b.lines.map((l) => l.id);
+  ok(ids.indexOf('track-diffuser') + 1 === ids.indexOf(d5)
+     && ids.indexOf(d5) + 1 === ids.indexOf(d10),
+    `ordered under the catalogue line, by wattage: ${ids.join(' ')}`);
+
+  /* A PLAN SAVED BEFORE MODULES CARRIED THEIR FIGURES states none, and the
+     catalogue is what it falls back to — not a `0 W` line on somebody's
+     order. */
+  const old = buildBOQ({ rooms: [empty('r1', 'Living')], pxPerFt: PX,
+    modules: [{ roomId: 'r1', fixture: 'track-diffuser' },
+              { roomId: 'r1', fixture: 'track-diffuser', watts: null, beam: null }] });
+  ok(old.lines.filter((l) => l.id.startsWith('track-diffuser')).length === 1
+     && old.lines.find((l) => l.id === 'track-diffuser').qty === 2,
+    'a module stating no wattage bills on the catalogue line');
 }
 
 /* --- THE COORDINATION BLOCK IS "OTHER ITEMS" ------------------------------

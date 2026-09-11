@@ -3,7 +3,7 @@ import { SHAPE_BY_ID, outlineFt as shapeOutlineFt, cornersFt as shapeCornersFt,
          pathLengthFt, isOpen as shapeIsOpen, isTrack as shapeIsTrack,
          isBuilt as shapeIsBuilt, frameFt as shapeFrameFt, handlesFor,
          editablePath as shapeEditablePath } from './ceilingShapes.js';
-import { MODULE_BY_ID, moduleLenIn } from './magTrack.js';
+import { MODULE_BY_ID, moduleLenIn, moduleWatts } from './magTrack.js';
 import { freePoint, resolvePoint } from './point.js';
 import { asPathHost } from './path.js';
 import { arraySpots, arrayPath, throwDiameterFt, DEFAULT_DROP_FT } from './cob.js';
@@ -218,7 +218,14 @@ export function projectTrackModulesPx(trackFixtures, magTrackById, pxPerFt) {
            two different objects on the drawing. It was a flat 24 in for every
            diffuser, which drew the whole range as the biggest thing in it. */
         lenIn: moduleLenIn(f.kind, f.watts), wideIn: m.wideIn ?? 1.5,
-        watts: f.watts ?? m.watts, beam: f.beam ?? m.beam,
+        /* AND THE SPECIFICATION IT WAS PLACED AT, falling back to what a module
+           of this kind OPENS at rather than to the entry's own field — which the
+           diffuser does not have, because its default is its family's (see
+           `moduleWatts`). `m.watts` left a module saved before the figures were
+           stored with no wattage at all, and every reader then invented its own
+           answer: the panel said 10 W, the schedule said 18. One figure, from
+           the one place that knows it. */
+        watts: f.watts ?? moduleWatts(m.id), beam: f.beam ?? m.beam,
       });
     }
     return out;

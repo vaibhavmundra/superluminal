@@ -9,6 +9,7 @@ import { buildRoomEmitters, polygonInMetres } from './emitters.js';
 import { heatmapTargetForLayer, heatmapLayerFor,
          HEATMAP_LAYER_DEFAULT, HEATMAP_PLANE } from './heatmapTargets.js';
 import { PROBE_HEIGHT_MM } from './indirect.js';
+import useHeatmapLayer from './useHeatmapLayer.js';
 import { readHeatmapPalette } from './colours.js';
 
 // ---------------------------------------------------------------------------
@@ -53,19 +54,26 @@ import { readHeatmapPalette } from './colours.js';
 // over its own grid, the box it covers in PLAN PIXELS, and the target it was
 // judged against — see HeatmapOverlay, which draws it and computes nothing.
 //
-// AND THERE IS NO VIEW STATE LEFT IN HERE. `useHeatmapLayer` held a selected
-// layer and a probe height while the legend offered both; the legend offers
-// neither now, so the two are the module constants below and the hook is back
-// to being a pure function of what App already holds. The engine still solves
-// three layers and still takes any probe height — see HEATMAP_LAYERS and
-// PROBE_HEIGHT_MM — so putting either control back is a control, not a
+// THE ONE PIECE OF VIEW STATE IS WHICH READING IS ON SCREEN, and it is
+// `useHeatmapLayer`'s rather than this file's — composed here so that the
+// choice and the field it produced come back as one object and cannot say two
+// different things. It held a probe HEIGHT too, once, for a control that is
+// not back; that is the module constant below. The engine still solves all
+// three layers and still takes any height — see HEATMAP_LAYERS and
+// PROBE_HEIGHT_MM — so the height coming back is a control, not a
 // restructuring.
+//
+// SWITCHING LAYERS IS CHEAP AND HAS TO BE. Nothing about the geometry or the
+// light transport depends on which reading is being taken, so both caches
+// survive a switch untouched and all that runs is the gather — which is why
+// the layer is deliberately kept out of `inputs`, where it would have dropped
+// the drawing to the coarse pass and made the reader wait for it to sharpen
+// again.
 // ---------------------------------------------------------------------------
 
-/** WHAT THE DRAWING SHOWS, AND WHAT HEIGHT IT IS READ AT. Two constants rather
- *  than two pieces of state, because nothing on screen can change either. Both
- *  are owned elsewhere — the layer table and indirect.js — and read here. */
-const LAYER_ID = HEATMAP_LAYER_DEFAULT;
+/** WHAT HEIGHT THE PROBES SIT AT. Still a constant, because nothing on screen
+ *  changes it — the card's height chips did not come back with the layer chips.
+ *  Owned by indirect.js and read here. */
 const PROBE_HEIGHT_M = PROBE_HEIGHT_MM / 1000;
 
 /** How long the hand has to be still before the full-resolution pass runs.
@@ -78,7 +86,12 @@ export const SETTLE_MS = 140;
  *  them. */
 const EMPTY = {
   on: false, rooms: [], palette: null, plane: HEATMAP_PLANE,
-  layer: heatmapLayerFor(LAYER_ID),
+  layer: heatmapLayerFor(HEATMAP_LAYER_DEFAULT),
+  /* THE SELECTOR IS FILLED IN BY THE HOOK even on this object, so the card
+     never has to guard against a missing list — see the spread at the two
+     early returns. An empty array here would be a card that loses its chips
+     for the frame before a scale exists. */
+  layers: [], setLayer: null,
   targets: [], distinct: [], focusTarget: null, mode: null, ms: 0,
 };
 
@@ -269,11 +282,21 @@ export default function useHeatmap({
   magTracksPx = [],
   trackModulesPx = [],
 }) {
+  /* WHICH OF THE OFFERED READINGS THE DRAWING IS SHOWING. Its own module — see
+     useHeatmapLayer.js — and composed here rather than called by App so that
+     the choice and the field it produced are one object. */
+  const view = useHeatmapLayer();
+  const { layerId } = view;
   /* --- WHAT THE SOLVE DEPENDS ON, AS ONE OBJECT ---------------------------
      THE IDENTITY OF THIS IS THE "SOMETHING CHANGED" SIGNAL, which is why it is
      a memo over the whole input list rather than a list of dependencies on the
      solve below. React already recomputes it exactly when one of them changes,
-     and the settle timer downstream needs a single thing to watch. */
+     and the settle timer downstream needs a single thing to watch.
+     THE LAYER IS NOT IN IT, and that is deliberate: picking a layer is not a
+     moving hand, so it must not drop the drawing to the coarse pass and make
+     the reader wait for it to sharpen again. The caches below are what make
+     that safe — the geometry and the light transport are both layer-blind, so
+     switching reuses everything and re-gathers one field. */
   const inputs = useMemo(() => ({
     rooms, pxPerFt, projectId, roomTypes, materials, ceilingMmFor, spaceAnalysis,
     accentZonesPx, taskSpotsPx, manualCobsPx, arrayCobsPx, magTracksPx, trackModulesPx,
@@ -324,12 +347,18 @@ export default function useHeatmap({
     // RULE 1: the switch, before anything is read.
     if (!on) return EMPTY;
     const { pxPerFt: ppf } = inputs;
-    if (!(ppf > 0) || !inputs.rooms.length) return { ...EMPTY, on: true, mode };
+    /* THE SELECTOR SURVIVES A SHEET WITH NOTHING ON IT, which is why `view` is
+       spread rather than `EMPTY`'s empty list being taken: a plan waiting for a
+       scale still shows the card, and a card whose chips appear only once there
+       is a room to measure is a control that flickers. */
+    if (!(ppf > 0) || !inputs.rooms.length) {
+      return { ...EMPTY, ...view, on: true, mode };
+    }
     const metresPerPx = M_PER_FT / ppf;
     /* WHETHER THIS LAYER IS READ AT A PROBE IN THE ROOM'S VOLUME, which is
        what decides whether there is a height to report and a plane to name.
        Off the layer table rather than off the id — see HEATMAP_LAYERS. */
-    const indirect = !!heatmapLayerFor(LAYER_ID).probe;
+    const indirect = !!heatmapLayerFor(layerId).probe;
     const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
 
     const out = [];
@@ -376,10 +405,10 @@ export default function useHeatmap({
          the probe field on the reflected one, which carries no direct term at
          all. Both are lux, and the layer says which lux. */
       const { solved, values, probeZ } = solveRoomLayer(
-        hit, { sources, layerId: LAYER_ID, probeHeightM: PROBE_HEIGHT_M });
+        hit, { sources, layerId, probeHeightM: PROBE_HEIGHT_M });
 
       const targetLux = heatmapTargetForLayer(
-        LAYER_ID, inputs.projectId, inputs.roomTypes?.[room.id]?.type);
+        layerId, inputs.projectId, inputs.roomTypes?.[room.id]?.type);
       targets.push({ roomId: room.id, lux: targetLux });
 
       /* --- THE FIELD AS A RECTANGLE OF RATIOS -----------------------------
@@ -416,7 +445,7 @@ export default function useHeatmap({
         },
         polygonPx: room.geo.polygonPx,
         targetLux,
-        layer: LAYER_ID,
+        layer: layerId,
         meanLux: solved.mean, minLux: solved.min, maxLux: solved.max,
         emittedLumens: solved.emitted,
         bounces: solved.bounces,
@@ -448,9 +477,14 @@ export default function useHeatmap({
     const heightSet = [...new Set(heights)];
     return {
       on: true, mode, rooms: out, palette,
+      /* THE LAYER, THE LAYERS ON OFFER AND THE SETTER, all from `view`, so the
+         card draws its chips and prints its title off one object and cannot
+         name a measurement the field is not. Spread FIRST so the explicit
+         `layer` below is the resolved record rather than the id. */
+      ...view,
       /* THE LAYER ITSELF, so the card can print its name without knowing which
          one it is — one place decides what the drawing shows. */
-      layer: heatmapLayerFor(LAYER_ID),
+      layer: heatmapLayerFor(layerId),
       /* THE MEASUREMENT GEOMETRY, WHICH IS WHAT THE CARD'S SECOND LINE IS MADE
          OF. A fixed plane on the horizontal layer; on the reflected one, the
          height the drawing is actually showing — the open space's own, where a
@@ -478,5 +512,5 @@ export default function useHeatmap({
       focusName: focusRoom?.name ?? null,
       ms: typeof performance !== 'undefined' ? performance.now() - t0 : 0,
     };
-  }, [on, inputs, mode, palette, focusId]);
+  }, [on, inputs, mode, palette, focusId, view, layerId]);
 }

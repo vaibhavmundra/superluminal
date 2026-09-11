@@ -60,7 +60,8 @@ import { solveRoomLayer } from '../src/features/heatmap/useHeatmap.js';
 import { DISTRIBUTION_PROFILES } from '../src/features/heatmap/profiles.js';
 import { colourFor } from '../src/features/heatmap/colours.js';
 import {
-  HEATMAP_BANDS, HEATMAP_LAYERS, HEATMAP_LAYER_DEFAULT, heatmapLayerFor,
+  HEATMAP_BANDS, HEATMAP_LAYERS, HEATMAP_LAYERS_OFFERED, HEATMAP_LAYER_DEFAULT,
+  HEATMAP_PLANE, heatmapLayerFor,
   HEATMAP_TARGET_LUX, heatmapTargetFor, heatmapTargetForLayer,
   LUX_PER_LM_PER_SQFT, AVERAGE_FLOOR_SHARE, REFLECTED_AMBIENT_LM_PER_SQFT,
   REFLECTED_AMBIENT_LM_PER_SQFT_BY_ROOM, REFLECTED_AMBIENT_LM_PER_SQFT_DEFAULT,
@@ -723,19 +724,33 @@ sec('8. the layer table, and the colours it shares');
   ok('...and its note says what it adds up',
     /reflect/i.test(avg.note) && /quarter/i.test(avg.note)
     && /horizontal/i.test(avg.note), avg.note);
-  ok('the two component layers keep their own names and say they are components',
-    ref.label === 'Reflected ambient light'
-    && heatmapLayerFor('illuminance').label === 'Estimated illuminance'
-    && /component/i.test(ref.note)
-    && /component/i.test(heatmapLayerFor('illuminance').note));
-  ok('...and the reflected one still says what it excludes',
+  ok('the floor layer keeps its own name',
+    heatmapLayerFor('illuminance').label === 'Estimated illuminance');
+  ok('...and the reflected one is still marked as a component of the blend',
+    ref.label === 'Reflected ambient light' && /component/i.test(ref.note));
+  ok('...and still says what it excludes',
     /reflect/i.test(ref.note) && /direct/i.test(ref.note) && /exclud/i.test(ref.note),
     ref.note);
-  /* THE SELECTOR'S OWN FIELDS WENT WITH THE SELECTOR. Carrying a `short` sized
-     for a chip, or a `measure` sized for a subtitle, when neither exists is how
-     a table stops describing the thing it names. */
-  ok('no layer carries a field that only the removed selector could have used',
-    HEATMAP_LAYERS.every((l) => l.short === undefined && l.measure === undefined));
+
+  /* --- WHICH LAYERS THE CARD OFFERS IS THE TABLE'S DECISION --------------
+     `pick` IS THE ONE PLACE, and `HEATMAP_LAYERS_OFFERED` is derived from it
+     rather than being a second list of ids somewhere else — so adding or
+     removing a chip is one word on the row it belongs to and the two cannot
+     disagree about what exists. */
+  ok('the table offers the floor reading and the blend',
+    HEATMAP_LAYERS_OFFERED.map((l) => l.id).join(',') === 'illuminance,average',
+    HEATMAP_LAYERS_OFFERED.map((l) => l.id).join(','));
+  ok('...and not the component layer, which is not a question anybody asks',
+    !HEATMAP_LAYERS_OFFERED.some((l) => l.id === 'reflected') && ref.pick !== true);
+  ok('...and it is derived from `pick` rather than listed twice',
+    HEATMAP_LAYERS_OFFERED.length === HEATMAP_LAYERS.filter((l) => l.pick).length);
+  /* A CHIP NEEDS A SHORT LABEL AND A SENTENCE FOR ITS TOOLTIP. Carrying either
+     on a layer nothing offers would be the table describing UI that does not
+     exist, which is why only the offered rows have one. */
+  ok('every offered layer has the chip label and tooltip a chip needs',
+    HEATMAP_LAYERS_OFFERED.every((l) => !!l.short && !!l.note));
+  ok('...and the layer nothing offers carries no chip label',
+    ref.short === undefined);
   ok('every layer still carries what the engine and the card DO read',
     HEATMAP_LAYERS.every((l) => l.id && l.label && l.note
       && typeof l.probe === 'boolean' && typeof l.floor === 'boolean'));
@@ -998,7 +1013,7 @@ sec('9b. Average — the two layers added, and nothing solved twice');
 }
 
 
-sec('10. one heatmap, one name, and nothing to choose');
+sec('10. two readings, one scale, and a chip to choose between them');
 {
   const vite = await createServer({
     server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
@@ -1008,7 +1023,7 @@ sec('10. one heatmap, one name, and nothing to choose');
   try {
     const legend = await vite.ssrLoadModule('/src/features/heatmap/HeatmapLegend.jsx');
     const HeatmapLegend = legend.default;
-    const { targetLine } = legend;
+    const { targetLine, whereLine } = legend;
     const useHeatmap = (await vite.ssrLoadModule('/src/features/heatmap/useHeatmap.js')).default;
 
     const roomPoly = [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }];
@@ -1044,23 +1059,72 @@ sec('10. one heatmap, one name, and nothing to choose');
       got.focusTarget === heatmapTargetForLayer('average', 'residential', 'living_space')
       && Math.round(got.focusTarget) === 145, `${got.focusTarget}`);
 
-    /* --- THERE IS NOTHING LEFT TO CHOOSE, AND THAT IS STRUCTURAL ----------
-       THE CONTROLS WERE BUILT ON THIS DATA. A layer selector needs a list of
-       layers and a setter; a height control needs a list of heights and a
-       setter. With none of the four on the hook's output there is nothing a
-       card could render them from, which is a stronger statement than "the
-       markup does not contain them" — and it is the one a server render can
-       actually make, since the card measures itself off the stage and so draws
-       nothing outside a browser. */
-    for (const gone of ['layers', 'setLayer', 'probeHeights', 'setProbeHeightMm',
-                        'layerId', 'probeHeightMm']) {
-      ok(`the hook no longer exposes \`${gone}\`, so no control can be built from it`,
-        got[gone] === undefined, `got ${typeof got[gone]}`);
-    }
-    ok('...and the card exports no measurement-line or height formatter either',
-      legend.measurementLine === undefined && legend.m === undefined);
-    ok('the card names the open space and its target, and nothing else',
-      targetLine(got) === 'Room · Target 145 lx', targetLine(got));
+    /* --- THE SELECTOR, AND WHAT IT IS MADE OF -----------------------------
+       A CHIP ROW NEEDS A LIST AND A SETTER, and asserting they are on the
+       hook's output is a stronger statement than "the markup contains two
+       buttons" — it is also the only one a server render can make, since the
+       card measures itself off the stage and so draws nothing outside a
+       browser.
+       TWO AND NOT THREE. `reflected` is a COMPONENT of the blend rather than a
+       question anybody is asking, and `pick` in the layer table is the one
+       place that decides — see HEATMAP_LAYERS_OFFERED. */
+    ok('the hook offers the layers the table marks pickable',
+      Array.isArray(got.layers) && got.layers.length === 2
+      && got.layers.map((l) => l.id).join(',') === 'illuminance,average',
+      (got.layers ?? []).map((l) => l.id).join(','));
+    ok('...every offered layer has a chip label', got.layers.every((l) => !!l.short));
+    ok('...and a sentence for its tooltip', got.layers.every((l) => !!l.note));
+    ok('...and the component layer is NOT offered',
+      !got.layers.some((l) => l.id === 'reflected'));
+    ok('...with a setter to change it', typeof got.setLayer === 'function');
+    ok('...and the id of the one showing', got.layerId === 'average');
+    ok('the card names the open space, WHERE the reading is taken, and its target',
+      targetLine(got) === 'Room · 1.2 m · Target 145 lx', targetLine(got));
+
+    /* --- AND WHAT THE OTHER CHIP SELECTS ----------------------------------
+       THE SWITCH ITSELF CANNOT BE PRESSED HERE, and that is a fact about the
+       harness rather than a gap in the cover: `useHeatmapLayer` holds the
+       choice in `useState`, and a server render has no reconciler — a setter
+       called during `renderToStaticMarkup` schedules nothing and the next
+       render starts at the default again. Driving it would need a DOM and a
+       reconciler for a control whose whole body is two buttons.
+       SO THE THREE THINGS THE CHIP CHANGES ARE ASSERTED WHERE THEY LIVE: the
+       TARGET in the table, the FIELD in the engine (section 9 switches layers
+       through `solveRoomLayer` directly and is where that is proved), and the
+       LINE in the card's own pure function, which is exported for exactly this
+       reason. What the React layer adds is a setter, and that it is a function
+       of the right shape is asserted above. */
+    ok('the floor reading is judged against a different target from the blend',
+      heatmapTargetForLayer('illuminance', 'residential', 'living_space')
+        !== heatmapTargetForLayer('average', 'residential', 'living_space'),
+      `${heatmapTargetForLayer('illuminance', 'residential', 'living_space')}`);
+    ok('...and it is the horizontal figure the rest of the app already has',
+      heatmapTargetForLayer('illuminance', 'residential', 'living_space') === 150);
+
+    /* THE CARD'S LINE FOR THE FLOOR READING. Built from the shape the hook
+       returns for that layer — a named PLANE and no probe height, which is what
+       `indirect` decides — so the string the reader sees is checked against the
+       same fields the drawing is made of. */
+    const asFloor = {
+      ...got, layer: heatmapLayerFor('illuminance'), layerId: 'illuminance',
+      plane: HEATMAP_PLANE, probeHeightM: null,
+      focusTarget: heatmapTargetForLayer('illuminance', 'residential', 'living_space'),
+    };
+    ok('the card names the PLANE on the floor reading, not a height',
+      whereLine(asFloor) === 'Floor level', whereLine(asFloor));
+    ok('...and the whole line changes with the chip',
+      targetLine(asFloor) === 'Room · Floor level · Target 150 lx', targetLine(asFloor));
+    ok('...where the blend names the height its probes stood at',
+      whereLine(got) === '1.2 m', whereLine(got));
+
+    /* A LAYER THE TABLE HAS NEVER HEARD OF FALLS BACK RATHER THAN BLANKING THE
+       DRAWING. The rule is `heatmapLayerFor`'s and `useHeatmapLayer` applies it
+       at the SETTER as well as at the read, so the state cannot come to hold an
+       id that would leave the card naming nothing. */
+    ok('an unknown layer id falls back to the default rather than to nothing',
+      heatmapLayerFor('no-such-layer').id === 'average');
+    ok('...and calling the setter with one does not throw',
+      (() => { try { got.setLayer('no-such-layer'); return true; } catch { return false; } })());
 
     /* THE ROOM STILL CARRIES EVERYTHING A FUTURE READOUT WOULD WANT, which is
        the difference between removing a control and removing the data behind
@@ -1088,12 +1152,12 @@ sec('10. one heatmap, one name, and nothing to choose');
       renderToStaticMarkup(React.createElement(Flat, { focus: 'R1' }));
       const living = seen;
       ok('clicking the living space puts ITS target on the card',
-        targetLine(living) === 'Living · Target 145 lx', targetLine(living));
+        targetLine(living) === 'Living · 1.2 m · Target 145 lx', targetLine(living));
 
       renderToStaticMarkup(React.createElement(Flat, { focus: 'R2' }));
       const kitchen = seen;
       ok('...and clicking the kitchen puts the kitchen\'s on it',
-        targetLine(kitchen) === 'Kitchen · Target 290 lx', targetLine(kitchen));
+        targetLine(kitchen) === 'Kitchen · 1.2 m · Target 290 lx', targetLine(kitchen));
       ok('...which is double, because a kitchen is worked in',
         near(kitchen.focusTarget, 2 * living.focusTarget, 1e-12),
         `${kitchen.focusTarget.toFixed(2)} vs ${living.focusTarget.toFixed(2)}`);
@@ -1122,7 +1186,7 @@ sec('10. one heatmap, one name, and nothing to choose');
          also holds a kitchen at 290 would be wrong about half the drawing. */
       renderToStaticMarkup(React.createElement(Flat, { focus: null }));
       ok('with nothing open and the spaces disagreeing, the card prints the range',
-        targetLine(seen) === 'Target 145–290 lx', targetLine(seen));
+        targetLine(seen) === '1.2 m · Target 145–290 lx', targetLine(seen));
       ok('...and names no space, because none was picked', seen.focusName === null);
     }
 
@@ -1133,7 +1197,7 @@ sec('10. one heatmap, one name, and nothing to choose');
       const Alone = () => { alone = useHeatmap({ ...args, focusId: null }); return null; };
       renderToStaticMarkup(React.createElement(Alone));
       ok('one space and no click prints the figure without a name',
-        targetLine(alone) === 'Target 145 lx', targetLine(alone));
+        targetLine(alone) === '1.2 m · Target 145 lx', targetLine(alone));
     }
 
     // THE SWITCH IN THE BAR IS STILL THE WHOLE OF THE ON/OFF.
@@ -1142,6 +1206,17 @@ sec('10. one heatmap, one name, and nothing to choose');
       got.on === false && got.rooms.length === 0);
     ok('...and still names the layer it would draw, so the shape does not change',
       got.layer?.id === 'average');
+    /* THE CHIPS SURVIVE A SHEET WITH NOTHING ON IT. A card whose control
+       appears only once there is a room to measure is a control that flickers;
+       see the early return in the hook's memo. */
+    {
+      let bare = null;
+      const Bare = () => { bare = useHeatmap({ ...args, rooms: [] }); return null; };
+      renderToStaticMarkup(React.createElement(Bare));
+      ok('...and a sheet with no rooms still offers the reading chips',
+        bare.on === true && bare.layers?.length === 2
+        && typeof bare.setLayer === 'function');
+    }
 
     ok('the legend draws nothing with the layer off',
       renderToStaticMarkup(React.createElement(HeatmapLegend,

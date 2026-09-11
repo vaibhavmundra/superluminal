@@ -296,29 +296,36 @@ export const reflectedAmbientTargetFor = (projectId, roomTypeId = null) =>
 export const AVERAGE_FLOOR_SHARE = 0.25;
 
 /**
- * THE LAYERS THE ENGINE CAN SOLVE. Three — and ONE OF THEM IS WHAT THE DRAWING
- * SHOWS. The other two are its components and are not offered to the reader.
+ * THE LAYERS THE ENGINE CAN SOLVE. Three, of which the card OFFERS two.
  *
- * --- THERE WAS A SELECTOR AND IT IS GONE, WHICH IS THE POINT ---------------
- * The card carried three chips for a while and the reader had to choose
- * between a horizontal illuminance, a reflected ambient and their blend before
- * the drawing meant anything. That is a question about photometric convention
- * asked of somebody who came to lay out lights. ONE HEATMAP ANSWERS IT: the
- * blend shows how filled the space is AND what the task fittings are doing to
- * it, which is the whole reason somebody turns a heatmap on. The two component
- * layers stay in this table because `average` is literally built out of them —
- * see `solveRoomLayer` — and because the day one of them is worth showing on
- * its own it is a selector in the legend and nothing else.
+ * --- THE SELECTOR WENT, AND HALF OF IT IS BACK ----------------------------
+ * IT WAS THREE CHIPS AND THAT WAS ONE QUESTION TOO MANY. A reader had to
+ * choose between a horizontal illuminance, a reflected ambient and their blend
+ * before the drawing meant anything — a question about photometric convention
+ * asked of somebody who came to lay out lights — so it was cut to the blend
+ * alone, which shows how filled the space is AND what the task fittings are
+ * doing to it.
  *
- * `label` IS WHAT THE CARD PRINTS, and only the shown layer's is ever seen.
- * `short` AND `measure` WENT WITH THE SELECTOR AND THE MEASUREMENT LINE: they
- * were sized for a chip and for a subtitle, and carrying UI fields for UI that
- * does not exist is how a table stops describing the thing it names.
+ * WHAT THAT LOST IS THE ONE READING A LIGHTING DRAWING IS ACTUALLY JUDGED ON.
+ * Horizontal illuminance on the floor is the number a meter reads, the number
+ * a standard is written in and the number a client asks about; the blend is a
+ * fuller picture of the room and is not that figure. Somebody laying out
+ * fittings wants both, at different moments, and asked for it back.
  *
- * `note` IS THE ONE SENTENCE THAT SAYS WHAT EACH LAYER IS. Nothing renders it
- * — the card is a name and a key and nothing else — so it is documentation
- * that happens to live in the data, beside the numbers it describes rather
- * than in a comment that can drift from them.
+ * SO `pick` IS THE TABLE'S OWN ANSWER TO "WHICH ARE OFFERED", and it is two
+ * rather than three deliberately: the blend and the floor are two QUESTIONS a
+ * designer has — how does the room feel, and does the floor make its number —
+ * where `reflected` is one of them with a term taken out, which is a component
+ * rather than a question. It is one word away from being offered on the day it
+ * is worth asking.
+ *
+ * `label` IS WHAT THE CARD PRINTS as its title; `short` is the same thing sized
+ * for a chip, and only the offered layers need one.
+ *
+ * `note` IS THE ONE SENTENCE THAT SAYS WHAT EACH LAYER IS. It is the offered
+ * chips' `title`, where it costs the card no height, and documentation for the
+ * one that is not offered — beside the numbers it describes rather than in a
+ * comment that can drift from them.
  *
  * --- `probe` AND `floor` ARE WHAT THE ENGINE READS, AND THEY ARE THE WHOLE
  *     INTERFACE BETWEEN THIS TABLE AND THE SOLVER ------------------------
@@ -339,17 +346,18 @@ export const HEATMAP_LAYERS = [
   {
     id: 'illuminance',
     label: 'Estimated illuminance',
-    note: 'Horizontal illuminance on the measurement plane — direct fixture '
-      + 'light and reflected light together. A component of `average`; not '
-      + 'shown on its own.',
-    probe: false, floor: true,
+    short: 'Floor',
+    note: 'Horizontal illuminance on the floor — direct fixture light and '
+      + 'reflected light together. The figure a meter reads and a standard is '
+      + 'written in.',
+    probe: false, floor: true, pick: true,
   },
   {
     id: 'reflected',
     label: 'Reflected ambient light',
     note: 'Light reaching this location after reflecting from room surfaces, '
       + 'with direct fixture light excluded. A component of `average`; not '
-      + 'shown on its own.',
+      + 'offered on its own — see `pick`.',
     probe: true, floor: false,
   },
   {
@@ -374,10 +382,11 @@ export const HEATMAP_LAYERS = [
      */
     id: 'average',
     label: 'Estimated light level',
+    short: 'Average',
     note: 'Reflected ambient light at the measurement height, plus a quarter '
       + 'of the horizontal illuminance on the floor below it — how filled the '
       + 'space is, and what the task fittings add to it.',
-    probe: true, floor: true,
+    probe: true, floor: true, pick: true,
   },
 ];
 
@@ -390,6 +399,18 @@ export const HEATMAP_LAYERS = [
  * entries are reached only by `average` asking for its own halves.
  */
 export const HEATMAP_LAYER_DEFAULT = 'average';
+
+/**
+ * THE LAYERS THE CARD OFFERS, in table order — see `pick` on the table above.
+ *
+ * DERIVED AND NOT A SECOND LIST, which is the whole reason `pick` is a field
+ * rather than an array of ids somewhere else: adding or removing a chip is one
+ * word on the row it belongs to, and there is no way for the two to disagree
+ * about what exists. The legend draws whatever is in here and draws no control
+ * at all when there is one entry, so cutting back to a single layer removes the
+ * selector rather than leaving a chip that does nothing.
+ */
+export const HEATMAP_LAYERS_OFFERED = HEATMAP_LAYERS.filter((l) => l.pick);
 
 /** A layer by id, falling back to the default rather than to nothing — a stored
  *  preference naming a layer this build has dropped must not blank the drawing. */

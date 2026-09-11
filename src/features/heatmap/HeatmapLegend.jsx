@@ -1,30 +1,40 @@
 import { HEATMAP_BANDS } from './heatmapTargets.js';
 import { useStageRect } from '../../components/StageBar.jsx';
 import usePanelDrag from '../../hooks/usePanelDrag.js';
+import { PROP_OFF, PROP_ON } from '../../ui/tokens.js';
 
 // ---------------------------------------------------------------------------
-// HeatmapLegend — THE NAME OF THE MEASUREMENT, WHAT THE OPEN SPACE IS AIMING
-// AT, AND WHAT THE COLOURS MEAN. Three lines, in that order, and no control.
+// HeatmapLegend — WHICH READING IS ON SCREEN, WHERE IT IS TAKEN, WHAT THE OPEN
+// SPACE IS AIMING AT, AND WHAT THE COLOURS MEAN. In that order, with one
+// control: the two chips that choose between the readings.
 //
 // A KEY IS NOT HELPER TEXT. Every other floating thing on this drawing is
 // suppressed on the principle that a control is its label — and a five-colour
 // scale has no label it can be. So this one exists, and it is held to the same
 // rule: it says what is being measured and what each colour is, and stops.
 //
-// --- WHAT WAS HERE AND WENT, BECAUSE IT IS THE SHAPE OF THE DECISION ------
+// --- ONE CONTROL, AND IT IS TWO CHIPS RATHER THAN THE SIX IT ONCE WAS -----
 // THE CARD CARRIED A THREE-CHIP LAYER SELECTOR AND A THREE-CHIP HEIGHT
-// CONTROL. Both were real answers to real questions, and together they made a
-// reader choose a photometric convention and a measurement plane before the
-// drawing meant anything — which is a lot to ask of somebody who came to lay
-// out lights.
+// CONTROL, and together they made a reader choose a photometric convention
+// AND a measurement plane before the drawing meant anything — a lot to ask of
+// somebody who came to lay out lights. Both were cut, and the blend was left
+// as the single answer.
 //
-// ONE HEATMAP ANSWERS IT INSTEAD. `Estimated light level` blends the reflected
-// ambient at 1.2 m with a quarter of the horizontal illuminance at the floor,
-// so one picture shows how filled the space is AND what the task fittings are
-// doing to it. There is nothing left to choose, so there is no control left to
-// put on the card. The engine still solves all three layers and still takes
-// any probe height — see HEATMAP_LAYERS and PROBE_HEIGHT_MM — so bringing a
-// control back is a control, not a rebuild.
+// WHAT THAT LOST IS THE FLOOR READING, which is the one a lighting drawing is
+// actually judged on: horizontal lux is what a meter reads, what a standard is
+// written in and what a client asks about. The blend is a fuller picture of the
+// room and is not that figure, and somebody laying out fittings wants both, at
+// different moments.
+//
+// SO THE LAYER CHIPS ARE BACK AND THE HEIGHT CHIPS ARE NOT. The two are not
+// the same kind of question: which reading you are taking is a question with an
+// answer on the drawing, where the height a probe stands at is a convention to
+// settle once. `PROBE_HEIGHT_MM` stays a constant; see useHeatmapLayer.js.
+//
+// WHICH CHIPS EXIST IS THE TABLE'S DECISION AND NOT THIS FILE'S — see `pick`
+// in heatmapTargets.js. The card draws whatever it is handed and draws NO
+// control at all when there is one entry, so cutting back to a single reading
+// removes the selector rather than leaving a chip that does nothing.
 //
 // --- THE TARGET IS NOT A CONTROL AND IT STAYS ------------------------------
 // IT WENT WITH THE CONTROLS FOR ONE REVISION AND THAT WAS WRONG. The five
@@ -69,6 +79,31 @@ const BOTTOM = 26, RIGHT = 18;
  *  precision and round HERE. */
 const lx = (n) => `${Math.round(n)} lx`;
 
+/** A height as a designer writes one: metres to one decimal. A probe height
+ *  quoted to the millimetre would be claiming the room was measured. */
+export const m = (n) => `${(Math.round(n * 10) / 10).toFixed(1)} m`;
+
+/**
+ * WHERE THE READING IS TAKEN — a plane on the floor layer, a height on the
+ * blend, and nothing at all when neither is known.
+ *
+ * IT IS ON THE CARD BECAUSE THERE ARE TWO READINGS AGAIN. With one layer the
+ * title carried the whole meaning; with two, "Estimated illuminance" and
+ * "Estimated light level" are a word apart and describe measurements taken in
+ * different places, and a card that does not say where has printed a lux figure
+ * of nothing. It is also what the feature was asked for in the first place: a
+ * legend explaining the colours AND the measurement plane.
+ *
+ * THE HEIGHT IS THE ONE THE DRAWING ACTUALLY USED, not the one that was asked
+ * for. A 1.1 m loft cannot hold a 1.2 m probe — `probeHeightFor` clamps it into
+ * the room — and the card says what it got.
+ */
+export function whereLine(heatmap) {
+  const { plane, probeHeightM } = heatmap ?? {};
+  if (plane?.label) return plane.label;
+  return Number.isFinite(probeHeightM) ? m(probeHeightM) : null;
+}
+
 /**
  * THE CARD'S SECOND LINE: whose target, and what it is.
  *
@@ -87,15 +122,20 @@ const lx = (n) => `${Math.round(n)} lx`;
  */
 export function targetLine(heatmap) {
   const { focusTarget, focusName, distinct = [] } = heatmap ?? {};
+  /* WHERE IT IS MEASURED GOES BETWEEN THE SPACE AND THE FIGURE, because that is
+     the order the sentence runs in: whose reading, taken where, judged against
+     what. Absent entirely rather than left blank when there is nothing to say. */
+  const where = whereLine(heatmap);
+  const at = where ? `${where} · ` : '';
   if (focusTarget != null) {
     return focusName
-      ? `${focusName} · Target ${lx(focusTarget)}`
-      : `Target ${lx(focusTarget)}`;
+      ? `${focusName} · ${at}Target ${lx(focusTarget)}`
+      : `${at}Target ${lx(focusTarget)}`;
   }
   if (distinct.length > 1) {
-    return `Target ${Math.round(distinct[0])}–${lx(distinct[distinct.length - 1])}`;
+    return `${at}Target ${Math.round(distinct[0])}–${lx(distinct[distinct.length - 1])}`;
   }
-  return null;
+  return where || null;
 }
 
 export default function HeatmapLegend({ heatmap, stage }) {
@@ -107,6 +147,7 @@ export default function HeatmapLegend({ heatmap, stage }) {
   if (!heatmap?.on || !heatmap.rooms.length || !box) return null;
 
   const target = targetLine(heatmap);
+  const layers = heatmap.layers ?? [];
 
   return (
     <div ref={drag.ref}
@@ -145,14 +186,41 @@ export default function HeatmapLegend({ heatmap, stage }) {
         <div className="text-[11px] leading-none text-text tracking-[-0.01em]">
           {heatmap.layer?.label ?? 'Estimated light level'}
         </div>
+        {/* --- WHICH READING ---------------------------------------------
+            `PROP_ON`/`PROP_OFF` — the app's own compact segmented chip, the
+            same pair the switchboard's ratings wear. `PROP_SHAPE` already
+            carries `flex-1`, so the chips split the card's width between them —
+            which is what makes this read as one control with two states rather
+            than as two buttons.
+            THE SENTENCE ABOUT EACH IS THE CHIP'S `title` AND NOT A LINE ON THE
+            CARD, where it would cost height on a panel whose whole job is to be
+            small. The words are the layer table's — see `note`.
+            DRAWN ONLY WHERE THERE IS A CHOICE. One offered layer is not a
+            control, and a single chip that cannot be turned off is a button
+            that does nothing. */}
+        {layers.length > 1 && (
+          <div className="flex gap-1 mt-2" role="group" aria-label="Heatmap reading">
+            {layers.map((l) => (
+              <button key={l.id} type="button" title={l.note}
+                aria-pressed={l.id === heatmap.layer?.id}
+                className={l.id === heatmap.layer?.id ? PROP_ON : PROP_OFF}
+                onClick={() => heatmap.setLayer?.(l.id)}>
+                {l.short}
+              </button>
+            ))}
+          </div>
+        )}
         {/* WHOSE TARGET, AND WHAT IT IS. Omitted entirely rather than printed
             empty when there is nothing to say — a plan with no target is a
             plan with no spaces on it, and the card is already gone by then. */}
         {target && (
-          <div className="mt-1 text-[10px] leading-[1.35] text-subtle">
+          <div className="mt-2 text-[10px] leading-[1.35] text-subtle">
             {target}
           </div>
         )}
+
+
+
         <ul className="list-none m-0 mt-2 p-0 grid gap-[3px]">
           {HEATMAP_BANDS.map((b) => (
             <li key={b.id} className="flex items-center gap-2">
@@ -161,10 +229,9 @@ export default function HeatmapLegend({ heatmap, stage }) {
                 style={{ background: `var(${b.token})` }} />
               <span className="text-[10px] leading-none text-muted tabular-nums">
                 {b.label}
-                {/* WHICH BAND IS THE ONE TO BE IN. It stays now that the target
-                    figure has gone: without it the five percentages are shares
-                    of a number the card no longer states, and this is the only
-                    thing left saying which of them is the answer. */}
+                {/* WHICH BAND IS THE ONE TO BE IN. The line above states the
+                    target these five are percentages OF; this says which of
+                    them is the answer, which the percentages alone do not. */}
                 {b.id === '75-125' && (
                   <span className="ml-0.5 text-[8px] tracking-[0.04em] text-muted">
                     (Recommended)

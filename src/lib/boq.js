@@ -144,9 +144,15 @@ export const FIXTURES = [
      reflector. Null is "not specified here", which is true, rather than a
      number somebody would later try to design to.
 
-     18 W IS THE ORDINARY 600 mm MODULE, and it is `PANEL_WATTS`' own default in
-     lumens.js — stated in both because one is the catalogue and the other is
-     the model, and they have to agree about the product. */
+     18 W IS THE TOP OF THE RANGE — see TRACK_DIFFUSER_WATTS in lumens.js, which
+     sells this product at 5, 10 and 18. It cited `PANEL_WATTS`' default until
+     the track diffuser stopped being filed under the panel and got a family of
+     its own, and the two ranges have nothing to say to each other now.
+
+     AND IT IS THE LINE FOR A MODULE AT THAT SPECIFICATION AND NOT FOR EVERY
+     MODULE. A diffuser carries its own wattage — a hand-placed one opens at the
+     family's 10 W and the allocator solves for 5s and 10s along a rail — and
+     each figure is its own line on the schedule. See `moduleLine`. */
   { id: 'track-diffuser', label: 'Track diffuser — linear', unit: 'nos',
     watts: 18, beam: null, lumens: 1600,
     note: 'linear ambient module, clipped into a track' },
@@ -308,6 +314,57 @@ const cobLine = (watts, beam) => ({
   note: 'placed by hand — specified per fitting',
 });
 
+/* --- AND A TRACK MODULE IS SPECIFIED THE SAME WAY, WHICH IT WAS NOT BEING ---
+   THE SCHEDULE BILLED EVERY DIFFUSER AT 18 W whatever was on the drawing. A
+   module clipped onto a magnetic track carries its own wattage and its own
+   optic — see `placeModule` in magTrack.js — and the BOQ was reading neither:
+   the catalogue line's figures went onto the row, so a run of 5 W corner
+   modules was ordered as 18 W apiece and the connected load was wrong by the
+   difference. Changing the wattage in the specification bar or on the Analysis
+   row moved the drawing and the two figures at the top of the panel and left
+   the schedule saying what it had always said.
+
+   IT IS THE COB'S RULE, APPLIED TO THE PRODUCT ABOVE. One line per
+   specification, because that is what gets ordered — and the allocator makes
+   the point on its own: the corner-first rule puts 5 W at the corners of a rail
+   and a 10 W in the middle of it, which is two products on one profile and
+   cannot be one line at either figure.
+
+   THE CATALOGUE LINE IS STILL THE PRODUCT AT ITS STATED SPECIFICATION, and a
+   module that matches it counts INTO it rather than beside it. That is what
+   keeps a hand-clipped 5 W / 30° spot and one the ceiling design absorbed into
+   a track on the same row: they are the same fitting bought the same way, and
+   two rows reading "Track spot — directional" would be this file's authoring
+   history on somebody's order. Only a module specified away from the catalogue
+   earns a line, and it says so in its description.
+
+   NO `beam` IN THE ID WHERE THERE IS NO BEAM. A diffuser has no reflector and
+   states none — see the note on `track-diffuser` — so its lines differ by
+   wattage alone and `track-diffuser-5w` is the whole specification. */
+export const moduleLineId = (fixture, watts, beam) =>
+  `${fixture}-${watts}w${beam != null ? `-${beam}` : ''}`;
+
+const moduleLine = (base, watts, beam) => ({
+  ...base,
+  id: moduleLineId(base.id, watts, beam),
+  /* THE FIGURES IN THE DESCRIPTION, for `cobLine`'s reason one block up: a
+     schedule is read as a list of descriptions, and two "Track diffuser —
+     linear" rows with the numbers three columns away is a list nobody can
+     scan. */
+  label: `${base.label}, ${watts} W${beam != null ? `, ${beam}°` : ''}`,
+  watts, beam,
+  /* PRO-RATA OFF THE CATALOGUE'S OWN PAIR, which is this app's model of these
+     families rather than a guess: `track_diffuser` and `track_spot` state no
+     fixed lumens in lumens.js, so output is watts × efficacy and a watt is a
+     watt across the range. See `unitOutput`. */
+  lumens: base.lumens != null && base.watts > 0
+    ? Math.round(base.lumens * (watts / base.watts)) : base.lumens,
+  /* WHICH PRODUCT THIS IS A SPECIFICATION OF, so the derived rows sit under
+     their catalogue line rather than in a block of their own at the foot of the
+     schedule. A reader scanning for diffusers finds all of them together. */
+  base: base.id,
+});
+
 export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
                            /* --- THE MAGNETIC TRACKS AND THEIR MODULES --------
                               THEIR OWN TWO ARGUMENTS, beside `spots` and for its
@@ -367,6 +424,28 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
     if (!(w > 0) || !(b > 0)) return null;
     const id = cobLineId(w, b);
     if (!cobSpecs.has(id)) cobSpecs.set(id, cobLine(w, b));
+    return id;
+  };
+
+  /* WHICH LINE ONE TRACK MODULE IS BOUGHT ON, gathered before the rooms are
+     walked for `cobSpecs`' reason: the totals loop and the line list below have
+     to agree about what exists. See `moduleLine` for the rule. */
+  const modSpecs = new Map();
+  const moduleIdOf = (m) => {
+    /* A MODULE WITH NO CATALOGUE LINE IS NOT BILLED AND NOT INVENTED. The wall
+       washer is declared and not specified yet (see TRACK_MODULES), and a
+       schedule that priced it would be pricing a product nobody has chosen. */
+    const base = FIXTURE_BY_ID[m?.fixture];
+    if (!base) return null;
+    /* A FIGURE THE MODULE DOES NOT STATE IS THE CATALOGUE'S, which is what a
+       plan saved before modules carried their own specification holds, and what
+       `> 0` means here rather than `!= null`: a null wattage reads as 0 through
+       `Number`, and a nought-watt fitting is not a product. */
+    const w = Number(m.watts) > 0 ? Number(m.watts) : base.watts;
+    const b = Number(m.beam) > 0 ? Number(m.beam) : (base.beam ?? null);
+    if (w === base.watts && b === (base.beam ?? null)) return base.id;
+    const id = moduleLineId(base.id, w, b);
+    if (!modSpecs.has(id)) modSpecs.set(id, moduleLine(base, w, b));
     return id;
   };
 
@@ -456,12 +535,14 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
       q['track-profile'] += trackMetres(t.lengthFt ?? 0);
       q['track-corner'] += t.corners ?? 0;
     }
+    /* ...AND EACH ONE ON THE LINE ITS OWN FIGURES PUT IT ON — see
+       `moduleIdOf`, which is the COB loop's `cobIdOf` over a product that has a
+       catalogue line to fall back to. `q[id] == null` seeds a derived line the
+       same way, and it is what lets a line outside BILLED_IDS be counted at
+       all. */
     for (const m of modules) {
       if (m.roomId !== r.id) continue;
-      const id = m.fixture;
-      // A MODULE WITH NO CATALOGUE LINE IS NOT BILLED AND NOT INVENTED. The
-      // wall washer is declared and not specified yet (see TRACK_MODULES), and
-      // a schedule that priced it would be pricing a product nobody has chosen.
+      const id = moduleIdOf(m);
       if (!id) continue;
       if (q[id] == null) q[id] = 0;
       q[id]++;
@@ -513,8 +594,16 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
      out. Sorted by wattage and then by optic so the six hand-placed lines read
      as a range of one product rather than as the order they happened to be
      clicked in. */
-  const catalogue = [...FIXTURES, ...[...cobSpecs.values()].sort(
-    (a, b) => a.watts - b.watts || a.beam - b.beam)];
+  /* EACH TRACK MODULE'S DERIVED LINES FOLLOW THE PRODUCT THEY ARE A
+     SPECIFICATION OF, rather than being appended in a block: "Track diffuser —
+     linear" and its 5 W and 10 W rows read as one range in the schedule, which
+     is how somebody scanning for diffusers finds all of them. Sorted by wattage
+     and then by optic, like the COB lines and for their reason. */
+  const modLines = [...modSpecs.values()].sort(
+    (a, b) => a.watts - b.watts || (a.beam ?? 0) - (b.beam ?? 0));
+  const catalogue = [
+    ...FIXTURES.flatMap((f) => [f, ...modLines.filter((m) => m.base === f.id)]),
+    ...[...cobSpecs.values()].sort((a, b) => a.watts - b.watts || a.beam - b.beam)];
 
   const lines = catalogue.map((f) => {
     const qty = total[f.id] ?? 0;

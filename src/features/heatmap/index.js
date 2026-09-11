@@ -32,7 +32,8 @@ export { HEATMAP_BANDS, HEATMAP_TARGET_LUX, HEATMAP_TARGET_LUX_BY_ROOM,
             first one's is: "what is this room aiming at" is a question asked
             from outside the feature, and the reflected-ambient figures are a
             different answer to it against a different measurement. */
-         HEATMAP_LAYERS, HEATMAP_LAYER_DEFAULT, heatmapLayerFor,
+         HEATMAP_LAYERS, HEATMAP_LAYERS_OFFERED, HEATMAP_LAYER_DEFAULT,
+         heatmapLayerFor,
          REFLECTED_AMBIENT_LM_PER_SQFT, REFLECTED_AMBIENT_TARGET_LUX,
          REFLECTED_AMBIENT_TARGET_LUX_DEFAULT, LUX_PER_LM_PER_SQFT,
          AVERAGE_FLOOR_SHARE,
