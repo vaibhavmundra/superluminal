@@ -58,6 +58,125 @@ export const FAN_SWEEPS = [600, 900, 1050, 1200];
 export const FAN_SWEEP_MM = 900;
 
 /**
+ * WHAT A DECORATIVE FITTING MAY BE SPECIFIED AT, in watts.
+ *
+ * PER TYPE, AND IN TWO DIFFERENT SHAPES, BECAUSE THEY ARE NOT ONE PRODUCT.
+ *
+ * A CHANDELIER IS A RANGE, for the reason `COB_WATT_RANGE` in lib/cob.js gives
+ * at length and which applies here more strongly than it does there: it is a
+ * fitting somebody CHOSE. Nobody orders a chandelier off a lighting schedule —
+ * they buy the one they liked and tell you what it draws, which is why boq.js
+ * counts these and does not bill them. It is several lamps in one body (the
+ * heatmap models it as a ring of six elements — see `chandelier` in
+ * features/heatmap/profiles.js) so its connected load is a multiple of a bare
+ * lamp's and 55 W is an ordinary one. A chip list over that span would be this
+ * app arguing with a product sheet it has never seen.
+ *
+ * A PENDANT AND A STANDARD LAMP ARE THREE BULBS, AND THAT IS THE WHOLE LIST.
+ * Each is ONE lamp in ONE shade, and the lamp is bought as a lamp: 7, 9 or 12
+ * watts. A slider from 3 to 24 over that was a control offering twenty-two
+ * figures for a choice with three answers, and every one of the other nineteen
+ * is a line nobody can order. `options` is what says so, and the panel draws
+ * chips for it — see the three-way branch in SpaceAnalysis, which was already
+ * written for exactly this distinction and had nothing routed into it.
+ *
+ * SO A TYPE CARRIES EITHER `options` OR `min`/`max`/`step`, NEVER BOTH, and
+ * `wattRangeOf` / `wattOptionsOf` are the two readings of that. A type that
+ * carried both would be two controls for one decision, and the panel would
+ * silently pick whichever branch it tested first.
+ *
+ * THE FIGURES ARE CATALOGUE FIGURES AND ARE MEANT TO BE EDITED. They sit beside
+ * the sizes for that reason: this table is where a decorative fitting's
+ * specification lives, and the diameter and the load are two facts of the same
+ * kind. Nothing derives them.
+ *
+ * WHOLE WATTS, like the COB's: a slider landing on 12.4 W is a control
+ * pretending to a precision no product has.
+ */
+export const LAMP_WATTAGES = {
+  /* SIX ARMS AT A BARE LAMP EACH, ROUGHLY, AND THAT IS THE TOP OF IT. */
+  chandelier:    { min: 5, max: 55, step: 1, defaultWatts: 36 },
+  /* ONE SHADE OVER A TABLE. The same `kind` as the chandelier and half its
+     diameter — see the entry below — so it is half the fitting and nothing like
+     the same load, and unlike the chandelier it is ONE bulb, which is what
+     makes it a list of three rather than a span. */
+  pendant:       { options: [7, 9, 12], defaultWatts: 9 },
+  /* ONE BULB, PLUGGED IN. The same three, and its default is the figure every
+     decorative fitting used to share — so the one type whose old wattage was
+     never wrong keeps it. */
+  standing_lamp: { options: [7, 9, 12], defaultWatts: 7 },
+};
+
+/**
+ * WHAT THIS ONE FITTING DRAWS, and what it may be set to.
+ *
+ * KEYED BY `typeId` AND NOT BY `kind`, which is the whole reason a pendant can
+ * differ from a chandelier at all: they are one `kind` on purpose (see the entry
+ * below for the nine files that rely on it) and two entries in the picker, and
+ * the load is one of the two things that actually differ between them.
+ *
+ * THE STORED FIGURE WINS AND IS ABSENT UNTIL SOMEBODY SETS ONE. A plan saved
+ * before these existed holds no `watts` on any object, and reads its type's
+ * default — which is what keeps an old plan's schedule correct rather than
+ * zeroed. Same rule the shape's `role` follows: what is default does not ride
+ * along in the file.
+ */
+/* FALLING BACK TO THE `kind`, WHICH IS NOT BELT AND BRACES. `typeId` has been
+   written by `makeCeilingObject` since it existed, but a duplicate is built by
+   spreading an original and a plan can be loaded from a file this build did not
+   write — and an object that answered "not a lamp" would drop out of the
+   schedule, out of the heatmap and out of the fixture list at once, silently.
+   A `kind: 'chandelier'` with no type is a chandelier: the larger of the two is
+   the safe reading, because it is the one that leaves the fitting visible. */
+export const lampWattsOf = (o) => LAMP_WATTAGES[o?.typeId]
+  ?? (o?.kind === 'chandelier' ? LAMP_WATTAGES.chandelier
+    : o?.kind === 'standing_lamp' ? LAMP_WATTAGES.standing_lamp : null);
+
+/**
+ * THE TWO READINGS OF THAT ENTRY, AND A TYPE ANSWERS EXACTLY ONE OF THEM.
+ *
+ * `wattRangeOf` IS NULL FOR A FITTING SOLD AT THREE FIGURES, which is the whole
+ * mechanism: the panel tests `wattRange` first and draws a slider for it, so a
+ * pendant that still answered a range would keep the slider whatever else it
+ * offered. See the three-way branch in SpaceAnalysis. Null is not an absence
+ * here — it is the fitting saying "not a continuous choice".
+ */
+export const wattRangeOf = (o) => {
+  const spec = lampWattsOf(o);
+  return spec && !spec.options ? spec : null;
+};
+/** ...and the list, where the fitting is sold as a list. */
+export const wattOptionsOf = (o) => lampWattsOf(o)?.options ?? null;
+
+/**
+ * WHAT THIS ONE FITTING IS SPECIFIED AT — the stored figure, held to what the
+ * type can actually be.
+ *
+ * A STORED FIGURE OFF THE LIST IS SNAPPED TO THE NEAREST ONE ON IT, and that is
+ * not defensive coding: a pendant saved while the slider existed holds any
+ * whole number from 3 to 24, and a 14 W pendant reopened here would light three
+ * chips none of which was latched — a control that cannot show its own state.
+ * Snapping reports the nearest thing anybody can buy and is what the schedule
+ * would have to bill anyway. NOTHING IS REWRITTEN ON THE DOCUMENT: the stored
+ * 14 stays until somebody presses a chip, exactly as an out-of-range slider
+ * value was clamped on read and not on disk.
+ */
+export const wattsOf = (o) => {
+  const spec = lampWattsOf(o);
+  if (!spec) return null;
+  const w = Number(o?.watts);
+  if (!Number.isFinite(w)) return spec.defaultWatts;
+  if (spec.options) {
+    return spec.options.reduce(
+      (best, x) => (Math.abs(x - w) < Math.abs(best - w) ? x : best), spec.options[0]);
+  }
+  return Math.min(spec.max, Math.max(spec.min, w));
+};
+
+/** Is this object a light at all? The three the lighting schedule counts. */
+export const isLamp = (o) => !!lampWattsOf(o);
+
+/**
  * The catalogue. `kind` is what it is; `id` is what the picker offers, which is
  * not the same thing — a fan is one kind, one entry and FOUR SIZES, because the
  * sweep is a property of the fan you placed rather than four things to place.

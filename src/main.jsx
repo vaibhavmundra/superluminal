@@ -16,6 +16,7 @@ import AdminUsers from './routes/AdminUsers.jsx';
 import AdminUserView from './routes/AdminUserView.jsx';
 import AdminUserProject from './routes/AdminUserProject.jsx';
 import AdminPlanViewer from './routes/AdminPlanViewer.jsx';
+import { FloatingScheduleDemoButton } from './components/ScheduleDemoButton.jsx';
 import './styles.css';
 
 // ---------------------------------------------------------------------------
@@ -114,6 +115,7 @@ createRoot(document.getElementById('root')).render(
           <Route path="/admin/plans/:planId" element={<RequireAuth><AdminPlanViewer /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <FloatingScheduleDemoButton />
         </BillingProvider>
       </AuthProvider>
     </BrowserRouter>

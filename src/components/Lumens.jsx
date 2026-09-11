@@ -21,12 +21,12 @@ import React from 'react';
    wrongly. Nothing but the two figures side by side says that.
 
    WHAT IS WASHING THE ROOM, AND WHAT IS BEING POINTED AT SOMETHING. That is the
-   question, and it is why the two figures are not two of the scheme's three
-   LAYERS: accent light is ambient light as far as a room's level goes — a sconce
-   washes a wall, a pendant throws in every direction — while a recessed COB puts
-   eighty percent of its output at the floor. The fixture list still groups by
-   the three layers, because that is how a scheme is designed; this is how it is
-   read.
+   question, and it is now the same question the fixture list groups by: a sconce
+   washes a wall and a pendant throws in every direction, while a recessed COB
+   puts eighty percent of its output at the floor. There used to be a third layer
+   — 'accent' — that this file folded into the ambient figure before printing it,
+   so the reading and the grouping disagreed by one section. The layer has gone
+   and the fold with it; see `layer` in lib/lumens.js for why.
 
    NEITHER FIGURE IS THIS FILE'S ARITHMETIC. `contributions` arrives on the
    analysis and is `achieved` broken in two, always summing back to it — see the
@@ -119,9 +119,8 @@ export default function Lumens({ analysis }) {
       {/* --- WHAT IT IS MADE OF, AND THE TWO ADD BACK UP TO IT -------------
           NO THIRD LINE. There was an accent one, drawn only when there was
           something in it, on the reasoning that three printed figures had to add
-          up to the big one. They add up in two now — see the note at the top of
-          this file for why accent light belongs with the ambient half rather
-          than in a line of its own. */}
+          up to the big one. There is no third layer left to print — see the note
+          at the top of this file. */}
       <div className={ROW}>
         <span className={LBL}>Ambient lights contribution</span>
         <span className={FIG}>{lm(ambient)}</span>

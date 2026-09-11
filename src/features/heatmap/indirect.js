@@ -60,26 +60,25 @@ import { buildSphereTransfer, gather } from './reflection.js';
 import { AVERAGE_FLOOR_SHARE } from './heatmapTargets.js';
 
 /**
- * WHERE THE PROBES SIT, IN MILLIMETRES ABOVE THE FLOOR — the product default.
+ * WHERE THE PROBES SIT, IN MILLIMETRES ABOVE THE FLOOR.
  *
  * 1200 IS A CHOICE AND NOT A STANDARD, and saying so is the point of this
  * comment. It is roughly the height of a seated eye and of the middle of a
  * standing body, which is where "how bright does this room feel" is actually
- * asked, and it is the figure this layer opens on. It is not quoted from a
- * code and nothing about the engine depends on it: it is one entry here and
- * one chip in the legend.
+ * asked. It is not quoted from a code.
+ *
+ * --- AND IT IS FIXED, WHICH IS A DECISION RATHER THAN A LIMITATION --------
+ * THERE WAS A THREE-CHIP HEIGHT CONTROL IN THE LEGEND (`PROBE_HEIGHTS_MM`,
+ * 800 / 1200 / 1700) AND IT IS GONE. A measurement height is a question about
+ * photometric convention, and asking it of somebody laying out lights buys
+ * them a decision they have no basis to make and a card three rows taller.
+ * The engine never cared: `solveIndirect` takes a `probeZ` like it always did,
+ * `probeHeightFor` still clamps it per room, and the whole of "make it
+ * adjustable again" is a control that writes a different number here.
+ *
+ * READ ONCE, BY useHeatmap. Nothing else in the feature knows the figure.
  */
 export const PROBE_HEIGHT_MM = 1200;
-
-/**
- * THE HEIGHTS THE LEGEND OFFERS. Three, because a compact control in a 220px
- * card can hold three chips and because these are the three questions actually
- * asked of an ambient level: at a worktop, at a seated eye, and standing.
- *
- * ANY HEIGHT IS VALID AND THESE ARE ONLY THE QUICK ONES — `probeHeightFor`
- * takes a number, so a future field or slider needs nothing here.
- */
-export const PROBE_HEIGHTS_MM = [800, 1200, 1700];
 
 /**
  * HOW FAR BELOW THE SLAB A PROBE IS KEPT, in metres.

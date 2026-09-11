@@ -286,6 +286,47 @@ sec('every run is its own row');
     new Set(many.rows.map((r) => r.key)).size === many.rows.length);
 }
 
+sec('a row states the default it would read with nothing stored');
+{
+  /* --- THE CHIP THAT COULD NOT BE PRESSED --------------------------------
+     A ROW MAY OPEN SOMEWHERE OTHER THAN ITS FAMILY'S DEFAULT, and the spots
+     are why: a directional spot and an ambient downlight are one FAMILY and
+     two catalogue lines, 5 W against 7. `fixtureGroups` stamps the row's own
+     `defaultWatts` and `wattsFor` honours it — but the WRITE has to know the
+     same number, because "a choice back at the default stores nothing" is the
+     rule every override in this app follows. It was being handed the family's
+     7 regardless, so pressing 7 W on a Directional spot row read as "back to
+     the default", deleted the override, and the row fell straight back to 5:
+     one chip out of five that could not be chosen, and the most familiar
+     figure of the five. So the row carries the answer. */
+  const rowFor = (group, stored = {}) => analyseSpace({
+    polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+    projectId: 'residential', country: 'India',
+    groups: [group], watts: stored,
+  }).rows[0];
+
+  const grid = rowFor({ key: 'cob', familyId: 'cob', count: 3 });
+  ok('an ordinary row is at its family default',
+    grid.defaultWatts === FAMILY_BY_ID.cob.defaultWatts);
+
+  const SPOT = { key: 'spot', familyId: 'cob', count: 1, defaultWatts: 5 };
+  const spot = rowFor(SPOT);
+  ok('...and a row with a default of its own says so, not the family\'s',
+    spot.defaultWatts === 5 && FAMILY_BY_ID.cob.defaultWatts !== 5,
+    `${spot.defaultWatts} vs family ${FAMILY_BY_ID.cob.defaultWatts}`);
+  ok('...which is the figure it opens at', spot.watts === 5);
+
+  /* THE ROUND TRIP, WHICH IS WHERE THE FAULT ACTUALLY LIVED: every chip the
+     family offers has to come back off the store as itself. `ROW_WATTS_SET` in
+     usePlanDoc is the rule — a wattage equal to the default stores nothing —
+     and this walks the whole list through it exactly as `setRowWatts` does. */
+  const store = (row, w) => (w === row.defaultWatts ? {} : { [row.key]: w });
+  const unreachable = FAMILY_BY_ID.cob.watts
+    .filter((w) => rowFor(SPOT, store(spot, w)).watts !== w);
+  ok('...and every wattage the family sells can be chosen on it',
+    unreachable.length === 0, `unreachable: ${unreachable.join(', ')} W`);
+}
+
 sec('the whole reading for one space');
 {
   const empty = analyseSpace({ polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
@@ -382,51 +423,66 @@ sec('the whole reading for one space');
   ok('...and nothing is outstanding', enough.shortfall === 0);
 }
 
-sec('the total is split into the layers a scheme is designed in');
+sec('the total is split into the two layers a scheme is designed in');
 {
-  /* AMBIENT, TASK AND ACCENT ARE ONE FITTING EACH, so a figure landing in the
-     wrong bucket cannot hide inside another row's contribution. A track spot
-     borrows the COB and is the task layer; a floor lamp is accent. */
-  const three = analyseSpace({
+  /* AMBIENT AND TASK ARE ONE FITTING EACH, so a figure landing in the wrong
+     bucket cannot hide inside another row's contribution. A track spot borrows
+     the COB and is the task layer; a floor lamp washes the room and is ambient.
+     THERE WAS A THIRD, 'accent', AND THE LAMP WAS IN IT. It never reached the
+     readout — this file's own next section folded it into the ambient figure
+     before printing — so all it did was file a chandelier in a section of the
+     fixture list away from everything else that lights a room, with its wattage
+     control inside it. See `layer` in lib/lumens.js. */
+  const two = analyseSpace({
     polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
     projectId: 'residential', country: 'India',
     groups: [{ key: 'cove', familyId: 'cove', count: 1, lengthFt: 20 },
              { key: 'spot', familyId: 'track_spot', count: 3 },
              { key: 'lamp', familyId: 'lamp', count: 2 }],
   });
-  const netOf = (k) => three.rows.find((r) => r.key === k).netLumens;
-  ok('the ambient row is the ambient figure', at(three.byLayer.ambient, netOf('cove')));
-  ok('...the task row the task figure', at(three.byLayer.task, netOf('spot')));
-  ok('...and the accent row the accent figure', at(three.byLayer.accent, netOf('lamp')));
+  const netOf = (k) => two.rows.find((r) => r.key === k).netLumens;
+  ok('a cove is the ambient figure...', at(two.contributions.ambient,
+    netOf('cove') + netOf('lamp')));
+  ok('...a decorative lamp is in it too, and not in a layer of its own',
+    netOf('lamp') > 0 && two.contributions.ambient > netOf('cove'));
+  ok('...and the track spot is the task figure', at(two.contributions.task, netOf('spot')));
   /* THE ONE PROPERTY THE GROUPING DEPENDS ON: the fixture list draws a section
-     per layer, so three figures that did not add back to the total would be a
-     panel whose sections do not account for their own room. */
-  ok('the three add back up to achieved',
-    at(three.byLayer.ambient + three.byLayer.task + three.byLayer.accent,
-      three.achieved));
+     per layer, so figures that did not add back to the total would be a panel
+     whose sections do not account for their own room. */
+  ok('the two add back up to achieved',
+    at(two.contributions.ambient + two.contributions.task, two.achieved));
   /* AND EVERY ROW IS IN EXACTLY ONE OF THEM, which is what stops a fitting
-     going missing from a panel that claims to list the room. */
-  ok('every row is in one of the three layers',
-    three.rows.every((r) => ['ambient', 'task', 'accent'].includes(r.layer)));
+     going missing from a panel that claims to list the room. This is the
+     assertion that would have caught the third layer's removal leaving a family
+     behind: a row whose layer has no section is a fitting on the drawing, in
+     the arithmetic, and nowhere in the list. */
+  ok('every row is in one of the two layers',
+    two.rows.every((r) => ['ambient', 'task'].includes(r.layer)));
+  /* EVERY FAMILY, NOT JUST THE THREE ABOVE. The families are the table; a new
+     one added with a layer the panel cannot draw is exactly the mistake. */
+  ok('...and so is every family in the table',
+    FIXTURE_FAMILIES.every((f) => ['ambient', 'task'].includes(f.layer)));
+  ok('the decorative lamp family is ambient',
+    FAMILY_BY_ID.lamp.layer === 'ambient');
+  ok('...and so are the sconce and the shelf strip that shared its section',
+    FAMILY_BY_ID.sconce.layer === 'ambient'
+      && FAMILY_BY_ID.shelf_strip.layer === 'ambient');
 
-  /* ALL THREE KEYS EXIST WHATEVER IS IN THE ROOM, so a caller can print a layer
+  /* BOTH KEYS EXIST WHATEVER IS IN THE ROOM, so a caller can print a layer
      without first asking whether the room has one — a missing key would print
      as an empty figure rather than as a zero. */
   const bare = analyseSpace({ polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
                               projectId: 'residential', country: 'India' });
-  ok('an empty room still answers for all three layers',
-    bare.byLayer.ambient === 0 && bare.byLayer.task === 0
-      && bare.byLayer.accent === 0);
-  ok('...and for both contributions',
+  ok('an empty room still answers for both layers',
     bare.contributions.ambient === 0 && bare.contributions.task === 0);
 }
 
-sec('...and the readout reads it as two figures, not three');
+sec('...and the readout prints those same two figures');
 {
   /* WHAT WASHES THE ROOM AND WHAT IS POINTED AT SOMETHING. A downlight is task
-     light — 80% of its output goes at the floor — and a sconce is not, however a
-     scheme files it. These are the two figures the readout prints, so the
-     grouping being right is not enough: the FOLD has to be right too. */
+     light — 80% of its output goes at the floor — and a sconce is not. The
+     readout prints these two, and the fixture list now groups by the same two:
+     one question, asked once. */
   const room = analyseSpace({
     polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
     projectId: 'residential', country: 'India',
@@ -442,9 +498,10 @@ sec('...and the readout reads it as two figures, not three');
   ok('a recessed COB is task light', at(room.contributions.task, netOf('cob')));
   ok('...and not part of the ambient figure',
     room.contributions.ambient < netOf('cob'));
-  /* ACCENT FOLDS INTO AMBIENT, which is the other half of the fold: a floor
-     lamp throws in every direction and that light is in the room. */
-  ok('accent light counts as ambient',
+  /* A DECORATIVE LAMP IS AMBIENT LIGHT, which used to be a FOLD performed here
+     and is now simply what the row says. The figure is identical either way —
+     that is the point, and it is why removing the layer changed no arithmetic. */
+  ok('a decorative lamp counts as ambient',
     at(room.contributions.ambient, netOf('cove') + netOf('lamp')));
   ok('the two add back up to achieved',
     at(room.contributions.ambient + room.contributions.task, room.achieved));

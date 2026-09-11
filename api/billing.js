@@ -1,51 +1,12 @@
-// ---------------------------------------------------------------------------
-// api/billing.js — the till. Five actions, one authority, and the browser is not
-// it.
+// The server is the authority for the only usage rule: a Free account may light
+// three distinct plans. It re-validates the caller and plan ownership before it
+// records a plan slot; area and render passes are never charged. Checkout prices
+// are also server-owned and selected from Vercel's country header.
 //
-// THIS FILE IS THE ONLY THING THAT MAY SAY "YES, LIGHT IT". The editor asks; it
-// does not decide. That split is the entire security model, because everything
-// on the other side of the wire is editable by whoever is looking at it: the
-// tier in React state, the remaining balance printed in the profile menu, the
-// disabled attribute on a button. All three are conveniences. The refusal that
-// counts happens here, against rows read with the service key, on every claim.
-//
-// THE THREE CHECKS, IN THIS ORDER, EXACTLY AS api/admin.js DOES THEM:
-//   1. There is a bearer token.
-//   2. Supabase says it belongs to a real, current user — asked of /auth/v1/user
-//      with the ANON key, which is the call that actually validates the
-//      signature and the expiry. Nothing else can.
-//   3. The row being spent against belongs to that user.
-// Only then does the service key write.
-//
-// WHAT IS TRUSTED, AND SAYING SO PLAINLY.
-//
-// The square footage of a space is computed in the browser, from geometry that
-// only the browser has: an outline is stored in drawing units and resolving it
-// needs the parsed DXF, which is a megabyte of line work this endpoint has no
-// business loading. So `sqft` arrives from the client and is TRUSTED FOR ITS
-// MAGNITUDE, within bounds. What is not trusted, and is checked here every time:
-//
-//   · that the caller is who they say they are          (the token)
-//   · that the plan being charged is theirs             (owner = uid)
-//   · that the figure is inside sane bounds             (MAX_CLAIM_SQFT)
-//   · that the fingerprint has not already been charged (the unique index)
-//   · that the balance covers it                        (canSpend, service-side)
-//
-// A determined user with devtools can under-report an area. What they cannot do
-// is spend somebody else's allowance, replay a charge to inflate their own,
-// charge a plan they do not own, or grant themselves a tier — and every claim
-// they make is written to usage_events with `claimed_sqft` beside it, so
-// under-reporting leaves a trail in a table they cannot write to. That is the
-// honest description of this boundary, and it is where it is because moving it
-// means shipping a DXF parser into the billing endpoint.
-//
-// RUNS UNCHANGED IN TWO PLACES — a Vercel function in production, Vite dev
-// middleware on localhost (vite.config.js) — which is why the body is read
-// defensively: Vercel parses JSON, Vite does not.
-// ---------------------------------------------------------------------------
+// This module runs both as a Vercel function and Vite development middleware.
 import { createHmac } from 'node:crypto';
-import { TIER, TIERS, tierOf, sellableTier, windowStart, balanceFromTotals, canSpend,
-         MAX_CLAIM_SQFT, MIN_CLAIM_SQFT, normaliseEmail } from '../src/lib/plans.js';
+import { TIERS, tierOf, sellableTier, windowStart, balanceFromTotals, canSpend,
+         normaliseEmail } from '../src/lib/plans.js';
 
 /**
  * THE CONFLICT TARGETS, NAMED, BECAUSE POSTGREST WILL NOT GUESS THEM.
@@ -103,43 +64,38 @@ const RZP_API = 'https://api.razorpay.com/v1';
 const RZP_MODE = (process.env.RZP_MODE || 'subscription').toLowerCase() === 'order'
   ? 'order' : 'subscription';
 
-const CURRENCY = (process.env.RZP_CURRENCY || 'USD').toUpperCase();
-
-/**
- * THE PLAN IDS, AND TWO SPELLINGS OF EACH ARE ACCEPTED ON PURPOSE.
- *
- * `RZP_PLAN_<TIER>` is what tools/razorpay-plans.mjs prints and what
- * .env.example documents. `RZP_<TIER>_PLAN` is the shape already sitting in this
- * project's .env.local, written by hand for plans created in the Razorpay
- * dashboard rather than by the script. Accepting both costs one `||` and saves
- * the failure it prevents, which is the worst kind: a plan id that is plainly
- * present in the environment file, and a checkout that says the tier has no plan
- * id — with the misspelling being ours, not the operator's.
- */
-const planId = (slug) => {
-  const S = slug.toUpperCase();
-  return process.env[`RZP_PLAN_${S}`] || process.env[`RZP_${S}_PLAN`] || '';
+const PLAN_IDS = {
+  india: process.env.RZP_INDIA_PLAN || '',
+  global: process.env.RZP_USD_PLAN || '',
 };
 
-const PLAN_IDS = { starter: planId('starter'), pro: planId('pro') };
+const REGIONAL_PRICES = {
+  india: { market: 'india', currency: 'INR', amount: 499, amountMinor: 49900,
+           display: '₹499' },
+  global: { market: 'global', currency: 'USD', amount: 10, amountMinor: 1000,
+            display: '$10' },
+};
 
-/**
- * THE AMOUNT IN MINOR UNITS, AND IT IS NOT DERIVED FROM THE DOLLAR PRICE.
- *
- * `tier.usd * 100` is only correct while the account charges in dollars. A
- * Razorpay account taking rupees needs a rupee price that somebody chose — $10
- * is not ₹1,000 and it is not today's mid-market rate either, it is whatever
- * reads as a sensible Indian price. So the amount is explicit, per tier, and
- * falls back to the dollar figure only when the currency actually is USD.
- */
-function amountMinor(slug) {
-  const S = slug.toUpperCase();
-  const env = process.env[`RZP_AMOUNT_${S}`] || process.env[`RZP_${S}_AMOUNT`];
-  if (env) return Math.round(Number(env));
-  const t = TIER[slug];
-  if (!t) return 0;
-  if (CURRENCY !== 'USD') return 0;   // 0 is refused below — better than a wrong price
-  return Math.round(t.usd * 100);
+/** Vercel supplies an ISO country code. Missing locally means global/USD. */
+function pricingFor(req) {
+  const raw = req?.headers?.['x-vercel-ip-country']
+    || req?.headers?.['X-Vercel-IP-Country'] || '';
+  const country = String(Array.isArray(raw) ? raw[0] : raw).trim().toUpperCase();
+  const base = country === 'IN' ? REGIONAL_PRICES.india : REGIONAL_PRICES.global;
+  return { ...base, country: country || null };
+}
+
+function pricingForPlan(planId) {
+  if (PLAN_IDS.india && planId === PLAN_IDS.india) return REGIONAL_PRICES.india;
+  if (PLAN_IDS.global && planId === PLAN_IDS.global) return REGIONAL_PRICES.global;
+  return null;
+}
+
+// Kept as a tiny pure export for the billing test harness.
+function amountMinor(slug, currency = 'USD') {
+  if (sellableTier(slug)?.slug !== 'studio') return 0;
+  return currency === 'INR' ? REGIONAL_PRICES.india.amountMinor
+    : REGIONAL_PRICES.global.amountMinor;
 }
 
 const rzpAuth = () => 'Basic ' + Buffer.from(`${RZP_KEY}:${RZP_SECRET}`).toString('base64');
@@ -324,7 +280,7 @@ const publicState = (sub, balance) => ({
   status: sub?.status ?? 'inactive',
   mode: sub?.mode ?? null,
   cancelAtPeriodEnd: !!sub?.cancel_at_period_end,
-  currency: sub?.currency ?? CURRENCY,
+  currency: sub?.currency ?? 'USD',
   periodStart: sub?.current_period_start ?? null,
   periodEnd: balance.periodEnd,
   lifetime: balance.lifetime,
@@ -353,21 +309,16 @@ async function stateAction(user) {
  * environments, and a VITE_ prefix on it would mean test and live keys diverging
  * between the bundle and this file. One source, handed over per checkout.
  */
-async function checkoutAction(user, body) {
+async function checkoutAction(user, body, pricing) {
   const slug = String(body.tier || '');
-  const tier = TIER[slug];
-  if (!tier || tier.usd <= 0) { const e = new Error('Unknown plan'); e.status = 400; throw e; }
+  const tier = sellableTier(slug);
+  if (!tier || tier.slug !== 'studio') { const e = new Error('Unknown plan'); e.status = 400; throw e; }
   if (!RZP_KEY || !RZP_SECRET) {
     const e = new Error('Payments are not configured — RZP_KEY and RZP_SECRET are missing');
     e.status = 503; throw e;
   }
 
-  const amount = amountMinor(slug);
-  if (!amount || amount < 100) {
-    const e = new Error(`No price is set for ${tier.name} in ${CURRENCY}`
-      + ` — set RZP_AMOUNT_${slug.toUpperCase()} in minor units`);
-    e.status = 503; throw e;
-  }
+  const amount = pricing.amountMinor;
 
   const name = String(body.name || '').trim().slice(0, 120);
   // THE ACCOUNT'S ADDRESS, NOT THE TYPED ONE. Somebody who types a different
@@ -379,13 +330,14 @@ async function checkoutAction(user, body) {
 
   // WRITTEN SERVER-SIDE AND NEVER TOUCHED BY THE BROWSER, which is the entire
   // reason verifyAction is allowed to believe them.
-  const notes = { owner: user.id, tier: slug, email, app: 'super-luminal' };
+  const notes = { owner: user.id, tier: 'studio', market: pricing.market,
+                  currency: pricing.currency, email, app: 'super-luminal' };
 
   if (RZP_MODE === 'subscription') {
-    const planId = PLAN_IDS[slug];
+    const planId = PLAN_IDS[pricing.market];
     if (!planId) {
-      const e = new Error(`${tier.name} has no Razorpay plan id`
-        + ` — run tools/razorpay-plans.mjs and set RZP_PLAN_${slug.toUpperCase()}`);
+      const variable = pricing.market === 'india' ? 'RZP_INDIA_PLAN' : 'RZP_USD_PLAN';
+      const e = new Error(`${tier.name} has no Razorpay plan id — set ${variable}`);
       e.status = 503; throw e;
     }
     // A CUSTOMER FIRST, so the mandate and every future charge hang off one
@@ -419,15 +371,15 @@ async function checkoutAction(user, body) {
       mode: 'subscription',
       keyId: RZP_KEY,
       subscriptionId: sub.id,
-      tier: slug,
-      amount, currency: CURRENCY,
+      tier: 'studio',
+      amount, currency: pricing.currency,
       prefill: { name, email, contact },
     };
   }
 
   // --- prepaid month --------------------------------------------------------
   const order = await rzp('/orders', { method: 'POST', body: {
-    amount, currency: CURRENCY,
+    amount, currency: pricing.currency,
     // Razorpay caps the receipt at 40 characters and rejects anything longer,
     // which is why this is a slice and not a template with an email in it.
     receipt: `sl-${slug}-${Date.now()}`.slice(0, 40),
@@ -438,8 +390,8 @@ async function checkoutAction(user, body) {
     mode: 'order',
     keyId: RZP_KEY,
     orderId: order.id,
-    tier: slug,
-    amount, currency: CURRENCY,
+    tier: 'studio',
+    amount, currency: pricing.currency,
     prefill: { name, email, contact },
   };
 }
@@ -532,7 +484,7 @@ async function verifyAction(user, body) {
   }
 
   // --- WHAT THE GATEWAY SAYS, WHICH IS THE ONLY AUTHORITY HERE --------------
-  let notes = null, amount = null, planId = null, status = null;
+  let notes = null, amount = null, planId = null, status = null, paidCurrency = null;
   let start = new Date(), end = null;
 
   if (mode === 'subscription') {
@@ -565,6 +517,7 @@ async function verifyAction(user, body) {
     }
     notes = order?.notes ?? null;
     amount = Number(order?.amount) || 0;
+    paidCurrency = String(order?.currency || payment?.currency || '').toUpperCase();
     status = 'active';
   }
 
@@ -613,13 +566,16 @@ async function verifyAction(user, body) {
   // `tier: 'pro'` would still have been refused — the tier now comes from the
   // notes, not the body — but a plan whose price was changed in the dashboard
   // would silently sell the wrong thing.
-  const expected = amountMinor(tier.slug);
-  if (mode === 'order' && expected && amount !== expected) {
-    console.warn('[billing] amount does not match the tier', { paymentId, amount, expected });
-    const e = new Error('This payment does not match that plan'); e.status = 400; throw e;
+  const expectedPricing = mode === 'subscription'
+    ? pricingForPlan(planId)
+    : (notes?.market === 'india' ? REGIONAL_PRICES.india : REGIONAL_PRICES.global);
+  if (!expectedPricing) {
+    console.warn('[billing] unknown Razorpay plan id', { paymentId, planId });
+    const e = new Error('This payment does not match a configured plan'); e.status = 400; throw e;
   }
-  if (mode === 'subscription' && PLAN_IDS[tier.slug] && planId !== PLAN_IDS[tier.slug]) {
-    console.warn('[billing] plan id does not match the tier', { paymentId, planId });
+  const expected = expectedPricing.amountMinor;
+  if (mode === 'order' && (amount !== expected || paidCurrency !== expectedPricing.currency)) {
+    console.warn('[billing] amount does not match the tier', { paymentId, amount, expected });
     const e = new Error('This payment does not match that plan'); e.status = 400; throw e;
   }
 
@@ -644,7 +600,7 @@ async function verifyAction(user, body) {
       provider_payment_id: paymentId, provider_order_id: orderId || null,
       provider_subscription_id: subId || null,
       event: 'checkout.verified', status: 'captured',
-      amount_minor: expected, currency: CURRENCY,
+      amount_minor: expected, currency: expectedPricing.currency,
       raw: { mode, tier: tier.slug, verifiedAt: new Date().toISOString() },
     }],
   });
@@ -664,7 +620,7 @@ async function verifyAction(user, body) {
     provider_subscription_id: subId || null,
     provider_plan_id: mode === 'subscription' ? planId : null,
     mode,
-    currency: CURRENCY,
+    currency: expectedPricing.currency,
     amount_minor: expected,
     current_period_start: start.toISOString(),
     current_period_end: end.toISOString(),
@@ -716,7 +672,6 @@ async function consumeAction(user, body) {
   // because it is the owner's project — means an edit grant is also a grant to
   // empty somebody's account, which is not a thing anybody would offer twice.
   // Whoever lays out the lighting buys the layout.
-  let planStats = null;
   if (planId) {
     const rows = await rest(`plans?id=eq.${enc(planId)}`
       + '&select=id,owner,project_id,stats&limit=1');
@@ -735,38 +690,12 @@ async function consumeAction(user, body) {
         : [];
       if (!shares.length) { const e = new Error('No such plan'); e.status = 403; throw e; }
     }
-    planStats = plan.stats ?? null;
   }
 
   const { sub, balance } = await balanceOf(user);
 
   if (kind === 'render_pass') {
-    const fingerprint = String(body.fingerprint || '').slice(0, 64);
-    if (!fingerprint) { const e = new Error('No fingerprint'); e.status = 400; throw e; }
-
-    // ALREADY CHARGED MEANS CHARGED *NET*, AND THE DIFFERENCE WAS A FREE-PASS
-    // LOOP. This used to ask only whether a row with this fingerprint existed,
-    // which a released charge still satisfies — so the sequence was: claim (one
-    // pass debited), release (refunded), claim again (seen as already paid, runs
-    // for nothing), for ever. Summing the pair is the fix: a charge that has been
-    // reversed nets to zero and is charged again, which is what a retry after a
-    // failure should cost.
-    const rows = await rest(`usage_events?owner=eq.${enc(user.id)}&kind=eq.render_pass`
-      + `&fingerprint=in.(${enc(fingerprint)},${enc(fingerprint + ':rev')})`
-      + '&select=units&limit=10');
-    const net = rows.reduce((n, r) => n + (Number(r.units) || 0), 0);
-    if (net > 0) return { ok: true, charged: { passes: 0 }, state: publicState(sub, balance) };
-
-    const verdict = canSpend(balance, { passes: 1 });
-    if (!verdict.ok) return { ok: false, ...verdict, state: publicState(sub, balance) };
-
-    await rest(`usage_events?on_conflict=${ON_CONFLICT.usage_events}`,
-      { method: 'POST', prefer: 'resolution=ignore-duplicates',
-      body: [{ owner: user.id, plan_id: planId, kind: 'render_pass', units: 1,
-               fingerprint, note: String(body.note || '').slice(0, 200) || null }] });
-
-    const after = await balanceOf(user);
-    return { ok: true, charged: { passes: 1 }, state: publicState(after.sub, after.balance) };
+    return { ok: true, charged: { passes: 0 }, state: publicState(sub, balance) };
   }
 
   // --- layout ---------------------------------------------------------------
@@ -782,24 +711,9 @@ async function consumeAction(user, body) {
   const byFp = new Map();
   for (const it of items) {
     const fingerprint = String(it.fingerprint || '').slice(0, 64);
-    const claimed = Number(it.sqft);
     if (!fingerprint) continue;
-    if (!Number.isFinite(claimed)) continue;
-    if (claimed > MAX_CLAIM_SQFT) {
-      const e = new Error('That plan is larger than this tool will meter'); e.status = 400; throw e;
-    }
-    // BELOW THE FLOOR IS NOT A SPACE. rooms.js already discards enclosed areas
-    // under 8 sq ft as too small to be a room, so nothing dropped here was going
-    // to be lit — and two hundred hundredth-of-a-foot rows per request was half
-    // of the ledger-overflow exploit described in plans.js.
-    if (claimed < MIN_CLAIM_SQFT) continue;
-    // The larger of any duplicates, so a collision cannot be used to round a
-    // space down.
-    const prev = byFp.get(fingerprint);
-    if (!prev || claimed > prev.sqft) {
-      byFp.set(fingerprint, { fingerprint, sqft: claimed,
-                              outlineId: String(it.outlineId || '').slice(0, 64) });
-    }
+    byFp.set(fingerprint, { fingerprint,
+                            outlineId: String(it.outlineId || '').slice(0, 64) });
   }
   const clean = [...byFp.values()];
   if (!clean.length) { const e = new Error('Nothing to charge'); e.status = 400; throw e; }
@@ -817,8 +731,6 @@ async function consumeAction(user, body) {
   if (!fresh.length) {
     return { ok: true, charged: { area: 0, spaces: 0 }, state: publicState(sub, balance) };
   }
-
-  const total = fresh.reduce((s2, c) => s2 + c.sqft, 0);
 
   // --- DOES THIS OPEN A NEW PLAN SLOT ---------------------------------------
   //
@@ -849,7 +761,7 @@ async function consumeAction(user, body) {
     if (!lit.length) newPlans = 1;
   }
 
-  const verdict = canSpend(balance, { area: total, newPlans });
+  const verdict = canSpend(balance, { newPlans });
   if (!verdict.ok) {
     return { ok: false, ...verdict, spaces: fresh.length, state: publicState(sub, balance) };
   }
@@ -858,7 +770,7 @@ async function consumeAction(user, body) {
       { method: 'POST', prefer: 'resolution=ignore-duplicates',
     body: fresh.map((c) => ({
       owner: user.id, plan_id: planId, kind: 'layout',
-      area_sqft: c.sqft, claimed_sqft: c.sqft, units: 1,
+      area_sqft: 0, claimed_sqft: null, units: 1,
       fingerprint: c.fingerprint,
       // The space's own name is not sent — it is the user's text and has no
       // business in a billing row. Its id is enough to line an event up with a
@@ -867,14 +779,7 @@ async function consumeAction(user, body) {
     })) });
 
   const after = await balanceOf(user);
-  if (planStats?.areaSqft && total > planStats.areaSqft * 4) {
-    // Not a refusal — a plan legitimately grows between saves — but a ratio this
-    // far out is worth a line in the log, because the alternative reading is a
-    // client sending nonsense.
-    console.warn('[billing] claim is far above the stored plan area',
-      { planId, total, stored: planStats.areaSqft });
-  }
-  return { ok: true, charged: { area: total, spaces: fresh.length },
+  return { ok: true, charged: { area: 0, spaces: fresh.length },
            state: publicState(after.sub, after.balance) };
 }
 
@@ -906,32 +811,9 @@ async function consumeAction(user, body) {
 const RELEASE_WINDOW_MS = 15 * 60 * 1000;
 
 async function releaseAction(user, body) {
-  const fingerprint = String(body.fingerprint || '').slice(0, 64);
-  if (!fingerprint) { const e = new Error('No fingerprint'); e.status = 400; throw e; }
-
-  const sub = await subscriptionOf(user.id);
-  const from = windowStart(sub);
-  const cutoff = new Date(Math.max(
-    Date.now() - RELEASE_WINDOW_MS,
-    from ? Date.parse(from) : 0,
-  )).toISOString();
-
-  const charge = await rest(`usage_events?owner=eq.${enc(user.id)}&kind=eq.render_pass`
-    + `&fingerprint=eq.${enc(fingerprint)}&units=eq.1`
-    + `&created_at=gte.${enc(cutoff)}&select=id,plan_id&limit=1`);
-  if (!charge.length) {
-    const balance = balanceFromTotals(sub, await totalsOf(user.id, sub),
-                                      { isAdmin: !!user.isAdmin });
-    return { ok: false, reason: 'nothing-to-release', state: publicState(sub, balance) };
-  }
-
-  await rest(`usage_events?on_conflict=${ON_CONFLICT.usage_events}`,
-      { method: 'POST', prefer: 'resolution=ignore-duplicates',
-    body: [{ owner: user.id, plan_id: charge[0].plan_id, kind: 'render_pass', units: -1,
-             fingerprint: `${fingerprint}:rev`, note: 'render pass failed' }] });
-
-  const after = await balanceOf(user);
-  return { ok: true, state: publicState(after.sub, after.balance) };
+  void body;
+  const { sub, balance } = await balanceOf(user);
+  return { ok: true, state: publicState(sub, balance) };
 }
 
 /**
@@ -975,7 +857,7 @@ async function cancelAction(user) {
  */
 const ACTIONS = {
   state: (user) => stateAction(user),
-  checkout: (user, body) => checkoutAction(user, body),
+  checkout: (user, body, pricing) => checkoutAction(user, body, pricing),
   verify: (user, body) => verifyAction(user, body),
   consume: (user, body) => consumeAction(user, body),
   release: (user, body) => releaseAction(user, body),
@@ -992,6 +874,8 @@ export default async function handler(req, res) {
     res.end(JSON.stringify(obj));
   };
 
+  const pricing = pricingFor(req);
+  if (req.method === 'GET') return send(200, { pricing });
   if (req.method !== 'POST') return send(405, { error: 'POST only' });
   if (!PROJECT_URL || !SERVICE_KEY || !ANON_KEY) {
     return send(503, { error: 'Billing is not configured on the server' });
@@ -1003,8 +887,9 @@ export default async function handler(req, res) {
     if (!run) return send(400, { error: 'Unknown action' });
 
     const user = requireUser(await resolveUser(req));
-    const out = await run(user, body);
-    return send(200, { ...out, tiers: TIERS.map((t) => t.slug), mode: RZP_MODE });
+    const out = await run(user, body, pricing);
+    if (out.state) out.state.pricing = pricing;
+    return send(200, { ...out, pricing, tiers: TIERS.map((t) => t.slug), mode: RZP_MODE });
   } catch (err) {
     const status = err.status || 500;
     if (status >= 500) console.error('[billing]', err);
@@ -1018,4 +903,4 @@ export default async function handler(req, res) {
 // Exported for tools/test-billing.mjs, which exercises the signature and the
 // month arithmetic without a network.
 export const __test = { hmac: (p) => hmac(p), sameSig, addMonth, amountMinor, tierOf,
-                        RELEASE_WINDOW_MS };
+                        pricingFor, pricingForPlan, RELEASE_WINDOW_MS };

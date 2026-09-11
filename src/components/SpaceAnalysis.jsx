@@ -50,13 +50,13 @@ import { AUTOPLACE_AT_FRACTION, BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.j
    GETS some, so hiding it until there are some would be hiding the control
    behind its own effect.
 
-   THESE THREE SECTIONS ARE THE SCHEME; THE READOUT'S TWO FIGURES ARE THE
-   READING. Both come off the same `layer` on the same rows, and they are not the
-   same split: the readout folds ACCENT in with AMBIENT, because a sconce washing
-   a wall puts its light in the room exactly as a cove does, where a downlight
-   puts eighty percent of it at the floor. So this file groups by what a fitting
-   is FOR and Lumens.jsx reads by where the light GOES. See `contributions` in
-   lib/lumens.js, which is the one place that fold happens.
+   THESE TWO SECTIONS ARE THE SCHEME AND THEY ARE ALSO THE READOUT'S TWO
+   FIGURES. Both come off the same `layer` on the same rows, and they are now the
+   same split — they were not, while a third layer existed: this file drew an
+   ACCENT section and Lumens.jsx folded it into the ambient figure before
+   printing, so the list said three things and the readout said two. The layer
+   has gone (see `layer` in lib/lumens.js), and one question is asked once: is
+   this fitting washing the room, or is it pointed at something.
    THE TOTAL STILL COUNTS EVERYTHING. A room lit largely by its downlights is a
    lit room, and an achieved figure that ignored them would report a shortfall
    nobody could act on. What such a room shows is a low AMBIENT figure beside a
@@ -119,12 +119,21 @@ const quantity = (row) => (row.unit === 'm'
   ? `${Math.round(row.lengthFt)} ft`
   : `${row.count}`);
 
-/* THE THREE LAYERS, IN THE ORDER A SCHEME IS DESIGNED IN. `always` is the one
-   that draws its heading with nothing under it — see the note above. */
+/* THE TWO LAYERS, IN THE ORDER A SCHEME IS DESIGNED IN. `always` is the one
+   that draws its heading with nothing under it — see the note above.
+
+   THERE WAS A THIRD, 'Accent', AND IT IS GONE. A chandelier, a pendant, a floor
+   lamp, a sconce and a shelf strip were filed under it — every one of them a
+   thing that lights the ROOM, and every one of them therefore already counted
+   in the ambient figure the readout prints (the fold that did that addition is
+   in `analyseSpace`). So the section was not a reading of anything; it was a
+   drawer, and what it held was a chandelier's wattage, three rows below the
+   fittings it belongs beside and in a heading nobody thought to open.
+   TWO SECTIONS AND TWO LAYER VALUES, which is what stops a row existing that
+   this list has no section to draw it in. See `layer` in lib/lumens.js. */
 const LAYERS = [
   { id: 'ambient', label: 'Ambient', always: true },
   { id: 'task', label: 'Task lights' },
-  { id: 'accent', label: 'Accent' },
 ];
 
 /* THE SECTION HEADING. Smaller and quieter than the panel's own `Analysis`
@@ -145,6 +154,126 @@ const Caret = ({ open }) => (
   </svg>
 );
 
+/**
+ * THE WATTAGE SLIDER, AND IT WRITES ONCE PER GESTURE RATHER THAN ONCE PER PIXEL.
+ *
+ * THE BUG THIS EXISTS TO FIX: A CHANDELIER'S SLIDER COULD NOT BE DRAGGED. You
+ * could click a point on the track and the value jumped there, and you could
+ * not take hold of the thumb and move it — which is the exact signature of the
+ * failure, because a click is ONE write and a drag is fifty.
+ *
+ * WHY A DRAG AND A CLICK DIFFER. A decorative fitting is a CEILING OBJECT, so
+ * its wattage is stored on the object — see `patchObject` — and `ceilingObjs`
+ * is an input to the layout: `projectObstaclesPx` rebuilds, the `rooms` memo
+ * re-lays out every space on the plan, the heatmap is rebuilt behind it and the
+ * document is queued for saving. That is the right answer to "the plan changed"
+ * and a catastrophic one to run per pointer-move. The main thread never gets
+ * back to the pointer, the browser's own thumb-tracking is starved, and the
+ * control reads as broken. One click completes the rebuild and looks fine.
+ * IT IS NOT THE WATTAGE THAT INVALIDATES THE LAYOUT — a 44 W chandelier is the
+ * same obstacle as a 36 W one — but the memo cannot know that, and narrowing
+ * its dependency to "the geometric part of every object" would be a second,
+ * cleverer projection to keep in step with the first.
+ *
+ * THIS IS THE SAME ANSWER ShapeMenu'S RadiusControl ALREADY GIVES, and its
+ * header carries the same diagnosis in the same words — a native range emits
+ * scores of changes in one drag and writing through on each "eventually starves
+ * the pointer event that would finish the drag". Two controls, one failure, one
+ * fix: keep the thumb and the readout LOCAL, commit on release.
+ *
+ * WHY THIS ONE KEEPS THE NATIVE INPUT AND THAT ONE DOES NOT. RadiusControl
+ * suppresses the browser's drag and tracks the pointer itself because it needed
+ * a live preview drawn on the ceiling under it. Nothing here needs that: with
+ * `onChange` writing only to local state, the native drag is no longer starved
+ * and works exactly as the platform intends, keyboard and assistive input
+ * included — which is a control with less code in it, not more.
+ *
+ * THE COMMIT IS ON THE WINDOW AND NOT ON THE INPUT. A thumb dragged past the
+ * end of the track releases the pointer over whatever is next to it, so an
+ * `onPointerUp` on the input misses the release that matters most — the one at
+ * either extreme. `blur` catches the window losing focus mid-drag.
+ *
+ * AND THE PROP WINS WHENEVER THIS IS NOT THE THING WRITING. `live` is what says
+ * a gesture is in flight; without it, the re-render that a neighbouring control
+ * causes would snap the thumb back to the stored figure under the finger.
+ *
+ * ...WHICH ALSO MAKES A DRAG ONE UNDO STEP. Fifty writes were fifty entries in
+ * the history, so undoing a wattage change meant pressing undo until it
+ * stopped. That was never a separate bug — it is this one, seen from the other
+ * side.
+ */
+function WattSlider({ range, watts, disabled, onCommit }) {
+  const [draft, setDraft] = useState(watts);
+  /* ONE REF AND NOT FOUR PIECES OF STATE. The window listeners below are
+     registered once and must read the CURRENT draft, wattage and handler when
+     they fire; a value closed over at registration would be the one from the
+     render that installed them. */
+  const box = useRef({ draft: watts, watts, onCommit, live: false });
+  box.current.watts = watts;
+  box.current.onCommit = onCommit;
+
+  /* THE STORED FIGURE, WHENEVER NOTHING IS BEING DRAGGED. This is what makes
+     the control follow an undo, a plan being reloaded, or the same fitting
+     being changed from somewhere else. */
+  useEffect(() => {
+    if (box.current.live) return;
+    box.current.draft = watts;
+    setDraft(watts);
+  }, [watts]);
+
+  useEffect(() => {
+    const finish = () => {
+      const b = box.current;
+      if (!b.live) return;
+      b.live = false;
+      if (b.draft !== b.watts) b.onCommit?.(b.draft);
+    };
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
+    return () => {
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+    };
+  }, []);
+
+  /* THE KEYBOARD COMMITS ON KEY-UP, which is the same rule said about the other
+     input device: an arrow key held down repeats, and one write per repeat is
+     the same storm by a different route. It never sets `live`, so the effect
+     above keeps following the document between presses. */
+  const keyCommit = () => {
+    const b = box.current;
+    if (b.draft !== b.watts) b.onCommit?.(b.draft);
+  };
+
+  return (
+    <div className="flex items-center gap-2 mb-1">
+      <input type="range" aria-label="Wattage" disabled={disabled}
+        min={range.min} max={range.max}
+        step={range.step ?? COB_WATT_RANGE.step}
+        value={draft}
+        className="flex-1 min-w-0 accent-white cursor-pointer
+          disabled:opacity-[.45] disabled:cursor-not-allowed"
+        onPointerDown={() => { box.current.live = true; }}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          box.current.draft = v;
+          setDraft(v);
+        }}
+        onKeyUp={keyCommit}
+        /* THE LAST FALLBACK, for assistive input that changes the value and
+           moves away without either a pointer release or a key-up. */
+        onBlur={() => { if (!box.current.live) keyCommit(); }} />
+      {/* THE DRAFT AND NOT THE STORED FIGURE, so the number under the thumb is
+          the number the thumb is on while it is moving. */}
+      <span className="text-[11.5px] text-text tabular-nums w-[38px] text-right">
+        {draft} W
+      </span>
+    </div>
+  );
+}
+
 export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
                                         highlight = [], autoplace = null,
                                         onAutoplace = null, disabled = false }) {
@@ -156,7 +285,12 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
      knowing — the one outside influence is `highlight`, and a new highlight
      REPLACES the open set. Keyed by row key, so a row that stops existing takes
      its entry out of use rather than opening some other fitting. */
-  const [open, setOpen] = useState(() => new Set());
+  /* SEEDED FROM THE SELECTION, AND NOT LEFT TO THE EFFECT BELOW TO OPEN. The
+     effect is what handles the selection CHANGING while the panel is up; this
+     is the panel arriving with one already made — press a chandelier on the
+     drawing and open the space, and its row is open on the first paint rather
+     than one frame later. Same set, same rule, one render earlier. */
+  const [open, setOpen] = useState(() => new Set(highlight ?? []));
   const rowRefs = useRef({});
   /* WHAT WE LAST ANSWERED FOR. The effect below must run when the SELECTION
      changes and not on every render — the rows re-render on every keystroke of
@@ -316,18 +450,8 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
               contribution below is computed from, so it is printed.
               AND OTHERWISE THE CHIPS, which is every family the engine buys. */}
           {row.wattRange ? (
-            <div className="flex items-center gap-2 mb-1">
-              <input type="range" aria-label="Wattage" disabled={disabled}
-                min={row.wattRange.min} max={row.wattRange.max}
-                step={row.wattRange.step ?? COB_WATT_RANGE.step}
-                value={row.watts}
-                className="flex-1 min-w-0 accent-white cursor-pointer
-                  disabled:opacity-[.45] disabled:cursor-not-allowed"
-                onChange={(e) => onWatts(row, Number(e.target.value))} />
-              <span className="text-[11.5px] text-text tabular-nums w-[38px] text-right">
-                {row.watts} W
-              </span>
-            </div>
+            <WattSlider range={row.wattRange} watts={row.watts} disabled={disabled}
+              onCommit={(w) => onWatts(row, w)} />
           ) : row.wattOptions.length < 2 ? (
             <div className={KV}>
               <span className={LBL}>Wattage</span>

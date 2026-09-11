@@ -6,7 +6,7 @@ import { SceneSwitch } from '../../components/StageBar.jsx';
 // IT IS `SceneSwitch` AND NOTHING ELSE, which is the whole of the design. The
 // bar's left-hand slot holds the switches that say what the DRAWING SHOWS rather
 // than what the next press does — the Suggested Grid is the other one — and they
-// take one shape on purpose: a capsule with ON or OFF written in its own track.
+// take one shape on purpose: a compact capsule whose knob shows its state.
 // Wrapping it here rather than calling `SceneSwitch` from App keeps the feature's
 // UI inside the feature, and keeps App's addition to one element.
 //

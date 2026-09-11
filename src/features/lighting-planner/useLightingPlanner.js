@@ -73,19 +73,37 @@ export default function useLightingPlanner({
     setPickingId, setOutlinesOpen, milestone,
   });
 
-  /** ONE ROW'S WATTAGE, IN ONE ROOM — a run's own, or a counted family's. `key`
-   *  is whatever `fixtureGroups` said identifies the row; `familyId` is only
-   *  needed to know what its default is. A choice that lands back on that
-   *  default is stored as nothing, the rule every override in this app
-   *  follows — see `boardKinds` and the wall tones.
-   *  THE FAMILY'S DEFAULT IS RESOLVED HERE, for the reason `materialsOf` is
-   *  resolved by its caller: FAMILY_BY_ID is the catalogue and the catalogue is
-   *  not the document's to know. What the action carries is the number a row at
-   *  its default would be, which is the whole of what the reducer needs to
-   *  decide whether this wattage is a decision or a restatement. */
+  /** ONE ROW'S WATTAGE, IN ONE ROOM — a run's own, or a counted family's. The
+   *  ROW is the argument: `row.key` is whatever `fixtureGroups` said identifies
+   *  it, and the row is also the only thing that knows what its default is. A
+   *  choice that lands back on that default is stored as nothing, the rule every
+   *  override in this app follows — see `boardKinds` and the wall tones.
+   *  THE DEFAULT IS RESOLVED HERE, for the reason `materialsOf` is resolved by
+   *  its caller: the catalogue is not the document's to know. What the action
+   *  carries is the number a row at its default would be, which is the whole of
+   *  what the reducer needs to decide whether this wattage is a decision or a
+   *  restatement.
+   *
+   *  AND IT IS THE ROW'S DEFAULT RATHER THAN THE FAMILY'S, WHICH IS THE FIX FOR
+   *  A WATTAGE THAT COULD NOT BE CHOSEN AT ALL. This took `familyId` and asked
+   *  the catalogue for `FAMILY_BY_ID[familyId].defaultWatts` — and a row may
+   *  open somewhere other than its family's default. The spots are why: a
+   *  directional spot and an ambient downlight are one FAMILY and two catalogue
+   *  lines, 5 W against 7 W, so `fixtureGroups` stamps the row's own
+   *  `defaultWatts` and `wattsFor` honours it. The reducer was being handed the
+   *  family's 7 regardless, so pressing the 7 W chip on a Directional spot row
+   *  read as "back to the default", DELETED the override, and the row fell
+   *  straight back to 5 — one chip out of five that could not be picked, and the
+   *  most familiar figure of the five.
+   *  SO THE ROW IS PASSED WHOLE rather than a fifth argument being added for
+   *  its default. A trailing optional would let the next call site forget it and
+   *  get this bug back silently; a row cannot be passed without the number that
+   *  belongs to it. `row.defaultWatts` comes off `analyseSpace`, which is where
+   *  the two halves of the answer already meet — see the note there. */
   const setRowWatts = useCallback(
-    (roomId, key, familyId, watts) =>
-      docActions.setRowWatts(roomId, key, watts, FAMILY_BY_ID[familyId]?.defaultWatts),
+    (roomId, row, watts) =>
+      docActions.setRowWatts(roomId, row.key, watts,
+        row.defaultWatts ?? FAMILY_BY_ID[row.familyId]?.defaultWatts),
     [docActions]);
 
   /**

@@ -5,6 +5,7 @@ import { stashUpload } from '../lib/pendingUpload.js';
 import { startPlanUpload } from '../lib/uploads.js';
 import Wordmark from '../components/Wordmark.jsx';
 import HowToLink from '../components/HowToLink.jsx';
+import ScheduleDemoButton from '../components/ScheduleDemoButton.jsx';
 
 // ---------------------------------------------------------------------------
 // THE HOME PAGE, which is the upload screen with a promise over it.
@@ -110,12 +111,13 @@ export default function Home() {
         </p>
 
         <div className="flex flex-col items-center gap-3">
-          <button className="lp-glow-btn text-[14px] py-0 px-12 rounded-[8px] h-field-h inline-flex items-center justify-center"
+          <button className="lp-glow-btn text-[14px] py-0 px-0 w-[240px] rounded-[8px] h-field-h inline-flex items-center justify-center"
             onClick={() => inputRef.current?.click()}>
             + Upload a floor plan
           </button>
           <input ref={inputRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
             onChange={(e) => accept(e.target.files?.[0])} />
+          <ScheduleDemoButton />
           <span className="text-[11.5px] text-subtle">or drop it anywhere on this page · DXF, PDF or image</span>
           {/* UNDER THE DROP HINT, NOT BETWEEN IT AND THE BUTTON. The hint is the
               second half of the button's own sentence — "upload one, or drop it

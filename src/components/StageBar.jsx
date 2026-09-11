@@ -110,30 +110,23 @@ export const SCENE = 'flex items-center h-9 px-2.5 rounded-[7px] border-0 '
    switch that is visibly on or off, not a word you press and then have to look
    at the drawing to find out what happened.
 
-   THE STATE IS WRITTEN INSIDE THE TRACK, opposite the knob. A capsule with a
-   knob and no word is a control you read by remembering which side means on;
-   ON and OFF in the track say it outright, in the space the knob is not using,
-   without a caption beside the bar. */
+   POSITION AND COLOUR CARRY THE STATE; the visible label says what the switch
+   controls and `aria-checked` says its state to assistive technology. Keeping
+   ON and OFF out of the track makes these compact controls easier to scan. */
 export function SceneSwitch({ label, on = false, title = null, onClick }) {
   return (
     <button type="button" role="switch" aria-checked={on} title={title ?? undefined}
       className={`${SCENE} gap-2`} onClick={onClick}>
       {label}
       <span aria-hidden="true"
-        className={'relative flex-none block w-[46px] h-[20px] rounded-full '
+        className={'relative flex-none block w-[34px] h-[20px] rounded-full '
           + 'transition-colors duration-150 '
           + (on ? 'bg-black' : 'bg-black/[0.13]')}>
-        <span className={'absolute top-1/2 -translate-y-1/2 text-[9px] leading-none '
-          + 'font-semibold tracking-[0.08em] '
-          + (on ? 'left-[7.5px] text-white' : 'right-[6.5px] text-black/55')}>
-          {on ? 'ON' : 'OFF'}
-        </span>
-        {/* `left` AND NOT A TRANSFORM, because the knob is inside a box that is
-            already translating its own label vertically; two transforms on one
-            capsule is one of them being overwritten. */}
+        {/* `left` AND NOT A TRANSFORM keeps the knob's travel independent of
+            any transform a caller might apply to the complete switch. */}
         <span className={'absolute top-[3px] w-[14px] h-[14px] rounded-full bg-white '
           + 'shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-[left] duration-150 '
-          + (on ? 'left-[29px]' : 'left-[3px]')} />
+          + (on ? 'left-[17px]' : 'left-[3px]')} />
       </span>
     </button>
   );

@@ -25,6 +25,8 @@ import {
 import { FITTING_LUMENS } from '../src/lib/settings.js';
 import { FIXTURE_BY_ID } from '../src/lib/boq.js';
 import { COB_WATT_RANGE } from '../src/lib/cob.js';
+import { LAMP_WATTAGES, wattsOf, wattRangeOf, wattOptionsOf }
+  from '../src/lib/ceilingObjects.js';
 
 const PPF = 30;
 let n = 0;
@@ -112,16 +114,29 @@ const lists = (over = {}) => ({
   }));
   const by = new Map(rows.map((q) => [q.key, q]));
   assert.equal(by.get('spot').count, 2);
-  assert.equal(by.get('spot').layer, 'task');
   assert.equal(by.get('spot').defaultWatts, FIXTURE_BY_ID.spot.watts);
   assert.equal(by.get('art-spot').count, 1);
-  assert.equal(by.get('art-spot').layer, 'accent');
+  assert.equal(by.get('art-spot').defaultWatts, FIXTURE_BY_ID['art-spot'].watts);
+  /* TWO ROWS, TWO CATALOGUE WATTAGES, AND NO LAYER OVERRIDE ON EITHER. It used
+     to be `art ? 'accent' : 'task'`, back when there were three layers: one is
+     what you work by, the other what you look at. With two, the question is "is
+     this washing the room or is it pointed at something", and an art spot is the
+     most pointed fitting on the drawing — a 24-degree cone on a picture, 80% of
+     it at the floor. Both are task light, which is the `cob` family's own
+     answer, so there is nothing left to override. See `layer` in lib/lumens.js. */
+  assert.equal(by.get('spot').layer, undefined);
+  assert.equal(by.get('art-spot').layer, undefined);
   assert.ok(!by.has('s4') && !by.has('s5'));
-  ok('fixtureGroups bills a work spot and an art spot as two rows, one layer each');
+  ok('fixtureGroups bills a work spot and an art spot as two rows at two wattages');
 }
 
 {
-  const r = room({ fans: [{ kind: 'fan' }, { kind: 'chandelier' }, { kind: 'chandelier' }] });
+  /* THE OBJECTS CARRY IDS, because the row key IS the fitting's id now — one row
+     per decorative lamp, see `fixtureGroups`. Every real object is minted with
+     one; a fixture without one is not a fitting this app could ever hold. */
+  const r = room({ fans: [{ id: 'f1', kind: 'fan' },
+                          { id: 'ch1', typeId: 'chandelier', kind: 'chandelier' },
+                          { id: 'ch2', typeId: 'pendant', kind: 'chandelier' }] });
   const rows = fixtureGroups(r, lists({
     cobArrays: [{ id: 'a1', roomId: 'r1', watts: 999, beam: 37 }],
     arrayCobsPx: [
@@ -152,7 +167,35 @@ const lists = (over = {}) => ({
   assert.equal(by.get('m2').watts, 5, 'a module is specified on its own');
   assert.ok(!by.has('m3'), 'the wall washer has no numbers yet');
   assert.ok(!by.has('m4'), 'a module on another room’s run is not in this room');
-  assert.equal(by.get('lamp').count, 2, 'a chandelier is a lamp; a fan is not');
+  /* --- AND EACH DECORATIVE FITTING IS ITS OWN ROW, WHICH IT WAS NOT --------
+     IT WAS `by.get('lamp').count === 2`: one row for every chandelier, pendant
+     and floor lamp in the room, on the counted-family rule. That rule is for
+     things bought as a lot, and these are not — a chandelier is several lamps in
+     one body at 55 W and a floor lamp is one bulb in a shade. One row meant one
+     wattage across all of them, which was wrong about at least one. */
+  assert.ok(!by.has('lamp'), 'the decorative lamps no longer share one row');
+  assert.ok(!by.has('f1'), 'a fan is not a fitting and is in no row');
+  assert.equal(by.get('ch1').count, 1, 'a chandelier is its own row...');
+  assert.equal(by.get('ch2').count, 1, '...and so is the pendant beside it');
+  assert.equal(by.get('ch1').label, 'Chandelier', 'labelled by its type');
+  assert.equal(by.get('ch2').label, 'Pendant', '...which is what tells the two apart');
+  /* ONE FAMILY STILL. They share a distribution — a bare fitting throwing in
+     every direction — so nothing about the arithmetic changed; what changed is
+     that the ROW is the fitting rather than the family. */
+  assert.equal(by.get('ch1').familyId, 'lamp');
+  assert.equal(by.get('ch2').familyId, 'lamp');
+  /* AND EACH CARRIES ITS OWN CONTROL, which is the whole point — and they are
+     not the same KIND of control. A chandelier is a span to 55 W and gets the
+     slider; a pendant is one bulb, so it gets the three figures a bulb is sold
+     at and no slider at all. Exactly one of the two is non-null per row, which
+     is what the panel's three-way branch reads. */
+  assert.equal(by.get('ch1').wattRange.max, 55);
+  assert.equal(by.get('ch1').wattOptions, null, 'a chandelier is not a list');
+  assert.equal(by.get('ch2').wattRange, null, 'a pendant is not a slider');
+  assert.deepEqual(by.get('ch2').wattOptions, [7, 9, 12],
+    '...it is the three wattages a bulb is bought at');
+  assert.equal(by.get('ch2').defaultWatts, 9,
+    'and the row carries the TYPE\'s default, not the family\'s');
   ok('fixtureGroups gives an array one row and a placed lamp or module a row apiece');
 }
 
@@ -191,6 +234,15 @@ const lists = (over = {}) => ({
                       kind: 'ceiling-strip', shapeId: 'track-1' }],
     taskSpotsPx: [{ id: 's1', roomId: 'r6', fixture: 'spot' },
                   { id: 's2', roomId: 'r7', fixture: 'art-spot' }],
+    /* THE CEILING OBJECTS, THROUGH THE LIST THAT DECIDES WHICH ROOM THEY ARE IN.
+       `objectsInRoom` is what `fixtureGroups` counts the lamp row from, so the
+       row this opens cannot be a row the count did not make. */
+    rooms: [{ id: 'r10', geo: { objectsInRoom: [
+      { id: 'o1', kind: 'chandelier' },
+      { id: 'o2', kind: 'standing_lamp' },
+      { id: 'o3', kind: 'fan' },
+      { id: 'o4', kind: 'ac' },
+    ] } }],
   };
   assert.deepEqual(highlightRows({ ...base, selCobId: 'c1' }),
     { keys: ['c1'], roomId: 'r1' });
@@ -216,6 +268,127 @@ const lists = (over = {}) => ({
     { keys: ['c1', 'spot'], roomId: 'r6' }, 'two things can be picked at once');
   assert.deepEqual(highlightRows(base), { keys: [], roomId: null });
   ok('highlightRows translates every kind of selection into row keys');
+}
+
+/* --- AND A CHANDELIER IS A SELECTION LIKE ANY OTHER ------------------------
+   IT WAS THE ONE FITTING WITH NO ROUTE FROM THE DRAWING TO ITS WATTAGE. A
+   chandelier, a pendant and a standing lamp are CEILING OBJECTS — the register
+   the fans and the AC cassettes are in — so the press that picks one up was a
+   press this function had never been told about: it highlighted nothing, opened
+   nothing, and the wattage chips sat in a row nothing led to. */
+{
+  const base = {
+    selCobId: null, selArrayId: null, selModuleId: null,
+    selAccId: null, selSpotId: null, selLightId: null, selShapeId: null,
+    manualCobs: [], cobArrays: [], trackModulesPx: [],
+    accentZonesPx: [], taskSpotsPx: [],
+    rooms: [{ id: 'r1', geo: { objectsInRoom: [
+      { id: 'o1', typeId: 'chandelier', kind: 'chandelier' },
+      { id: 'o2', typeId: 'standing_lamp', kind: 'standing_lamp' },
+      { id: 'o3', typeId: 'fan', kind: 'fan' },
+      { id: 'o4', typeId: 'ac', kind: 'ac' },
+    ] } }],
+  };
+  assert.deepEqual(highlightRows({ ...base, selObjIds: ['o1'] }),
+    { keys: ['o1'], roomId: 'r1' }, 'pressing a chandelier opens that chandelier');
+  assert.deepEqual(highlightRows({ ...base, selObjIds: ['o2'] }),
+    { keys: ['o2'], roomId: 'r1' }, '...and the floor lamp opens its own row');
+  /* THE KEY IS THE FITTING AND NOT THE FAMILY, which is what makes the wattage
+     reachable per fitting: press the chandelier and the slider that opens is the
+     chandelier's. It used to be `'lamp'` for all of them — one row, one figure,
+     and no way to say that the pendant beside it draws a fifth as much. */
+  assert.deepEqual(highlightRows({ ...base, selObjIds: ['o1', 'o2'] }),
+    { keys: ['o1', 'o2'], roomId: 'r1' }, 'two picked are two rows');
+  /* AND THE THINGS IN THAT REGISTER THAT ARE NOT FITTINGS STAY OUT OF IT. A fan
+     and a cassette are in no lighting schedule, and the test is the one
+     `fixtureGroups` already applies — so the two cannot disagree about what
+     counts as a lamp. */
+  assert.deepEqual(highlightRows({ ...base, selObjIds: ['o3'] }),
+    { keys: [], roomId: null }, 'a fan is not a fitting and opens nothing');
+  assert.deepEqual(highlightRows({ ...base, selObjIds: ['o4'] }),
+    { keys: [], roomId: null }, '...nor is an AC cassette');
+  assert.deepEqual(highlightRows({ ...base, selObjIds: ['o3', 'o1'] }),
+    { keys: ['o1'], roomId: 'r1' }, 'a fan picked with a pendant does not hide it');
+  assert.deepEqual(highlightRows(base), { keys: [], roomId: null });
+  ok('highlightRows reaches a chandelier’s row from the drawing');
+}
+
+/* --- WHAT EACH DECORATIVE FITTING MAY BE SET TO ---------------------------
+   THE CATALOGUE, AND THE ONE PROPERTY THAT MATTERS ABOUT IT: the three are not
+   one product, so they are not one control. A chandelier is several lamps in
+   one body, reaches 55 W and is a SPAN; a pendant and a standard lamp are one
+   bulb in one shade, and a bulb is bought at 7, 9 or 12 W — a LIST. */
+{
+  const w = (typeId, watts) => wattsOf({ typeId, kind: typeId, watts });
+  const BULBS = [7, 9, 12];
+
+  /* --- EXACTLY ONE SHAPE PER TYPE, WHICH IS WHAT THE PANEL BRANCHES ON -----
+     `wattRangeOf` IS TESTED FIRST BY SpaceAnalysis and draws the slider, so a
+     type that answered both would get the slider whatever list it also
+     offered. This is the assertion that keeps the two readings exclusive. */
+  for (const [id, spec] of Object.entries(LAMP_WATTAGES)) {
+    assert.ok(!!spec.options !== (spec.min != null),
+      `${id} is a list or a span and not both`);
+    const o = { typeId: id, kind: id };
+    assert.equal(!!wattRangeOf(o), !spec.options, `${id}: the range reading agrees`);
+    assert.deepEqual(wattOptionsOf(o), spec.options ?? null,
+      `${id}: ...and so does the list reading`);
+  }
+
+  /* --- THE CHANDELIER IS THE SPAN ---------------------------------------- */
+  assert.equal(LAMP_WATTAGES.chandelier.max, 55, 'a chandelier reaches 55 W');
+  /* STEP 1 W, for `COB_WATT_RANGE`'s reason: a slider landing on 12.4 W is a
+     control pretending to a precision no product has. */
+  assert.equal(LAMP_WATTAGES.chandelier.step, 1);
+  assert.ok(LAMP_WATTAGES.chandelier.defaultWatts >= LAMP_WATTAGES.chandelier.min
+    && LAMP_WATTAGES.chandelier.defaultWatts <= LAMP_WATTAGES.chandelier.max,
+    'and its default is inside its own range');
+
+  /* --- AND THE OTHER TWO ARE THE THREE BULBS, EXACTLY ---------------------
+     ASSERTED AS THE WHOLE LIST rather than as a length or a maximum: the point
+     of the change is that these are the three figures and there are no others,
+     and a test that only checked the top of the list would pass on a slider. */
+  assert.deepEqual(LAMP_WATTAGES.pendant.options, BULBS,
+    'a pendant is 7, 9 or 12 W and nothing else');
+  assert.deepEqual(LAMP_WATTAGES.standing_lamp.options, BULBS,
+    'and so is a standing lamp');
+  for (const id of ['pendant', 'standing_lamp']) {
+    assert.equal(wattRangeOf({ typeId: id, kind: id }), null,
+      `${id} offers no slider — that is what puts the chips on screen`);
+    assert.ok(BULBS.includes(LAMP_WATTAGES[id].defaultWatts),
+      `${id}'s default is one of the three it offers`);
+  }
+
+  /* NOTHING STORED READS THE TYPE'S DEFAULT, which is what keeps a plan saved
+     before any of this existed correct rather than zeroed. */
+  assert.equal(w('chandelier', undefined), LAMP_WATTAGES.chandelier.defaultWatts);
+  assert.equal(w('standing_lamp', undefined), 7,
+    'the floor lamp keeps the figure every decorative fitting used to share');
+  assert.equal(w('pendant', undefined), 9);
+  /* A STORED FIGURE WINS, AND IS CLAMPED. A file written by a build with a wider
+     range must not put a 200 W chandelier through the lumen model. */
+  assert.equal(w('chandelier', 40), 40);
+  assert.equal(w('chandelier', 999), 55);
+  /* --- AND ON A LIST IT IS SNAPPED, NOT CLAMPED --------------------------
+     THE SLIDER EXISTED, so pendants are saved out there at every whole number
+     from 3 to 24. Clamping would leave a 14 W pendant reading 14 with none of
+     its three chips latched — a control that cannot show its own state — so
+     the nearest thing anybody can buy is what it reports. */
+  assert.equal(w('pendant', 9), 9, 'a figure on the list is itself');
+  assert.equal(w('pendant', 14), 12, '...and 14 W off an old slider reads as 12');
+  assert.equal(w('pendant', 3), 7, '...and 3 W as 7, the smallest bulb there is');
+  assert.equal(w('standing_lamp', 999), 12, '...and anything absurd as the largest');
+  assert.equal(w('standing_lamp', 8), 7,
+    'a tie-break goes to the lower figure, which is the cheaper mistake');
+
+  /* AND THE THINGS THAT ARE NOT LAMPS ANSWER FOR NOTHING. */
+  assert.equal(wattRangeOf({ typeId: 'fan', kind: 'fan' }), null);
+  assert.equal(wattOptionsOf({ typeId: 'fan', kind: 'fan' }), null);
+  assert.equal(wattsOf({ typeId: 'ac', kind: 'ac' }), null);
+  /* THE `kind` FALLBACK, for an object carrying no type: dropping it would take
+     the fitting out of the schedule, the heatmap and the list at once. */
+  assert.equal(wattRangeOf({ kind: 'chandelier' }), LAMP_WATTAGES.chandelier);
+  ok('a chandelier is a span, a pendant and a standing lamp are 7/9/12 W');
 }
 
 // --- what a room says went wrong --------------------------------------------

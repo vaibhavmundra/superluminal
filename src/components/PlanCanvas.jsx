@@ -8,6 +8,10 @@ import { TRACK_DIMS_IN } from '../lib/track.js';
 import { SB_COLOUR, SB_MM } from '../lib/electrical.js';
 import { WIRE_CHAIN, WIRE_PICKED } from '../lib/flows.js';
 import { doorWidthAt } from '../lib/doors.js';
+/* THE SCONCE'S OWN FOUR FIGURES, WHICH THE DXF NOW DRAWS TOO. They were written
+   out here and nowhere else, so the file exported a ring on the wall line while
+   this drew a crosshair standing off it. See SCONCE_FT in settings.js. */
+import { SCONCE_FT, FAN_FT } from '../lib/settings.js';
 
 // ---------------------------------------------------------------------------
 // PlanCanvas — the finished drawing. EVERY room on it, not one.
@@ -2044,13 +2048,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           RECESSED COBs ONLY. A head seated in magnetic track is not a round
           ceiling cut-out and is deliberately excluded; directed task spots
           land away from their bodies and have their own target marks. The ring
-          is inert and unclipped so it remains a complete circle that can be
-          read as an angle annotation even when the cone reaches a wall. */}
+          is inert and clipped to its room, exactly like the beam field it
+          annotates: a cone reaching a wall must not draw its dotted footprint
+          across the adjacent room or outside the plan. */}
       {heatmapOn && layers.beamAngles && layers.lights && !placingGeometry && (
         <g fill="none" stroke={rim} pointerEvents="none"
           strokeWidth={lw * 0.65} strokeLinecap="round"
           strokeDasharray={`${lw * 1.15} ${lw * 3.1}`} opacity="0.72">
-          {autoLights && laid.flatMap((r) => (r.plan.lightsPx ?? [])
+          {autoLights && laid.flatMap((r, ri) => (r.plan.lightsPx ?? [])
             .filter((l) => !l.track)
             .map((l) => {
               const fixture = l.fixture || l.kind;
@@ -2058,14 +2063,19 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               return ft > 0 ? (
                 <circle key={`beam-grid-${r.id}-${l.id}`}
                   className="lp-beam-footprint"
+                  clipPath={`url(#roomclip-${ri})`}
                   cx={l.x} cy={l.y} r={(ft / 2) * s} />
               ) : null;
             }))}
-          {manualCobs.map((c) => c.throwFt > 0 ? (
-            <circle key={`beam-manual-${c.id}`}
-              className="lp-beam-footprint"
-              cx={c.x} cy={c.y} r={(c.throwFt / 2) * s} />
-          ) : null)}
+          {manualCobs.map((c) => {
+            const ri = laid.findIndex((r) => r.id === c.roomId);
+            return c.throwFt > 0 && ri >= 0 ? (
+              <circle key={`beam-manual-${c.id}`}
+                className="lp-beam-footprint"
+                clipPath={`url(#roomclip-${ri})`}
+                cx={c.x} cy={c.y} r={(c.throwFt / 2) * s} />
+            ) : null;
+          })}
         </g>
       )}
 
@@ -3011,12 +3021,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   strokeLinecap="round" />
               </g>
             ) : (
+              /* THE BLADES, AND THE DXF DRAWS THE SAME THREE NOW. The count,
+                 the phase and the 0.94 were written out here and nowhere else,
+                 so the exported file had a four-armed centre mark at a fixed
+                 size where this has a fan at the sweep somebody chose. See
+                 FAN_FT in settings.js. */
               <g>
                 <circle cx={f.x} cy={f.y} r={lw * 3} fill={col} />
-                {[0, 1, 2].map((k) => {
-                  const a = (k * 2 * Math.PI) / 3 + Math.PI / 6;
+                {Array.from({ length: FAN_FT.spokes }, (_, k) => {
+                  const a = (k * 2 * Math.PI) / FAN_FT.spokes + FAN_FT.phase;
+                  const sp = R0 * FAN_FT.spoke;
                   return <line key={k} x1={f.x} y1={f.y}
-                    x2={f.x + Math.cos(a) * R0 * 0.94} y2={f.y + Math.sin(a) * R0 * 0.94}
+                    x2={f.x + Math.cos(a) * sp} y2={f.y + Math.sin(a) * sp}
                     stroke={col} strokeWidth={lw * 2.2} strokeLinecap="round" opacity="0.75" />;
                 })}
               </g>
@@ -3302,11 +3318,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // is drawn standing off into the room. You had to click the wall line
         // to select a fitting you could see three feet away.
         const SG = (a.point && a.inward) ? (() => {
-          const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
+          // THE FLOOR IS A SCREEN CONCERN AND STAYS HERE. `SCONCE_FT.r` is the
+          // real radius the drawing and the file share; three line-weights is
+          // what keeps the mark legible zoomed out, and a drawing file must not
+          // have it — see SCONCE_FT.
+          const R = Math.max((pxPerFt || 12) * SCONCE_FT.r, lw * 3);
           const { x: ix, y: iy } = a.inward;
-          const stand = R * 2.6;
+          const stand = R * SCONCE_FT.stand;
           return {
-            R, stand, arm: R * 1.7, ix, iy,
+            R, stand, arm: R * SCONCE_FT.arm, ix, iy,
             ux: a.along?.x ?? -iy, uy: a.along?.y ?? ix,
             cx: a.point.x + ix * stand, cy: a.point.y + iy * stand,
           };
@@ -4119,7 +4139,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           fitting drawn twice, and the dotted one would be under the solid one.
           A HAND-PLACED SPOT IS NEVER ONE OF THOSE and draws here either way. */}
       {layers.spots && taskSpots.map((sp) => {
+        /* ...AND A POSITION, WHICH `rejected` IS NOT THE WHOLE OF. The placer
+           emits one record per task surface whether or not it found anywhere to
+           stand: a refusal carries `rejected`, a surface it SKIPPED carries
+           `skipped` and no reason, and neither carries an `x`. Without the
+           second half of this test a skipped surface was drawn as a group full
+           of NaN coordinates — invisible, because SVG ignores an attribute it
+           cannot parse, which is the only reason this was harmless HERE. It was
+           not harmless on the plotted sheet: pdf-lib validates, and the same
+           record took the whole PDF download down with it. The pool loop above
+           has always had this test; see the spots loop in pdfPlot.js. */
         if (!spotIsPlaced(sp) || sp.rejected) return null;
+        if (!Number.isFinite(sp.x) || !Number.isFinite(sp.y)) return null;
         const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
         const ux = Math.cos(sp.angle), uy = Math.sin(sp.angle);
         // --- A DIRECTIONAL HEAD ON A TRACK -------------------------------

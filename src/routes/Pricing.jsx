@@ -5,55 +5,36 @@ import PlanPicker from '../components/PlanPicker.jsx';
 import CheckoutDialog from '../components/CheckoutDialog.jsx';
 import { useAuth } from '../lib/auth.jsx';
 import { useBilling } from '../lib/billing.jsx';
-import { TIER, fmtSqft, fmtPlans } from '../lib/plans.js';
+import { TIER } from '../lib/plans.js';
 
-// The old bare `.btn` class, as Tailwind utilities — same split as
-// PlanPicker.jsx / RenderPassPanel.jsx.
 const BTN_BASE = 'text-[12px] px-3 py-[7px] rounded border cursor-pointer transition-colors duration-[120ms] disabled:opacity-100 disabled:cursor-not-allowed';
 const BTN_DEFAULT = 'border-border/10 bg-surface backdrop-blur-[5px] text-white hover:bg-surface-2 hover:text-black hover:border-border-strong active:bg-surface-3 disabled:hover:bg-surface disabled:hover:border-border/10';
 
-// ---------------------------------------------------------------------------
-// THE PRICING PAGE, AND IT IS A PUBLIC ONE.
-//
-// NOT BEHIND RequireAuth, deliberately. A price a visitor cannot read without
-// making an account is a price they will assume is bad, and this page is also the
-// thing somebody forwards to whoever signs the cheque — a partner, a purchase
-// department — who has no login and no reason to make one. So it renders cold,
-// with the same three cards the paywall shows, and the only difference when
-// somebody IS signed in is a strip saying where they stand.
-//
-// THE METER IS EXPLAINED ON THE PAGE, at length, low down. Square feet are an
-// unusual thing to be billed in and the questions are predictable and identical:
-// what counts, does fixing a wall cost me twice, what happens when I run out
-// mid-drawing. Answering them here is cheaper than answering them one email at a
-// time, and a metered plan whose rules are not written down is one nobody
-// upgrades to.
-//
-// SIGN-IN IS DEFERRED UNTIL THE MOMENT OF PAYING, the same way the upload defers
-// it: choosing a plan while signed out remembers the choice, sends you to /login,
-// and reopens the checkout on the way back. The tier travels in the route's
-// state — not in localStorage, which would still be there next week and would
-// reopen a payment dialog nobody asked for.
-//
-// A SUBSCRIPTION BELONGS TO AN ACCOUNT, so there has to be an account before
-// there is a subscription. That is one screen of friction in front of the card,
-// and it is bought back by everything downstream having exactly one owner to
-// reason about: no purchase in limbo, no claim-by-email, no window in which money
-// has moved and nobody holds what it bought.
-// ---------------------------------------------------------------------------
+const FAQS = [
+  ['What does Super Luminal help me do?',
+    'It turns a floor plan into an accurate representation of how the lighting will work in each room, including fixture placement, beam behaviour, lighting analysis and the resulting bill of quantities.'],
+  ['What is included for free?',
+    'Your first three floor plans are free. Each one gets the full planning experience, lighting analysis, BOQ and exports—there is no reduced free version.'],
+  ['What happens after three plans?',
+    'Studio gives you unlimited access to the app for one monthly price. There is no square-footage allowance, render-pass allowance or per-export charge.'],
+  ['Can I keep editing my free plans?',
+    'Yes. The three plans you have already used remain yours to edit, re-light and export. Studio is required when you want to light another plan after those three.'],
+  ['What does priority support mean?',
+    'Studio questions and product issues move to the front of our support queue, so active project work gets a faster response.'],
+  ['Can I cancel?',
+    'Yes. Cancel at any time and Studio remains available until the end of the month you have already paid for.'],
+];
 
 export default function Pricing() {
   const nav = useNavigate();
   const loc = useLocation();
   const { user, ready: authReady } = useAuth();
   const { state, checkout, cancel, refresh } = useBilling();
-
   const [picked, setPicked] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
 
-  // Coming back from /login with a tier in hand: pick up where we left off.
   useEffect(() => {
     const want = loc.state?.tier;
     if (want && user && TIER[want]) {
@@ -77,7 +58,7 @@ export default function Pricing() {
       const out = await checkout({ tier: picked, details });
       if (out.ok) {
         setPicked(null);
-        setMsg(`You are on ${TIER[picked]?.name}. ${fmtSqft(out.state.area.left)} available.`);
+        setMsg('Studio is active. You now have unlimited access to Super Luminal.');
       } else setPicked(null);
     } catch (e) {
       setErr(String(e.message || e));
@@ -88,31 +69,10 @@ export default function Pricing() {
     ? new Date(state.periodEnd).toLocaleDateString(undefined,
         { day: 'numeric', month: 'short', year: 'numeric' })
     : null;
-
-  // Same figure feeds the bar's width and its colour — see the CSS this
-  // replaces (`.usage-bar i[style*="width: 100%"]`), which turned the fill red
-  // once the meter reads full.
-  // THE BAR SHOWS WHICHEVER METER WILL ACTUALLY REFUSE THIS ACCOUNT FIRST.
-  //
-  // On free that is the plan count — three drawings — and an area bar there
-  // would read 4% full while the very next claim is turned away, which is the
-  // most misleading a progress bar can be. On a paid tier there is no plan cap
-  // and area is the only meter, so it is the area bar exactly as before.
-  const onPlans = !state.unlimited && state.plans?.allowed != null;
-  const meter = onPlans ? state.plans : state.area;
-  const usagePct = Math.min(100, (meter.used / Math.max(1, meter.allowed)) * 100);
+  const planUsed = Math.min(state.plans?.used ?? 0, state.plans?.allowed ?? 3);
 
   return (
     <div className="min-h-full flex flex-col">
-      {/* BLACK, AND OPAQUE — not the 5% white glass the rest of this app wears.
-          Two reasons, and the second is the binding one. The page's ground is
-          #000 under a 24px graph-paper grid, and glass lets that grid run
-          straight through the header and behind the wordmark. And the logo is a
-          PLATED asset — white ink on an opaque black rectangle, chosen because
-          it is a tenth the weight of the transparent cut (see Wordmark.jsx) —
-          so anything but #000 behind it shows the plate as a box round the
-          mark. The hairline underneath is then what separates the bar from the
-          page rather than a change in tone. */}
       <header className="h-14 flex-none flex items-center gap-3.5 max-[640px]:gap-2 px-[22px] max-[640px]:px-3.5 border-b border-border/10 bg-[var(--bg)]">
         <Wordmark />
         <div className="flex-1" />
@@ -123,164 +83,58 @@ export default function Pricing() {
       </header>
 
       <main className="flex-1 overflow-y-auto pt-5 px-[30px] pb-[70px] max-[760px]:pt-4 max-[760px]:px-[18px] max-[760px]:pb-[60px]">
-        <div className="w-full max-w-[1180px] mx-auto">
-          <header className="flex items-end justify-between gap-5 mt-1.5 mb-[30px] max-w-[66ch]">
-            <div>
-              <h1 className="m-0 text-[26px] tracking-[-0.03em]">Pay for the area you light</h1>
-            </div>
+        <div className="w-full max-w-[980px] mx-auto">
+          <header className="mt-1.5 mb-[30px] max-w-[680px]">
+            <h1 className="m-0 text-[28px] tracking-[-0.035em]">See the light before you build it</h1>
+            <p className="mt-2 mb-0 text-[13px] leading-[1.65] text-muted">
+              Super Luminal is focused on one thing: giving you an accurate representation
+              of the lighting in your room. Light three plans free, then choose Studio for unlimited access.
+            </p>
           </header>
 
-          {/* WHERE YOU STAND, and only for somebody who is signed in. A usage
-              strip on a cold visit would be three zeroes and a bar at 0%, which
-              is chrome pretending to be information. */}
           {user && (
-            <section className="grid grid-cols-[auto_1fr_auto] max-[760px]:grid-cols-1 gap-[18px] max-[760px]:gap-3 items-center bg-surface backdrop-blur-[5px] border border-border/10 rounded-lg px-[18px] py-4 mb-[26px]">
+            <section className="flex items-center justify-between gap-5 max-[640px]:items-start max-[640px]:flex-col bg-surface backdrop-blur-[5px] border border-border/10 rounded-lg px-[18px] py-4 mb-[26px]">
               <div>
-                <b className="block text-[20px] tracking-[-0.03em] tabular-nums">
-                  {state.unlimited ? fmtSqft(null)
-                    : onPlans ? fmtPlans(state.plans.left)
-                    : fmtSqft(state.area.left)}
+                <b className="block text-[18px] tracking-[-0.02em]">
+                  {state.unlimited ? 'Unlimited access' : `${planUsed} of 3 free plans used`}
                 </b>
                 <span className="text-[11px] text-subtle">
-                  {state.unlimited ? 'no limit'
-                    : onPlans ? `left of ${state.plans.allowed}`
-                    : `left of ${fmtSqft(state.area.allowed)}`}
+                  {state.unlimited
+                    ? `Studio${endsOn ? ` · renews ${endsOn}` : ''}`
+                    : 'No area, render or export limits on those plans'}
                 </span>
               </div>
-              {/* AN UNLIMITED METER HAS NO BAR. A full-width blue bar would read
-                  as "you have used everything" and an empty one as "you have used
-                  nothing"; there is no honest position for a needle on a dial with
-                  no end, so the dial goes. */}
-              <div className={
-                'rounded-full overflow-hidden '
-                + (state.unlimited ? 'bg-border/10 h-px self-center max-[760px]:self-stretch' : 'h-1.5 bg-white/10 border border-border/10')
-              }>
-                {!state.unlimited && (
-                  <i className={
-                    'block h-full rounded-full transition-[width] duration-300 '
-                    + (usagePct >= 100 ? 'bg-danger' : 'bg-accent-gradient')
-                  } style={{ width: `${usagePct}%` }} />
-                )}
-              </div>
-              <div className="flex flex-col gap-[3px] text-right max-[760px]:text-left">
-                <span className="text-[11.5px] text-muted">
-                  <b className="text-white">{TIER[state.tier]?.name ?? 'Free'}</b>
-                  {state.unlimited ? ' · unmetered'
-                    : state.lifetime ? ' · the free allowance does not refresh'
-                    : endsOn ? ` · renews ${endsOn}` : ''}
-                </span>
-                {/* THE BACKSTOP, SAID ONLY TO SOMEBODY ALREADY ON THE TIER, and
-                    only here. It is not on the pricing card, because a visitor
-                    who has uploaded nothing should not have to reason about two
-                    meters — see tierHeadline in plans.js. But a free user
-                    looking at their own usage page is exactly the person who
-                    should be able to find it, rather than meeting it for the
-                    first time as a refusal. */}
-                {onPlans && (
-                  <span className="text-[11.5px] text-subtle">
-                    {Math.round(state.area.used).toLocaleString('en-IN')} of
-                    {' '}{fmtSqft(state.area.allowed)} used across them
-                  </span>
-                )}
-                {state.unlimited
-                  ? <span className="text-[11.5px] text-muted">{Math.round(state.area.used).toLocaleString('en-IN')} sq ft
-                      {' '}and {state.passes.used} render pass
-                      {state.passes.used === 1 ? '' : 'es'} used</span>
-                  : state.passes.allowed > 0 && (
-                    <span className="text-[11.5px] text-muted">{state.passes.left} of {state.passes.allowed} render passes left</span>
-                  )}
-                {state.cancelAtPeriodEnd && (
-                  <span className="text-[11.5px] text-danger">Cancelled — runs until {endsOn}</span>
-                )}
-              </div>
+              {state.cancelAtPeriodEnd && (
+                <span className="text-[11.5px] text-danger">Cancelled — available until {endsOn}</span>
+              )}
             </section>
           )}
 
           {msg && <p className="text-[11.5px] leading-normal mt-2 bg-ok/10 backdrop-blur-[5px] border border-ok/20 rounded text-ok py-[9px] px-[11px]">{msg}</p>}
           {err && <p className="text-[11.5px] leading-normal mt-2 text-danger border-l-2 border-danger pl-[9px]">{err}</p>}
 
-          <PlanPicker current={user ? state.tier : 'free'} busyTier={busy ? picked : null}
-            unlimited={state.unlimited} onChoose={choose} />
+          <PlanPicker current={user ? state.tier : null} busyTier={busy ? picked : null}
+            unlimited={state.unlimited} pricing={state.pricing} onChoose={choose} />
 
-          {/* --- HOW THE METER WORKS ---------------------------------------- */}
           <section className="mb-[34px] bg-surface backdrop-blur-[5px] backdrop-saturate-[1.8] border border-border/10 rounded-lg px-[22px] pt-[18px] pb-[22px]">
-            <h3 className="m-0 mb-[18px] text-[10px] tracking-[0.11em] uppercase text-subtle">How the meter works</h3>
-
+            <h3 className="m-0 mb-[18px] text-[10px] tracking-[0.11em] uppercase text-subtle">Frequently asked questions</h3>
             <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-[22px_30px]">
-              <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">What is measured</h4>
-                <p className="m-0 text-xs leading-[1.65] text-muted">
-                  The built area of the spaces you light — the sum of the outlines,
-                  not the size of the sheet. A title block, a margin and a site plan
-                  parked off to one side cost you nothing, which is why the same
-                  building drawn on A1 and on A0 meters identically.
-                </p>
-              </div>
-              <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">When it is charged</h4>
-                <p className="m-0 text-xs leading-[1.65] text-muted">
-                  When a space is lit, once, at the area it had at that moment. The
-                  outlines, the room detection, the scale, the BOQ and every export
-                  format are not metered separately — they come with the layout.
-                </p>
-              </div>
-              <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">Fixing a wall does not cost twice</h4>
-                <p className="m-0 text-xs leading-[1.65] text-muted">
-                  Charging is per space, not per drawing. If the detector gets nine
-                  rooms right and one wrong, you drag the corners on that one and
-                  re-light: the nine are already paid for and only the room whose
-                  geometry actually changed is charged again. Re-lighting a plan you
-                  have not touched is free, this month or next year.
-                </p>
-              </div>
-              <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">Render passes are counted, not measured</h4>
-                <p className="m-0 text-xs leading-[1.65] text-muted">
-                  A render pass reads the interior views you already have and marks
-                  the panelling, the art and the shelving back onto the plan. It
-                  costs the same whether the wall is nine feet or ninety, so it is
-                  counted per run. A pass that fails is given back.
-                </p>
-              </div>
-              <div>
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">Running out mid-drawing</h4>
-                <p className="m-0 text-xs leading-[1.65] text-muted">
-                  Nothing is lost. The layout is refused before it runs, the outlines
-                  stay exactly as you drew them, and the plan is waiting where you
-                  left it once the allowance is there. There is no partial layout —
-                  half a lit ceiling is worse than a clear refusal.
-                </p>
-              </div>
-              <div>
-                {/* THE ONE PLACE THE BACKSTOP IS EXPLAINED TO A COLD VISITOR,
-                    and it belongs here rather than on the card. A card is an
-                    offer and has room for one number; this section is where
-                    somebody who wants to know exactly how the meter works comes
-                    to read, and leaving the 15,000 out of it entirely would make
-                    the first refusal feel like a term nobody mentioned. */}
-                <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">The free tier is three plans, once</h4>
-                <p className="m-0 text-xs leading-[1.65] text-muted">
-                  Three floor plans, not refreshed monthly, and you can go on
-                  editing and re-lighting those three for nothing — only a fourth
-                  drawing needs a paid tier. Each one goes all the way through:
-                  detection, layout, schedule, DXF. There is a{' '}
-                  {fmtSqft(TIER.free.area)} ceiling across the three, which is
-                  well past three flats and is there to stop the tier being used
-                  on a tower.
-                </p>
-              </div>
+              {FAQS.map(([question, answer]) => (
+                <div key={question}>
+                  <h4 className="m-0 mb-1.5 text-[12.5px] tracking-[-0.01em] text-white">{question}</h4>
+                  <p className="m-0 text-xs leading-[1.65] text-muted">{answer}</p>
+                </div>
+              ))}
             </div>
           </section>
 
-          {user && state.tier !== 'free' && !state.unlimited && !state.cancelAtPeriodEnd && (
+          {user && state.tier === 'studio' && !state.cancelAtPeriodEnd && (
             <section className="mb-[34px]">
               <p className="text-[11.5px] text-muted leading-normal mt-2">
                 <button className="border-0 bg-transparent text-[11.5px] text-danger p-0 no-underline cursor-pointer hover:underline" onClick={async () => {
                   if (!confirm('Cancel at the end of this month?\n\n'
-                    + 'You keep everything until ' + (endsOn || 'the period ends')
-                    + ', and nothing you have drawn is affected.')) return;
-                  try { await cancel(); await refresh(); setMsg('Cancelled. Your plan runs to the end of the period.'); }
+                    + 'You keep Studio until ' + (endsOn || 'the period ends') + '.')) return;
+                  try { await cancel(); await refresh(); setMsg('Cancelled. Studio remains available until the end of the paid period.'); }
                   catch (e) { setErr(String(e.message || e)); }
                 }}>Cancel subscription</button>
                 {' '}— the month you have paid for runs to its end.
@@ -291,13 +145,9 @@ export default function Pricing() {
       </main>
 
       {picked && (
-        <CheckoutDialog
-          tier={TIER[picked]}
-          defaults={{ email: user?.email || '', signedIn: !!user }}
-          busy={busy}
-          error={err}
-          onCancel={() => { if (!busy) { setPicked(null); setErr(''); } }}
-          onPay={pay} />
+        <CheckoutDialog tier={TIER[picked]} pricing={state.pricing}
+          defaults={{ email: user?.email || '', signedIn: !!user }} busy={busy} error={err}
+          onCancel={() => { if (!busy) { setPicked(null); setErr(''); } }} onPay={pay} />
       )}
     </div>
   );

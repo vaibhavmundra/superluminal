@@ -16,6 +16,17 @@
 // ---------------------------------------------------------------------------
 
 import { TRACK_DIMS_IN } from './track.js';
+/* THE FITTING SYMBOLS, SHARED WITH THE PDF PLOTTER AND WITH THE CANVAS — see
+   settings.js for the tables and for why 0.29 and 0.5 are no longer written out
+   here. A size is the same kind of claim as a position, and the head of
+   pdfPlot.js states the property both files exist to keep about those.
+   THE OTHER THREE ARE THE SAME KIND OF CLAIM ABOUT A SHAPE. The aim tail's
+   length and its head, a sconce's crosshair and a fan's blades were each written
+   out in one drawing and not the other, and every one of them had drifted: the
+   plot drew an arrow where this drew a bare line, the canvas drew a crosshair
+   standing off a wall where this drew a ring on it, and the canvas drew three
+   blades at the fan's own sweep where this drew a fixed four-armed plus. */
+import { SYMBOL_FT, AIM_FT, SCONCE_FT, FAN_FT } from './settings.js';
 
 export function download(filename, content, mime = 'text/plain') {
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
@@ -418,9 +429,9 @@ const DOT_FT = 0.05;   // ~15 mm of ink
 const GAP_FT = 0.10;   // ~30 mm of air
 
 // The filled centre dot on a fitting whose BODY is large — a chandelier, a
-// pendant. A downlight's dot is 0.42 of a 0.29 ft ring, and this is that number,
+// pendant. A downlight's dot is 0.42 of its own ring, and this is that fraction
 // held still so a big fitting does not get a big blob. See the chandelier branch.
-const DOT_MARK_FT = 0.29 * 0.42;
+const DOT_MARK_FT = SYMBOL_FT.small * 0.42;
 
 /**
  * One LTYPE table entry. `dashes` is the pattern in drawing units: positive is
@@ -501,7 +512,19 @@ function slHeader(insunits, duPerFt) {
  */
 export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
                                     objects = [], accents = [],
-                                    spots = [] } = {}) {
+                                    spots = [],
+                                    /* THE MAGNETIC TRACK AND ITS MODULES, which
+                                       this file had no parameter for — see the
+                                       block that draws them for what was
+                                       missing. Already in plan pixels, the
+                                       contract every list here arrives under. */
+                                    tracks = [], trackModules = [],
+                                    /* THE LAMPS A HAND PUT DOWN, AND THIS FILE
+                                       HAD NO PARAMETER FOR THEM EITHER — the
+                                       same gap the magnetic track had, one
+                                       population later. See the block that
+                                       draws them. Already in plan pixels. */
+                                    cobs = [] } = {}) {
   // A DXF SOURCE OVERLAYS; ANYTHING ELSE IS A SHEET OF ITS OWN. This used to
   // throw on an image, which is why there was a second exporter and why the
   // second exporter was the one most people actually got.
@@ -580,6 +603,66 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
     add(dxfLine(LY_KF, q.x - t, q.y, q.x + t, q.y));
     add(dxfLine(LY_KF, q.x, q.y - t, q.x, q.y + t));
   };
+  /**
+   * A WALL SCONCE: THE CROSSHAIR STANDING OFF ITS WALL.
+   *
+   * IT WAS A RING AT THE WALL POINT, AND BOTH HALVES OF THAT WERE WRONG.
+   *
+   * THE RING, because a circle on these drawings is a hole in a ceiling. A
+   * sconce is not one: it is fixed to a vertical surface and hangs in the room,
+   * and a ring says nothing about which surface it is on. On a plan the mark
+   * landed exactly on the room outline, so what arrived in CAD was a circle
+   * sitting astride a wall line — which reads as a core through the wall.
+   *
+   * THE POSITION, because "the mounting position is what gets set out on site"
+   * is true and is what the STEM is for. The stem touches the wall at the
+   * mounting point and the body stands off into the room, so the file gives the
+   * setting-out point AND says which side of the wall the fitting is on. A
+   * symbol centred on the line would be drawn half inside the wall — and on an
+   * external wall, half in next door.
+   *
+   * THE SAME GEOMETRY THE CANVAS DRAWS, part for part: the ring at `r`, the
+   * centre standing off by `stand` along the wall's inward normal, the stem
+   * running from the wall through the ring and out the far side by `arm`, and
+   * the cross bar of the same length lying ALONG the wall. See `SG` in
+   * PlanCanvas and SCONCE_FT in settings.js, which is the one place those four
+   * figures live.
+   *
+   * BUILT IN PIXELS AND CONVERTED POINT BY POINT, for the reason the header
+   * gives: `inward` and `along` are directions, and a direction carried across
+   * the Y flip as a number comes out mirrored — which would put every sconce on
+   * the wrong side of its own wall.
+   *
+   * A SCONCE WITH NO WALL BEHIND IT FALLS BACK TO THE RING. `inward` comes off
+   * the placer and every sconce this app makes has one (see placeZone), but a
+   * plan saved before it did would otherwise export nothing at all, and a
+   * fitting missing from the file is worse than a fitting drawn as a ring.
+   */
+  const sconce = (a) => {
+    const r = SCONCE_FT.r * px;                       // the ring, in plan pixels
+    const ix = a.inward?.x, iy = a.inward?.y;
+    if (!Number.isFinite(ix) || !Number.isFinite(iy)) {
+      marker(LY_D, a.point, SCONCE_FT.r);
+      return;
+    }
+    // ALONG THE WALL, and derived from the normal when the placer did not say:
+    // the left normal of `inward` is the wall's own direction either way.
+    const ux = a.along?.x ?? -iy, uy = a.along?.y ?? ix;
+    const stand = r * SCONCE_FT.stand, arm = r * SCONCE_FT.arm;
+    const cx = a.point.x + ix * stand, cy = a.point.y + iy * stand;
+    const c = P({ x: cx, y: cy });
+    add(dxfCircle(LY_D, c.x, c.y, L(SCONCE_FT.r)));
+    // The stem: from the mounting point on the wall, through the ring, out the
+    // far side. One line, so the wall point stays snappable.
+    const tail = P({ x: cx + ix * arm, y: cy + iy * arm });
+    const foot = P(a.point);
+    add(dxfLine(LY_D, foot.x, foot.y, tail.x, tail.y));
+    // The cross bar, lying along the wall.
+    const b0 = P({ x: cx - ux * arm, y: cy - uy * arm });
+    const b1 = P({ x: cx + ux * arm, y: cy + uy * arm });
+    add(dxfLine(LY_D, b0.x, b0.y, b1.x, b1.y));
+  };
+
   const IN = (n) => n / 12;
 
   // --- room outlines
@@ -662,14 +745,42 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
       const c = P({ x: o.x, y: o.y });
       const rFt = (o.r || 0) / px;
       add(dxfCircle(LY_O, c.x, c.y, L(rFt)));
-      // A CROSS AND NOT A FILLED DOT, and the difference is the point of the
-      // layer. A fan is not a lamp: nothing on `ceiling_objects` emits, so
-      // nothing on it gets the filled symbol that means "this is a light". The
-      // cross stays because a circle alone gives nothing to snap to and the
-      // centre is what a fan gets set out from.
-      const t = L(0.3);
-      add(dxfLine(LY_O, c.x - t, c.y, c.x + t, c.y));
-      add(dxfLine(LY_O, c.x, c.y - t, c.x, c.y + t));
+      /* --- A FAN IS ITS BLADES, AND THE BLADES ARE THREE ------------------
+         A CROSS WAS THE WRONG MARK, AND IT WAS WRONG TWICE. Four arms at
+         ninety degrees inside a circle is the drawing convention for a CENTRE
+         MARK — what a setting-out drawing puts on a hole to be cored — so a
+         ceiling of fans read as coring information; and it was drawn at a flat
+         0.3 ft whatever the fan's sweep, so a 1200mm fan and a 900mm one came
+         out as the same small plus inside two different circles, with the one
+         dimension anybody scales off the drawing carried by the circle alone.
+         THREE SPOKES AT 120, AT THE FAN'S OWN SWEEP. It is the symbol on
+         screen, part for part — see the fan's branch in PlanCanvas, which
+         draws the same count, the same phase and the same 0.94 of the body
+         radius — and it is what the object IS, which is the test every mark in
+         this file is held to.
+         IN PIXELS AND THEN CONVERTED, like every other angle on this sheet.
+         See the header: a spoke is a direction, and a direction carried across
+         the Y flip as a number comes out mirrored. Three endpoints cannot.
+         STILL NOT FILLED, which is the rule the cross was keeping and the one
+         thing worth carrying over: nothing on `ceiling_objects` emits, so
+         nothing on it gets the solid mark that means "this is a light". The
+         spokes meet at the centre, so the fan still has the point an installer
+         sets it out from. */
+      if (o.kind === 'fan') {
+        for (let k = 0; k < FAN_FT.spokes; k++) {
+          const a = (k * 2 * Math.PI) / FAN_FT.spokes + FAN_FT.phase;
+          const tip = P({ x: o.x + Math.cos(a) * (o.r || 0) * FAN_FT.spoke,
+                          y: o.y + Math.sin(a) * (o.r || 0) * FAN_FT.spoke });
+          add(dxfLine(LY_O, c.x, c.y, tip.x, tip.y));
+        }
+      } else {
+        // Everything else round on this layer — a geyser, a split unit — keeps
+        // the crosshair: a circle alone gives nothing to snap to, and the centre
+        // is what the object gets set out from.
+        const t = L(0.3);
+        add(dxfLine(LY_O, c.x - t, c.y, c.x + t, c.y));
+        add(dxfLine(LY_O, c.x, c.y - t, c.x, c.y + t));
+      }
     }
   }
 
@@ -691,6 +802,60 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
     }
   }
 
+  /* --- A COVE'S SETTING-OUT LINE, WHICH IS THE CEILING CONTRACTOR'S ---------
+     A COVE IS TWO LINES AND THE FILE ONLY CARRIED ONE. `plan.covesPx` is the
+     pocket a cove is formed in — set out, boarded and skimmed weeks before the
+     tape that goes in it arrives — and only the tape was being exported, so a
+     coved ceiling imported as a dotted rectangle floating in a room with nothing
+     to say what builds it.
+     ON THE CEILING CONTRACTOR'S LAYER, which is the one the reverse cove already
+     uses. The trade rule is this list's whole principle and it gives one answer
+     here: a cove's pocket and a reverse cove's slot are the same scope, the same
+     programme and the same person's drawing. The layer's NAME is narrower than
+     what it now holds — renaming it would change what every plan already issued
+     imports as, which is a worse cost than a name that reads as the smaller of
+     two cases. See SUPERLUMINAL_LAYERS.
+     DOTTED, LIKE THE TAPE, because it comes off that layer's linetype — and it
+     should: a pocket is a thing you cannot see once the ceiling is closed. */
+  for (const r of rooms) {
+    for (const cv of r?.plan?.covesPx || []) {
+      if (cv?.line?.length >= 3) add(dxfPolyline(LY_C, cv.line.map(P), true));
+    }
+  }
+
+  /* --- THE MAGNETIC TRACK SOMEBODY DREW, AND WHAT IS CLIPPED ONTO IT --------
+     THE SAME GAP THE PDF HAD, and for the same reason: the two exporters were
+     given the engine's layout and nothing for the fittings a hand put down.
+     `plan.tracksPx` above is the ABSORBING track — what the ceiling design made
+     of a chunk — and this is a profile a person drew with modules they clipped
+     on, which survives every re-grid.
+     THE CARRIER AND THE HEADS ON THEIR TWO LAYERS, which is the split this file
+     already states: the profile is set out and fixed by one visit, the modules
+     are clipped in on another and are a different order from a different page of
+     the catalogue. */
+  for (const t of tracks) {
+    if (!(t?.pts?.length >= 2)) continue;
+    add(dxfPolyline(LY_K, t.pts.map(P), !!t.closed));
+  }
+  for (const m of trackModules) {
+    if (!Number.isFinite(m?.x) || !Number.isFinite(m?.y)) continue;
+    /* A DIFFUSER IS A BODY AND AN AIMED HEAD IS A RING, which is the same split
+       the plotted sheet makes: a diffuser is 200 to 600 mm of extrusion lying
+       along the rail and measurable off the drawing, and a track spot is the
+       same fitting as a recessed COB with the ceiling taken away.
+       `trackBody` TAKES AN ANGLE and the module carries a VECTOR, because a
+       drawn track is not rectilinear and 'h' or 'v' cannot describe a diagonal.
+       It is converted here rather than stored, so the one place that knows how
+       an angle survives the Y flip stays `trackBody`. */
+    if (m.kind === 'diffuser') {
+      trackBody(m, IN(m.lenIn ?? TRACK_DIMS_IN.head.len),
+                   IN(m.wideIn ?? TRACK_DIMS_IN.head.wide),
+                   Math.atan2(m.uy ?? 0, m.ux ?? 1));
+      continue;
+    }
+    marker(LY_KF, m, SYMBOL_FT.cob);
+  }
+
   // --- spots: the recessed schedule, ambient and aimed alike
   //
   // ...LESS THE ONES A TRACK TOOK. A head clipped into a profile is not part of
@@ -703,8 +868,8 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
                   l.trackAxis === 'v' ? Math.PI / 2 : 0);
         continue;
       }
-      const rFt = (l.kind === 'large' ? 0.5 : 0.29)
-        * ((l.fixture || l.kind) === 'small-narrow' ? 0.8 : 1);
+      const rFt = (l.kind === 'large' ? SYMBOL_FT.large : SYMBOL_FT.small)
+        * ((l.fixture || l.kind) === 'small-narrow' ? SYMBOL_FT.narrow : 1);
       marker(LY_S, l, rFt);
       // THE BAR THROUGH A LARGE FITTING, WHICH IS ITS ORIENTATION AND NOT
       // DECORATION. A large fitting sits ON a grid line rather than in a cell,
@@ -720,6 +885,29 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
         else add(dxfLine(LY_S, c.x - bar, c.y, c.x + bar, c.y));
       }
     }
+  }
+
+  /* --- AND THE RECESSED LAMPS SOMEBODY PLACED ONE AT A TIME ---------------
+     THEY WERE NOT IN THE FILE AT ALL. `plan.lightsPx` above is the LAYOUT —
+     what the gridding engine made of a ceiling, thrown away and rebuilt every
+     time a fan moves — and a lamp placed by hand is deliberately not in it (see
+     the `manualCobs` prop in PlanCanvas and the header of lib/cob.js). So a
+     ceiling laid out entirely by hand, which is what this app recommends for the
+     cases the solver is wrong about, exported as a room outline with nothing in
+     it. The plotted sheet has drawn them from the beginning; only the DXF was
+     short, which is the drift the shared argument object exists to close.
+     ON `spots`, WITH THE ENGINE'S OWN. A hand-placed COB is a recessed downlight
+     — the same trim, the same cut-out, the same line on the schedule — and what
+     differs is who chose where it went, which is not a fact about the ceiling.
+     Splitting them onto a layer of their own would ask an electrician to switch
+     two layers on to see one schedule.
+     A DRAFT IS NOT A FITTING. The array bar's preview rides in the canvas's list
+     so that what you watch move is what the tick will keep; nothing is placed
+     until it is ticked, and a file carrying the preview would bill a run nobody
+     committed to. Same gate as the plot's. */
+  for (const c of cobs) {
+    if (c?.draft || !Number.isFinite(c?.x) || !Number.isFinite(c?.y)) continue;
+    marker(LY_S, c, SYMBOL_FT.cob);
   }
 
   // --- accents: a strip is linear product, a sconce is decorative
@@ -764,9 +952,8 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
     // comes off this file into a CAD package is one continuous circuit rather
     // than four pieces somebody has to join up by eye.
     else if (a.loop) add(dxfPolyline(LY_T, a.loop.map(P), true));
-    // A sconce goes at its wall point, not at the offset the drawing hangs the
-    // symbol out to: the mounting position is what gets set out on site.
-    else if (a.point) marker(LY_D, a.point, 0.3);
+    // A sconce: the crosshair standing off its wall, exactly as on screen.
+    else if (a.point) sconce(a);
   }
 
   // --- directional spots, on the same layer as the ambient ones
@@ -781,7 +968,7 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
     if (onTrack) {
       trackBody(sp, IN(TRACK_DIMS_IN.spot.len), IN(TRACK_DIMS_IN.spot.wide), sp.angle || 0);
     } else {
-      marker(LY_S, sp, 0.3);
+      marker(LY_S, sp, SYMBOL_FT.spot);
     }
     // The tail, pointing at what it lights. Drawn to a fixed length rather than
     // all the way to the surface, which would read as a line to somewhere.
@@ -792,11 +979,42 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
     const LY_A = onTrack ? LY_KF : LY_S;
     const from = P(sp), to = P(sp.target);
     const dx = to.x - from.x, dy = to.y - from.y;
-    const d = Math.hypot(dx, dy) || 1, reach = L(1.2);
+    const d = Math.hypot(dx, dy) || 1, reach = L(AIM_FT.reach);
     // Clear of the body, which on a track is longer than a ring's radius.
-    const start = onTrack ? L(IN(TRACK_DIMS_IN.spot.len) / 2 + 0.05) : L(0.42);
-    add(dxfLine(LY_A, from.x + (dx / d) * start, from.y + (dy / d) * start,
-                      from.x + (dx / d) * reach, from.y + (dy / d) * reach));
+    const start = onTrack
+      ? L(IN(TRACK_DIMS_IN.spot.len) / 2 + 0.05) : L(AIM_FT.start);
+    const ux = dx / d, uy = dy / d;
+    const tip = { x: from.x + ux * reach, y: from.y + uy * reach };
+    add(dxfLine(LY_A, from.x + ux * start, from.y + uy * start, tip.x, tip.y));
+    /* --- AND A HEAD ON IT, WHICH IS WHAT MAKES IT AN ARROW ----------------
+       IT WENT OUT AS A BARE LINE. A shaft with nothing on the end of it is not
+       an arrow — it is a leader, or a setting-out line, or a wire — and on the
+       one fitting whose ROTATION is part of its specification the drawing was
+       therefore silent about the only thing it was drawn to say: a spot aimed
+       at the wall and a spot aimed away from it came out as the same mark.
+       THE SAME HEAD THE PLOTTED SHEET DRAWS, off the same two fractions — see
+       AIM_FT in settings.js and the block that builds it in pdfPlot.js. A PDF
+       and a DXF of one plan that disagreed about a fitting would be worse than
+       either being wrong, and an arrow on one and a line on the other is the
+       largest disagreement of that kind this drawing had.
+       SIZED OFF THE FIXED STANDOFF AND NOT OFF THE BODY, so every arrow on the
+       sheet carries the same head: the tail is an ANNOTATION — it says what the
+       fitting is for — and scaling it to a six-inch track spot would shrink the
+       one mark whose whole job is to be noticed. Same argument as the canvas's.
+       FILLED, FOR THE REASON THE PLOT GIVES: at hairline weight an open V
+       disappears, and a solid head is what reads. A SOLID is the only primitive
+       in R12 that arrives with ink inside it — see dxfSolidTri.
+       BUILT FROM THE TRANSFORMED DIRECTION, which is safe here and nowhere else
+       in this file: both ends of the shaft are already transformed points, so
+       the direction between them is the drawing's own, and a triangle symmetric
+       about that direction cannot be mirrored by a flip that has happened. */
+    const head = L(AIM_FT.start * AIM_FT.headFrac);
+    const half = head * AIM_FT.headWideFrac;
+    const nx = -uy, ny = ux;                       // the aim's left normal
+    const back = { x: tip.x - ux * head, y: tip.y - uy * head };
+    add(dxfSolidTri(LY_A, tip,
+      { x: back.x + nx * half, y: back.y + ny * half },
+      { x: back.x - nx * half, y: back.y - ny * half }));
   }
 
   out = out.concat(['0','ENDSEC','0','EOF']);

@@ -1761,6 +1761,15 @@ export function usePlanDoc(seed) {
     /* ...AND THE ONE EDIT THAT IS A RULE RATHER THAN A SHAPE. See
        OBJECT_SWEEP_SET for why the non-fans are ignored rather than refused. */
     setObjectSweep: (ids, mm) => dispatch({ type: 'OBJECT_SWEEP_SET', ids, mm }),
+    /* WHAT A DECORATIVE FITTING DRAWS, WRITTEN ONTO THE FITTING. A chandelier's
+       wattage is not a room's decision — it is the one this object was chosen
+       at — so it lives here beside its diameter and its rotation rather than in
+       `fixtureWatts`, which is the room's store of per-FAMILY overrides. Same
+       arrangement a hand-placed COB has and for the same reason: the figure
+       survives the room being re-gridded under it. See `wattsOf` in
+       lib/ceilingObjects.js, and `setCobSpec` for the other half of the pair. */
+    patchObject: (id, patch) =>
+      dispatch({ type: 'LIST_PATCHED', field: 'ceilingObjs', id, patch }),
 
     clearLightMoves: () => dispatch({ type: 'MAP_CLEARED', field: 'lightMoves' }),
     /* THE PER-FRAME NUDGE. The feet come in already worked out because getting

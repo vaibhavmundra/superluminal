@@ -18,6 +18,8 @@ import { FITTING_LUMENS } from '../../lib/settings.js';
 import { FIXTURE_FAMILIES } from '../../lib/lumens.js';
 import { clampWatts, nearestBeam, COB_WATT_RANGE } from '../../lib/cob.js';
 import { MODULE_BY_ID, moduleWatts } from '../../lib/magTrack.js';
+import { CEILING_BY_ID, isLamp, wattsOf, wattRangeOf, wattOptionsOf, lampWattsOf }
+  from '../../lib/ceilingObjects.js';
 import { bbox } from '../../lib/geometry.js';
 import { roomTypeIn } from '../../lib/roomTypes.js';
 import { nextChunkOption } from '../../lib/ceilingDesign.js';
@@ -156,14 +158,20 @@ export function fixtureGroups(r, {
     if (sp.roomId !== r.id || sp.rejected || sp.x == null) continue;
     /* WHICH SPOT IT IS, OFF THE FITTING ITSELF. `art-spot` is a 24-degree lamp
        aimed at a picture and `spot` a 30-degree one aimed at a worktop; the
-       schedule has always billed them as two lines, and they are two LAYERS
-       for the same reason — one is what you work by, the other is what you
-       look at. */
+       schedule has always billed them as two lines, and they still open at two
+       different catalogue wattages.
+       AND THEY ARE ONE LAYER NOW, WHICH IS WHY THE OVERRIDE HAS GONE. It read
+       `art ? 'accent' : 'task'`, and that was the third layer's only use outside
+       the decorative families — one is what you work by, the other is what you
+       look at. With two layers the question is "is this washing the room or is
+       it pointed at something", and an art spot is the most pointed fitting on
+       the drawing: a 24-degree cone on a picture, 80% of it at the floor. It is
+       task light by the reading that is left, which is the `cob` family's own
+       answer — so there is nothing here to override. See `layer` in lumens.js. */
     const art = sp.fixture === 'art-spot';
     bump(art ? 'art-spot' : 'spot', 'cob', 1, 0);
     const row = g.get(art ? 'art-spot' : 'spot');
     row.label = art ? 'Art spot' : 'Directional spot';
-    row.layer = art ? 'accent' : 'task';
     row.defaultWatts = FIXTURE_BY_ID[art ? 'art-spot' : 'spot']?.watts ?? null;
   }
 
@@ -281,23 +289,69 @@ export function fixtureGroups(r, {
     row.beam = nearestBeam(c.beam);
   }
 
-  /* --- THE DECORATIVE LAMPS, AND THERE ARE TWO LISTS TO ASK -----------------
-     ONE ROW FOR ALL OF THEM, which is the `unit` rule this file already states
-     for the counted families: anything sold by the piece gets one row for the
-     lot, and three lamps in a room are one decision about lamps. See the note on
-     the key being the zone's id for the linear ones.
-     `objectsInRoom` AND NOT `fansInRoom`, AND THAT IS THE FIX. The obstacle list
-     has the off-ceiling objects filtered out of it, so a standing lamp was never
-     in it — the lamp landed on the drawing, moved no figure and appeared in no
-     row, which reads exactly like a fitting the app has not been told about. A
-     chandelier and a pendant were counted because they hang, and hanging is not
-     the reason they belong in a lighting schedule. See `objectsInRoom` in
-     lib/layout.js.
+  /* --- THE DECORATIVE LAMPS, ONE ROW EACH -----------------------------------
+     AND IT WAS ONE ROW FOR ALL OF THEM, WHICH WAS THE BUG. The counted-family
+     rule this file states above — anything sold by the piece gets one row for
+     the lot — was applied here on the reading that three lamps in a room are one
+     decision about lamps. They are not. A chandelier is several lamps in one
+     fitting and draws 55 W; a floor lamp is one bulb in a shade and cannot be
+     any such thing; a pendant is half a chandelier. One row meant one wattage
+     across all three, so a room with a chandelier and a reading lamp had a
+     single figure that was wrong about at least one of them, and no way to say
+     so.
+     SO IT IS THE HAND-PLACED LAMP'S RULE INSTEAD, and it passes that rule's own
+     test exactly: a thing you point at and specify on its own. Every one of
+     these was placed by hand, one at a time, and chosen — nobody orders a
+     chandelier off a schedule (see COORDINATION in lib/boq.js, which counts
+     these and deliberately does not bill them). The key is the fitting's own id,
+     so pressing one on the drawing opens the row that is about it and changing
+     the wattage moves that fitting and nothing else.
+     ...AND THE LABEL IS THE TYPE'S, which is what makes the list readable: a
+     chandelier, a pendant and a standing lamp are three names people use, and
+     `analyseSpace` numbers any two rows that share one. They remain ONE FAMILY —
+     the distribution is the same in all three cases, a bare fitting throwing in
+     every direction — so nothing about the arithmetic changes; what changed is
+     that the row is the fitting rather than the family.
+     THE WATTAGE AND ITS RANGE COME OFF THE FITTING, exactly as a hand-placed
+     COB's do and for the same reason: it was specified when it was placed, so
+     there is nothing for a room-level store to hold. See `wattsOf` and
+     `wattRangeOf` in lib/ceilingObjects.js, which is where a decorative
+     fitting's specification lives.
+     `objectsInRoom` AND NOT `fansInRoom`. The obstacle list has the off-ceiling
+     objects filtered out of it, so a standing lamp was never in it — the lamp
+     landed on the drawing, moved no figure and appeared in no row, which reads
+     exactly like a fitting the app has not been told about. A chandelier and a
+     pendant were counted because they hang, and hanging is not the reason they
+     belong in a lighting schedule. See `objectsInRoom` in lib/layout.js.
      FALLING BACK TO THE OBSTACLES, so a room laid out by a caller that hands in
      only that list still counts its pendants. */
-  const lamps = (r.geo?.objectsInRoom ?? r.geo?.fansInRoom ?? []).filter(
-    (f) => f.kind === 'chandelier' || f.kind === 'standing_lamp').length;
-  if (lamps) bump('lamp', 'lamp', lamps, 0);
+  for (const f of (r.geo?.objectsInRoom ?? r.geo?.fansInRoom ?? [])) {
+    /* AN OBJECT WITH NO ID IS NOT COUNTED, and that is the one thing the
+       per-fitting key costs. Every ceiling object is minted with one — see
+       `newCeilingObjectId`, which both the palette and the Option-drag duplicate
+       go through — so this can only be malformed data; and the alternative is
+       worse than dropping it, because several of them would share the key
+       `undefined` and merge into one row, which is the exact clubbing this loop
+       exists to end, with a chandelier and a floor lamp inside it. */
+    if (!f?.id || !isLamp(f)) continue;
+    bump(f.id, 'lamp', 1, 0);
+    const row = g.get(f.id);
+    row.label = CEILING_BY_ID[f.typeId]?.label ?? 'Decorative lamp';
+    row.watts = wattsOf(f);
+    /* --- AND IN WHICHEVER SHAPE ITS TYPE IS SOLD IN --------------------------
+       EXACTLY ONE OF THESE IS NON-NULL and the panel's three-way branch reads
+       them in that order: a chandelier is a span and gets the slider, a pendant
+       and a standard lamp are three bulbs and get chips. See `LAMP_WATTAGES`,
+       which is the one place that decides which a type is — asked twice here
+       rather than tested on, so this loop never has to know. */
+    row.wattRange = wattRangeOf(f);
+    row.wattOptions = wattOptionsOf(f);
+    /* WHAT THE ROW READS WITH NOTHING STORED, which is the fitting's own and
+       not the family's. `analyseSpace` computes a row's `defaultWatts` through
+       `wattsFor`, whose answer for this family is one figure for all three
+       types — see LAMP_WATTS in lumens.js — and the three defaults differ. */
+    row.defaultWatts = lampWattsOf(f)?.defaultWatts ?? null;
+  }
 
   /* IN THE TABLE'S OWN ORDER, so the rows do not reshuffle as fittings are
      added, and within a family in the order the drawing produced them.
@@ -328,7 +382,9 @@ export function fixtureGroups(r, {
  */
 export function highlightRows({
   selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
+  selObjIds = [],
   manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx,
+  rooms = [],
 }) {
   const keys = [];
   let roomId = null;
@@ -388,6 +444,47 @@ export function highlightRows({
     if (run) {
       keys.push(run.id);
       roomId = run.roomId ?? roomId;
+    }
+  }
+  /* --- AND A CHANDELIER LIGHTS THE LAMP ROW, WHICH IS THE WHOLE OF HOW ITS
+     WATTAGE IS REACHED ------------------------------------------------------
+     IT WAS THE ONE FITTING WITH NO ROUTE FROM THE DRAWING TO ITS FIGURE. Every
+     other thing on this canvas answers "what is this, and what is it doing to
+     the room" by opening its row: press a cove, a spot, a module, a grid light,
+     and the panel scrolls to the row and offers the wattage. A chandelier, a
+     pendant and a standing lamp are CEILING OBJECTS — the same register a fan
+     and an AC cassette are in — so they were picked up by a handler this
+     function had never been told about, and pressing one highlighted nothing.
+     Its wattage existed, in a row, in a section, and there was no gesture that
+     led to it.
+     THE KEY IS THE FAMILY AND NOT THE FITTING, which is `fixtureGroups`'s
+     counted rule said back: three lamps in a room are one decision about lamps
+     and therefore one row, exactly as twelve grid lights are one row. So
+     pressing any one of them marks the decision all of them share — the same
+     answer `selLightId` gets, and for the same reason.
+     THE KEY IS THE FITTING'S OWN ID, which is what `fixtureGroups` bumps each of
+     these under: one row per decorative lamp, because a chandelier and the floor
+     lamp beside it are two fittings at two wattages. So pressing one opens the
+     row that is about THAT one.
+     ONLY THE THINGS THAT ARE FITTINGS, AND THE ROOM IS ASKED THE SAME WAY. A fan
+     and an AC cassette are in this selection register too and neither is in a
+     lighting schedule, so the walk is over `geo.objectsInRoom` — the very list
+     `fixtureGroups` counts the rows from — and the test is `isLamp`, the very
+     function it filters with. One list, one test, one answer: the row this opens
+     cannot be a row the count did not make, and the space it opens cannot be a
+     space the lamp was not counted in. A ceiling object stores plan FEET and no
+     room id (see `makeCeilingObject`), so resolving one any other way would mean
+     a second hit test and a unit conversion this function has no business
+     doing. */
+  if (selObjIds.length) {
+    const picked = new Set(selObjIds);
+    for (const r of rooms) {
+      const mine = (r.geo?.objectsInRoom ?? r.geo?.fansInRoom ?? []).filter(
+        (f) => picked.has(f.id) && isLamp(f));
+      if (!mine.length) continue;
+      for (const f of mine) keys.push(f.id);
+      roomId = r.id ?? roomId;
+      break;
     }
   }
   return { keys, roomId };

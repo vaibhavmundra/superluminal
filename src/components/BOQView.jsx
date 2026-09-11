@@ -94,12 +94,6 @@ export default function BOQView({ boq, planName }) {
   }
 
   const t = boq.totals;
-  // Whether the narrow-beam column earns its place on THIS plan.
-  const narrow = boq.rooms.reduce((n, r) => n + (r.qty['small-narrow'] || 0), 0);
-  // ...and whether the track columns do. Same rule and the same reason: a plan
-  // with no track on it should not carry three columns of dashes explaining
-  // that.
-  const tracked = boq.rooms.reduce((n, r) => n + (r.qty['track-profile'] || 0), 0);
 
   return (
     <div className="w-full flex justify-center px-[18px] pb-[60px] max-[900px]:px-[10px] max-[900px]:pb-[40px]">
@@ -227,11 +221,22 @@ export default function BOQView({ boq, planName }) {
         </table>
         </div>
 
+        {/* --- WHAT IS ON THE DRAWING AND IS NOT A LIGHT THIS APP SELLS ----
+            IT WAS "CEILING ITEMS", AND THAT NAME STOPPED BEING TRUE — the same
+            rename, for the same reason, that the rail's own row went through.
+            Three of the seven are not on a ceiling: a split AC's indoor unit is
+            on a wall at 2100mm, a geyser is over a door, and a standing lamp is
+            on the floor. Two more are LIGHTS — a chandelier and a standard lamp
+            — which is the other half of why "ceiling" was the wrong word for
+            the group; what these seven share is not where they are, it is that
+            somebody else supplies them and this schedule coordinates with them
+            rather than pricing them. See COORDINATION in lib/boq.js. */}
         {boq.coordination.length > 0 && (<>
-          <h2 className="mt-[26px] mb-[2px] text-[11.5px] tracking-[.06em] uppercase text-subtle">Ceiling items</h2>
+          <h2 className="mt-[26px] mb-[2px] text-[11.5px] tracking-[.06em] uppercase text-subtle">Other items</h2>
           <p className={NOTE + ' mt-0 mx-0 mb-[9px] max-w-[60ch]'}>
-            On the drawing because they occupy ceiling — they are why the lights
-            are where they are. Counted, and deliberately not billed.
+            On the drawing because the electrical work has to allow for them —
+            and, where they take ceiling, because they are why the lights are
+            where they are. Counted, and deliberately not billed.
           </p>
           <table className={TABLE + ' max-w-[430px]'}>
             <colgroup>
@@ -252,89 +257,28 @@ export default function BOQView({ boq, planName }) {
           </table>
         </>)}
 
-        {boq.rooms.length > 0 && (<>
-          <h2 className="mt-[26px] mb-[2px] text-[11.5px] tracking-[.06em] uppercase text-subtle">Space breakdown</h2>
-          <p className={NOTE + ' mt-0 mx-0 mb-[9px] max-w-[60ch]'}>
-            How a site is wired and how a contractor prices it. These add up to
-            the totals above.
-          </p>
-          {/* --- ONE LIST OF COLUMNS, AND EVERYTHING IS BUILT FROM IT -------
-              THE STRAY COLUMN OFF THE RIGHT MARGIN WAS THIS TABLE'S SHAPE BEING
-              DECLARED THREE TIMES. The `<colgroup>`, the header row and the body
-              row each rebuilt the same conditional list by hand, and the three
-              had drifted:
+        {/* --- THE SPACE BREAKDOWN WAS HERE, AND IT IS GONE FROM THE SCREEN --
+            A ROOM-BY-ROOM GRID OF FITTING COUNTS, under the order it adds up
+            to. It was asked for and removed (2026-09-11): on screen the
+            schedule is read as ONE order — what to buy for this plan — and a
+            second table restating the same totals split eleven ways is the
+            page's longest section answering a question nobody had while
+            reading it. Where a space's fittings ARE the question, the drawing
+            answers it better than a grid can: press the space and the Analysis
+            panel lists them with their wattages, their optics and what each
+            contributes.
 
-                · the colgroup had NO entry for the optional `Small 5W` column,
-                  so a plan with a wet room ran one column short of its headers
-                · the widths were fixed percentages that only added up in the
-                  base case: 24 + 6x12.6 = 99.6, but with a track on the plan it
-                  became 24 + 8x12.6 = 124.8, and `table-fixed` obediently drew a
-                  table a quarter wider than its container. "Track heads" was
-                  simply the last column, so it was the one hanging off the page.
+            IT IS STILL IN EVERY EXPORT, deliberately, and that is not an
+            inconsistency. A schedule sent to a contractor is read away from the
+            drawing, by somebody who cannot press a space to find out what is in
+            it — so the CSV, the PDF and the spreadsheet all keep their
+            per-space block, and the workbook keeps its second sheet. See
+            `boqTable`'s `perRoom` and SHEET_ROOMS in lib/boq.js; nothing there
+            was touched.
 
-              Percentages that have to be re-totalled by hand every time an
-              optional column is added are a bug waiting on the next column. So
-              the columns are DATA now: one entry each, `false` where a column
-              has not earned its place, and the widths divided from the count.
-              The three renders below cannot disagree, because there is one list.
-
-              `Space` KEEPS ITS 24% and the rest share what is left equally —
-              a room name is prose and the others are two or three digits. */}
-          {(() => {
-            const cols = [
-              { head: 'Space', left: true, w: 24, cell: (r) => <b>{r.name}</b> },
-              { head: 'Area', cell: (r) => <N v={r.areaSqft} dp={0} /> },
-              { head: 'Small', cell: (r) => r.qty.small || '—' },
-              // ONLY WHERE THERE ARE ANY. A column of dashes on every
-              // residential plan is a column nobody reads; a wet room's 5 W
-              // narrow-beam lamp is a different product from the 7 W and has to
-              // be countable separately when it exists.
-              narrow > 0 && { head: 'Small 5W', cell: (r) => r.qty['small-narrow'] || '—' },
-              { head: 'Large', cell: (r) => r.qty.large || '—' },
-              { head: 'Spots', cell: (r) => r.qty.spot || '—' },
-              { head: 'Sconces', cell: (r) => r.qty.sconce || '—' },
-              { head: 'Strip',
-                cell: (r) => (r.qty.strip ? `${r.qty.strip.toFixed(2)} m` : '—') },
-              tracked > 0 && { head: 'Track',
-                cell: (r) => (r.qty['track-profile'] ? `${r.qty['track-profile']} m` : '—') },
-              // THE HEADS AS ONE FIGURE, ambient and directional together. The
-              // two are separate LINES on the order above, because they are two
-              // products; per space the question being asked is "how many things
-              // clip into this room's track", and splitting it costs a column to
-              // answer half of it twice.
-              tracked > 0 && { head: 'Track heads',
-                cell: (r) => (r.qty['track-ambient'] || 0) + (r.qty['track-spot'] || 0) || '—' },
-            ].filter(Boolean);
-            // Whatever the first column did not take, split evenly. This is the
-            // line that makes the total 100 whichever optional columns appeared.
-            const rest = (100 - cols[0].w) / (cols.length - 1);
-            return (
-              <div className="max-[900px]:overflow-x-auto">
-              <table className={TABLE}>
-                <colgroup>
-                  {cols.map((c) => (
-                    <col key={c.head} style={{ width: `${c.w ?? rest}%` }} />
-                  ))}
-                </colgroup>
-                <thead>
-                  <tr>{cols.map((c) => (
-                    <th key={c.head} className={TH_WRAP}>{c.head}</th>
-                  ))}</tr>
-                </thead>
-                <tbody>
-                  {boq.rooms.map((r) => (
-                    <tr key={r.id} className={ROW_HOVER}>
-                      {cols.map((c) => (
-                        <td key={c.head} className={c.left ? TD : TD_R}>{c.cell(r)}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
-            );
-          })()}
-        </>)}
+            WHAT WENT WITH IT: the `narrow` and `tracked` column gates, which
+            existed only to decide which of its optional columns had earned a
+            place. */}
       </div>
     </div>
   );

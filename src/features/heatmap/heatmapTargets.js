@@ -196,6 +196,43 @@ export const REFLECTED_AMBIENT_LM_PER_SQFT = {
 export const REFLECTED_AMBIENT_LM_PER_SQFT_DEFAULT = 10;
 
 /**
+ * THE ROOMS THAT ARE NOT FILLED LIKE THE REST OF THEIR BUILDING.
+ *
+ * ROOM TYPE WINS OVER PROJECT, exactly as `heatmapTargetFor` and
+ * `lumenCriteriaFor` already have it: a kitchen in a flat is a kitchen before
+ * it is residential. This table did not exist for one revision and the file
+ * said so out loud — that the specified references were per project and that
+ * inventing a per-room breakdown would be asserting a specification nobody had
+ * reviewed. THEY HAVE NOW BEEN REVIEWED, for three rooms.
+ *
+ * TWENTY, WHICH IS DOUBLE THE DOMESTIC FIGURE AND IS THE OFFICE ONE. A
+ * kitchen, a bathroom and a utility are the rooms in a home where somebody
+ * STANDS AND WORKS — chopping, shaving, ironing — and they are worked in at
+ * close range with the body between the fitting and the task. The filled,
+ * from-all-directions quantity this layer measures is exactly what stops that
+ * being done in your own shadow, and the domestic 10 is a living-room figure:
+ * enough for a room to read as lit, not enough for a room to be worked in. The
+ * office reference is the one already in this file for spaces that are worked
+ * in all day, so these three take it rather than a fourth number.
+ *
+ * IN THE SAME UNIT AS THE TABLE ABOVE — received lumens per square foot — so
+ * it converts through the same constant and is directly comparable to the
+ * project figures rather than being a multiplier nobody can check against
+ * anything. `retail`'s 30 is the only project above this, so a toilet in a
+ * shop comes DOWN to 20, which is the override doing its job: a back-of-house
+ * WC is not lit like a shop floor.
+ *
+ * THE KEYS ARE ROOM TYPE IDS from PROJECT_TYPES (lib/roomTypes.js). `kitchen`
+ * is both residential and restaurant and one entry serves both, which is the
+ * point of keying on the type rather than on the pair.
+ */
+export const REFLECTED_AMBIENT_LM_PER_SQFT_BY_ROOM = {
+  kitchen: 20,
+  toilet: 20,
+  utility: 20,
+};
+
+/**
  * ...AND THE SAME TABLE IN LUX, WHICH IS WHAT THE ENGINE COMPARES AGAINST.
  *
  * DERIVED RATHER THAN TYPED OUT, so the two can never drift: editing a
@@ -208,6 +245,12 @@ export const REFLECTED_AMBIENT_TARGET_LUX = Object.fromEntries(
   Object.entries(REFLECTED_AMBIENT_LM_PER_SQFT)
     .map(([id, lm]) => [id, lm * LUX_PER_LM_PER_SQFT]));
 
+/** ...and the per-room overrides, through the same conversion for the same
+ *  reason: two tables in one unit, one constant between them. */
+export const REFLECTED_AMBIENT_TARGET_LUX_BY_ROOM = Object.fromEntries(
+  Object.entries(REFLECTED_AMBIENT_LM_PER_SQFT_BY_ROOM)
+    .map(([id, lm]) => [id, lm * LUX_PER_LM_PER_SQFT]));
+
 /** 107.64 lux — the residential reference, and what an unrecognised project
  *  gets. Derived from the same constant for the same reason. */
 export const REFLECTED_AMBIENT_TARGET_LUX_DEFAULT =
@@ -216,21 +259,19 @@ export const REFLECTED_AMBIENT_TARGET_LUX_DEFAULT =
 /**
  * WHAT THIS SPACE IS AIMING AT ON THE REFLECTED-AMBIENT LAYER, in lux.
  *
- * BY PROJECT AND NOT BY ROOM TYPE, WHICH IS A DELIBERATE DIFFERENCE from
- * `heatmapTargetFor` above and is worth stating rather than leaving as an
- * omission. The horizontal table has a per-room override because a kitchen
- * worktop and a bedroom genuinely want different amounts of light ON THE TASK.
- * The specified reflected-ambient references are a per-project general-
- * illumination figure and nobody has reviewed a per-room breakdown of them; a
- * table invented here would be this file asserting a specification it does not
- * have. The signature takes `roomTypeId` anyway so that the day such a table is
- * reviewed it is an entry here and not a change at every call site.
+ * ROOM TYPE, THEN PROJECT, THEN THE DOMESTIC DEFAULT — the same precedence
+ * `heatmapTargetFor` and `lumenCriteriaFor` use, and now for the same reason:
+ * a room listed above has been looked at on its own and a room absent from it
+ * takes its building's figure, which is the honest reading of "nobody has
+ * looked at this one".
  *
- * ONE PLACE FOR THE MAPPING, THE CONVERSION AND THE FALLBACK, which is what the
- * brief asks for and what makes recalibration an edit to this file alone.
+ * ONE PLACE FOR THE MAPPING, THE CONVERSION AND THE FALLBACK, which is what
+ * makes recalibration an edit to this file alone.
  */
-export const reflectedAmbientTargetFor = (projectId, _roomTypeId = null) =>
-  REFLECTED_AMBIENT_TARGET_LUX[projectId] ?? REFLECTED_AMBIENT_TARGET_LUX_DEFAULT;
+export const reflectedAmbientTargetFor = (projectId, roomTypeId = null) =>
+  REFLECTED_AMBIENT_TARGET_LUX_BY_ROOM[roomTypeId]
+  ?? REFLECTED_AMBIENT_TARGET_LUX[projectId]
+  ?? REFLECTED_AMBIENT_TARGET_LUX_DEFAULT;
 
 /**
  * HOW MUCH OF THE FLOOR'S HORIZONTAL ILLUMINANCE THE `average` LAYER ADDS.
@@ -255,20 +296,29 @@ export const reflectedAmbientTargetFor = (projectId, _roomTypeId = null) =>
 export const AVERAGE_FLOOR_SHARE = 0.25;
 
 /**
- * THE LAYERS THE HEATMAP CAN SHOW. Three, and the table is the whole of what
- * the legend's selector is built from — a fourth is an entry here, a line in
- * the resolver below, and nothing at all in the engine.
+ * THE LAYERS THE ENGINE CAN SOLVE. Three — and ONE OF THEM IS WHAT THE DRAWING
+ * SHOWS. The other two are its components and are not offered to the reader.
  *
- * `label` IS THE FULL NAME AND `short` IS WHAT FITS IN THE SELECTOR. The
- * existing view keeps the name it has always had on the card ("Estimated
- * illuminance"), which is what "preserve existing view names" asks for.
+ * --- THERE WAS A SELECTOR AND IT IS GONE, WHICH IS THE POINT ---------------
+ * The card carried three chips for a while and the reader had to choose
+ * between a horizontal illuminance, a reflected ambient and their blend before
+ * the drawing meant anything. That is a question about photometric convention
+ * asked of somebody who came to lay out lights. ONE HEATMAP ANSWERS IT: the
+ * blend shows how filled the space is AND what the task fittings are doing to
+ * it, which is the whole reason somebody turns a heatmap on. The two component
+ * layers stay in this table because `average` is literally built out of them —
+ * see `solveRoomLayer` — and because the day one of them is worth showing on
+ * its own it is a selector in the legend and nothing else.
  *
- * `note` IS THE ONE SENTENCE THAT ANSWERS "WHAT AM I LOOKING AT" and it is a
- * TOOLTIP rather than a paragraph on the card — this app's rule is that a
- * control is its label, and the card already carries the measurement, the
- * height and the target in plain sight. The sentence is for the reader who
- * wants to know what a layer includes and excludes, which is the one thing the
- * name cannot say.
+ * `label` IS WHAT THE CARD PRINTS, and only the shown layer's is ever seen.
+ * `short` AND `measure` WENT WITH THE SELECTOR AND THE MEASUREMENT LINE: they
+ * were sized for a chip and for a subtitle, and carrying UI fields for UI that
+ * does not exist is how a table stops describing the thing it names.
+ *
+ * `note` IS THE ONE SENTENCE THAT SAYS WHAT EACH LAYER IS. Nothing renders it
+ * — the card is a name and a key and nothing else — so it is documentation
+ * that happens to live in the data, beside the numbers it describes rather
+ * than in a comment that can drift from them.
  *
  * --- `probe` AND `floor` ARE WHAT THE ENGINE READS, AND THEY ARE THE WHOLE
  *     INTERFACE BETWEEN THIS TABLE AND THE SOLVER ------------------------
@@ -289,19 +339,17 @@ export const HEATMAP_LAYERS = [
   {
     id: 'illuminance',
     label: 'Estimated illuminance',
-    short: 'Illuminance',
-    measure: 'Horizontal lux',
     note: 'Horizontal illuminance on the measurement plane — direct fixture '
-      + 'light and reflected light together.',
+      + 'light and reflected light together. A component of `average`; not '
+      + 'shown on its own.',
     probe: false, floor: true,
   },
   {
     id: 'reflected',
     label: 'Reflected ambient light',
-    short: 'Reflected',
-    measure: 'Reflected ambient',
-    note: 'Light reaching this location after reflecting from room surfaces. '
-      + 'Direct fixture light is excluded.',
+    note: 'Light reaching this location after reflecting from room surfaces, '
+      + 'with direct fixture light excluded. A component of `average`; not '
+      + 'shown on its own.',
     probe: true, floor: false,
   },
   {
@@ -325,18 +373,23 @@ export const HEATMAP_LAYERS = [
      * here so nobody has to rediscover it from the arithmetic.
      */
     id: 'average',
-    label: 'Average',
-    short: 'Average',
-    measure: 'Average',
-    note: 'Reflected ambient light at this height, plus a quarter of the '
-      + 'horizontal illuminance on the floor below it.',
+    label: 'Estimated light level',
+    note: 'Reflected ambient light at the measurement height, plus a quarter '
+      + 'of the horizontal illuminance on the floor below it — how filled the '
+      + 'space is, and what the task fittings add to it.',
     probe: true, floor: true,
   },
 ];
 
-/** The layer a plan opens on: the one that was here first, so switching the
- *  heatmap on shows what it has always shown. */
-export const HEATMAP_LAYER_DEFAULT = 'illuminance';
+/**
+ * THE ONE LAYER THE DRAWING SHOWS.
+ *
+ * IT IS A CONSTANT AND NOT A DEFAULT ANY MORE, and the name is kept because it
+ * is still what `heatmapLayerFor` falls back to. There is no selector and no
+ * state: the hook reads this, the card prints its label, and the other two
+ * entries are reached only by `average` asking for its own halves.
+ */
+export const HEATMAP_LAYER_DEFAULT = 'average';
 
 /** A layer by id, falling back to the default rather than to nothing — a stored
  *  preference naming a layer this build has dropped must not blank the drawing. */
@@ -433,6 +486,19 @@ export const HEATMAP_BANDS = [
   { id: 'above-200', from: 2.0,  to: null, anchor: 2.5,
     token: '--color-heatmap-above-200', label: 'Above 200%' },
 ];
+// export const HEATMAP_BANDS = [
+//   { id: 'below-25',  from: 0,    to: 0.25, anchor: 0,
+//     token: '--color-heatmap-below-25',  label: 'Below 25%' },
+//   { id: '25-75',     from: 0.25, to: 0.5, anchor: 0.5,
+//     token: '--color-heatmap-25-75',     label: '25–75%' },
+//   { id: '75-125',    from: 0.5, to: 1.0, anchor: 1.0,
+//     token: '--color-heatmap-75-125',    label: '75–125%' },
+//   { id: '125-200',   from: 1.0, to: 1.5,  anchor: 1.225,
+//     token: '--color-heatmap-125-200',   label: '125–200%' },
+//   /* See the note above on why this one is not a midpoint. */
+//   { id: 'above-200', from: 1.5,  to: null, anchor: 2.0,
+//     token: '--color-heatmap-above-200', label: 'Above 200%' },
+// ];
 
 /**
  * WHICH BAND A RATIO IS IN. Half-open intervals, so a value exactly on a

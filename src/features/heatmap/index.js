@@ -7,21 +7,20 @@
 //                     off. Every input is a list App already holds.
 //   HeatmapOverlay    draws it, inside the drawing's own <svg>, taking no
 //                     pointer.
-//   HeatmapLegend     the key: the bands, the measurement, the height it is
-//                     taken at, the active target — and which of the two
-//                     layers is being shown.
+//   HeatmapLegend     the key: the measurement's name, and the five bands.
 //   HeatmapSwitch     the capsule in the bar at the foot of the drawing.
 //
 // The constants a reader is likely to want next are re-exported too — the
 // target table and the band table — because "what is this room aiming at" is
 // a question asked from outside the feature.
 //
-// AND THE FOUR NAMES STILL ANSWER FOR TWO LAYERS. `useHeatmap` computes the
-// one that is selected and carries the selection with it; the switch in the
-// bar is still the whole of the on/off, and the choice between measurements is
-// two chips in the legend. App wires the same four elements it always did —
-// which is the test of whether the second layer was added inside the feature
-// or through it.
+// AND THE FOUR NAMES STILL ANSWER FOR ONE HEATMAP BUILT OUT OF THREE LAYERS.
+// `Estimated light level` is the reflected ambient at 1.2 m plus a quarter of
+// the horizontal illuminance at the floor; the other two layers are its
+// components and are never shown on their own. The switch in the bar is the
+// whole of the on/off, and there is nothing else to choose — App wires the
+// same four elements it always did, which is the test of whether any of this
+// was added inside the feature or through it.
 // ---------------------------------------------------------------------------
 export { default as useHeatmap } from './useHeatmap.js';
 export { default as HeatmapOverlay } from './HeatmapOverlay.jsx';
@@ -38,4 +37,4 @@ export { HEATMAP_BANDS, HEATMAP_TARGET_LUX, HEATMAP_TARGET_LUX_BY_ROOM,
          REFLECTED_AMBIENT_TARGET_LUX_DEFAULT, LUX_PER_LM_PER_SQFT,
          AVERAGE_FLOOR_SHARE,
          reflectedAmbientTargetFor, heatmapTargetForLayer } from './heatmapTargets.js';
-export { PROBE_HEIGHT_MM, PROBE_HEIGHTS_MM, probeHeightFor } from './indirect.js';
+export { PROBE_HEIGHT_MM, probeHeightFor } from './indirect.js';

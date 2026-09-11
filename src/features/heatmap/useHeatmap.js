@@ -7,9 +7,9 @@ import { solveIndirect, solveAverage, probeHeightFor,
          probeWasClamped } from './indirect.js';
 import { buildRoomEmitters, polygonInMetres } from './emitters.js';
 import { heatmapTargetForLayer, heatmapLayerFor,
-         HEATMAP_PLANE } from './heatmapTargets.js';
+         HEATMAP_LAYER_DEFAULT, HEATMAP_PLANE } from './heatmapTargets.js';
+import { PROBE_HEIGHT_MM } from './indirect.js';
 import { readHeatmapPalette } from './colours.js';
-import useHeatmapLayer from './useHeatmapLayer.js';
 
 // ---------------------------------------------------------------------------
 // useHeatmap — WHEN THE SOLVER RUNS, AND WHAT IT IS ALLOWED TO COST.
@@ -51,10 +51,22 @@ import useHeatmapLayer from './useHeatmapLayer.js';
 //
 // WHAT COMES BACK IS READY TO PAINT. One entry per room holding the ratio field
 // over its own grid, the box it covers in PLAN PIXELS, and the target it was
-// judged against — see HeatmapOverlay, which draws it and computes nothing —
-// plus the layer state the legend both reads and sets, so that the field on the
-// drawing and the name on the card cannot come apart.
+// judged against — see HeatmapOverlay, which draws it and computes nothing.
+//
+// AND THERE IS NO VIEW STATE LEFT IN HERE. `useHeatmapLayer` held a selected
+// layer and a probe height while the legend offered both; the legend offers
+// neither now, so the two are the module constants below and the hook is back
+// to being a pure function of what App already holds. The engine still solves
+// three layers and still takes any probe height — see HEATMAP_LAYERS and
+// PROBE_HEIGHT_MM — so putting either control back is a control, not a
+// restructuring.
 // ---------------------------------------------------------------------------
+
+/** WHAT THE DRAWING SHOWS, AND WHAT HEIGHT IT IS READ AT. Two constants rather
+ *  than two pieces of state, because nothing on screen can change either. Both
+ *  are owned elsewhere — the layer table and indirect.js — and read here. */
+const LAYER_ID = HEATMAP_LAYER_DEFAULT;
+const PROBE_HEIGHT_M = PROBE_HEIGHT_MM / 1000;
 
 /** How long the hand has to be still before the full-resolution pass runs.
  *  Long enough that a drag never triggers one, short enough that letting go
@@ -66,6 +78,7 @@ export const SETTLE_MS = 140;
  *  them. */
 const EMPTY = {
   on: false, rooms: [], palette: null, plane: HEATMAP_PLANE,
+  layer: heatmapLayerFor(LAYER_ID),
   targets: [], distinct: [], focusTarget: null, mode: null, ms: 0,
 };
 
@@ -256,21 +269,11 @@ export default function useHeatmap({
   magTracksPx = [],
   trackModulesPx = [],
 }) {
-  /* WHICH LAYER, AND WHAT HEIGHT ITS PROBES SIT AT. Its own module — see
-     useHeatmapLayer.js — and composed here rather than called by App so that
-     the choice and the field it produced are one object. */
-  const view = useHeatmapLayer();
-  const { layerId, probeHeightM } = view;
-
   /* --- WHAT THE SOLVE DEPENDS ON, AS ONE OBJECT ---------------------------
      THE IDENTITY OF THIS IS THE "SOMETHING CHANGED" SIGNAL, which is why it is
      a memo over the whole input list rather than a list of dependencies on the
      solve below. React already recomputes it exactly when one of them changes,
-     and the settle timer downstream needs a single thing to watch.
-     THE LAYER AND THE HEIGHT ARE NOT IN IT, and that is deliberate: picking a
-     layer or a height is not a moving hand, so it must not drop the drawing to
-     the coarse pass and make the reader wait for it to sharpen again. The two
-     caches below are what make that safe. */
+     and the settle timer downstream needs a single thing to watch. */
   const inputs = useMemo(() => ({
     rooms, pxPerFt, projectId, roomTypes, materials, ceilingMmFor, spaceAnalysis,
     accentZonesPx, taskSpotsPx, manualCobsPx, arrayCobsPx, magTracksPx, trackModulesPx,
@@ -317,7 +320,7 @@ export default function useHeatmap({
     setPalette(readHeatmapPalette());
   }, [on]);
 
-  const field = useMemo(() => {
+  return useMemo(() => {
     // RULE 1: the switch, before anything is read.
     if (!on) return EMPTY;
     const { pxPerFt: ppf } = inputs;
@@ -326,7 +329,7 @@ export default function useHeatmap({
     /* WHETHER THIS LAYER IS READ AT A PROBE IN THE ROOM'S VOLUME, which is
        what decides whether there is a height to report and a plane to name.
        Off the layer table rather than off the id — see HEATMAP_LAYERS. */
-    const indirect = !!heatmapLayerFor(layerId).probe;
+    const indirect = !!heatmapLayerFor(LAYER_ID).probe;
     const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
 
     const out = [];
@@ -372,11 +375,11 @@ export default function useHeatmap({
          `total` on the horizontal layer — direct and reflected together — and
          the probe field on the reflected one, which carries no direct term at
          all. Both are lux, and the layer says which lux. */
-      const { solved, values, probeZ } =
-        solveRoomLayer(hit, { sources, layerId, probeHeightM });
+      const { solved, values, probeZ } = solveRoomLayer(
+        hit, { sources, layerId: LAYER_ID, probeHeightM: PROBE_HEIGHT_M });
 
       const targetLux = heatmapTargetForLayer(
-        layerId, inputs.projectId, inputs.roomTypes?.[room.id]?.type);
+        LAYER_ID, inputs.projectId, inputs.roomTypes?.[room.id]?.type);
       targets.push({ roomId: room.id, lux: targetLux });
 
       /* --- THE FIELD AS A RECTANGLE OF RATIOS -----------------------------
@@ -413,7 +416,7 @@ export default function useHeatmap({
         },
         polygonPx: room.geo.polygonPx,
         targetLux,
-        layer: layerId,
+        layer: LAYER_ID,
         meanLux: solved.mean, minLux: solved.min, maxLux: solved.max,
         emittedLumens: solved.emitted,
         bounces: solved.bounces,
@@ -421,7 +424,7 @@ export default function useHeatmap({
         /* WHAT THE PROBES ACTUALLY GOT, per room. `null` on the horizontal
            layer, which has a plane rather than a probe height. */
         probeHeightM: probeZ,
-        probeClamped: indirect && probeWasClamped(probeHeightM, probeZ),
+        probeClamped: indirect && probeWasClamped(PROBE_HEIGHT_M, probeZ),
         roomHeightM: heightM,
       });
     }
@@ -445,6 +448,9 @@ export default function useHeatmap({
     const heightSet = [...new Set(heights)];
     return {
       on: true, mode, rooms: out, palette,
+      /* THE LAYER ITSELF, so the card can print its name without knowing which
+         one it is — one place decides what the drawing shows. */
+      layer: heatmapLayerFor(LAYER_ID),
       /* THE MEASUREMENT GEOMETRY, WHICH IS WHAT THE CARD'S SECOND LINE IS MADE
          OF. A fixed plane on the horizontal layer; on the reflected one, the
          height the drawing is actually showing — the open space's own, where a
@@ -465,13 +471,12 @@ export default function useHeatmap({
          prints the range, because a key claiming one target over a plan with
          three would be the wrong kind of confident. */
       focusTarget: focus?.lux ?? (distinct.length === 1 ? distinct[0] : null),
+      /* ...AND WHOSE IT IS. A figure that changes when you click a room and
+         does not say which room it belongs to is a figure you cannot check.
+         Null when nothing is open, which is what makes the card fall back to
+         the plain "Target ..." line rather than naming a space nobody picked. */
+      focusName: focusRoom?.name ?? null,
       ms: typeof performance !== 'undefined' ? performance.now() - t0 : 0,
     };
-  }, [on, inputs, mode, palette, focusId, layerId, probeHeightM]);
-
-  /* THE FIELD AND THE CHOICE, AS ONE OBJECT — and it is a memo so that the
-     switched-off case still hands every consumer the same thing on every
-     render. `view` has a stable identity between changes and so does `field`,
-     so this changes when one of them does and at no other time. */
-  return useMemo(() => ({ ...field, ...view }), [field, view]);
+  }, [on, inputs, mode, palette, focusId]);
 }

@@ -3,8 +3,9 @@
 //
 // TWO DOORS IN ONE FILE, and they are answering two different callers.
 //
-//   POST  the app, asking "what is behind this token". Requires a signed-in
-//         user AND a live token. Returns rows with the service key.
+//   POST  the app, either asking "what is behind this token" or creating a
+//         named invitation. Both require a signed-in user; invitation also
+//         proves project ownership before it writes or sends mail.
 //   GET   a scraper, asking for the Open Graph card at /s/<token>. Requires
 //         nothing, returns no rows — a title, a picture and a sentence.
 //
@@ -40,6 +41,9 @@ const PROJECT_URL = process.env.SUPABASE_URL
 
 const SERVICE_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+const RESEND_KEY = process.env.RESEND_API_KEY || '';
+const RESEND_FROM = process.env.RESEND_FROM_EMAIL
+  || 'Super Luminal <share@superluminal.design>';
 
 /** Where the app lives, for the absolute URLs a scraper needs. */
 const SITE = (process.env.PUBLIC_SITE_URL || 'https://superluminal.design').replace(/\/+$/, '');
@@ -54,6 +58,7 @@ const publicUrl = (path) =>
 const PLAN_CARD_COLS =
   'id, project_id, owner, name, status, source_kind, file_name, storage_path, snapshot_path,'
   + ' width, height, px_per_ft, project_type, stats, created_at, updated_at';
+const SHARE_COLS = 'id,project_id,email,role,invited_user,owner_email,created_at';
 
 /**
  * THE ONE SENTENCE THE CARD SAYS, and it is the site's own. A share is still a
@@ -77,13 +82,17 @@ async function readBody(req) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return {}; }
 }
 
-async function rest(path) {
+async function rest(path, { method = 'GET', body = null, headers = {} } = {}) {
   const res = await fetch(`${PROJECT_URL}/rest/v1/${path}`, {
+    method,
     headers: {
       apikey: SERVICE_KEY,
       Authorization: `Bearer ${SERVICE_KEY}`,
       Accept: 'application/json',
+      ...(body == null ? {} : { 'Content-Type': 'application/json' }),
+      ...headers,
     },
+    ...(body == null ? {} : { body: JSON.stringify(body) }),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -248,7 +257,103 @@ async function openPlan(body, user) {
   return { plan, project, access: 'view', grant };
 }
 
-const ACTIONS = { project: openProject, plan: openPlan };
+/**
+ * SEND THE NOTICE AFTER THE GRANT EXISTS. Email is delivery, not permission:
+ * a temporary Resend failure must not roll back access the owner deliberately
+ * granted, and the response says plainly when those two outcomes differ.
+ */
+async function sendInviteEmail({ email, role, project, user }) {
+  if (!RESEND_KEY) throw new Error('Resend is not configured');
+
+  const oneLine = (value) => String(value).replace(/[\r\n\t]+/g, ' ').trim();
+  const inviter = oneLine(user?.user_metadata?.full_name || user?.email || 'Someone at your studio');
+  const projectName = oneLine(project.name || 'a lighting project');
+  const access = role === 'edit' ? 'view and edit' : 'view';
+  const url = `${SITE}/projects/${encodeURIComponent(project.id)}`;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${RESEND_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: RESEND_FROM,
+        to: [email],
+        ...(user?.email ? { reply_to: user.email } : {}),
+        subject: `${inviter} shared “${projectName}” with you`,
+        text: `${inviter} invited you to ${access} “${projectName}” in Super Luminal.\n\n`
+          + `Open the project: ${url}\n\nSign in with ${email} to use this invitation.`,
+        html: `<p>${esc(inviter)} invited you to ${esc(access)} <strong>${esc(projectName)}</strong> in Super Luminal.</p>`
+          + `<p><a href="${esc(url)}" style="display:inline-block;padding:10px 16px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Open the project</a></p>`
+          + `<p style="color:#666;font-size:13px">Sign in with ${esc(email)} to use this invitation.</p>`,
+      }),
+      signal: ctl.signal,
+    });
+    const raw = await res.text();
+    if (!res.ok) throw new Error(`resend ${res.status}: ${raw.slice(0, 240)}`);
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch { /* the 2xx is enough */ }
+    return data?.id || null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * A NAMED SHARE, CREATED SERVER-SIDE because it now has a server-side effect.
+ * The service key bypasses RLS, so ownership is re-proved here before either a
+ * row or an email is produced. Re-entering somebody already on the list may
+ * update their role, but it does not send another "new invitation" email.
+ */
+async function invite(body, user) {
+  const projectId = uuid(body.projectId);
+  if (!projectId) { const e = new Error('Bad project id'); e.status = 400; throw e; }
+
+  const email = String(body.email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    const e = new Error('A valid email address is required'); e.status = 400; throw e;
+  }
+  const role = body.role === 'edit' ? 'edit' : body.role === 'view' ? 'view' : null;
+  if (!role) { const e = new Error('Bad share role'); e.status = 400; throw e; }
+
+  const projects = await rest(`projects?select=id,owner,name&id=eq.${enc(projectId)}&limit=1`);
+  const project = projects[0];
+  if (!project || project.owner !== user.id) {
+    const e = new Error('Only the project owner can share it'); e.status = 403; throw e;
+  }
+  if (email === String(user.email || '').trim().toLowerCase()) {
+    const e = new Error('You already own this project'); e.status = 400; throw e;
+  }
+
+  const previous = await rest(`project_shares?project_id=eq.${enc(projectId)}`
+    + `&email=eq.${enc(email)}&select=id&limit=1`);
+  const rows = await rest(`project_shares?on_conflict=project_id,email&select=${SHARE_COLS}`, {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+    body: { project_id: projectId, email, role },
+  });
+  const share = rows[0];
+  if (!share) throw new Error('The share was not created');
+
+  if (previous.length) return { share, email: { sent: false, skipped: 'existing' } };
+
+  try {
+    const id = await sendInviteEmail({ email, role, project, user });
+    return { share, email: { sent: true, id } };
+  } catch (err) {
+    console.error('[share] invitation email failed after the grant was created', err);
+    return {
+      share,
+      email: { sent: false, error: 'delivery-failed' },
+      warning: 'The project was shared, but the invitation email could not be sent.',
+    };
+  }
+}
+
+const ACTIONS = { project: openProject, plan: openPlan, invite };
 
 // --- the Open Graph card ---------------------------------------------------
 
@@ -437,7 +542,9 @@ export default async function handler(req, res) {
     const out = await run(body, user);
     // WHO OPENED WHAT. A view-only link is still a door into somebody's work,
     // and a door with no log is a door nobody can answer questions about.
-    console.log(`[share] ${user.email} ${body.action} token=${String(body.token).slice(0, 8)}…`
+    console.log(`[share] ${user.email} ${body.action}`
+      + (body.token ? ` token=${String(body.token).slice(0, 8)}…` : '')
+      + (body.projectId ? ` project=${body.projectId}` : '')
       + (body.planId ? ` plan=${body.planId}` : '')
       + ` ${Date.now() - t0}ms`);
     return sendJson(200, out);

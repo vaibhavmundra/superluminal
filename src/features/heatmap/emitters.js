@@ -379,7 +379,8 @@ export function buildRoomEmitters({
   /* --- 8. THE CHANDELIERS ------------------------------------------------
      COUNTED AS `lamp` BY THE LUMEN MODEL, which is what routes a pendant into
      the one family whose split describes something throwing in every direction —
-     see `fixtureGroups`. So the lumens come from the 'lamp' row and the
+     see `fixtureGroups`. So the lumens come from that fitting's OWN row (one per
+     decorative lamp, keyed by its id) and the
      DISTRIBUTION comes from the chandelier profile rather than the floor lamp's,
      because a pendant hangs and a floor lamp stands. This is the case
      profiles.js's header calls "the caller knows better than the family".
@@ -394,19 +395,23 @@ export function buildRoomEmitters({
      Falling back to the obstacles keeps a room laid out by a caller that hands
      in only that list lighting its pendants as before. */
   const objects = room.geo?.objectsInRoom ?? room.geo?.fansInRoom ?? [];
+  /* ITS OWN ROW AND ITS OWN OUTPUT, WHICH IS THE OTHER HALF OF THEM STOPPING
+     SHARING ONE. This read `perUnitOf(rows, 'lamp')` once, outside the loop, and
+     lit every pendant in the room at that one figure — which was correct exactly
+     as long as one row covered them all. Each is its own row now (see
+     `fixtureGroups`), so the figure is asked per fitting, by the fitting's own
+     id. A 55 W chandelier and a 9 W pendant in one room now throw what they
+     draw, which is the whole reason they were split. */
   const pendants = objects.filter((f) => f.kind === 'chandelier');
-  if (pendants.length) {
-    const lm = perUnitOf(rows, 'lamp');
+  for (const f of pendants) {
+    if (!Number.isFinite(f?.x) || !Number.isFinite(f?.y)) continue;
+    const lm = perUnitOf(rows, f.id);
+    if (!(lm > 0)) continue;
     const profile = DISTRIBUTION_PROFILES.chandelier;
-    if (lm > 0) {
-      for (const f of pendants) {
-        if (!Number.isFinite(f?.x) || !Number.isFinite(f?.y)) continue;
-        const c = toM(f);
-        push({ profileId: 'chandelier', lm,
-               geom: { kind: 'ring', c: { ...c, z: mountZ(profile) },
-                       r: Math.max(0.05, (f.r ?? 0) * M), n: profile.elements } });
-      }
-    }
+    const c = toM(f);
+    push({ profileId: 'chandelier', lm,
+           geom: { kind: 'ring', c: { ...c, z: mountZ(profile) },
+                   r: Math.max(0.05, (f.r ?? 0) * M), n: profile.elements } });
   }
 
   /* --- 9. THE STANDING LAMPS ---------------------------------------------
@@ -426,17 +431,17 @@ export function buildRoomEmitters({
      for a mount measured from the floor and `dropMm` for one measured down from
      the slab. Nothing here knows which — that is the whole of what the profile
      is for. See LAMP_MM in profiles.js. */
+  /* PER FITTING, for the reason the pendants above give. */
   const standing = objects.filter((f) => f.kind === 'standing_lamp');
-  if (standing.length) {
-    const lm = perUnitOf(rows, 'lamp');
+  {
     const profile = DISTRIBUTION_PROFILES.floor_lamp;
-    if (lm > 0) {
-      for (const f of standing) {
-        if (!Number.isFinite(f?.x) || !Number.isFinite(f?.y)) continue;
-        const c = toM(f);
-        push({ profileId: 'floor_lamp', lm,
-               geom: { kind: 'point', p: { ...c, z: mountZ(profile) } } });
-      }
+    for (const f of standing) {
+      if (!Number.isFinite(f?.x) || !Number.isFinite(f?.y)) continue;
+      const lm = perUnitOf(rows, f.id);
+      if (!(lm > 0)) continue;
+      const c = toM(f);
+      push({ profileId: 'floor_lamp', lm,
+             geom: { kind: 'point', p: { ...c, z: mountZ(profile) } } });
     }
   }
 

@@ -133,6 +133,93 @@ export const lumenCriteriaFor = (projectId, roomTypeId) =>
  * without the band growing inward far enough to eat the headboard of a bed
  * standing against it.
  */
+/**
+ * THE FITTING SYMBOLS' REAL SIZES — SHARED BY THE PDF AND THE DXF.
+ *
+ * IT LIVES HERE BECAUSE IT HAD TWO COPIES AND THEY HAD ALREADY DRIFTED.
+ * pdfPlot.js held a `SYMBOL_FT` table and exporters.js hard-coded 0.29 and 0.5
+ * in the middle of a loop, and the head of pdfPlot.js states the property those
+ * two files exist to keep: "a PDF and a DXF of one plan that disagreed about
+ * where a fitting is would be worse than either being wrong". A size is the same
+ * kind of claim as a position. One table, both readers.
+ *
+ * A DIAMETER IN INCHES, because that is how a downlight is specified and bought.
+ * It was seven inches of drawing for a four inch fitting — nearly twice its real
+ * size — which on a dense ceiling is the difference between a symbol and a blob.
+ */
+export const COB_DIA_IN = 4;
+
+/**
+ * Radii in FEET, which is the unit both exporters work in.
+ *
+ * `large` KEEPS ITS RATIO TO `small`, and that ratio is a real difference rather
+ * than a drawing habit: `large` is the 12 W fitting the engine puts on a grid
+ * line and `small` the 7 W one it puts in a cell, so the drawing has always said
+ * which is which by size.
+ *
+ * A SPOT AND A HAND-PLACED LAMP ARE THE SAME TRIM AS THE GRID'S SMALL ONE,
+ * deliberately: on the ceiling they are one fitting, and what differs is whether
+ * it is aimed and who chose where it went. One number, so a sheet cannot show
+ * three sizes of the same hole. `narrow` is a MULTIPLIER, not a radius.
+ */
+export const SYMBOL_FT = {
+  small: COB_DIA_IN / 24,
+  large: (COB_DIA_IN / 24) * (0.5 / 0.29),
+  narrow: 0.8,
+  spot: COB_DIA_IN / 24,
+  cob: COB_DIA_IN / 24,
+};
+
+/**
+ * THE AIM TAIL ON A DIRECTIONAL SPOT, in feet, AND ITS HEAD.
+ *
+ * IT WAS TWO NUMBERS IN pdfPlot.js AND TWO LITERALS IN exporters.js, which is
+ * the arrangement the table above exists to end — and the drift was visible on
+ * the sheet: the plot drew a filled head and the DXF drew a bare line, so the
+ * one fitting whose direction is part of its specification came out of CAD
+ * saying nothing about which way it points.
+ *
+ * `start` clears the body and `reach` is a FIXED length rather than the distance
+ * to what the fitting lights: a tail that reaches the surface reads as a line to
+ * somewhere else. The head is expressed as fractions of those, so an arrow is
+ * the same arrow at every scale and on both readers — 0.66 of the standoff long,
+ * 0.42 of that across, which is what the plotted sheet has always drawn.
+ */
+export const AIM_FT = { start: 0.42, reach: 1.2, headFrac: 0.66, headWideFrac: 0.42 };
+
+/**
+ * A WALL SCONCE'S SYMBOL: A CROSSHAIR STANDING OFF ITS WALL.
+ *
+ * NOT A RING, AND NOT ON THE WALL LINE. Every other fitting on these drawings is
+ * a hole in a ceiling, so a circle at its centre is the honest mark. A sconce is
+ * fixed to a vertical surface and hangs in the room: a symbol centred on the
+ * wall would be drawn half inside it — and on an external wall, half in next
+ * door — and a ring says nothing about which surface it is fixed to.
+ *
+ * `r` IS IN FEET and the other two are MULTIPLES OF IT, which is how the canvas
+ * has always expressed them (see `SG` in PlanCanvas). One table, three readers:
+ * the screen, the DXF, and anything plotted from either. The canvas floors `r`
+ * at three line-weights so the mark stays legible when zoomed out; that floor is
+ * a SCREEN concern and deliberately has no place in a drawing file.
+ */
+export const SCONCE_FT = { r: 0.3, stand: 2.6, arm: 1.7 };
+
+/**
+ * A CEILING FAN'S BLADES: THREE SPOKES, 120 DEGREES APART.
+ *
+ * A CROSS IS THE WRONG MARK AND IT WAS THE ONE THE DXF WROTE. Four arms at
+ * ninety degrees inside a circle is the drawing convention for a CENTRE MARK —
+ * what a setting-out drawing puts on a hole to be cored — so a ceiling full of
+ * them read as coring information rather than as fans. Three spokes at 120 is
+ * what the canvas draws and what the object is.
+ *
+ * `spoke` IS A FRACTION OF THE FAN'S OWN SWEEP RADIUS, so a 1200mm fan and a
+ * 900mm one are drawn at the sizes they actually are — the sweep is the property
+ * somebody chose when they placed it. `phase` is the first blade's angle, kept
+ * so no spoke lies exactly along an axis and gets read as a setting-out line.
+ */
+export const FAN_FT = { spokes: 3, spoke: 0.94, phase: Math.PI / 6 };
+
 export const WALL_WEIGHT_IN = 2;
 export const OTHER_STROKE_PX = 1.6;
 

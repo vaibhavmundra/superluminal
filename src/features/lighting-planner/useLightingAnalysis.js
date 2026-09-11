@@ -40,6 +40,7 @@ export default function useLightingAnalysis({
   manualCobs, cobArrays, ceilingObjs,
   materials, fixtureWatts, ceilingMmFor,
   selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
+  selObjIds,
   docActions, setOptionPick,
 }) {
   const totals = useMemo(() => planTotals(rooms), [rooms]);
@@ -128,9 +129,11 @@ export default function useLightingAnalysis({
    *  carries the note on why a row key is not a fitting id. */
   const highlight = useMemo(() => highlightRows({
     selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
-    manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx,
+    selObjIds,
+    manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx, rooms,
   }), [selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
-      manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx]);
+      selObjIds, manualCobs, cobArrays, trackModulesPx, accentZonesPx, taskSpotsPx,
+      rooms]);
 
   /**
    * CLICKING A FITTING TAKES YOU TO IT IN THE ANALYSIS.
@@ -199,10 +202,24 @@ export default function useLightingAnalysis({
     magTracks: magTracksPx,
     modules: trackModulesPx.map((m) => ({
       roomId: m.roomId, fixture: MODULE_BY_ID[m.kind]?.fixture ?? null })),
+    /* --- AND EVERY DOWNLIGHT A HAND PUT DOWN, WHICH WAS NOT BEING BILLED ----
+       THE SCHEDULE HAD NO COBs IN IT AT ALL. `rooms` carries what the gridding
+       ENGINE placed and nothing else; a lamp clicked onto the ceiling lives in
+       `manualCobs` and a lamp on a ring is one of an array's, and neither list
+       was ever handed over — so a plan laid out entirely by hand scheduled
+       nothing. `buildBOQ` gives them a line per (wattage, beam) pair; see
+       `cobLineId`.
+       THE DOCUMENT'S OWN LIST FOR THE LOOSE ONES AND THE PROJECTION FOR THE
+       ARRAYS, which is not an inconsistency: a manual COB stores its room, its
+       wattage and its optic on itself, and an array stores one specification
+       and a COUNT — its lamps only exist once the geometry has been resolved.
+       `arrayCobsPx` is that resolution and is already computed for the canvas.
+       Neither position is read here; only the room and the two figures. */
+    cobs: [...manualCobs, ...arrayCobsPx],
     pxPerFt,
     plan: source?.name ?? null,
   }), [rooms, accentZonesPx, taskSpotsPx, ceilingObjs, magTracksPx, trackModulesPx,
-       pxPerFt, source]);
+       manualCobs, arrayCobsPx, pxPerFt, source]);
 
   /**
    * THE SCHEDULE AS A FILE, PREPARED BUT NOT HANDED OVER. Three formats, one

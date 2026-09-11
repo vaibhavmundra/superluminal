@@ -100,6 +100,7 @@ export default function ShareDialog({ projectId, projectName = '', onClose }) {
   const [role, setRole] = useState('view');
   const [busy, setBusy] = useState('');          // '' | 'invite' | 'link' | a share id
   const [err, setErr] = useState('');
+  const [notice, setNotice] = useState(null);    // { kind: 'ok' | 'warning', text }
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
@@ -126,14 +127,20 @@ export default function ShareDialog({ projectId, projectName = '', onClose }) {
     e?.preventDefault();
     const addr = email.trim().toLowerCase();
     if (!looksLikeEmail(addr) || busy) return;
-    setBusy('invite'); setErr('');
+    setBusy('invite'); setErr(''); setNotice(null);
     try {
-      const row = await addShare(projectId, addr, role);
+      const result = await addShare(projectId, addr, role);
+      const row = result.share;
       setShares((list) => {
         const rest = (list || []).filter((s) => s.id !== row.id);
         return [...rest, row];
       });
       setEmail('');
+      setNotice(result.warning
+        ? { kind: 'warning', text: result.warning }
+        : result.email?.sent
+          ? { kind: 'ok', text: `Invitation emailed to ${addr}.` }
+          : { kind: 'ok', text: `${addr} already had access; their permission was updated.` });
     } catch (ex) {
       setErr(friendly(ex));
     } finally { setBusy(''); }
@@ -211,7 +218,7 @@ export default function ShareDialog({ projectId, projectName = '', onClose }) {
             <input id="share-email" type="email" autoFocus value={email}
               placeholder="client@studio.com" autoComplete="off"
               className="flex-1 min-w-0"
-              onChange={(e) => { setEmail(e.target.value); setErr(''); }} />
+              onChange={(e) => { setEmail(e.target.value); setErr(''); setNotice(null); }} />
             <button type="submit" className={BTN_WHITE + ' flex-none'} disabled={!canInvite}>
               {busy === 'invite' ? 'Sharing…' : 'Share'}
             </button>
@@ -219,18 +226,20 @@ export default function ShareDialog({ projectId, projectName = '', onClose }) {
           <div className="h-2.5" />
           <RolePicker value={role} onChange={setRole} disabled={busy === 'invite'} />
           <p className={`${NOTE} mt-2 mb-0`}>
-            {/* THE TWO THINGS THAT SURPRISE PEOPLE, BOTH SAID PLAINLY.
-                No email goes out — the share is live immediately and the project
-                is waiting under "Shared with me", but the owner still has to
-                tell them it is there. And the grant is keyed on the ADDRESS
-                (see migration 0006), so signing up with a different one is the
-                one way this quietly does not work. */}
-            Send them the link below. The
-            project also appears under “Shared with me” on their dashboard, as
-            long as they sign in with <em className="not-italic text-subtle">this
-            address</em>.
+            {/* THE GRANT IS KEYED ON THE ADDRESS (see migration 0006), so the
+                invitation says which address must be used to sign in. */}
+            We’ll email them a link. The project also appears under “Shared with
+            me” on their dashboard when they sign in with <em
+              className="not-italic text-subtle">this address</em>.
           </p>
         </form>
+
+        {notice && (
+          <p role="status" className={'text-[11.5px] leading-[1.5] mt-3 border-l-2 pl-[9px] '
+            + (notice.kind === 'warning' ? 'text-accent border-accent' : 'text-ok border-ok')}>
+            {notice.text}
+          </p>
+        )}
 
         {/* --- WHO HAS IT --------------------------------------------------- */}
         <div className="border-t border-border/10 pt-3.5 mt-4">
@@ -344,7 +353,9 @@ export default function ShareDialog({ projectId, projectName = '', onClose }) {
  */
 function friendly(e) {
   const msg = String(e?.message || e);
-  if (/that is your own address/i.test(msg)) return 'That is your own address — this project is already yours.';
+  if (/that is your own address|already own this project/i.test(msg)) {
+    return 'That is your own address — this project is already yours.';
+  }
   if (/violates row-level security|permission denied/i.test(msg)) {
     return 'Only the project’s owner can change who it is shared with.';
   }

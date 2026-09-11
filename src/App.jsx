@@ -163,7 +163,7 @@ import SwitchboardSheet from './components/SwitchboardSheet.jsx';
    a corner, rotating it and setting a fan's sweep are all features/fixtures/;
    what is read here is the label a palette prints, the sweep chips and the
    sweep the selected fan is at. */
-import { CEILING_BY_ID, sweepMm } from './lib/ceilingObjects.js';
+import { CEILING_BY_ID, sweepMm, wattsOf } from './lib/ceilingObjects.js';
 import { collectTargets, SNAP_DEFAULTS } from './lib/snapGuides.js';
 /* PICKING A THING UP, MOVING IT, AND LEAVING A COPY BEHIND — the four rules
    every draggable object on this canvas needs and each of which has been got
@@ -227,6 +227,32 @@ import { usePlanDoc } from './hooks/usePlanDoc.js';
 // that permanently reads "Saved" on a plan nobody has touched is noise, and it
 // is also a claim about a write that never happened.
 const SAVE_LABEL = { idle: '', dirty: 'Unsaved…', saving: 'Saving…', saved: 'Saved', error: 'Not saved' };
+
+/* THE SHARE MENU HAS TWO KINDS OF ACT, so it gets two marks and no more:
+   people for a live project grant, download for every file handed back. Keeping
+   the three formats on one glyph lets the words carry the format distinction. */
+function PeopleMenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+      stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true" className="mt-px flex-none text-text">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+
+function DownloadMenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+      stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true" className="mt-px flex-none text-text">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="m7 10 5 5 5-5M12 15V3" />
+    </svg>
+  );
+}
 
 // THE UPLOAD IS REPORTED SEPARATELY FROM THE SAVE, because they fail
 // independently and mean different things. The autosave protects the work — the
@@ -1925,6 +1951,12 @@ export default function App({
     manualCobs, cobArrays, ceilingObjs,
     materials, fixtureWatts, ceilingMmFor,
     selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
+    /* AND THE CEILING OBJECTS, because a chandelier is one. It is the only
+       fitting on this drawing whose selection lives in the OBJECT register —
+       alongside the fans and the cassettes, which are not fittings — and until
+       it was handed in, pressing a pendant opened no row and there was no
+       gesture that reached its wattage. See `highlightRows`. */
+    selObjIds,
     docActions, setOptionPick,
   });
   /* THE NAMES THIS FILE ALREADY USED. Six are read by the footer, the Result
@@ -2189,6 +2221,12 @@ export default function App({
      Gated on `source` as well, so a stale `view` cannot survive a Clear and
      render a schedule of a plan that is no longer loaded. */
   const boqOpen = view === 'boq' && !!source;
+  /* SHARE BELONGS TO THE DRAWING, NOT ITS SCHEDULE. Closing the latch as the
+     BOQ opens matters as much as hiding the button: otherwise leaving the BOQ
+     could resurrect a menu that had been open on the previous sheet. */
+  useEffect(() => {
+    if (boqOpen) setShareMenu(false);
+  }, [boqOpen]);
   /* THE SWITCHBOARD SHEET TAKES THE STAGE TOO, on the same terms and gated the
      same way: a stale `view` must not survive a Clear and render a schedule of
      plates from a plan that is no longer loaded.
@@ -2390,7 +2428,18 @@ export default function App({
     const r = at?.roomId
       ? rooms.find((q) => q.id === at.roomId)
       : (Number.isFinite(at?.x) && Number.isFinite(at?.y) ? roomAt(at) : null);
-    const watts = wattsFor(familyId, (r && fixtureWatts[r.id]) || {}, familyId);
+    /* --- THE FITTING'S OWN FIGURE FIRST, WHERE IT HAS ONE -------------------
+       A DECORATIVE FITTING IS SPECIFIED ON ITSELF and not on the room. A
+       chandelier, a pendant and a standing lamp each carry `watts` beside their
+       diameter — see `wattsOf` in lib/ceilingObjects.js — and they are ONE
+       family, so the room-level lookup below answers the same figure for all
+       three of them. Left to it, a pendant set to 12 W hovered as 7, which is
+       this card contradicting the Analysis panel about the fitting they are
+       both pointed at.
+       `wattsOf` ANSWERS NULL FOR EVERYTHING ELSE, including the accent zone a
+       sconce hands in, so this is a branch a lamp takes and nothing else does. */
+    const own = wattsOf(at);
+    const watts = own ?? wattsFor(familyId, (r && fixtureWatts[r.id]) || {}, familyId);
     return { watts, lumens: unitOutput(family, watts, lumensPerWattFor(country)) };
   }, [rooms, roomAt, fixtureWatts, country]);
 
@@ -2744,14 +2793,13 @@ export default function App({
   const { selBoard, selBoardExtras, selBoardParts, heightOf,
           country: sbCountry, placedCount: placedBoardCount,
           /* THE GATE, ANSWERED BY THE FEATURE THAT IS BEHIND IT. It is the
-             document's `doorsOk`; what the switch below does about it is App's,
-             because the way in is the door step and that is another domain. */
+             document's `doorsOk`; confirming it remains part of the door and
+             switchboard workflow even though the floating layer toggle is gone. */
           doorsOk } = electrical.panel;
   const { groups: boardSheet } = electrical.sheet;
   const { pickFlow, reorderBoardUnit, setBoardOutlet, setBoardAmps, setBoardHeight,
           addBoardPoint, removeBoardPoint, deleteBoard, placeBoardAt,
           openBoardPlace: enterBoardPlace, clearPlacedBoards,
-          toggleLayer: toggleElectricalLayer,
           /* HANDED STRAIGHT TO THE FIXTURE GESTURES, which is the one command on
              that list another domain spends. Placing a standing lamp can oblige
              a socket to appear on the wall behind it — see `socketForLamp` — and
@@ -4724,6 +4772,124 @@ export default function App({
     })),
   };
 
+  /* --- WHAT A PLOTTED SHEET IS MADE OF, ASSEMBLED ONCE ---------------------
+     TWO CALL SITES ISSUE THE SAME PDF — the editor's Share menu and the
+     viewer's panel — and the note at the second one already says why they must
+     not differ: "one implementation, so an operator's PDF and an owner's cannot
+     come out differently". They were nonetheless two hand-written argument
+     lists, which is the same hand-maintained pair this file warns about
+     everywhere else, and the drift was real: three whole populations were
+     missing from both, and adding them to one would have left the other behind.
+     So the arguments are one object and the call sites pass it.
+
+     EVERY LIST IS A `*Px` PROJECTION, never a document store. The stores hold
+     FEET (`manualCobs` has `xFt`/`yFt` and no `x` at all) and the plotter works
+     in plan pixels, so handing it a store gives it `undefined` coordinates —
+     which is not an error anywhere, just a fitting that silently fails to
+     appear. See `projected lists, not stores` in the note on `lampsPx`.
+
+     `lampsPx` IS THE PAIR THE CANVAS DRAWS, draft excluded — the hand-placed
+     COBs and every array's lamps, assembled for the wiring and reused here
+     because it is the same question: every lamp a hand put on a ceiling.
+
+     AND `canvasLayers` RATHER THAN `layers`, which is the one that is easy to
+     get wrong. `canvasLayers` is what the DRAWING is showing — it is `layers`
+     with the derived rules applied (the plates go off with the wiring, the
+     night view drops the dimensions and the cells) — and the sheet is supposed
+     to be the drawing on paper. Passing the raw switches would plot marks the
+     screen is not showing. */
+  const plotArgs = useMemo(() => ({
+    source, pxPerFt, rooms,
+    objects: obstaclesPx,
+    accents: accentZonesPx,
+    spots: taskSpotsPx,
+    coves: reverseCoves,
+    cobs: lampsPx,
+    tracks: magTracksPx,
+    trackModules: trackModulesPx,
+    layers: canvasLayers,
+  }), [source, pxPerFt, rooms, obstaclesPx, accentZonesPx, taskSpotsPx,
+       reverseCoves, lampsPx, magTracksPx, trackModulesPx, canvasLayers]);
+
+  /* --- AND THE DXF'S, WHICH IS THE SAME DRAWING FOR A DIFFERENT READER -------
+     TWO CALL SITES AGAIN, and the same hand-written pair the PDF's had: the
+     Share menu's and the viewer panel's. Assembled here so the two cannot
+     differ, and so the next list a drawing grows reaches both files at once —
+     the magnetic track reached neither until now, which is exactly the drift
+     this closes.
+     `rooms` IS NARROWED ON PURPOSE. The DXF wants a name and a layout per room
+     and nothing else; handing it the live room objects would tie a file format
+     to whatever the scene happens to carry this week.
+     NO `layers`. A DXF has layers of its OWN — eight of them, split by trade —
+     and which ones a reader looks at is a decision they make in their own CAD.
+     Withholding geometry from a file somebody imports to work from would be
+     this app deciding what another trade may see. The SHEET honours the
+     switches because a sheet is a picture; a file is not. */
+  /* --- IS THIS A DARK SHEET? ------------------------------------------------
+     THE INVERTED VIEW SAYS YES AND THE HEATMAP SAYS NO, and the second half is
+     what stops the export producing a blank page. The ink rule is one colour for
+     every mark — white on a dark sheet, black on a light one — with the heatmap
+     forcing black, because an illuminance field is a light-coloured wash and
+     white marks on it are a drawing with nothing on it. Put those together on a
+     sheet whose GROUND was still black and every mark on it is black on black.
+     SO THE HEATMAP DECIDES THE SHEET AND NOT JUST THE INK. A heatmap plot is a
+     READING — it is asked for to be measured off, not to be presented — so it
+     goes on light paper, in black, with the plan the right way up underneath.
+     That is also why this is here rather than inside the plotter: the base image
+     is chosen from the same answer, and an inverted plan under a white ground
+     would be the other half of the same mistake. */
+  const darkSheet = !!layers.invert && !layers.heatmap;
+
+  /* --- WHAT GOES UNDER A NIGHT SHEET, RESOLVED ONCE -------------------------
+     THE EXPORT HAS TO BE THE DRAWING ON SCREEN, and for a night sheet that means
+     the INVERTED plan — a white plan with black lines comes out a black plan
+     with white lines, which is exactly what the canvas is showing. It was coming
+     out as a black page with the linework floating on it and no plan at all,
+     because `nightBase` re-renders the imported PDF page and every other kind of
+     import threw on the way in — swallowed by a `.catch(() => null)` right here.
+     `invertedSrc` IS THE ANSWER THE SCREEN IS ALREADY USING. usePlanSource
+     inverts the plan's pixels for the canvas (see the note there on why it is
+     done to the bitmap and not with a CSS filter) and the canvas draws
+     `invertedSrc ?? source.src`. Handing the same image to the plot is what
+     makes the two agree by construction rather than by two implementations
+     happening to match.
+     THE RE-RENDER STILL WINS WHERE THERE IS A PAGE — see `nightBase`, which
+     prefers it and takes this as its fallback: the editor's copy is 2400px on
+     the long edge, which is 72 dpi on an A1.
+     ONE FUNCTION, TWO CALL SITES. The editor's Share menu and the viewer's
+     panel both issue this sheet, and the note at the second one is the reason
+     this is not written out twice: "one implementation, so an operator's PDF and
+     an owner's cannot come out differently". */
+  const nightSheetBase = useCallback(() => (darkSheet
+    ? nightBase(openPdf, initialFile, pdfPage, {
+        fallback: invertedSrc && source?.w > 0
+          ? { dataUrl: invertedSrc, w: source.w, h: source.h } : null,
+      }).catch(() => null)
+    : Promise.resolve(null)),
+  /* `openPdf` IS NOT IN HERE. It is a module import rather than a value this
+     component holds, so it cannot change between renders — see the lint rule's
+     own wording. */
+  [darkSheet, initialFile, pdfPage, invertedSrc, source]);
+
+  const dxfArgs = useMemo(() => ({
+    source, pxPerFt, heightPx: source?.h,
+    rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
+    objects: obstaclesPx,
+    accents: accentZonesPx,
+    spots: taskSpotsPx,
+    /* `lampsPx`, THE SAME LIST THE PLOT IS HANDED — the hand-placed COBs and
+       every array's lamps, draft excluded. It was missing from this object
+       alone, so a ceiling laid out by hand exported to CAD as an empty room
+       while the PDF of the same plan was full of fittings. A `*Px` projection
+       and not the store, for the reason the plot's own note gives: the store
+       holds feet and the exporter works in plan pixels, and handing it one is
+       not an error anywhere — just a fitting that silently fails to appear. */
+    cobs: lampsPx,
+    tracks: magTracksPx,
+    trackModules: trackModulesPx,
+  }), [source, pxPerFt, rooms, obstaclesPx, accentZonesPx, taskSpotsPx,
+       lampsPx, magTracksPx, trackModulesPx]);
+
   // --- persistence ----------------------------------------------------------
   //
   // ONE OBJECT OUT, ONE OBJECT IN, and the route decides when to write it. The
@@ -5011,45 +5177,6 @@ export default function App({
      artefact this exists to remove. */
   const holdPanelBody = useExitHold(windowSpeaks, 260);
 
-  /* --- IS THE WIRING SHOWING, ON THE BAR OVER THE DRAWING -----------------
-     ONE SWITCH THAT IS ALWAYS THERE, whatever else the bar happens to be
-     carrying. It was a latched switch at the foot of the panel reading "Show
-     electrical layout", then a pair of scene buttons — Lighting / Electrical
-     layout — beside a third that left for the schedule.
-
-     IT IS A SWITCH AGAIN, AND THE PAIR WAS THE WRONG SHAPE FOR IT. A pair of
-     words says "these are two places you can be", which is what a schedule is;
-     the wiring is not a place, it is the same drawing with the loops and the
-     plates drawn on it. So the control that says whether they are showing is a
-     thing that is visibly on or off, and it says which in the track.
-
-     THE SCHEDULE LEFT THIS BAR ENTIRELY. It IS a different place, and where you
-     go is a fact about the DOCUMENT rather than about the sheet in front of you
-     — so it is a button in the top bar beside Share, with everything else that
-     is about the document. The bar over the drawing is left holding exactly one
-     thing, which is the one thing on it that changes the drawing.
-
-     THE FIRST PRESS STILL ASKS ABOUT THE DOORS, which is the one piece of
-     behaviour carried through every version of this control. A switchboard is
-     placed beside a door, so this cannot honestly show the wiring until
-     somebody has said the door boxes are right — and the honest answer to "show
-     me the electricals", the first time it is asked, is a question. See
-     `doorsOk`.
-
-     AND THE PLATES COME AND GO WITH IT. `canvasLayers` takes `switchboards`
-     off while this is off: a plate on the wall with no loop running off it is
-     half the wiring drawn on a lighting sheet, which reads as a layout with
-     some unexplained blue rectangles in it. One switch, one layer. */
-  const flipElectrical = () => {
-    /* THE DOOR EDITOR IS THE QUESTION THIS SWITCH ASKED, so pressing it again
-       while the question is open is the answer "not now" rather than a second
-       question. */
-    if (doorEdit) { closeDoorEdit(); return; }
-    if (layers.electrical) { toggleElectricalLayer(); return; }
-    if (!doorsOk) { openDoorEdit(); return; }
-    toggleElectricalLayer();
-  };
-
   /* --- IS THE MODULE BAR THE ONE STANDING AT THE FOOT OF THE DRAWING? -------
      ONE BAR IN THAT PLACE, AND THIS IS THE FOURTH THING THAT CLAIMS IT — after
      the downlight's specification, a selected array's, and the shape bar. So it
@@ -5093,21 +5220,11 @@ export default function App({
     && addTool !== 'cob' && !selArrayBar && (armed === 'fan' || !!selFan);
   const fanBarSweep = selFan ? sweepMm(selFan) : fanSweepMm;
 
-  const sceneTail = !source || showTrace || prep || readOnly || sheetOpen ? null : (
-    <SceneSwitch label="Electrical layer" on={layers.electrical}
-      title={doorsOk
-        ? 'Show the plates and loop every fitting back to its switchboard'
-        : 'Confirm the doors, then the wiring'}
-      onClick={flipElectrical} />
-  );
-
-  /* --- ...AND THE LAYOUT'S OWN SWITCH AT THE OTHER END OF THE SAME BAR -----
-     THE TWO ENDS HOLD THE TWO DRAWINGS. `sceneTail` says whether the WIRING is
-     on the sheet; this says whether the ENGINE'S ANSWER is — the ambient grid
-     and the aimed spots it computed, as against the COBs, tracks and accents a
-     hand put down. Both are questions about what is drawn rather than about the
-     next press, which is why neither is in the bar's contextual middle, and why
-     they take the same shape: a capsule that says ON or OFF in its own track.
+  /* --- THE LAYOUT SWITCHES ON THE FLOATING BAR ----------------------------
+     THE ELECTRICAL LAYER SWITCH IS DELIBERATELY NOT HERE. Wiring remains
+     available from the Electrical tool and the View menu, while this contextual
+     bar stays about the lighting layout being edited: its suggestions and its
+     heatmap.
 
      `autoLights` WAS THE CAPSULE HERE AND IT IS NOT ANY MORE. Two switches over
      the same population is one question too many at the front of the bar: the
@@ -5119,10 +5236,9 @@ export default function App({
      which is where a switch nobody reaches for every session belongs, and which
      keeps a sheet saved with it ON from having no way to take it off.
 
-     THE SAME GATES AS THE TAIL, TO THE TERM. There is no layout to show without
-     a drawing, none while the pipeline is still making one, and a viewer gets
-     the sheet as it was left rather than switches over it. Sharing the gate list
-     is also what keeps the bar from arriving with one end of it missing.
+     THE SAME GATES FOR BOTH CONTROLS, TO THE TERM. There is no layout to show
+     without a drawing, none while the pipeline is still making one, and a
+     viewer gets the sheet as it was left rather than switches over it.
      IT IS `layers.suggestGrid` AND NOT A THIRD STORE. The same key the exports
      and PlanCanvas read, so this switch and the drawing cannot disagree — see
      LAYER_DEFAULTS for why the grid stopped being part of `lights`. */
@@ -5306,7 +5422,31 @@ export default function App({
               are standing on is a control with nothing behind it; the way out of
               this screen is its own foot, which already offers exactly one — the
               design, or the light. */}
-          {source && !readOnly && !showTrace && (
+          {/* --- AND ON A SHEET IT IS THE WAY BACK TO THE DRAWING ----------
+              THE SCHEDULE IS NOT A STAGE OF THE PLAN, it is another page of the
+              same document, and the one thing anybody wants from this corner
+              while they are reading it is out. "Space outlines" there offered a
+              jump two stages backwards from a screen that has no stage at all —
+              and it would have thrown away the reader's place in the schedule
+              to do it.
+              IT IS NOT GATED ON `readOnly` LIKE THE LINK BELOW IT. The BOQ
+              toggle further along this bar is, so a viewer who reaches the
+              schedule has no other way off it; a back button that vanished for
+              them would be a page with no exit. */}
+          {boqOpen ? (
+            <button type="button"
+              title="Back to the drawing"
+              onClick={() => docActions.setView('design')}
+              className={'flex-none inline-flex items-center gap-[7px] h-8 px-2 rounded '
+                + 'border-0 bg-transparent text-[12px] leading-none whitespace-nowrap '
+                + 'cursor-pointer transition-colors duration-[120ms] '
+                + 'focus-visible:outline-2 focus-visible:outline-accent '
+                + 'focus-visible:outline-offset-2 '
+                + 'text-muted hover:text-ink hover:bg-ink/[0.07]'}>
+              <span aria-hidden="true" className="text-[13px]">←</span>
+              Back
+            </button>
+          ) : source && !readOnly && !showTrace && (
             <button type="button"
               title="Back to the space outlines — nothing is discarded"
               aria-pressed={false}
@@ -5554,7 +5694,7 @@ export default function App({
             stands is the plan, which is a thing somebody may legitimately want
             on the outlines step. A dead button is a claim that something is
             available — and so is a hidden one, in reverse. */}
-        {source && !readOnly && !prep && (
+        {source && !readOnly && !prep && !boqOpen && (
           <>
             <button type="button" ref={shareRef}
               onClick={() => setShareMenu((v) => !v)}
@@ -5592,8 +5732,13 @@ export default function App({
                 <>
                   <button type="button" className={MENU_ITEM}
                     onClick={() => { setShareMenu(false); onShare(); }}>
-                    <b className="font-normal text-text">Share with people</b>
-                    <span className={MENU_NOTE}>A link, with who may see it</span>
+                    <span className="grid w-full grid-cols-[16px_minmax(0,1fr)] gap-x-2">
+                      <PeopleMenuIcon />
+                      <span className="flex min-w-0 flex-col items-start gap-[3px]">
+                        <b className="font-normal text-text">Share with people</b>
+                        <span className={MENU_NOTE}>A link, with who may see it</span>
+                      </span>
+                    </span>
                   </button>
                   <div className="h-px bg-border/15 my-1.5 mx-3" aria-hidden="true" />
                 </>
@@ -5607,19 +5752,18 @@ export default function App({
                 onClick={async () => {
                   setShareMenu(false);
                   if (!await gateExport()) return;
-                  download(`${exportBase}-lights.dxf`, toSuperluminalDXF({
-                    source, pxPerFt, heightPx: source.h,
-                    rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                    objects: obstaclesPx,
-                    accents: accentZonesPx,
-                    spots: taskSpotsPx,
-                  }), 'application/dxf');
+                  download(`${exportBase}-lights.dxf`, toSuperluminalDXF(dxfArgs), 'application/dxf');
                   milestone.current?.('export');
                 }}>
-                <b className="font-normal text-text">Download DXF</b>
-                <span className={MENU_NOTE}>
-                  One superluminal_ layer, split by trade
-                  {isVector ? ', in the drawing\u2019s own units' : ', in feet'}
+                <span className="grid w-full grid-cols-[16px_minmax(0,1fr)] gap-x-2">
+                  <DownloadMenuIcon />
+                  <span className="flex min-w-0 flex-col items-start gap-[3px]">
+                    <b className="font-normal text-text">Download DXF</b>
+                    <span className={MENU_NOTE}>
+                      One superluminal_ layer, split by trade
+                      {isVector ? ', in the drawing\u2019s own units' : ', in feet'}
+                    </span>
+                  </span>
                 </span>
               </button>
               {/* PNG AND PDF FOLLOW THE VIEW. Night view is a deliverable in its
@@ -5636,9 +5780,14 @@ export default function App({
                     await svgToPNG(svgRef.current, source.w,
                       { asScanned: !layers.invert, ground: layers.invert ? '#000000' : '#fff' }));
                 }}>
-                <b className="font-normal text-text">Download PNG</b>
-                <span className={MENU_NOTE}>
-                  The sheet as you see it{layers.invert ? ', night view' : ''}
+                <span className="grid w-full grid-cols-[16px_minmax(0,1fr)] gap-x-2">
+                  <DownloadMenuIcon />
+                  <span className="flex min-w-0 flex-col items-start gap-[3px]">
+                    <b className="font-normal text-text">Download PNG</b>
+                    <span className={MENU_NOTE}>
+                      The sheet as you see it{layers.invert ? ', night view' : ''}
+                    </span>
+                  </span>
                 </span>
               </button>
               {/* PDF IS PLOTTED FROM THE GEOMETRY, NOT PRINTED FROM THE SCREEN.
@@ -5654,24 +5803,26 @@ export default function App({
                        sheet's own resolution rather than reusing the editor's
                        2400px copy; that is the whole reason it is awaited
                        separately. */
-                    const base = layers.invert
-                      ? await nightBase(openPdf, initialFile, pdfPage).catch(() => null)
-                      : null;
+                    const base = await nightSheetBase();
                     const out = await plotToPDF({
-                      source, pxPerFt, rooms, objects: obstaclesPx,
-                      accents: accentZonesPx, spots: taskSpotsPx, coves: reverseCoves,
+                      ...plotArgs,
                       file: initialFile, pageNo: pdfPage, title: exportBase,
-                      night: layers.invert, base,
+                      night: darkSheet, base,
                     });
                     download(`${exportBase}-lights.pdf`, out.bytes, 'application/pdf');
                     milestone.current?.('export');
                   } catch (err) { console.error('[export] the plot failed', err); }
                 }}>
-                <b className="font-normal text-text">Download PDF</b>
-                <span className={MENU_NOTE}>
-                  {layers.invert
-                    ? 'The presentation sheet, plotted as vector'
-                    : 'The line plot, on its own sheet size'}
+                <span className="grid w-full grid-cols-[16px_minmax(0,1fr)] gap-x-2">
+                  <DownloadMenuIcon />
+                  <span className="flex min-w-0 flex-col items-start gap-[3px]">
+                    <b className="font-normal text-text">Download PDF</b>
+                    <span className={MENU_NOTE}>
+                      {layers.invert
+                        ? 'The presentation sheet, plotted as vector'
+                        : 'The line plot, on its own sheet size'}
+                    </span>
+                  </span>
                 </span>
               </button>
             </Popover>
@@ -6666,7 +6817,7 @@ export default function App({
                 bar's `edit` state is withheld (`otherBar` in `shapeBarMode`),
                 so `geometry.bar.mode` is null unless something opened it. */}
             {!readOnly && addTool === 'cob' && !geometry.bar.mode && (
-              <CobSpec key={cobMode} stage={stageRef} lead={autoLead} tail={sceneTail}
+              <CobSpec key={cobMode} stage={stageRef} lead={autoLead}
                 watts={cobShow.watts} beam={cobShow.beam}
                 recommended={!cobStanding}
                 /* THE MODE IS ALSO THE EDITOR'S LIFETIME, hence the key. React
@@ -6729,7 +6880,7 @@ export default function App({
                 the press that selects an array disarms every tool anyway, so
                 this is belt and braces rather than a live case. */}
             {!readOnly && addTool !== 'cob' && selArrayBar && (
-              <CobSpec stage={stageRef} lead={autoLead} tail={sceneTail}
+              <CobSpec stage={stageRef} lead={autoLead}
                 watts={selArrayBar.watts} beam={selArrayBar.beam}
                 array={selArrayBar.array}
                 onWatts={(w) => setArraySpec(selArrayId, { watts: w })}
@@ -6749,37 +6900,16 @@ export default function App({
                 plus, press it and the modules arrive beside the rail cell, pick
                 one and this says what the next press will clip in. */}
             {moduleBarOn && (
-              <ModuleSpec stage={stageRef} lead={autoLead} tail={sceneTail}
+              <ModuleSpec stage={stageRef} lead={autoLead}
                 label={MODULE_BY_ID[trackMode]?.label ?? 'Module'}
                 watts={moduleSpec.watts} wattList={moduleWattList(trackMode)}
                 beam={moduleSpec.beam}
                 onWatts={(w) => setModuleSpec((d) => ({ ...d, watts: w }))}
                 onBeam={(b) => setModuleSpec((d) => ({ ...d, beam: b }))} />
             )}
-            {/* --- AND THE BAR ITSELF, WHEN NOTHING IS BEING DONE TO THE PLAN --
-                THE ELECTRICAL SWITCH IS ALWAYS ON SCREEN, which is what makes
-                it findable: "where do I turn the wiring on" has one answer and
-                it is in the same place whatever else is happening. When a
-                gesture IS running it rides on that gesture's own bar — see
-                `tail` on the three above — because two pills side by side at the
-                foot of the drawing would be two controls competing for the
-                position people have learned.
-
-                SO THIS IS THE SAME BAR WITH NOTHING IN FRONT OF THE TAIL. The
-                condition is exactly the negation of the four: `addTool ===
-                'cob'` renders the specification bar, a selected array renders
-                it in its editing tense, `geometry.bar.mode` renders the shape
-                bar, and `moduleBarOn` renders the module's own — which carries
-                its own `readOnly` rather than borrowing this one's, because it
-                is read in two places. `readOnly` is in here because none of the
-                others is drawn on a viewer's sheet — and neither is the tail,
-                which is null there, so this collapses to nothing on its own. */}
-            {/* EITHER END IS ENOUGH TO EARN THE BAR, which is why the test is
-                an `||` now. It read `&& sceneTail` on the reasoning that the
-                tail is the only thing a plain bar ever holds; there are two
-                standing switches at the two ends of it, both gated the same way
-                (see `autoLead`), and a bar drawn only when one of them survived
-                would be a bar that vanished the day their gates diverged. */}
+            {/* THE PLAIN BAR, WHEN NO EDITING CONTROL CLAIMS ITS POSITION.
+                `autoLead` is the complete content now: the electrical layer
+                toggle has left this floating context bar. */}
             {/* --- AND THE FAN'S, WHICH IS ITS ONE PROPERTY -----------------
                 A SWEEP IS A FOOT AND A HALF OF DIAMETER EITHER WAY, so it is a
                 decision made while the fan is in hand and not a row in a panel
@@ -6788,16 +6918,14 @@ export default function App({
                 one-bar-at-a-time rule; see it, and FanSpec's header for why the
                 Design column no longer holds a second copy of this. */}
             {fanBarOn && (
-              <FanSpec stage={stageRef} lead={autoLead} tail={sceneTail}
+              <FanSpec stage={stageRef} lead={autoLead}
                 sweepMm={fanBarSweep} onSweep={setFanSweep} />
             )}
-            {/* `!fanBarOn` JOINS THE NEGATION FOR THE REASON THE OTHER FOUR ARE
-                IN IT: this is the same bar with nothing in front of the tail,
-                and drawn while a tool owns the position it would be a second
-                one stacked on the first. */}
+            {/* `!fanBarOn` joins the other ownership gates so a tool and the
+                plain layout controls never stack in the same position. */}
             {!(!readOnly && (addTool === 'cob' || selArrayBar || geometry.bar.mode))
-              && !moduleBarOn && !fanBarOn && (autoLead || sceneTail) && (
-              <StageBar stage={stageRef} lead={autoLead} tail={sceneTail} label="Drawing" />
+              && !moduleBarOn && !fanBarOn && autoLead && (
+              <StageBar stage={stageRef} lead={autoLead} label="Drawing" />
             )}
             {/* --- THE HEATMAP'S KEY ----------------------------------------
                 OUTSIDE THE BAR'S OWN CONDITION, because it is not part of the
@@ -6833,7 +6961,7 @@ export default function App({
                 NOT ON THE READ-ONLY SHEET. Every button on it changes the
                 ceiling. */}
             {!readOnly && geometry.bar.mode && (
-              <ShapeMenu stage={stageRef} lead={autoLead} tail={sceneTail} mode={geometry.bar.mode}
+              <ShapeMenu stage={stageRef} lead={autoLead} mode={geometry.bar.mode}
                 tool={geometry.status.tool} sides={geometry.bar.sides}
                 sizeLabel={geometry.bar.mode === 'draw' && geometry.bar.toCommit
                   ? shapeSizeLabel(geometry.bar.toCommit)
@@ -7845,25 +7973,19 @@ export default function App({
                  exporters.js. The exporter decides for itself whether it can
                  overlay, from `source.kind`. */
               if (kind === 'dxf') {
-                download(`${exportBase}-lights.dxf`, toSuperluminalDXF({
-                  source, pxPerFt, heightPx: source.h,
-                  rooms: rooms.map((r) => ({ name: r.outline.name, plan: r.plan })),
-                  objects: obstaclesPx, accents: accentZonesPx, spots: taskSpotsPx,
-                }), 'application/dxf');
+                download(`${exportBase}-lights.dxf`,
+                  toSuperluminalDXF(dxfArgs), 'application/dxf');
                 return;
               }
               // The same sheet the editor prints, and the same view rule — one
               // implementation, so an operator's PDF and an owner's cannot come
               // out differently.
               if (kind === 'pdf') {
-                (layers.invert
-                  ? nightBase(openPdf, initialFile, pdfPage).catch(() => null)
-                  : Promise.resolve(null))
+                nightSheetBase()
                   .then((base) => plotToPDF({
-                    source, pxPerFt, rooms, objects: obstaclesPx,
-                    accents: accentZonesPx, spots: taskSpotsPx, coves: reverseCoves,
+                    ...plotArgs,
                     file: initialFile, pageNo: pdfPage, title: exportBase,
-                    night: layers.invert, base,
+                    night: darkSheet, base,
                   }))
                   .then((out) => download(`${exportBase}-lights.pdf`, out.bytes, 'application/pdf'))
                   .catch((err) => console.error('[viewer] the plot failed', err));
@@ -8483,13 +8605,25 @@ export default function App({
                  other three — see `isModuleRow`, and `setTrackModuleSpec` for
                  why a module's figure has to be written onto the fitting rather
                  than into the room's override store. */
+              /* FIVE STORES NOW, AND A DECORATIVE FITTING IS THE NEW ONE. A
+                 chandelier, a pendant and a standing lamp are CEILING OBJECTS,
+                 and each is its own row keyed by its own id — see the note in
+                 `fixtureGroups` on why they stopped sharing one. So the wattage
+                 is written onto the OBJECT, beside its diameter, exactly as a
+                 hand-placed COB's is written onto the lamp.
+                 ASKED BEFORE `wattRange`, which is what used to catch it: both
+                 carry a slider, and a row that reached `setCobSpec` would be a
+                 patch aimed at a list this fitting is not in — a silent no-op,
+                 and a slider that moved and changed nothing. */
               onWatts={(row, w) => (isModuleRow(row.key)
                 ? setTrackModuleSpec(row.key, { watts: w })
                 : cobArrays.some((a) => a.id === row.key)
                   ? setArraySpec(row.key, { watts: w })
-                  : row.wattRange
-                    ? setCobSpec(row.key, { watts: w })
-                    : setRowWatts(openRoom.id, row.key, row.familyId, w))}
+                  : ceilingObjs.some((o) => o.id === row.key)
+                    ? docActions.patchObject(row.key, { watts: w })
+                    : row.wattRange
+                      ? setCobSpec(row.key, { watts: w })
+                      : setRowWatts(openRoom.id, row, w))}
               onBeam={(row, deg) => (isModuleRow(row.key)
                 ? setTrackModuleSpec(row.key, { beam: deg })
                 : cobArrays.some((a) => a.id === row.key)
@@ -8930,14 +9064,10 @@ export default function App({
             and it appears and disappears with that thing, so a footer pinned
             under it was three whole-plan facts hanging off a panel about a
             room.
-            THE SWITCH IS ON THE BAR OVER THE DRAWING. It went out as a pair of
-            scene buttons — Lighting / Electrical layout — and came back as a
-            switch, because the wiring is neither a tick on a list of twelve
-            layers nor a place you travel to: it is this drawing with the plates
-            and the loops on it, and a control that is visibly on or off is the
-            honest picture of that. Its first press still asks about the doors,
-            for the reason it always did: a switchboard is placed beside one.
-            See `sceneTail`.
+            THE ELECTRICAL SWITCH NOW LIVES IN VIEW, not on the floating context
+            bar. The Electrical rail tool still turns the layer on when its
+            workflow needs it; removing the duplicate from the bar changes no
+            drawing or saved preference.
             THE OTHER TWO ARE IN THE BOTTOM BAR, on the left, where the standing
             readings go. */}
       </div>

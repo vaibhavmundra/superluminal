@@ -23,6 +23,7 @@ process.env.SUPABASE_URL = 'https://test.supabase.co';
 process.env.SUPABASE_SECRET_KEY = 'service-key-not-real';
 process.env.SUPABASE_ANON_KEY = 'anon-key-not-real';
 process.env.PUBLIC_SITE_URL = 'https://superluminal.test';
+process.env.RESEND_API_KEY = 'resend-key-not-real';
 
 const { default: handler } = await import('../api/share.js');
 
@@ -41,11 +42,14 @@ const OTHER_PLAN = '99999999-8888-7777-6666-555555555555';
  * it, which is worse than no test.
  */
 let asked = [];
+let requests = [];
 function stub({ tokenValid = true, link = true, snapshot = null, status = 'ready',
                 who = { id: 'user-1', email: 'reader@x.io' },
-                owner = 'owner-1', shareRole = null } = {}) {
+                owner = 'owner-1', shareRole = null, existingShare = false,
+                resendOk = true } = {}) {
   asked = [];
-  globalThis.fetch = async (url) => {
+  requests = [];
+  globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     if (u.includes('/auth/v1/user')) {
       return tokenValid
@@ -53,13 +57,26 @@ function stub({ tokenValid = true, link = true, snapshot = null, status = 'ready
         : { ok: false, status: 401, json: async () => ({}), text: async () => 'bad jwt' };
     }
     asked.push(u);
+    requests.push({ url: u, init });
     const json = (v) => ({ ok: true, status: 200, text: async () => JSON.stringify(v) });
+
+    if (u.includes('api.resend.com/emails')) {
+      return resendOk
+        ? json({ id: 'mail-1' })
+        : { ok: false, status: 500, text: async () => 'provider unavailable' };
+    }
 
     if (u.includes('/rest/v1/project_share_links')) {
       return json(link && u.includes(TOKEN) ? [{ token: TOKEN, project_id: PROJECT }] : []);
     }
     // The standing grant, if the fixture says this caller has one.
     if (u.includes('/rest/v1/project_shares')) {
+      if (init.method === 'POST') {
+        const b = JSON.parse(init.body || '{}');
+        return json([{ id: 'share-1', project_id: b.project_id, email: b.email,
+          role: b.role, invited_user: null, owner_email: who.email }]);
+      }
+      if (u.includes('select=id&limit=1')) return json(existingShare ? [{ id: 'share-1' }] : []);
       return json(shareRole ? [{ role: shareRole }] : []);
     }
     if (u.includes('/rest/v1/projects')) {
@@ -155,6 +172,70 @@ stub();
 r = await run({ body: { action: 'plan', token: TOKEN, planId: PLAN } });
 ok(r.code === 200 && r.body.plan?.id === PLAN, 'one plan inside the link’s project → 200');
 ok(r.body.plan?.editor_state, 'and it is the WHOLE row, because the viewer restores from it');
+
+// --- A NAMED INVITATION WRITES ONCE AND MAILS ONCE ------------------------
+
+stub();
+r = await run({ body: { action: 'invite', projectId: PROJECT,
+  email: 'client@studio.com', role: 'view' } });
+ok(r.code === 403, 'a non-owner cannot create a named share');
+ok(!asked.some((u) => u.includes('api.resend.com')),
+   '...and cannot use the endpoint to send arbitrary mail');
+
+stub({ owner: 'user-1' });
+r = await run({ body: { action: 'invite', projectId: PROJECT,
+  email: 'CLIENT@Studio.com', role: 'edit' } });
+ok(r.code === 200 && r.body.share?.email === 'client@studio.com'
+   && r.body.share?.role === 'edit',
+   'the owner creates the lowercased edit grant');
+ok(r.body.email?.sent === true && r.body.email?.id === 'mail-1',
+   '...and the new recipient is emailed through Resend');
+const shareWrite = requests.find((q) => q.url.includes('/rest/v1/project_shares')
+  && q.init.method === 'POST');
+ok(shareWrite && shareWrite.init.headers?.Prefer === 'resolution=merge-duplicates,return=representation',
+   'the grant is an idempotent upsert, so retrying cannot duplicate access');
+const mail = requests.find((q) => q.url.includes('api.resend.com/emails'));
+const mailBody = JSON.parse(mail?.init?.body || '{}');
+ok(mailBody.to?.[0] === 'client@studio.com'
+   && mailBody.from === 'Super Luminal <share@superluminal.design>',
+   'the email is addressed to the invitee and sent from the verified domain');
+ok(mailBody.text?.includes(`https://superluminal.test/projects/${PROJECT}`)
+   && mailBody.text?.includes('Sign in with client@studio.com'),
+   'the message links straight to the project and names the address holding the grant');
+
+stub({ owner: 'user-1', existingShare: true });
+r = await run({ body: { action: 'invite', projectId: PROJECT,
+  email: 'client@studio.com', role: 'view' } });
+ok(r.code === 200 && r.body.email?.skipped === 'existing',
+   're-entering an existing recipient updates access without sending a new invitation');
+ok(!asked.some((u) => u.includes('api.resend.com')),
+   '...so changing a role cannot spam the recipient');
+
+stub({ owner: 'user-1', resendOk: false });
+const oldError = console.error;
+console.error = () => {};
+r = await run({ body: { action: 'invite', projectId: PROJECT,
+  email: 'client@studio.com', role: 'view' } });
+console.error = oldError;
+ok(r.code === 200 && r.body.share?.id === 'share-1' && r.body.email?.sent === false,
+   'a mail-provider failure does not revoke the share that was just created');
+ok(/could not be sent/i.test(r.body.warning || ''),
+   '...and the UI gets an explicit partial-success warning');
+
+for (const bad of [
+  { projectId: 'not-a-project', email: 'client@studio.com', role: 'view' },
+  { projectId: PROJECT, email: 'not-mail', role: 'view' },
+  { projectId: PROJECT, email: 'client@studio.com', role: 'owner' },
+]) {
+  stub({ owner: 'user-1' });
+  r = await run({ body: { action: 'invite', ...bad } });
+  ok(r.code === 400, 'malformed invitation input is refused before a grant is written');
+}
+
+stub({ owner: 'user-1' });
+r = await run({ body: { action: 'invite', projectId: PROJECT,
+  email: 'reader@x.io', role: 'view' } });
+ok(r.code === 400, 'the owner cannot invite their own address');
 
 // --- THE LINK DOES NOT DEMOTE ANYBODY --------------------------------------
 //

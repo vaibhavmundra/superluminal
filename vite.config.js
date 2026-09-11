@@ -45,6 +45,7 @@ function apiRoutes(env) {
       for (const k of ['ROBOFLOW_INFERENCE_KEY', 'ROBOFLOW_WORKFLOW_URL',
                        'ROBOFLOW_ROOMS_WORKFLOW_URL',
                        'OPENAI_API_KEY', 'OPENAI_VISION_MODEL', 'OPENAI_WALL_MODEL',
+                       'RESEND_API_KEY', 'RESEND_FROM_EMAIL',
                        'SUPABASE_URL', 'SUPABASE_PROJECT_ID', 'SUPABASE_SECRET_KEY',
                        'SUPABASE_ANON_KEY', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY',
                        // RAZORPAY, AND NONE OF THEM IS VITE_ PREFIXED — including
@@ -53,9 +54,8 @@ function apiRoutes(env) {
                        // a CONSTANT: test and live keys differ per environment, and a
                        // bundled copy is how a production build ends up opening a
                        // test-mode checkout. /api/billing hands it over per checkout.
-                       'RZP_KEY', 'RZP_SECRET', 'RZP_MODE', 'RZP_CURRENCY',
-                       'RZP_PLAN_STUDIO', 'RZP_PLAN_PRO',
-                       'RZP_AMOUNT_STUDIO', 'RZP_AMOUNT_PRO',
+                       'RZP_KEY', 'RZP_SECRET', 'RZP_MODE',
+                       'RZP_INDIA_PLAN', 'RZP_USD_PLAN',
                        'RZP_WEBHOOK_SECRET',
                        // Where the app lives, for the ABSOLUTE urls a scraper
                        // needs in an Open Graph card — a relative og:image is a

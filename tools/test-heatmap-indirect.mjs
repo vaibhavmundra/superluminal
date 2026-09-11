@@ -27,11 +27,13 @@
 //   · grid density, patch density and run segmentation do not move the answer;
 //   · the targets resolve by category, convert once, fall back to residential,
 //     and are independent of both existing tables;
-//   · switching layers changes the values, the ratios and the card's own line,
-//     and leaves no stale result behind;
-//   · `average` is EXACTLY its two components added, its TARGET is those two
-//     targets added the same way — so a room on target on both halves is on
-//     target on Average — and it solves neither of them twice.
+//   · `average` — the one layer the drawing shows, as `Estimated light level`
+//     — is EXACTLY its two components added, its TARGET is those two targets
+//     added the same way (so a room on target on both halves is on target on
+//     it), and it solves neither of them twice;
+//   · the components are still solved and cached independently, and switching
+//     between them leaves no stale result behind — which is what keeps a
+//     selector one control away rather than one rebuild away.
 //
 //   node tools/test-heatmap-indirect.mjs
 // ---------------------------------------------------------------------------
@@ -52,7 +54,7 @@ import { buildTransfer, buildPlaneTransfer, buildSphereTransfer, gather,
 import { buildRoomGeometry, solveRoom, surfacePass,
          directPass } from '../src/features/heatmap/solve.js';
 import { solveIndirect, probeHeightFor, probeWasClamped,
-         uniformExitanceReference, PROBE_HEIGHT_MM, PROBE_HEIGHTS_MM,
+         uniformExitanceReference, PROBE_HEIGHT_MM,
          PROBE_CLEARANCE_M } from '../src/features/heatmap/indirect.js';
 import { solveRoomLayer } from '../src/features/heatmap/useHeatmap.js';
 import { DISTRIBUTION_PROFILES } from '../src/features/heatmap/profiles.js';
@@ -61,7 +63,8 @@ import {
   HEATMAP_BANDS, HEATMAP_LAYERS, HEATMAP_LAYER_DEFAULT, heatmapLayerFor,
   HEATMAP_TARGET_LUX, heatmapTargetFor, heatmapTargetForLayer,
   LUX_PER_LM_PER_SQFT, AVERAGE_FLOOR_SHARE, REFLECTED_AMBIENT_LM_PER_SQFT,
-  REFLECTED_AMBIENT_LM_PER_SQFT_DEFAULT, REFLECTED_AMBIENT_TARGET_LUX,
+  REFLECTED_AMBIENT_LM_PER_SQFT_BY_ROOM, REFLECTED_AMBIENT_LM_PER_SQFT_DEFAULT,
+  REFLECTED_AMBIENT_TARGET_LUX, REFLECTED_AMBIENT_TARGET_LUX_BY_ROOM,
   REFLECTED_AMBIENT_TARGET_LUX_DEFAULT, reflectedAmbientTargetFor,
 } from '../src/features/heatmap/heatmapTargets.js';
 
@@ -440,12 +443,9 @@ sec('4. reflected ambient light is spatially uneven when the lighting is');
 
 sec('5. the probes sit inside the room, at a height the reader chose');
 {
-  ok('the product default is 1.2 m', PROBE_HEIGHT_MM === 1200);
-  ok('...and it is one of the heights the legend offers',
-    PROBE_HEIGHTS_MM.includes(PROBE_HEIGHT_MM));
-  ok('the offered heights are ordered and all inside a room',
-    PROBE_HEIGHTS_MM.every((v, i, a) => i === 0 || v > a[i - 1])
-    && PROBE_HEIGHTS_MM.every((v) => v > 0 && v < 2500));
+  ok('the probe height is 1.2 m', PROBE_HEIGHT_MM === 1200);
+  ok('...and it is a height a room can actually hold',
+    PROBE_HEIGHT_MM > 0 && PROBE_HEIGHT_MM < 2500);
 
   ok('an ordinary room gets exactly the height that was asked for',
     probeHeightFor(1.2, 2.7) === 1.2 && !probeWasClamped(1.2, probeHeightFor(1.2, 2.7)));
@@ -615,11 +615,43 @@ sec('7. the targets are their own table, converted once, with one fallback');
     reflectedAmbientTargetFor('residential') !== LUMENS_PER_SQFT.residential
     && reflectedAmbientTargetFor('residential') !== LUMEN_CRITERIA.residential
     && reflectedAmbientTargetFor('office') !== LUMEN_CRITERIA.office);
-  ok('...and a room type does not override it, unlike the horizontal table',
-    reflectedAmbientTargetFor('residential', 'kitchen')
-      === reflectedAmbientTargetFor('residential', 'bedroom')
-    && heatmapTargetFor('residential', 'kitchen')
-      !== heatmapTargetFor('residential', 'bedroom'));
+  /* --- THE ROOMS THAT ARE WORKED IN TAKE DOUBLE, AND IT IS THE OFFICE FIGURE
+     ROOM TYPE WINS OVER PROJECT, the same precedence `heatmapTargetFor` and
+     `lumenCriteriaFor` use. Asserted as a RELATIONSHIP — double the domestic
+     reference, equal to the office one — rather than as 215.28, so that
+     recalibrating either table keeps this honest instead of red. */
+  for (const room of ['kitchen', 'toilet', 'utility']) {
+    ok(`a ${room} is aiming at double the domestic reflected figure`,
+      near(reflectedAmbientTargetFor('residential', room),
+           2 * reflectedAmbientTargetFor('residential', 'living_space'), 1e-12)
+      && reflectedAmbientTargetFor('residential', room)
+        === reflectedAmbientTargetFor('office'),
+      `${reflectedAmbientTargetFor('residential', room).toFixed(2)} lx`);
+    ok(`...and it is the same ${room} whatever building it is in`,
+      reflectedAmbientTargetFor('restaurant', room)
+        === reflectedAmbientTargetFor('residential', room)
+      && reflectedAmbientTargetFor('hotel', room)
+        === reflectedAmbientTargetFor('residential', room));
+  }
+  ok('...and it is stated in the same received lm/ft2 as the project table',
+    Object.values(REFLECTED_AMBIENT_LM_PER_SQFT_BY_ROOM).every(
+      (lm) => lm === REFLECTED_AMBIENT_LM_PER_SQFT.office));
+  ok('...through the same single conversion, so the two tables cannot drift',
+    Object.entries(REFLECTED_AMBIENT_LM_PER_SQFT_BY_ROOM).every(
+      ([id, lm]) => REFLECTED_AMBIENT_TARGET_LUX_BY_ROOM[id] === lm * LUX_PER_LM_PER_SQFT));
+  ok('a room nobody has looked at still takes its building\'s figure',
+    reflectedAmbientTargetFor('residential', 'bedroom')
+      === reflectedAmbientTargetFor('residential')
+    && reflectedAmbientTargetFor('residential', 'no-such-room')
+      === reflectedAmbientTargetFor('residential'));
+  /* THE OVERRIDE OVERRIDES BOTH WAYS. Retail's 30 is the only project above
+     20, so a WC in a shop comes DOWN — which is the table doing its job
+     rather than a floor being quietly applied. */
+  ok('...and the override wins even where the building is brighter',
+    reflectedAmbientTargetFor('retail', 'toilet')
+      < reflectedAmbientTargetFor('retail'),
+    `${reflectedAmbientTargetFor('retail', 'toilet').toFixed(2)} `
+    + `vs ${reflectedAmbientTargetFor('retail').toFixed(2)}`);
 
   // ONE DOOR FOR BOTH LAYERS, so nothing outside this file has to know which
   // table its layer reads.
@@ -635,7 +667,8 @@ sec('7. the targets are their own table, converted once, with one fallback');
      revision. */
   for (const [proj, room, want] of [
     ['residential', 'living_space', 145], ['residential', 'bedroom', 133],
-    ['residential', 'kitchen', 183], ['office', 'office_workspace', 340],
+    ['residential', 'kitchen', 290], ['residential', 'toilet', 253],
+    ['residential', 'utility', 265], ['office', 'office_workspace', 340],
     ['retail', null, 398],
   ]) {
     const t = heatmapTargetForLayer('average', proj, room);
@@ -681,21 +714,31 @@ sec('7. the targets are their own table, converted once, with one fallback');
 
 sec('8. the layer table, and the colours it shares');
 {
-  ok('there are three layers and the existing one is still the default',
-    HEATMAP_LAYERS.length === 3 && HEATMAP_LAYER_DEFAULT === 'illuminance'
-    && heatmapLayerFor(HEATMAP_LAYER_DEFAULT).label === 'Estimated illuminance');
   const ref = heatmapLayerFor('reflected'), avg = heatmapLayerFor('average');
-  ok('...and the reflected one is named as the brief names it',
-    ref.label === 'Reflected ambient light' && ref.measure === 'Reflected ambient');
-  ok('...and says what it excludes, which is the thing a name cannot say',
+  ok('the engine has three layers and the composite is the one the drawing shows',
+    HEATMAP_LAYERS.length === 3 && HEATMAP_LAYER_DEFAULT === 'average'
+    && heatmapLayerFor(HEATMAP_LAYER_DEFAULT).id === 'average');
+  ok('...and it is called Estimated light level',
+    avg.label === 'Estimated light level', avg.label);
+  ok('...and its note says what it adds up',
+    /reflect/i.test(avg.note) && /quarter/i.test(avg.note)
+    && /horizontal/i.test(avg.note), avg.note);
+  ok('the two component layers keep their own names and say they are components',
+    ref.label === 'Reflected ambient light'
+    && heatmapLayerFor('illuminance').label === 'Estimated illuminance'
+    && /component/i.test(ref.note)
+    && /component/i.test(heatmapLayerFor('illuminance').note));
+  ok('...and the reflected one still says what it excludes',
     /reflect/i.test(ref.note) && /direct/i.test(ref.note) && /exclud/i.test(ref.note),
     ref.note);
-  ok('...and the composite one is called Average and says what it adds up',
-    avg.label === 'Average' && avg.short === 'Average'
-    && /reflect/i.test(avg.note) && /quarter/i.test(avg.note)
-    && /horizontal/i.test(avg.note), avg.note);
-  ok('every layer carries a short label the selector can fit',
-    HEATMAP_LAYERS.every((l) => l.short && l.short.length <= 14));
+  /* THE SELECTOR'S OWN FIELDS WENT WITH THE SELECTOR. Carrying a `short` sized
+     for a chip, or a `measure` sized for a subtitle, when neither exists is how
+     a table stops describing the thing it names. */
+  ok('no layer carries a field that only the removed selector could have used',
+    HEATMAP_LAYERS.every((l) => l.short === undefined && l.measure === undefined));
+  ok('every layer still carries what the engine and the card DO read',
+    HEATMAP_LAYERS.every((l) => l.id && l.label && l.note
+      && typeof l.probe === 'boolean' && typeof l.floor === 'boolean'));
 
   /* `probe` AND `floor` ARE THE WHOLE INTERFACE TO THE ENGINE, and getting
      either wrong is a layer that quietly costs the direct pass it does not
@@ -955,7 +998,7 @@ sec('9b. Average — the two layers added, and nothing solved twice');
 }
 
 
-sec('10. the card says what the drawing is showing');
+sec('10. one heatmap, one name, and nothing to choose');
 {
   const vite = await createServer({
     server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
@@ -965,63 +1008,20 @@ sec('10. the card says what the drawing is showing');
   try {
     const legend = await vite.ssrLoadModule('/src/features/heatmap/HeatmapLegend.jsx');
     const HeatmapLegend = legend.default;
-    const { measurementLine } = legend;
+    const { targetLine } = legend;
     const useHeatmap = (await vite.ssrLoadModule('/src/features/heatmap/useHeatmap.js')).default;
 
-    /* THE LINE, FOR BOTH LAYERS — the brief's own example string, built from
-       the layer table and the hook's own figures rather than typed out here. */
-    const reflectedView = {
-      layer: heatmapLayerFor('reflected'),
-      focusTarget: reflectedAmbientTargetFor('residential'),
-      probeHeightM: 1.2, probeHeightMm: 1200, probeClamped: false, distinct: [],
-    };
-    ok('the card names the measurement, the height and the target',
-      measurementLine(reflectedView) === 'Reflected ambient · 1.2 m · Target 108 lx',
-      measurementLine(reflectedView));
-    ok('...at the office figure too',
-      measurementLine({ ...reflectedView,
-        focusTarget: reflectedAmbientTargetFor('office') })
-        === 'Reflected ambient · 1.2 m · Target 215 lx');
-    ok('...and the height it prints is the one the ROOM got, not the one asked for',
-      measurementLine({ ...reflectedView, probeHeightM: 0.8, probeClamped: true })
-        === 'Reflected ambient · 0.8 m · Target 108 lx (fits room)'
-      || measurementLine({ ...reflectedView, probeHeightM: 0.8, probeClamped: true })
-        === 'Reflected ambient · 0.8 m (fits room) · Target 108 lx',
-      measurementLine({ ...reflectedView, probeHeightM: 0.8, probeClamped: true }));
-    ok('...and it moves with the height control',
-      measurementLine({ ...reflectedView, probeHeightM: 1.7 })
-        === 'Reflected ambient · 1.7 m · Target 108 lx');
-    /* THE COMPOSITE LAYER PRINTS ITS OWN COMPOSITE FIGURE, which is the whole
-       point of the card carrying the target at all: 145 is what this space is
-       aiming at on THIS measurement, and 108 would be the reflected half of it
-       quoted as though it were the whole. */
-    const averageView = { ...reflectedView, layer: heatmapLayerFor('average'),
-      focusTarget: heatmapTargetForLayer('average', 'residential', 'living_space') };
-    ok('...and the composite layer names itself, its height and its own composite target',
-      measurementLine(averageView) === 'Average · 1.2 m · Target 145 lx',
-      measurementLine(averageView));
-    ok('the horizontal layer keeps the line it always had',
-      measurementLine({ layer: heatmapLayerFor('illuminance'),
-                        plane: { label: 'Floor level' }, focusTarget: 150, distinct: [] })
-        === 'Floor level · target 150 lx');
-    ok('...and a plan whose spaces disagree gets the range rather than a wrong figure',
-      measurementLine({ layer: heatmapLayerFor('illuminance'),
-                        plane: { label: 'Floor level' }, focusTarget: null,
-                        distinct: [100, 300] }) === 'Floor level · target 100–300 lx');
-
-    /* --- AND THE HOOK, END TO END ON THE LAYER IT OPENS ON ---------------
-       A server render runs no effects and holds no state across calls, so what
-       this can assert is the mount: the default layer, the field it produces,
-       and that the selection and its setters are on the same object the legend
-       is handed. The transitions are section 9's, against the live cache. */
     const roomPoly = [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }];
-    const plans = [{
-      id: 'R1', outline: { name: 'Room' },
-      geo: { polygonPx: roomPoly, fansInRoom: [] },
-      plan: { ok: true, polygonPx: roomPoly, cellsPx: [], chunksPx: [], covesPx: [],
-              tracksPx: [], lightsPx: [{ id: 'L1', x: 200, y: 150, fixture: 'small' }],
+    const shift = (dx) => roomPoly.map((q) => ({ x: q.x + dx, y: q.y }));
+    const space = (id, name, poly) => ({
+      id, outline: { name },
+      geo: { polygonPx: poly, fansInRoom: [] },
+      plan: { ok: true, polygonPx: poly, cellsPx: [], chunksPx: [], covesPx: [],
+              tracksPx: [], lightsPx: [{ id: `L-${id}`, x: poly[0].x + 200, y: 150,
+                                         fixture: 'small' }],
               gridLightsPx: [], stats: {} },
-    }];
+    });
+    const plans = [space('R1', 'Room', roomPoly)];
     const args = {
       on: true, rooms: plans, pxPerFt: 40, projectId: 'residential',
       roomTypes: { R1: { type: 'living_space' } }, materials: {},
@@ -1033,37 +1033,122 @@ sec('10. the card says what the drawing is showing');
     let got = null;
     const Probe = (props) => { got = useHeatmap({ ...args, ...props }); return null; };
     renderToStaticMarkup(React.createElement(Probe));
-    ok('the heatmap opens on the layer it has always shown',
-      got.layerId === 'illuminance' && got.layer.label === 'Estimated illuminance'
-      && got.rooms[0].layer === 'illuminance' && got.rooms[0].maxLux > 0);
-    ok('...carrying the layer table and both setters for the legend',
-      Array.isArray(got.layers) && got.layers.length === HEATMAP_LAYERS.length
-      && typeof got.setLayer === 'function'
-      && typeof got.setProbeHeightMm === 'function'
-      /* BY VALUE AND NOT BY IDENTITY: the hook is loaded through vite here and
-         the constant is imported directly, so the two are different module
-         instances of the same table. */
-      && got.probeHeights.join() === PROBE_HEIGHTS_MM.join());
-    ok('...and the probe default, in both units',
-      got.probeHeightMm === PROBE_HEIGHT_MM
-      && got.probeHeightM === PROBE_HEIGHT_MM / 1000);
-    ok('...against its own plane and its own target, unchanged by any of this',
-      got.plane?.id === 'floor'
-      && got.focusTarget === heatmapTargetFor('residential', 'living_space')
-      && measurementLine(got) === 'Floor level · target 150 lx');
-    ok('...and the card that reads it is the card that has always read it',
-      measurementLine(got) === measurementLine({ ...got, layers: undefined }));
 
-    // THE SWITCH IS STILL THE WHOLE OF THE ON/OFF.
+    ok('the heatmap shows the composite layer and names it Estimated light level',
+      got.layer.id === 'average' && got.layer.label === 'Estimated light level'
+      && got.rooms[0].layer === 'average' && got.rooms[0].maxLux > 0);
+    ok('...measured at the fixed 1.2 m probe',
+      got.rooms[0].probeHeightM === PROBE_HEIGHT_MM / 1000
+      && got.rooms[0].probeClamped === false);
+    ok('...against the composite target for the space',
+      got.focusTarget === heatmapTargetForLayer('average', 'residential', 'living_space')
+      && Math.round(got.focusTarget) === 145, `${got.focusTarget}`);
+
+    /* --- THERE IS NOTHING LEFT TO CHOOSE, AND THAT IS STRUCTURAL ----------
+       THE CONTROLS WERE BUILT ON THIS DATA. A layer selector needs a list of
+       layers and a setter; a height control needs a list of heights and a
+       setter. With none of the four on the hook's output there is nothing a
+       card could render them from, which is a stronger statement than "the
+       markup does not contain them" — and it is the one a server render can
+       actually make, since the card measures itself off the stage and so draws
+       nothing outside a browser. */
+    for (const gone of ['layers', 'setLayer', 'probeHeights', 'setProbeHeightMm',
+                        'layerId', 'probeHeightMm']) {
+      ok(`the hook no longer exposes \`${gone}\`, so no control can be built from it`,
+        got[gone] === undefined, `got ${typeof got[gone]}`);
+    }
+    ok('...and the card exports no measurement-line or height formatter either',
+      legend.measurementLine === undefined && legend.m === undefined);
+    ok('the card names the open space and its target, and nothing else',
+      targetLine(got) === 'Room · Target 145 lx', targetLine(got));
+
+    /* THE ROOM STILL CARRIES EVERYTHING A FUTURE READOUT WOULD WANT, which is
+       the difference between removing a control and removing the data behind
+       it: the target and the probe height are on the field, they are simply
+       not printed. */
+    ok('the field still carries its target and the height it was read at',
+      got.rooms[0].targetLux > 0 && got.rooms[0].probeHeightM > 0
+      && got.rooms[0].roomHeightM === 2.7);
+
+    /* --- WHOSE TARGET IS ON THE CARD, AND IT FOLLOWS THE CLICK -----------
+       `focusId` IS WHICH SPACE IS OPEN IN THE PANEL, which is the room you
+       last clicked. A flat holds a living space at 145 and a kitchen at 290,
+       so the figure is only meaningful with the room's name beside it — and
+       the pair has to change together when the click does. */
+    {
+      const flat = [space('R1', 'Living', roomPoly),
+                    space('R2', 'Kitchen', shift(500))];
+      const types = { R1: { type: 'living_space' }, R2: { type: 'kitchen' } };
+      let seen = null;
+      const Flat = ({ focus }) => {
+        seen = useHeatmap({ ...args, rooms: flat, roomTypes: types, focusId: focus });
+        return null;
+      };
+
+      renderToStaticMarkup(React.createElement(Flat, { focus: 'R1' }));
+      const living = seen;
+      ok('clicking the living space puts ITS target on the card',
+        targetLine(living) === 'Living · Target 145 lx', targetLine(living));
+
+      renderToStaticMarkup(React.createElement(Flat, { focus: 'R2' }));
+      const kitchen = seen;
+      ok('...and clicking the kitchen puts the kitchen\'s on it',
+        targetLine(kitchen) === 'Kitchen · Target 290 lx', targetLine(kitchen));
+      ok('...which is double, because a kitchen is worked in',
+        near(kitchen.focusTarget, 2 * living.focusTarget, 1e-12),
+        `${kitchen.focusTarget.toFixed(2)} vs ${living.focusTarget.toFixed(2)}`);
+
+      /* THE COLOURS MOVE WITH IT. The same light in the same room reads as a
+         different share of target once the target doubles — which is the
+         whole point of a per-room figure and the thing that would silently
+         not happen if the field kept a stale target. */
+      const k = kitchen.rooms.find((r) => r.id === 'R2');
+      const l = living.rooms.find((r) => r.id === 'R2');
+      ok('...and the kitchen\'s own field is judged against the kitchen figure, whichever room is open',
+        k.targetLux === l.targetLux
+        && k.targetLux === heatmapTargetForLayer('average', 'residential', 'kitchen'),
+        `${k.targetLux.toFixed(2)}`);
+      ok('...so its ratios are half what the living-space figure would have made them',
+        (() => {
+          for (let i = 0; i < k.ratio.length; i++) {
+            if (Number.isNaN(k.ratio[i])) continue;
+            if (!near(k.ratio[i], k.lux[i] / k.targetLux, 1e-6)) return false;
+          }
+          return true;
+        })());
+
+      /* NOTHING OPEN, AND THE TWO SPACES DISAGREE — the card prints the range
+         rather than picking one, because a key claiming 145 over a plan that
+         also holds a kitchen at 290 would be wrong about half the drawing. */
+      renderToStaticMarkup(React.createElement(Flat, { focus: null }));
+      ok('with nothing open and the spaces disagreeing, the card prints the range',
+        targetLine(seen) === 'Target 145–290 lx', targetLine(seen));
+      ok('...and names no space, because none was picked', seen.focusName === null);
+    }
+
+    /* ONE SPACE, NOTHING OPEN: there is one figure and it is printed bare.
+       Naming a room nobody clicked would be the card inventing a selection. */
+    {
+      let alone = null;
+      const Alone = () => { alone = useHeatmap({ ...args, focusId: null }); return null; };
+      renderToStaticMarkup(React.createElement(Alone));
+      ok('one space and no click prints the figure without a name',
+        targetLine(alone) === 'Target 145 lx', targetLine(alone));
+    }
+
+    // THE SWITCH IN THE BAR IS STILL THE WHOLE OF THE ON/OFF.
     renderToStaticMarkup(React.createElement(Probe, { on: false }));
-    ok('the layer selection costs nothing while the heatmap is switched off',
+    ok('the heatmap off costs nothing at all',
       got.on === false && got.rooms.length === 0);
-    ok('...and the selection is still there to come back to',
-      got.layerId === 'illuminance' && typeof got.setLayer === 'function');
+    ok('...and still names the layer it would draw, so the shape does not change',
+      got.layer?.id === 'average');
 
     ok('the legend draws nothing with the layer off',
       renderToStaticMarkup(React.createElement(HeatmapLegend,
         { heatmap: { on: false, rooms: [] }, stage: null })) === '');
+    ok('...and nothing with no room on the sheet',
+      renderToStaticMarkup(React.createElement(HeatmapLegend,
+        { heatmap: { on: true, rooms: [] }, stage: null })) === '');
   } finally {
     await vite.close();
   }

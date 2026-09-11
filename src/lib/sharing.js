@@ -4,11 +4,10 @@
 // TWO MECHANISMS BEHIND ONE DIALOG, and the split is worth holding on to
 // because it decides which half of this file a given call belongs in.
 //
-//   BY EMAIL, THROUGH RLS. `project_shares` rows are a real grant, so every
-//   function in the first section is an ordinary supabase-js query and the
-//   policies are what make it legal. There is no endpoint, no service key and
-//   no second permission model — the invitee uses the same /projects/:id and
-//   /plans/:id the owner does, and the database decides what happens there.
+//   BY EMAIL, THROUGH THE SERVER. `project_shares` rows are a real grant, but
+//   creating one also sends a Resend invitation. The API verifies the caller is
+//   the project owner, writes the row, and uses the server-only mail key. Reads,
+//   role changes and revocation remain ordinary RLS-scoped Supabase queries.
 //
 //   BY LINK, THROUGH THE SERVER. A token in an address bar is not something a
 //   policy can see, so `/api/share` redeems it with the service key and hands
@@ -16,11 +15,8 @@
 //   src/lib/admin.js — same bearer token, same reasoning about who is trusted to
 //   assert what. See the header of api/share.js.
 //
-// WHAT THIS FILE DOES NOT DO IS SEND AN EMAIL. Adding a share is a row, and the
-// invitee finds the project waiting under "Shared with me" the next time they
-// sign in. Wiring a transactional mailer in here would be a second delivery path
-// to keep alive for something the app can already state on screen — the dialog
-// tells the owner to send the link themselves, which is what people do anyway.
+// THE BROWSER NEVER SEES THE RESEND KEY. `addShare` calls the same authenticated
+// endpoint that redeems links; the endpoint owns both the grant and its notice.
 // ---------------------------------------------------------------------------
 import { supabase } from './supabase.js';
 
@@ -58,15 +54,17 @@ export async function listShares(projectId) {
  * list and picking "Can edit" means "make them an editor", and an error saying
  * "already shared" would be the app refusing to do the obvious thing.
  *
- * `owner` and `email` are not sent: a trigger fills the first from the project
- * and lowercases the second, so sending them would only be a chance to disagree
- * with the row that ends up stored.
+ * `owner` is never accepted from the browser: the API proves ownership and the
+ * database trigger fills the column from the project. The address is normalised
+ * on both sides of that boundary so a mixed-case invite cannot become a second
+ * grant.
  */
 export async function addShare(projectId, email, role = 'view') {
-  return unwrap(await must().from('project_shares')
-    .upsert({ project_id: projectId, email: String(email).trim().toLowerCase(), role },
-            { onConflict: 'project_id,email' })
-    .select(SHARE_COLS).single());
+  return call('invite', {
+    projectId,
+    email: String(email).trim().toLowerCase(),
+    role,
+  });
 }
 
 export async function setShareRole(id, role) {

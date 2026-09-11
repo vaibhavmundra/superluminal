@@ -425,6 +425,67 @@ say('6. THE SCHEDULE RENDERS');
   catch (e) { err = e; }
   ok(!err, `BOQView renders without throwing${err ? `: ${err.message}` : ''}`);
   ok(html && html.includes('Track'), 'and the track lines are on it');
+
+  /* --- WHAT THE SHEET SHOWS AND WHAT IT DELIBERATELY DOES NOT -------------
+     THE SPACE BREAKDOWN CAME OFF THE SCREEN (2026-09-11) and stayed in every
+     export, which is a split only a render test can hold: `boqTable` still
+     emits the block — tools/test-boq.mjs asserts that — and this asserts the
+     page does not draw it. Either half alone would let the pair drift back
+     together. */
+  const sheet = renderToStaticMarkup(React.createElement(BOQView, {
+    boq: buildBOQ({
+      rooms: [{ id: 'r1', outline: { name: 'Living' },
+                plan: { ok: true, stats: { areaSqft: 320 },
+                        lights: [{ kind: 'small' }, { kind: 'small' }] } }],
+      cobs: [{ roomId: 'r1', watts: 7, beam: 30 }],
+      objects: [{ kind: 'chandelier' }, { kind: 'standing_lamp' }],
+      pxPerFt: S, plan: 'test',
+    }),
+  }));
+  ok(!/Space breakdown/i.test(sheet), 'the space-wise list is not on the screen');
+  ok(/Other items/i.test(sheet), 'the coordination block is headed "Other items"');
+  ok(!/Ceiling items/i.test(sheet), '...and not "Ceiling items"');
+  ok(sheet.includes('Recessed COB downlight — 7 W, 30°'),
+    'and a hand-placed COB is a line on the sheet at its own specification');
+}
+
+say('7. THE DECORATIVE FITTINGS GET THE CONTROL THEIR TYPE IS SOLD WITH');
+{
+  /* WHAT IS ON SCREEN, AND NOT WHAT THE DATA MERELY ALLOWS. The three-way
+     branch in SpaceAnalysis — slider / printed figure / chips — is the thing
+     these two requirements are ABOUT, so it is the thing asserted: a pendant
+     that offered three options and still drew a slider would pass every check
+     in test-lighting-planner and be the bug. */
+  const SpaceAnalysis = await load('/src/components/SpaceAnalysis.jsx');
+  const { analyseSpace } = await import('../src/lib/lumens.js');
+  const { wattsOf, wattRangeOf, wattOptionsOf } = await import('../src/lib/ceilingObjects.js');
+
+  const lampRow = (id, typeId) => ({
+    key: id, familyId: 'lamp', count: 1, lengthFt: 0,
+    label: typeId, watts: wattsOf({ typeId, kind: typeId }),
+    wattRange: wattRangeOf({ typeId, kind: typeId }),
+    wattOptions: wattOptionsOf({ typeId, kind: typeId }),
+  });
+  const draw = (row) => renderToStaticMarkup(React.createElement(SpaceAnalysis, {
+    analysis: analyseSpace({
+      polygonFt: box(20, 14), ceilingMm: 2700,
+      materials: { ceiling: 'light', floor: 'light', walls: 'light' },
+      projectId: 'residential', country: 'India', groups: [row], watts: {},
+    }),
+    onWatts: () => {}, highlight: [row.key],
+  }));
+
+  const chand = draw(lampRow('ch1', 'chandelier'));
+  ok(/type="range"/.test(chand), 'a chandelier gets the slider');
+  ok(/max="55"/.test(chand), '...that reaches 55 W');
+
+  for (const typeId of ['pendant', 'standing_lamp']) {
+    const html = draw(lampRow(typeId, typeId));
+    ok(!/type="range"/.test(html), `a ${typeId} gets no slider`);
+    const chips = [...html.matchAll(/>(\d+)W</g)].map((m) => Number(m[1]));
+    ok(String(chips) === '7,9,12',
+      `...it gets 7W, 9W and 12W and nothing else (got ${chips.join('/') || 'none'})`);
+  }
 }
 
 await vite.close();

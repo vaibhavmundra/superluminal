@@ -4,24 +4,9 @@ import { supabase } from './supabase.js';
 import { useAuth } from './auth.jsx';
 import { FREE, TIER, fingerprintOutline, fingerprintPass } from './plans.js';
 
-// ---------------------------------------------------------------------------
-// THE BROWSER'S HALF OF THE TILL.
-//
-// EVERYTHING IN HERE IS A CACHE OF SOMEBODY ELSE'S DECISION. The tier, the
-// square feet left, whether a layout may run — all of it is api/billing.js's
-// answer, held here so the profile menu can print a number without a round trip.
-// Nothing in this file is allowed to be the reason a layout goes ahead: the
-// editor asks the server every time, and this state only decides what the screen
-// says while it waits.
-//
-// That is worth being strict about because the temptation is the opposite. It
-// would be very easy to check `area.left` locally, skip the request when it looks
-// fine, and save 200ms — and then the check that matters lives in a React memo
-// that anybody can edit in a console.
-//
-// SO THE CONTRACT IS: claim(), await, then act. The gate is a network call.
-// ---------------------------------------------------------------------------
-
+// Browser state only mirrors the server's entitlement decision. Every layout
+// claim still goes through /api/billing so the three-plan limit cannot be
+// bypassed by changing React state. Render passes are deliberately unmetered.
 const Ctx = createContext(null);
 
 /** The shape before the server has answered — free, and nothing spent. */
@@ -29,8 +14,9 @@ const BLANK = {
   tier: 'free', status: 'inactive', mode: null, cancelAtPeriodEnd: false,
   unlimited: false,
   currency: 'USD', periodStart: null, periodEnd: null, lifetime: true,
-  area: { allowed: FREE.area, used: 0, left: FREE.area },
-  passes: { allowed: FREE.renderPasses, used: 0, left: FREE.renderPasses },
+  pricing: { country: null, currency: 'USD', amount: 10, amountMinor: 1000, display: '$10' },
+  area: { allowed: null, used: 0, left: null },
+  passes: { allowed: null, used: 0, left: null },
   // The free tier's headline meter. Paid tiers send a null allowance, which
   // every reader treats as "not metered on this" — see fmtRemaining in plans.js.
   plans: { allowed: FREE.plans, used: 0, left: FREE.plans },
@@ -67,6 +53,13 @@ export async function billingCall(action, body = {}) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || `Billing failed (${res.status})`);
   return json;
+}
+
+async function publicPricing() {
+  const res = await fetch('/api/billing', { headers: { Accept: 'application/json' } });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || `Pricing failed (${res.status})`);
+  return json.pricing;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +124,18 @@ export function BillingProvider({ children }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!user) { setState(BLANK); setReady(true); return BLANK; }
+    if (!user) {
+      try {
+        const pricing = await publicPricing();
+        const next = { ...BLANK, pricing, currency: pricing.currency };
+        if (alive.current) { setState(next); setErr(''); setReady(true); }
+        return next;
+      } catch (e) {
+        console.warn('[billing] could not read regional pricing', e);
+        if (alive.current) { setState(BLANK); setReady(true); }
+        return BLANK;
+      }
+    }
     try {
       const out = await billingCall('state');
       if (alive.current) { setState(out.state); setErr(''); setReady(true); }
@@ -178,18 +182,12 @@ export function BillingProvider({ children }) {
   /** One render pass. `runId` is minted per click, so a retry is a new charge. */
   const claimPass = useCallback(async ({ planId, roomId, runId }) => {
     const fingerprint = fingerprintPass({ planId, roomId, runId });
-    const out = await billingCall('consume', { kind: 'render_pass', planId, fingerprint });
-    if (out.state && alive.current) setState(out.state);
-    return { ...out, fingerprint };
+    return { ok: true, charged: { passes: 0 }, fingerprint };
   }, []);
 
   /** Give one back, because it failed. See releaseAction in api/billing.js. */
   const releasePass = useCallback(async (fingerprint) => {
-    if (!fingerprint) return;
-    try {
-      const out = await billingCall('release', { fingerprint });
-      if (out.state && alive.current) setState(out.state);
-    } catch (e) { console.warn('[billing] release failed', e); }
+    return fingerprint ? { ok: true } : undefined;
   }, []);
 
   /**
@@ -217,7 +215,7 @@ export function BillingProvider({ children }) {
       const opts = {
         key: order.keyId,
         name: 'Super Luminal',
-        description: `${t.name} — ${t.area.toLocaleString('en-IN')} sq ft a month`,
+        description: `${t.name} — unlimited access`,
         // A PRODUCT OF DESIGNOPOLIS, and it belongs here as well as on our own
         // dialog: the Razorpay window is the moment a card number is typed, and
         // the name on it has to be one the payer recognises from their statement.

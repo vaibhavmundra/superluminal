@@ -274,7 +274,21 @@ export const TRACK_DIFFUSER_WATTS = [5, 10, 18];
  */
 export const TRACK_SPOT_WATTS = [3, 5, 7, 9, 12];
 
-/** A floor or table lamp, per piece — and what a chandelier is counted as. */
+/**
+ * A floor or table lamp, per piece.
+ *
+ * ...AND THE DECORATIVE FITTINGS NO LONGER READ IT. A chandelier, a pendant and
+ * a standing lamp are each their own ROW now, and each states its own wattage
+ * off the fitting — out of a RANGE that differs per type, because a chandelier
+ * is several lamps in one body and a floor lamp is one bulb in a shade. See
+ * `LAMP_WATT_RANGES` in lib/ceilingObjects.js, which is where a decorative
+ * fitting's specification lives, and `fixtureGroups` for why they stopped
+ * sharing a row.
+ * IT STAYS BECAUSE IT IS STILL THE FAMILY'S DECLARED CATALOGUE, which is what
+ * `wattsFor` falls back to for any group that does NOT state its own figure —
+ * and because the sconce borrows this family's distribution while keeping a
+ * list of its own. A family with no `watts` is not a family this file can price.
+ */
 export const LAMP_WATTS = [5, 7, 9, 12];
 
 /**
@@ -325,14 +339,14 @@ export const SCONCE_WATTS = [7];
  *           PRODUCT rather than about the country. Absent means "ask the
  *           country" — see STRIP_LUMENS_PER_WATT and `lumensPerWattFor`.
  *
- *   layer   WHICH OF THE THREE JOBS A FITTING IS DOING — 'ambient', 'task' or
- *           'accent'. It is NOT the same question as `split`, and the two must
- *           not be collapsed: `split` is where the light physically goes, which
- *           is a fact about the product, and this is what it is FOR, which is a
- *           fact about the design. A recessed COB in a grid and a recessed COB
- *           aimed at a worktop are the same product throwing light the same way
- *           and they are two different layers of a lighting scheme — which is
- *           why a GROUP may override this, and the spots do. See `analyseSpace`.
+ *   layer   WHICH OF THE TWO JOBS A FITTING IS DOING — 'ambient' or 'task'. It
+ *           is NOT the same question as `split`, and the two must not be
+ *           collapsed: `split` is where the light physically goes, which is a
+ *           fact about the product, and this is what it is FOR, which is a fact
+ *           about the design. A recessed COB in a grid and a recessed COB aimed
+ *           at a worktop are the same product throwing light the same way and
+ *           they are two different layers of a lighting scheme — which is why a
+ *           GROUP may override this, and the spots do. See `analyseSpace`.
  *
  *           THE COVES ARE AMBIENT, both of them, and that is stated rather than
  *           derived. A reverse cove washes a wall, which is a mark against
@@ -340,6 +354,26 @@ export const SCONCE_WATTS = [7];
  *           things in this app that can carry a room's general level on its own,
  *           and a lighting designer reading this panel is asking "what is
  *           lighting the room" before "what is lighting the pictures".
+ *
+ *           --- AND THERE WAS A THIRD, 'accent', WHICH HAS GONE --------------
+ *           A CHANDELIER, A PENDANT, A FLOOR LAMP, A SCONCE AND A SHELF STRIP
+ *           WERE FILED UNDER IT, and it never earned its place: the readout has
+ *           only ever printed TWO figures, and accent light was folded into the
+ *           ambient one before it was printed (see `contributions` below, which
+ *           used to do that addition). So the third layer existed solely to put
+ *           those fittings in a section of their own in the fixture list — and
+ *           what that bought was a chandelier filed away from every other thing
+ *           that lights a room, in a section people did not think to open, with
+ *           its wattage control inside it.
+ *           THEY LIGHT THE ROOM, WHICH IS THE WHOLE TEST. A pendant throws in
+ *           every direction, a floor lamp throws up at the ceiling and out
+ *           through its shade, a sconce washes a wall, a shelf strip lifts a
+ *           recess. None of them is aimed at a work surface. That is the same
+ *           sentence the fold below was already making, so saying it here
+ *           instead removes a layer rather than losing one.
+ *           TWO VALUES AND TWO SECTIONS, so a row cannot carry a layer the
+ *           panel has no section for — which would be a fitting that is on the
+ *           drawing, in the arithmetic, and nowhere in the list.
  *
  * THE SIX THE BRIEF NAMES ARE ALL HERE, INCLUDING ONE NOTHING PLACES YET.
  * `panel` has no tool behind it, so no row can currently be built from it — it
@@ -454,7 +488,7 @@ export const FIXTURE_FAMILIES = [
        row. See the note in that file's header on why it is keyed by profile and
        not by family.
        SEE `LAMP_DEFAULT_WATTS` for why the default is 7 and not 9. */
-    id: 'lamp', label: 'Floor / table lamp', unit: 'nos', layer: 'accent',
+    id: 'lamp', label: 'Floor / table lamp', unit: 'nos', layer: 'ambient',
     split: { ceiling: 0.25, walls: 0.5, floor: 0.25 },
     watts: LAMP_WATTS, defaultWatts: LAMP_DEFAULT_WATTS, lumens: null,
   },
@@ -473,12 +507,12 @@ export const FIXTURE_FAMILIES = [
        does. `borrowed` says whose figures these are.
        ONE WATTAGE AND NOT A LIST: a sconce is specified at 7 W. See
        SCONCE_WATTS. */
-    id: 'sconce', label: 'Wall sconce', unit: 'nos', borrowed: 'lamp', layer: 'accent',
+    id: 'sconce', label: 'Wall sconce', unit: 'nos', borrowed: 'lamp', layer: 'ambient',
     split: { ceiling: 0.25, walls: 0.5, floor: 0.25 },
     watts: SCONCE_WATTS, defaultWatts: 7, lumens: null,
   },
   {
-    id: 'shelf_strip', label: 'Shelf LED strip', unit: 'm', borrowed: 'reverse_cove', layer: 'accent',
+    id: 'shelf_strip', label: 'Shelf LED strip', unit: 'm', borrowed: 'reverse_cove', layer: 'ambient',
     split: { ceiling: 0.0, walls: 0.8, floor: 0.2 },
     watts: STRIP_WATTS_PER_M, defaultWatts: 5, lumens: null, loss: STRIP_LOSS,
     lumensPerWatt: STRIP_LUMENS_PER_WATT,
@@ -795,7 +829,35 @@ export function analyseSpace({
       label: g.label ?? family.label,
       unit: family.unit,
       count: g.count ?? 0, lengthFt: g.lengthFt ?? 0, metres: perMetre ? qty : null,
-      watts: w, wattOptions: family.watts, split: family.split,
+      /* THE FAMILY'S LIST UNLESS THE GROUP BROUGHT ITS OWN, which is the same
+         "a group may state its own" rule the wattage two lines up follows and
+         for the same reason: the `lamp` family covers a chandelier, a pendant
+         and a standard lamp, and the three are not sold at the same figures.
+         See `LAMP_WATTAGES` in lib/ceilingObjects.js. */
+      watts: w, wattOptions: g.wattOptions ?? family.watts, split: family.split,
+      /* WHAT THIS ROW READS WITH NOTHING STORED, and it is not always the
+         family's default. The spots are why — a directional spot and an ambient
+         downlight are one family and two catalogue lines, 5 W against 7 — and
+         `wattsFor` above already honours `g.defaultWatts` when the family sells
+         it. This is the SAME question asked with an empty store, so the two
+         cannot disagree: reuse rather than a second copy of the fallback rule.
+         IT IS ON THE ROW BECAUSE THE WRITE NEEDS IT. "A choice back at the
+         default stores nothing" is the rule every override in this app follows,
+         and the reducer can only apply it to the right number if it is told the
+         right number — it was being handed the family's, so the 7 W chip on a
+         spot row deleted the override and the row fell back to 5. See
+         `setRowWatts` in features/lighting-planner. */
+      /* ...AND A ROW THAT IS NOT BUYING OFF THE FAMILY'S CATALOGUE KEEPS ITS
+         OWN. `wattsFor` validates a fallback against the family's list and
+         discards anything that is not on it, which is right for every row that
+         IS a catalogue line and wrong for the one kind that is not: a
+         chandelier's 36 W is not in `LAMP_WATTS` and could not be — that list
+         is four bare-lamp figures and this is six of them in one body. A row
+         carrying its own range or its own list has already said the family's
+         catalogue does not govern it, so its default is believed. */
+      defaultWatts: (g.wattRange || g.wattOptions) && g.defaultWatts != null
+        ? Number(g.defaultWatts)
+        : wattsFor(family.id, null, key, g.defaultWatts ?? null),
       /* THE TWO THINGS A ROW CAN CARRY THAT THE FAMILY CANNOT ------------------
          `wattRange` is a CONTINUOUS choice where the family offers a list, and
          `beam` is an optic. Both belong to a hand-placed fitting and to nothing
@@ -849,33 +911,29 @@ export function analyseSpace({
      WHAT LIGHTS THE ROOM AND WHAT LIGHTS THE WORK ARE TWO FIGURES, and a
      readout that only gives their sum cannot say the one thing a lighting
      designer wants said: that a room reaching its number on spots is not a lit
-     room. `achieved` is these three added up, always — the split groups the
-     rows, it does not change the arithmetic.
-     ALL THREE KEYS ARE PRESENT AT 0, so a caller can print a layer without
-     first asking whether the room has one. See `layer` on the rows above for
-     which fitting is in which. */
-  const byLayer = { ambient: 0, task: 0, accent: 0 };
-  for (const r of rows) byLayer[r.layer] = (byLayer[r.layer] ?? 0) + r.netLumens;
+     room. `achieved` is these two added up, always — the split groups the rows,
+     it does not change the arithmetic.
+     BOTH KEYS ARE PRESENT AT 0, so a caller can print a layer without first
+     asking whether the room has one. See `layer` on the rows above for which
+     fitting is in which.
 
-  /* --- ...AND THE TWO FIGURES THE READOUT PRINTS, WHICH ARE NOT THE THREE ---
-     ACCENT LIGHT IS AMBIENT LIGHT AS FAR AS A ROOM'S LEVEL GOES. A sconce
-     washes a wall, a pendant throws in every direction, a shelf strip lifts a
-     recess — none of them is aimed at a work surface, and all of that light ends
-     up in the room the same way a cove's does. The THREE layers are still what a
-     scheme is designed in, and the fixture list groups by them; the READING is
-     "how much of this room is being washed, and how much is being pointed at
-     something", which is two figures.
-     SO THE GROUPING AND THE ACCOUNTING ARE BOTH HERE, and neither is derived in
-     a component. A panel adding two of the three together would be a second
-     place that decides what ambient means. */
-  const contributions = {
-    ambient: byLayer.ambient + byLayer.accent,
-    task: byLayer.task,
-  };
+     THIS WAS TWO OBJECTS AND IT IS NOW ONE. There was a `byLayer` with three
+     keys and a `contributions` that added two of them together, because a third
+     layer — 'accent' — grouped the chandeliers, the sconces and the shelf strips
+     in the fixture list while contributing to the ambient figure like everything
+     else. With that layer gone (see the note on `layer` in FIXTURE_FAMILIES) the
+     two objects held the same two numbers, which is a second place that decides
+     what ambient means and the exact thing this file argues against elsewhere.
+     The name the readers use is the one that survived — Lumens.jsx prints
+     `contributions`, and nothing outside this file ever read `byLayer`. */
+  const contributions = { ambient: 0, task: 0 };
+  for (const r of rows) {
+    contributions[r.layer] = (contributions[r.layer] ?? 0) + r.netLumens;
+  }
 
   return {
     ref, areas, luReq, required, lumensPerWatt, rows, achieved,
-    byLayer, contributions,
+    contributions,
     shortfall: Math.max(0, required - achieved),
     ok: achieved >= required,
   };

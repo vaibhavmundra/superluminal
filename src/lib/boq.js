@@ -184,6 +184,15 @@ export const FIXTURES = [
 /**
  * Placed on the plan, counted, and deliberately not billed.
  *
+ * THE SECTION IS CALLED "OTHER ITEMS", AND IT WAS "CEILING ITEMS". Renamed on
+ * request (2026-09-11) and the name it lost was wrong twice over: three of
+ * these are not on a ceiling, and two of them — the chandelier and the standing
+ * lamp — are LIGHTS, which made "ceiling items" read as a category of
+ * not-lights that two lights were somehow in. What the seven actually share is
+ * the sentence below: somebody else supplies them and this schedule coordinates
+ * with them. The heading is in three places and all three say the same thing —
+ * BOQView, `boqTable` and `boqSheets`.
+ *
  * IT WAS "PLACED ON THE CEILING" AND TWO OF THESE ARE NOT. A split AC's indoor
  * unit is on a wall and a geyser is over a door; they are here for the reason
  * the other four are — somebody else supplies them, this drawing has to
@@ -260,6 +269,45 @@ export const trackMetres = (lengthFt) => (
  * turns a strip's pixel run into metres, and without it the strips are counted
  * but not measured — which is the honest outcome of not having a scale.
  */
+/* --- THE LINES THAT ARE NOT IN THE CATALOGUE ------------------------------
+   A HAND-PLACED DOWNLIGHT IS NOT A PRODUCT THIS FILE CAN NAME IN ADVANCE.
+   Every other entry in FIXTURES is a fitting the ENGINE buys: the grid's 7 W at
+   36 degrees, the wet room's 5 W at 30, the task spot's 5 W at 30. Each is one
+   line because each is one decision the app made once, off the catalogue.
+
+   A COB SOMEBODY PLACED WAS SPECIFIED AT THE MOMENT IT WAS PUT DOWN — any whole
+   wattage from 3 to 55 (see COB_WATT_RANGE) against any of eight optics — so
+   the products on a drawing are whatever was actually chosen on it, and there
+   is no fixed list to seed. That is why these lamps were absent from the
+   schedule entirely rather than merely mis-grouped: `q` is seeded from
+   BILLED_IDS, and a fitting with no catalogue id had nowhere to be counted.
+
+   ONE LINE PER (WATTAGE, BEAM) PAIR, WHICH IS THE WHOLE SPECIFICATION. Two 7 W
+   lamps at 30 and 45 degrees are two different products and cannot share an
+   order line — that is the rule this catalogue already states twice, at
+   `small-narrow` and at `art-spot`, both of which exist only because a beam
+   angle differed. The same holds the other way: 7 W and 12 W at one angle are
+   two lamps. So the pair is the key, and neither half of it alone will do.
+
+   AN ARRAY'S LAMPS ARE THE SAME PRODUCT AS A LOOSE ONE and merge into the same
+   line. A ring of twelve is a layout, not a fitting: the contractor orders
+   twelve of the lamp, and a separate "array" line would be this drawing's
+   authoring history leaking into somebody's purchase order. */
+export const cobLineId = (watts, beam) => `cob-${watts}-${beam}`;
+
+const cobLine = (watts, beam) => ({
+  id: cobLineId(watts, beam),
+  /* THE SPECIFICATION IS IN THE LABEL AS WELL AS IN THE COLUMNS, because the
+     schedule is read as a list of descriptions and "Recessed COB downlight" six
+     times over with the numbers three columns away is a list nobody can scan.
+     The catalogue's own lines do the same thing in words — "small", "large",
+     "narrow beam" — and these have figures instead because the figures are
+     what was chosen. */
+  label: `Recessed COB downlight — ${watts} W, ${beam}°`,
+  unit: 'nos', watts, beam, lumens: null,
+  note: 'placed by hand — specified per fitting',
+});
+
 export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
                            /* --- THE MAGNETIC TRACKS AND THEIR MODULES --------
                               THEIR OWN TWO ARGUMENTS, beside `spots` and for its
@@ -278,8 +326,49 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
                               which room it belongs to (its centre) rather than
                               this file re-deriving it. */
                            magTracks = [], modules = [],
+                           /* --- EVERY DOWNLIGHT A HAND PUT DOWN -------------
+                              ITS OWN ARGUMENT, beside `spots` and `magTracks`
+                              and for their reason: none of them is derived from
+                              the layout, so none can be read off a room.
+                              `r.plan.lights` is what the gridding ENGINE placed;
+                              a COB somebody clicked onto the ceiling is in
+                              `manualCobs`, and a lamp on a ring is one of an
+                              array's — see `projectArrayCobsPx`. Neither was
+                              ever handed to this function, which is why they
+                              were missing from the schedule rather than
+                              mis-counted in it.
+                              ONE LIST FOR BOTH, resolved by the caller: they are
+                              the same product and the difference between them is
+                              how they were positioned. Each entry needs
+                              `roomId`, `watts` and `beam` and nothing else. */
+                           cobs = [],
                            pxPerFt = null, plan = null } = {}) {
   const lit = rooms.filter((r) => r.plan?.ok);
+
+  /* WHICH (WATTAGE, BEAM) PAIRS ARE ACTUALLY ON THIS DRAWING, gathered before
+     the rooms are walked so that the totals loop and the line list below agree
+     about what exists. Insertion-ordered by first appearance and then sorted,
+     so the schedule numbers the same way twice for the same plan. */
+  const cobSpecs = new Map();
+  const cobIdOf = (c) => {
+    const w = Number(c?.watts);
+    const b = Number(c?.beam);
+    /* A LAMP WITH NO SPECIFICATION IS NOT INVENTED A LINE. Every COB this app
+       places is given both figures at the moment of the press, so this can only
+       be malformed data — and the alternative is a `cob-NaN-NaN` row on
+       somebody's order. It is dropped, exactly as a track module with no
+       catalogue line is.
+       `> 0` AND NOT `Number.isFinite`, WHICH IS THE TEST THAT LET ONE THROUGH:
+       `Number(null)` is 0 and 0 is perfectly finite, so a lamp with a null
+       wattage became a "Recessed COB downlight — 0 W" line drawing nothing.
+       Neither figure can legitimately be zero — there is no nought-watt lamp
+       and no nought-degree optic — so the positive test is both the stricter
+       one and the truer one. */
+    if (!(w > 0) || !(b > 0)) return null;
+    const id = cobLineId(w, b);
+    if (!cobSpecs.has(id)) cobSpecs.set(id, cobLine(w, b));
+    return id;
+  };
 
   // --- per room
   const byRoom = lit.map((r) => {
@@ -305,6 +394,19 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
     for (const s of spots) {
       if (s.roomId !== r.id || s.rejected) continue;
       const id = s.fixture || 'spot';
+      if (q[id] == null) q[id] = 0;
+      q[id]++;
+    }
+
+    /* AND THE ONES A HAND PUT DOWN, ON THEIR OWN LINE PER SPECIFICATION. The
+       loop is the spots' loop with the catalogue id replaced by the pair — see
+       `cobLineId`. `q[id] == null` seeds it, which is the same guard the three
+       loops above use and the reason a line outside BILLED_IDS can be counted
+       here at all. */
+    for (const c of cobs) {
+      if (c.roomId !== r.id) continue;
+      const id = cobIdOf(c);
+      if (!id) continue;
       if (q[id] == null) q[id] = 0;
       q[id]++;
     }
@@ -405,7 +507,16 @@ export function buildBOQ({ rooms = [], accents = [], spots = [], objects = [],
     for (const [k, n] of Object.entries(r.runsBy)) runsBy[k] = (runsBy[k] ?? 0) + n;
   }
 
-  const lines = FIXTURES.map((f) => {
+  /* THE CATALOGUE AND THEN WHAT WAS CHOSEN BY HAND, in that order and with the
+     same arithmetic applied to both — one `map` over a list built from two
+     sources rather than two maps that would drift about how a load is worked
+     out. Sorted by wattage and then by optic so the six hand-placed lines read
+     as a range of one product rather than as the order they happened to be
+     clicked in. */
+  const catalogue = [...FIXTURES, ...[...cobSpecs.values()].sort(
+    (a, b) => a.watts - b.watts || a.beam - b.beam)];
+
+  const lines = catalogue.map((f) => {
     const qty = total[f.id] ?? 0;
     // A PASSIVE LINE'S LOAD IS ZERO AND THAT IS A STATEMENT. See `passive` on
     // the track profile: null would put the line in the schedule's list of
@@ -639,7 +750,7 @@ export function boqTable(boq, { perRoom = true } = {}) {
 
   if (boq.coordination.length) {
     rows.push([]);
-    rows.push(['CEILING ITEMS — coordination only, not billed']);
+    rows.push(['OTHER ITEMS — coordination only, not billed']);
     rows.push(['Item', 'Description', 'Qty', 'Unit', '', '', '', '']);
     boq.coordination.forEach((c, i) => {
       rows.push([String(i + 1), c.label, String(c.qty), 'nos', '', '', '', '']);
@@ -870,8 +981,8 @@ export function boqSheets(boq) {
   let coordHead = null;
   if (boq.coordination.length) {
     rows.push(gap());
-    rows.push([txt('CEILING ITEMS', 'section')]);
-    rows.push([txt('Coordination only — on the drawing because they occupy ceiling, and not billed.', 'sub')]);
+    rows.push([txt('OTHER ITEMS', 'section')]);
+    rows.push([txt('Coordination only — on the drawing because the electrical work has to allow for them, and not billed.', 'sub')]);
     coordHead = at();
     rows.push([txt('#', 'h'), txt('Description', 'h'), txt('Qty', 'hr'), txt('Unit', 'hc'),
                txt('', 'h'), txt('', 'h'), txt('', 'h'), txt('', 'h')]);

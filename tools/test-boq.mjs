@@ -14,7 +14,8 @@
 // ---------------------------------------------------------------------------
 
 import zlib from 'zlib';
-import { buildBOQ, boqTable, FIXTURES, FIXTURE_BY_ID, runMetres } from '../src/lib/boq.js';
+import { buildBOQ, boqTable, boqSheets, cobLineId,
+         FIXTURES, FIXTURE_BY_ID, runMetres } from '../src/lib/boq.js';
 import { setRunEnd, moveRun } from '../src/lib/accentPlace.js';
 import { boqToCSV, boqToXLSX, boqToPDF, crc32, cellRef, isNumeric,
          xmlEscape, pdfText, textWidth, zipStore } from '../src/lib/boqExport.js';
@@ -209,7 +210,7 @@ const rows = boqTable(boq);
   ok(rows.some((r) => r[0] === 'Item'), 'there is a header row');
   ok(rows.some((r) => r[1] === 'Total fittings'), 'and a totals row');
   ok(rows.some((r) => r[0] === 'SPACE BREAKDOWN'), 'and the space breakdown');
-  ok(rows.some((r) => String(r[0]).startsWith('CEILING ITEMS')), 'and the coordination block');
+  ok(rows.some((r) => String(r[0]).startsWith('OTHER ITEMS')), 'and the coordination block');
   ok(rows.some((r) => String(r[2]).includes('excludes') || String(r[1]) === 'Load excludes'),
     'and the exclusion is on the face of it');
   ok(rows.every((r) => Array.isArray(r)), 'every row is an array');
@@ -528,6 +529,94 @@ console.log('\n-- a reverse cove is its own product, on the same tape --');
   const living = boqTable(b).find((r) => r[0] === 'Living');
   ok(near(Number(living[6]), 19 * 0.3048, 0.01),
     `which sums the room's tape: ${living[6]} m`);
+}
+
+/* --- THE DOWNLIGHTS A HAND PUT DOWN, WHICH WERE NOT ON THE SCHEDULE AT ALL --
+   `rooms` CARRIES WHAT THE GRIDDING ENGINE PLACED AND NOTHING ELSE, so a plan
+   laid out by hand scheduled nothing: the lamps live in `manualCobs` and in the
+   arrays, and neither list was ever handed to `buildBOQ`. They arrive as `cobs`
+   now, and the rule about how they GROUP is the thing worth pinning down —
+   see `cobLineId`. */
+{
+  const empty = (id, name) => ({ id, outline: { name },
+    plan: { ok: true, stats: { areaSqft: 200 }, lights: [] }, tracks: [] });
+  /* TWO LOOSE LAMPS AT 7 W / 30°, one at 7 W / 45° — the same wattage at
+     another OPTIC — one at 12 W / 30° — the same optic at another WATTAGE —
+     and a ring of eight at 7 W / 30°, which is the same product as the first
+     two and must not be a line of its own. */
+  const b = buildBOQ({
+    rooms: [empty('r1', 'Living'), empty('r2', 'Bed')],
+    cobs: [
+      { roomId: 'r1', watts: 7, beam: 30 },
+      { roomId: 'r1', watts: 7, beam: 30 },
+      { roomId: 'r1', watts: 7, beam: 45 },
+      { roomId: 'r2', watts: 12, beam: 30 },
+      ...Array.from({ length: 8 }, () => ({ roomId: 'r2', watts: 7, beam: 30 })),
+    ],
+    pxPerFt: PX, plan: 'cobs',
+  });
+  const cob = b.lines.filter((l) => l.id.startsWith('cob-'));
+  const by = Object.fromEntries(cob.map((l) => [l.id, l]));
+
+  ok(cob.length === 3, `three specifications, three lines (got ${cob.length})`);
+  ok(by[cobLineId(7, 30)]?.qty === 10,
+    `the ring and the loose lamps share a line where the pair matches (${by[cobLineId(7, 30)]?.qty})`);
+  ok(by[cobLineId(7, 45)]?.qty === 1,
+    'the same wattage at another beam angle is a different product');
+  ok(by[cobLineId(12, 30)]?.qty === 1,
+    '...and so is the same beam angle at another wattage');
+  /* SORTED, so a plan numbers its schedule the same way twice. */
+  ok(cob.map((l) => l.id).join() === [cobLineId(7, 30), cobLineId(7, 45),
+                                      cobLineId(12, 30)].join(),
+    'by wattage and then by optic');
+  ok(/7 W, 30/.test(by[cobLineId(7, 30)].label),
+    `the specification is in the description too: "${by[cobLineId(7, 30)].label}"`);
+
+  /* AND THEY REACH THE FIGURES AT THE FOOT OF THE SHEET. A line counted into
+     the table and left out of the totals is worse than one that is missing
+     from both, because the sheet then contradicts itself. */
+  ok(cob.every((l) => l.load === l.qty * l.watts), 'each line states its own load');
+  ok(b.totals.fittings === 12, `the fitting count includes them (${b.totals.fittings})`);
+  ok(b.totals.watts === 89, `and so does the connected load (${b.totals.watts} W)`);
+  ok(!b.totals.unstated.length,
+    'none of them lands in the "load excludes" caveat — every one states a wattage');
+  ok(b.rooms[0].qty[cobLineId(7, 30)] === 2 && b.rooms[1].qty[cobLineId(7, 30)] === 8,
+    'and each space counts its own');
+  ok(boqTable(b).some((r) => r[1] === by[cobLineId(7, 30)].label),
+    'the exported grid carries the line, like any other');
+
+  /* A LAMP WITH NO SPECIFICATION INVENTS NO PRODUCT. `Number(null)` is 0 and 0
+     is finite, so the obvious guard let a "0 W" line onto somebody's order —
+     which is why the test is `> 0` and why this case is pinned. */
+  const bad = buildBOQ({ rooms: [empty('r1', 'Living')], pxPerFt: PX,
+    cobs: [{ roomId: 'r1', watts: null, beam: 30 },
+           { roomId: 'r1', watts: 7, beam: undefined },
+           { roomId: 'r1', watts: 0, beam: 0 }] });
+  ok(!bad.lines.some((l) => l.id.startsWith('cob-')),
+    'a lamp with a null, missing or zero figure is dropped rather than billed');
+}
+
+/* --- THE COORDINATION BLOCK IS "OTHER ITEMS" ------------------------------
+   RENAMED BECAUSE THE OLD NAME WAS WRONG TWICE: three of the seven are not on
+   a ceiling, and two of them are lights. Asserted in all three places it is
+   written, because it was written in three places. */
+{
+  const b = buildBOQ({ rooms: [{ id: 'r1', outline: { name: 'Living' },
+    plan: { ok: true, stats: { areaSqft: 200 }, lights: [] } }],
+    objects: [{ kind: 'chandelier' }, { kind: 'standing_lamp' }, { kind: 'fan' }],
+    pxPerFt: PX });
+  ok(b.coordination.length === 3, 'the chandelier, the standing lamp and the fan are in it');
+  const rows = boqTable(b).map((r) => r.join('|'));
+  ok(rows.some((r) => r.startsWith('OTHER ITEMS')), 'the CSV/PDF block is headed OTHER ITEMS');
+  ok(!rows.some((r) => /CEILING ITEMS/.test(r)), '...and nothing still says CEILING ITEMS');
+  const sheet = boqSheets(b)[0].rows.flat().map((c) => c?.v);
+  ok(sheet.includes('OTHER ITEMS'), 'and so is the spreadsheet\'s');
+  /* THE PER-SPACE BLOCK STAYS IN THE EXPORTS, which is the half of this change
+     that is easy to take too far: it came off the SCREEN, where the drawing
+     answers the same question better, and a schedule read away from the
+     drawing still needs it. */
+  ok(rows.some((r) => r.startsWith('SPACE BREAKDOWN')),
+    'the per-space breakdown is still exported');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

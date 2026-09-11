@@ -32,7 +32,7 @@ const HOUSE = '/designopolis_logo.png';
 // A trust dialog with a form in it, rather than a form with a logo on top.
 // ---------------------------------------------------------------------------
 
-export default function CheckoutDialog({ tier, defaults = {}, busy = false, error = '',
+export default function CheckoutDialog({ tier, pricing = null, defaults = {}, busy = false, error = '',
                                          onCancel, onPay }) {
   const [name, setName] = useState(defaults.name || '');
   const [email, setEmail] = useState(defaults.email || '');
@@ -55,7 +55,8 @@ export default function CheckoutDialog({ tier, defaults = {}, busy = false, erro
   const contactOk = !contact.trim() || phoneDigits.length >= 8;
   const ready = name.trim().length > 1 && emailOk && contactOk && !busy;
 
-  const price = useMemo(() => `$${tier.usd}`, [tier.usd]);
+  const price = useMemo(() => pricing?.display || `$${tier.usd}`,
+    [pricing?.display, tier.usd]);
 
   const submit = (e) => {
     e.preventDefault();

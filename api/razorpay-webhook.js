@@ -77,6 +77,9 @@ const PROJECT_URL = process.env.SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const WEBHOOK_SECRET = process.env.RZP_WEBHOOK_SECRET || '';
 const CURRENCY = (process.env.RZP_CURRENCY || 'USD').toUpperCase();
+const RESEND_KEY = process.env.RESEND_API_KEY || '';
+const SITE = String(process.env.PUBLIC_SITE_URL || 'https://superluminal.design').replace(/\/$/, '');
+const CONFIRMATION_FROM = 'Super Luminal <hello@superluminal.design>';
 
 const enc = encodeURIComponent;
 
@@ -161,6 +164,75 @@ const addMonth = (from) => {
   if (d.getUTCDate() < day) d.setUTCDate(0);
   return d.toISOString();
 };
+
+const esc = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+
+async function sendPaymentConfirmation({ owner, subscriptionId, payment, periodEnd }) {
+  if (!RESEND_KEY) throw new Error('Resend is not configured');
+  if (!subscriptionId) throw new Error('The charged subscription has no subscription id');
+  if (!payment?.id) throw new Error('The charged subscription has no payment id');
+
+  const prior = await rest('payment_notifications?provider=eq.razorpay'
+    + `&provider_subscription_id=eq.${enc(subscriptionId)}&kind=eq.subscription_confirmation`
+    + '&select=id&limit=1');
+  if (prior.length) return;
+
+  const profiles = await rest(`profiles?select=email,full_name&id=eq.${enc(owner)}&limit=1`);
+  const email = String(profiles[0]?.email || '').trim().toLowerCase();
+  if (!email) throw new Error('The subscriber has no email address');
+
+  const currency = String(payment.currency || CURRENCY).toUpperCase();
+  const amount = Number(payment.amount) / 100;
+  const paid = Number.isFinite(amount)
+    ? new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en-US', {
+        style: 'currency', currency, maximumFractionDigits: 2,
+      }).format(amount)
+    : currency;
+  const name = String(profiles[0]?.full_name || '').trim().split(/\s+/)[0] || 'there';
+  const accessUntil = periodEnd
+    ? new Date(periodEnd).toLocaleDateString('en', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${RESEND_KEY}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `studio-subscription/${subscriptionId}`,
+      },
+      body: JSON.stringify({
+        from: CONFIRMATION_FROM,
+        to: [email],
+        subject: 'Your Studio subscription is confirmed',
+        text: `Hi ${name},\n\nWe received your ${paid} payment and your Super Luminal Studio subscription is active. You now have unlimited access to the app.${accessUntil ? `\n\nYour current paid period runs until ${accessUntil}.` : ''}\n\nOpen Super Luminal: ${SITE}/dashboard\n\nThank you,\nSuper Luminal`,
+        html: `<p>Hi ${esc(name)},</p><p>We received your <strong>${esc(paid)}</strong> payment and your Super Luminal Studio subscription is active.</p><p>You now have unlimited access to the app.</p>${accessUntil ? `<p>Your current paid period runs until ${esc(accessUntil)}.</p>` : ''}<p><a href="${esc(SITE)}/dashboard" style="display:inline-block;padding:10px 16px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Open Super Luminal</a></p><p>Thank you,<br>Super Luminal</p>`,
+      }),
+      signal: ctl.signal,
+    });
+    const raw = await response.text();
+    if (!response.ok) throw new Error(`resend ${response.status}: ${raw.slice(0, 240)}`);
+    let sent = {};
+    try { sent = raw ? JSON.parse(raw) : {}; } catch { /* the 2xx is enough */ }
+    await rest('payment_notifications?on_conflict=provider,provider_subscription_id,kind', {
+      method: 'POST',
+      prefer: 'resolution=ignore-duplicates',
+      body: [{
+        provider: 'razorpay',
+        provider_subscription_id: subscriptionId,
+        provider_payment_id: payment.id,
+        kind: 'subscription_confirmation',
+        recipient: email,
+        provider_message_id: sent?.id || null,
+      }],
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export default async function handler(req, res) {
   const send = (code, obj) => {
@@ -254,6 +326,10 @@ export default async function handler(req, res) {
         patch.current_period_start = secs(subEntity?.current_start) ?? new Date().toISOString();
         patch.current_period_end = secs(subEntity?.current_end)
           ?? addMonth(patch.current_period_start);
+        if (event === 'subscription.charged' && payEntity) {
+          patch.currency = payEntity.currency ?? CURRENCY;
+          patch.amount_minor = payEntity.amount ?? null;
+        }
         // THE CANCELLATION FLAG IS ONLY EVER CLEARED BY MONEY ARRIVING, and
         // `subscription.updated` is not that. Razorpay fires `updated` when a
         // cancel_at_cycle_end is SCHEDULED — which is precisely what cancelAction
@@ -333,6 +409,20 @@ export default async function handler(req, res) {
     await rest('subscriptions', { method: 'POST',
       prefer: 'resolution=merge-duplicates', body: [patch] });
 
+    // `subscription.activated` only says the mandate became active. Razorpay's
+    // charged event is the one that confirms money was received, and its
+    // payment id becomes the Resend idempotency key so webhook retries cannot
+    // send duplicate confirmations.
+    if (event === 'subscription.charged' && tierSlug === 'studio'
+        && moneyMoved(event, payEntity)) {
+      await sendPaymentConfirmation({
+        owner,
+        subscriptionId: subEntity?.id,
+        payment: payEntity,
+        periodEnd: patch.current_period_end,
+      });
+    }
+
     console.log('[webhook]', event, '→', patch.status, patch.tier ?? '(tier unchanged)');
     return send(200, { ok: true, event });
   } catch (err) {
@@ -344,4 +434,4 @@ export default async function handler(req, res) {
   }
 }
 
-export const __test = { verified, addMonth, secs };
+export const __test = { verified, addMonth, secs, moneyMoved };

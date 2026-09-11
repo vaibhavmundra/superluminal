@@ -53,7 +53,8 @@ import { colourFor, parseColour, readHeatmapPalette, heatmapOpacity,
          HEATMAP_OPACITY, HEATMAP_OPACITY_NIGHT } from '../src/features/heatmap/colours.js';
 import { HEATMAP_BANDS, HEATMAP_PLANE, HEATMAP_TARGET_LUX,
          HEATMAP_TARGET_LUX_BY_ROOM, HEATMAP_TARGET_LUX_DEFAULT,
-         heatmapTargetFor, heatmapBandFor } from '../src/features/heatmap/heatmapTargets.js';
+         heatmapTargetFor, heatmapTargetForLayer,
+         heatmapBandFor } from '../src/features/heatmap/heatmapTargets.js';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => {
@@ -680,7 +681,12 @@ sec('12. the adapter reads the app\'s own lists and invents nothing');
                      { x: ftPx(20), y: ftPx(13) }, { x: 0, y: ftPx(13) }];
   const room = {
     id: 'R1', outline: { name: 'Living' },
-    geo: { polygonPx, fansInRoom: [{ kind: 'chandelier', x: ftPx(10), y: ftPx(6.5), r: ftPx(1.5) }] },
+    /* THE OBJECT CARRIES AN ID, because the row key IS the fitting's id now: each
+       decorative lamp is its own row at its own wattage — see `fixtureGroups` —
+       so the heatmap asks for THIS pendant's output rather than for one figure
+       shared by every lamp in the room. */
+    geo: { polygonPx, fansInRoom: [{ id: 'CH1', typeId: 'chandelier', kind: 'chandelier',
+                                     x: ftPx(10), y: ftPx(6.5), r: ftPx(1.5) }] },
     plan: { ok: true, lightsPx: [
       { id: 'L1', x: ftPx(5), y: ftPx(4), fixture: 'small' },
       { id: 'L2', x: ftPx(15), y: ftPx(4), fixture: 'small' },
@@ -697,7 +703,10 @@ sec('12. the adapter reads the app\'s own lists and invents nothing');
     { key: 'spot', familyId: 'cob', count: 1, metres: null, totalOutput: 375, beam: null },
     { key: 'cv1', familyId: 'cove', count: 1, metres: 10, totalOutput: 4000, beam: null },
     { key: 'sconce', familyId: 'sconce', count: 2, metres: null, totalOutput: 1120, beam: null },
-    { key: 'lamp', familyId: 'lamp', count: 1, metres: null, totalOutput: 675, beam: null },
+    /* KEYED BY THE PENDANT'S OWN ID, which is what `fixtureGroups` bumps each
+       decorative lamp under now — one row per fitting, so a 55 W chandelier and
+       a 9 W pendant in one room throw what each of them draws. */
+    { key: 'CH1', familyId: 'lamp', count: 1, metres: null, totalOutput: 675, beam: null },
     { key: 'mcob-1', familyId: 'cob', count: 1, metres: null, totalOutput: 900, beam: 24 },
   ] };
   const rows = indexAnalysisRows(analysis);
@@ -876,10 +885,11 @@ sec('12. the adapter reads the app\'s own lists and invents nothing');
   const stand = buildRoomEmitters({
     room: { ...room,
       geo: { ...room.geo, fansInRoom: [],
-             objectsInRoom: [{ kind: 'standing_lamp', x: ftPx(4), y: ftPx(4),
+             objectsInRoom: [{ id: 'SL1', typeId: 'standing_lamp',
+                               kind: 'standing_lamp', x: ftPx(4), y: ftPx(4),
                                r: ftPx(0.74) }] },
       plan: { ok: true, lightsPx: [] } },
-    analysis: { rows: [{ key: 'lamp', familyId: 'lamp', count: 1, metres: null,
+    analysis: { rows: [{ key: 'SL1', familyId: 'lamp', count: 1, metres: null,
                          totalOutput: 525, beam: null }] },
     metresPerPx, ceilingMm: 2700,
   });
@@ -898,7 +908,7 @@ sec('12. the adapter reads the app\'s own lists and invents nothing');
     !buildRoomEmitters({
       room: { ...room, geo: { ...room.geo, fansInRoom: [], objectsInRoom: [] },
         plan: { ok: true, lightsPx: [] } },
-      analysis: { rows: [{ key: 'lamp', familyId: 'lamp', count: 1, metres: null,
+      analysis: { rows: [{ key: 'SL1', familyId: 'lamp', count: 1, metres: null,
                            totalOutput: 525, beam: null }] },
       metresPerPx, ceilingMm: 2700,
     }).some((q) => q.profileId === 'floor_lamp' || q.profileId === 'chandelier'));
@@ -1054,8 +1064,8 @@ sec('13. the layer, the ordering, the legend and the pointer');
 {
   ok('the heatmap layer exists and is OFF by default',
     'heatmap' in LAYER_DEFAULTS && LAYER_DEFAULTS.heatmap === false);
-  ok('the optional beam-angle annotation is OFF by default',
-    'beamAngles' in LAYER_DEFAULTS && LAYER_DEFAULTS.beamAngles === false);
+  ok('the optional beam-angle annotation is ON by default',
+    'beamAngles' in LAYER_DEFAULTS && LAYER_DEFAULTS.beamAngles === true);
 
   const vite = await createServer({
     server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
@@ -1121,19 +1131,41 @@ sec('13. the layer, the ordering, the legend and the pointer');
   const beamed = renderToStaticMarkup(React.createElement(
     PlanCanvas, { ...canvasProps, heatmapOn: true,
                   layers: { ...layers, beamAngles: true } }));
+  const cleanHeatmap = renderToStaticMarkup(React.createElement(
+    PlanCanvas, { ...canvasProps, heatmapOn: true,
+                  layers: { ...layers, beamAngles: false } }));
   ok('beam footprints are optional dotted circles over the heatmap',
-    !on.includes('lp-beam-footprint')
+    !cleanHeatmap.includes('lp-beam-footprint')
       && beamed.includes('lp-beam-footprint')
       && beamed.includes('stroke-dasharray'));
+  const beamTags = beamed.match(/<circle[^>]*class="lp-beam-footprint"[^>]*>/g) ?? [];
+  ok('...and every footprint is clipped to the room whose beam it annotates',
+    beamTags.length > 0
+      && beamTags.every((tag) => tag.includes('clip-path="url(#roomclip-0)"')));
+
+  const manualBeamed = renderToStaticMarkup(React.createElement(
+    PlanCanvas, { ...canvasProps, heatmapOn: true,
+                  layers: { ...layers, beamAngles: true },
+                  manualCobs: [
+                    { id: 'M1', roomId: 'R1', x: 20, y: 20, throwFt: 8 },
+                    { id: 'ORPHAN', roomId: 'gone', x: 20, y: 20, throwFt: 8 },
+                  ] }));
+  const manualBeamTags = manualBeamed.match(
+    /<circle[^>]*class="lp-beam-footprint"[^>]*>/g) ?? [];
+  const manualBeam = manualBeamTags.find((tag) => tag.includes('cx="20"'));
+  ok('a hand-placed COB uses its home room clip and an orphan draws no ring',
+    manualBeam?.includes('clip-path="url(#roomclip-0)"')
+      && manualBeamTags.length === beamTags.length + 1);
 
   ok('the overlay draws nothing without a palette',
     renderToStaticMarkup(React.createElement(HeatmapOverlay,
       { heatmap: { on: true, rooms: [], palette: null } })) === '');
-  ok('the switch is the bar\'s own capsule and says ON or OFF',
+  ok('the switch is the bar\'s own text-free capsule',
     (() => {
       const m = renderToStaticMarkup(React.createElement(HeatmapSwitch, { on: true }));
       return m.includes('Heatmap') && m.includes('role="switch"')
-        && m.includes('aria-checked="true"') && m.includes('>ON<');
+        && m.includes('aria-checked="true"')
+        && !m.includes('>ON<') && !m.includes('>OFF<');
     })());
   ok('the legend draws nothing with the layer off',
     renderToStaticMarkup(React.createElement(HeatmapLegend,
@@ -1222,8 +1254,15 @@ sec('13. the layer, the ordering, the legend and the pointer');
     renderToStaticMarkup(React.createElement(Probe));
     ok('the hook returns a field for the room', got?.on && got.rooms.length === 1);
     const f = got.rooms[0];
-    ok('...carrying the space\'s own target', f.targetLux
-      === heatmapTargetFor('residential', 'living_space'));
+    /* THE TARGET FOR THE SPACE AND FOR THE LAYER THE DRAWING SHOWS — not for
+       the horizontal one, which stopped being what the hook draws when the
+       heatmap became a single blended `Estimated light level`. Asked through
+       `heatmapTargetForLayer` off the hook's own layer, so this follows a
+       change of shown layer instead of pinning one. */
+    ok('...carrying the space\'s own target, for the layer being shown',
+      f.targetLux === heatmapTargetForLayer(
+        got.layer.id, 'residential', 'living_space')
+      && f.targetLux > 0, `${f.targetLux} for ${got.layer.id}`);
     ok('...and the ratio is lux over that target, cell by cell', (() => {
       for (let k = 0; k < f.ratio.length; k++) {
         if (Number.isNaN(f.ratio[k])) { if (!Number.isNaN(f.lux[k])) return false; continue; }
