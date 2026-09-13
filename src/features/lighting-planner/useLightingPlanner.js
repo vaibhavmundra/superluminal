@@ -142,6 +142,10 @@ export default function useLightingPlanner({
       /* THE PASSES. `run(opts)` is the whole pipeline and every re-run of one
          part of it; `stop()` lands on whatever finished. */
       run: pipeline.run, stop: pipeline.stop,
+      /* ...AND THE PRESS THAT LEAVES THE OUTLINES, which is no longer one of
+         them. It takes the spaces up and opens the design screen at once; the
+         classifier and the bed re-check run behind it. See `confirmOutlines`. */
+      confirmOutlines: pipeline.confirmOutlines,
       /* THE THREE EDITS THAT CHANGE WHAT A SPACE ADDS UP TO. Filling a ceiling's
          grid is `features/fixtures/`'s command, re-exposed here because the
          control it sits under is this panel's — see the space detail. */

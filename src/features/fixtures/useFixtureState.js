@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { idOf, idsOf, selectMany } from '../../lib/selection.js';
+import { idOf, idsOf, toggle } from '../../lib/selection.js';
 import { FAN_SWEEP_MM } from '../../lib/ceilingObjects.js';
 
 /**
@@ -50,8 +50,10 @@ export default function useFixtureState({ sel, setSel }) {
      wattage has. */
   const [fanSweepMm, setFanSweepMm] = useState(FAN_SWEEP_MM);
 
-  /* THE SELECTION IS A LIST FOR CEILING OBJECTS, because Shift-clicking builds
-     one, and they are the only kind that can be several — see `selectMany`.
+  /* THE SELECTION IS A LIST FOR THE THREE KINDS THAT CAN BE DRAGGED AS A GROUP
+     — ceiling objects, hand-placed COBs and arrays. See MULTI_KINDS in
+     lib/selection.js, which carries the note on why a light and a module are
+     not among them.
 
      `selObjId` IS THE PRIMARY — the most recently added — and it is what the
      property panels read. "What sweep is this fan?" and "is this an AC or a
@@ -66,12 +68,22 @@ export default function useFixtureState({ sel, setSel }) {
      rather than about this list. */
   const selObjIds = idsOf(sel, 'object');
   const selObjId = idOf(sel, 'object');
+  /* ...AND THE SAME PAIR FOR THE OTHER TWO. Read straight off the register, so
+     a kind that is not being held answers with the one shared empty array and
+     the dependency arrays downstream do not churn — see `idsOf`. */
+  const selCobIds = idsOf(sel, 'cob');
+  const selArrayIds = idsOf(sel, 'array');
+
+  /* ONE TOGGLE FOR EVERY KIND, AND THE RULE IS IN lib/selection.js.
+     It was written out here for objects alone — a functional setState that
+     rebuilt the list by hand — and copying that three times is three chances
+     for the "taking the last one out clears the register" case to be got wrong
+     in one of them. `toggle` is pure, tested, and knows which kinds can be
+     several; this is only the binding to `setSel`. */
+  const toggleSel = useCallback(
+    (kind, id) => setSel((cur) => toggle(cur, kind, id)), [setSel]);
   /** Add an object to the selection, or take it out if it is already in. */
-  const toggleSelObj = useCallback((id) => setSel((cur) => {
-    const ids = idsOf(cur, 'object');
-    return selectMany('object',
-      ids.includes(id) ? ids.filter((q) => q !== id) : [...ids, id]);
-  }), [setSel]);
+  const toggleSelObj = useCallback((id) => toggleSel('object', id), [toggleSel]);
   const [objDrag, setObjDrag] = useState(null);   // {id, mode, ...} while dragging
 
   // TWO SEPARATE THINGS, and conflating them was half of why this felt wrong.
@@ -334,16 +346,16 @@ export default function useFixtureState({ sel, setSel }) {
      seven machines `pressState` arbitrates between; see lib/pressOwner.js. */
   return {
     objType, setObjType, fanSweepMm, setFanSweepMm,
-    selObjIds, selObjId, toggleSelObj,
+    selObjIds, selObjId, toggleSelObj, toggleSel,
     objDrag, setObjDrag, objMode, setObjMode,
     armed, setArmed, ghost, setGhost,
-    selCobId,
+    selCobId, selCobIds,
     cobOpen, setCobOpen, cobMode, setCobMode,
     cobStanding, setCobStanding,
     cobLock, setCobLock, cobAt, setCobAt,
     cobDraftArray, setCobDraftArray,
     spotAim, setSpotAim,
-    selArrayId, arrayDrag, setArrayDrag,
+    selArrayId, selArrayIds, arrayDrag, setArrayDrag,
     trackMode, setTrackMode, trackAdd, setTrackAdd,
     moduleSpec, setModuleSpec,
     selModuleId, moduleDrag, setModuleDrag,

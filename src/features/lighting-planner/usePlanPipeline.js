@@ -550,6 +550,137 @@ export default function usePlanPipeline({
       refindBeds, absorbBedRows, planAreaSqft, claimSpaces, docActions,
       setPrep, cancelPrep, setPickingId, setOutlinesOpen, milestone]);
 
+  /* --- CONFIRMING THE OUTLINES, WHICH IS NOT A RUN -------------------------
+   *
+   * THE PLAN IS NOT LIT FOR YOU ANY MORE, so the press that leaves this screen
+   * has stopped being the expensive one. It used to mean "compute my layout":
+   * beds, classification, accent zones and task surfaces, up to four model calls
+   * per room, behind a checklist that was a minute long on a six-room flat. That
+   * whole wait existed to produce a design nobody had asked for in detail.
+   *
+   * WHAT IT MEANS NOW IS "THESE OUTLINES ARE RIGHT". The spaces are taken up,
+   * the design screen opens, and the person starts placing light. There is
+   * nothing to watch, so there is no loader — the landing IS the response to the
+   * press.
+   *
+   * TWO PASSES STILL RUN, AND THEY RUN BEHIND THE DESIGN SCREEN.
+   *
+   *   CLASSIFY  what kind of space each one is, which is what sets its lux
+   *             target. A bedroom and a kitchen do not want the same light, and
+   *             nobody should have to say so twice.
+   *   BEDS      where the beds are, which is what lets the ceiling warn somebody
+   *             who is about to put a downlight over a pillow.
+   *
+   * NEITHER BLOCKS ANYTHING. Both only ever ADD — a lux target the panel reads
+   * and a zone the canvas draws — so arriving a few seconds after the user does
+   * costs them nothing and waiting for them costs a few seconds of staring.
+   *
+   * AND NO ACCENTS, NO TASK SURFACES. Those place fittings, and placing fittings
+   * is the user's job now. `run()` still performs them on demand from the
+   * panels' own recompute buttons, which is where an expensive pass belongs: a
+   * press, with a wait the presser asked for.
+   *
+   * THE ORDER IS REVERSED FROM `run()` AND HAS TO BE. There, the beds were
+   * decided BEFORE the layout so the geometry memo was built once with their
+   * zones in it. Here the layout must exist immediately, so it is relit first
+   * and the beds fold in when they arrive — one extra recompute, on a screen the
+   * user is already using, in exchange for the wait disappearing.
+   */
+  const confirmOutlines = useCallback(async (opts = {}) => {
+    const ids = opts?.only ?? null;
+    const inRun = (id) => !ids || ids.includes(id);
+
+    // THE TILL STILL STANDS IN FRONT. Taking up a space is what is charged for,
+    // and that has not changed because the passes behind it did. It is the one
+    // thing awaited before landing: a refusal must not land on a design.
+    if (!await claimSpaces(ids ?? outlines.map((o) => o.id))) return;
+
+    /* --- THE LANDING, AND IT IS SYNCHRONOUS ------------------------------ */
+    docActions.relight(ids);
+    docActions.clearDirty(ids);
+    setPickingId(null);
+    setOutlinesOpen(false);
+    docActions.setView('spaces');
+
+    /* --- ...AND THE TWO PASSES, BEHIND IT -------------------------------- */
+    // NOT AWAITED BY THE CALLER. Everything past here is allowed to take as long
+    // as it takes, and a failure is a console line rather than a screen.
+    (async () => {
+      // THE ROOMS HAVE TO EXIST FIRST, and they cannot until React has
+      // re-rendered with the new litIds — see the note at `roomsRef`. Same wait
+      // the run does, for the same reason; the difference is that nobody is
+      // watching it.
+      let list = [];
+      for (let i = 0; i < 80; i++) {
+        list = (roomsRef.current || []).filter((r) => r.plan?.ok && inRun(r.id));
+        if (list.length) break;
+        await new Promise((res) => setTimeout(res, 60));
+      }
+      if (!list.length) { console.warn('[confirm] no spaces laid out — passes skipped'); return; }
+
+      /* THE MILESTONE FIRES HERE AND NOT AT THE LANDING, and the difference is
+         what it would record. `milestone.current` is REASSIGNED every render and
+         closes over that render's `editorState`, `stats` and `getSnapshot` — so
+         calling it in the same tick as `relight()` runs the closure from the
+         render BEFORE the spaces were taken up, and files a revision of the
+         document as it was a moment earlier, with a snapshot of an empty plan.
+         `run()` bought the same safety with a deliberate half-second beat before
+         its final paint; here the wait for the rooms above already provides it,
+         and provides it for a better reason: by now the layout it is recording
+         demonstrably exists. */
+      milestone.current?.('design');
+
+      // --- what kind of space each one is, which is what sets its lux target
+      const shots = {};
+      let types = roomTypes;
+      const found = {};
+      await mapLimit(list, 3, async (r) => {
+        try {
+          const out = await computeRoomType(r);
+          shots[r.id] = out.shot;
+          found[r.id] = { type: out.type, confidence: out.confidence,
+                          why: out.why, matched: out.matched };
+        } catch (err) {
+          console.warn('[types] failed for', r.outline.name, err);
+          found[r.id] = { type: 'other', confidence: 0, why: 'could not be read', matched: false };
+        }
+        return null;
+      });
+      types = { ...roomTypes, ...found };
+      docActions.mergeRoomTypes(found);
+      console.log('[confirm] room types', found);
+
+      // --- the beds, so the ceiling can warn about a light over a pillow
+      //
+      // A DECLARED BEDROOM WITH NO BED IS THE ONLY THING RE-ASKED, exactly as in
+      // `run()`: the whole-sheet pass on upload is the primary path, and this
+      // resolves the contradiction between two answers already in hand. See
+      // refindBeds.
+      const bedsNow = detections;
+      const bedrooms = list.filter((r) => expectsBed(projectId, types[r.id]?.type));
+      const empty = bedrooms.filter((r) => {
+        const poly = r.plan?.polygonPx ?? r.geo?.polygonPx;
+        return poly ? bedsIn(bedsNow, poly).length === 0 : false;
+      });
+      if (!empty.length) { console.log('[confirm] every bedroom already has a bed'); return; }
+
+      const rows = await mapLimit(empty, 2, async (r) => {
+        try {
+          const out = await refindBeds(r, { reuseShot: shots[r.id] });
+          return { id: r.id, name: r.outline.name,
+                   poly: r.plan?.polygonPx ?? r.geo?.polygonPx ?? null, ...out };
+        } catch (err) {
+          console.warn('[beds] failed for', r.outline.name, err);
+          return null;
+        }
+      });
+      const { found: moreBeds, verdicts } = absorbBedRows(rows, bedsNow);
+      console.log(`[confirm] ${empty.length} bedroom(s) had no bed — added ${moreBeds.length}`,
+        { verdicts });
+    })();
+  }, [outlines, projectId, roomTypes, detections, claimSpaces, docActions,
+      computeRoomType, refindBeds, absorbBedRows, setPickingId, setOutlinesOpen, milestone]);
+
   /** Stop the run where it is and land on whatever finished. */
   const stopPipeline = useCallback(() => {
     cancelPrep.current = true;
@@ -562,5 +693,5 @@ export default function usePlanPipeline({
     outlinesPx, roomTypes, projectId, roomState: prep?.roomState,
   }), [outlinesPx, prep, roomTypes, projectId]);
 
-  return { prep, loaderRooms, run: runPipeline, stop: stopPipeline };
+  return { prep, loaderRooms, run: runPipeline, stop: stopPipeline, confirmOutlines };
 }

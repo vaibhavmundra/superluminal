@@ -238,6 +238,11 @@ export function serialiseEditor(doc, { pxPerFt } = {}) {
     scale: {
       mode: s.scaleMode, refId: s.refId, customFt: s.customFt,
       measure: s.measure, doorPick: s.doorPick, pxPerFtAtSave: pxPerFt ?? null,
+      /* WHAT THE DRAWING SAID ABOUT ITSELF, when it said anything. Unlike the
+         other four this is not a setting the app re-derives — nothing saves the
+         PDF's text layer, so a reopened plan has no strings left to read and the
+         record IS the scale. See `stated` in usePlanDoc. */
+      stated: s.stated ?? null,
     },
     ceilingFt: s.ceilingFt,
 
@@ -648,6 +653,17 @@ export function applyEditor(p, set) {
   set.setUnitId(p.unitId ?? null);
 
   const sc = p.scale || {};
+  /* THE RECORD BEFORE THE MODE, and the order is load-bearing. `setStated` sets
+     the mode itself (see STATED_SET — they are one fact), so restoring it after
+     `setScaleMode` would overwrite a plan whose scale was later re-measured off
+     a door, and put it back on a reading its owner had already rejected.
+
+     UNCONDITIONAL, LIKE `doorPick` BELOW AND UNLIKE THE THREE ABOVE. A guarded
+     `if (sc.stated)` leaves the field UNDEFINED on a plan that never had a
+     reading, where every other field in this function lands on an explicit
+     null — and a document that round-trips `null` into `undefined` is not the
+     document that was saved, whatever it looks like on screen. */
+  set.setStated(sc.stated ?? null);
   if (sc.mode) set.setScaleMode(sc.mode);
   if (sc.refId) set.setRefId(sc.refId);
   if (sc.customFt != null) set.setCustomFt(sc.customFt);

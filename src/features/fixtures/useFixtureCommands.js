@@ -34,7 +34,7 @@ export default function useFixtureCommands({
   arrayOutline, spaceAnalysis, setSel, setOptionPick,
 }) {
   const {
-    cobDraftArray, setCobDraftArray, selObjIds,
+    cobDraftArray, setCobDraftArray, selObjIds, selCobIds, selArrayIds,
     setArrayDrag, setModuleDrag, setFanSweepMm,
     /* WHICH OF THE COB'S TWO GESTURES IS ARMED — read by `takeArrayGeometry`
        alone, which has to decline a guide drawn for any other reason. */
@@ -307,6 +307,24 @@ export default function useFixtureCommands({
     setSel(clear());
   }, [docActions, setSel]);
 
+  /** THE WHOLE SELECTION, for the reason `deleteObjects` states — now that a
+   *  ⌘-click can gather several lamps, a Delete that took only the primary would
+   *  leave three of four behind. Falls back to nothing when the register is
+   *  holding another kind, because `selCobIds` is empty then. */
+  const deleteCobs = useCallback(() => {
+    if (!selCobIds.length) return;
+    docActions.removeCobs(selCobIds);
+    setSel(clear());
+  }, [docActions, selCobIds, setSel]);
+
+  /** ...and the same for arrays. */
+  const deleteArrays = useCallback(() => {
+    if (!selArrayIds.length) return;
+    docActions.removeArrays(selArrayIds);
+    setSel(clear());
+    setArrayDrag((d) => (selArrayIds.includes(d?.id) ? null : d));
+  }, [docActions, selArrayIds, setSel, setArrayDrag]);
+
   /** THE WHOLE SELECTION, not just the primary. Deleting one of four selected
    *  objects and silently leaving the other three is the reading nobody expects,
    *  and it is the one a single-id delete gives. */
@@ -478,11 +496,14 @@ export default function useFixtureCommands({
     autoplace: { fill: autoplaceIn, set: setAutoplace },
     arrays: { place: placeArray, takeGeometry: takeArrayGeometry,
               setSpec: setArraySpec, setShape: setArrayShape,
-              remove: deleteArray,
+              remove: deleteArray, removeSelected: deleteArrays,
               setDraftCount, setDraftSide, setDraftOffset },
     modules: { setSpec: setTrackModuleSpec, isRow: isModuleRow,
                remove: deleteModule, allocateOnTrack },
-    cob: { setSpec: setCobSpec, remove: deleteCob },
+    /* `remove` TAKES ONE BY ID and `removeSelected` takes the whole gathered
+       selection. Both, because the panel's own cross is about the fitting it is
+       showing and the Delete key is about what is picked. */
+    cob: { setSpec: setCobSpec, remove: deleteCob, removeSelected: deleteCobs },
     objects: { remove: deleteObjects, setSweep },
     lights: { reset: resetLightMove },
   };

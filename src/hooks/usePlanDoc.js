@@ -336,6 +336,12 @@ export const DOC_FIELDS = {
      on the plan first. Fans are still detected and are still ceiling obstacles
      — they have simply stopped being a ruler. */
   scaleMode: () => 'door',
+  /* ...AND THERE ARE THREE, because a drawing can state its own.
+     'stated'  read off the dimensions printed on the plan — a chain of figures
+               along a wall, or a room labelled `18'-0" X 12'-0"`. Set by
+               features/dimension-intelligence on upload, and it is a MODE like
+               the other two: picking a door or dragging a reference line moves
+               the mode off it and the reading stops applying. See `stated`. */
   refId: () => 'door900',
   customFt: () => 3,
   // The two ends of the reference line, in plan px. `{ a: null, b: null }` is
@@ -347,6 +353,16 @@ export const DOC_FIELDS = {
      be anchored to the box that was MEASURED rather than looked up in a list
      that can change under it. See `pxPerFt` in App.jsx. */
   doorPick: () => null,
+  /* WHAT THE DRAWING SAID ABOUT ITSELF, ONCE: `{ pxPerFt, confidence, spread,
+     from, at }`, or null when nothing was read. See statedRecord().
+
+     LATCHED, AND THAT IS THE POINT OF STORING IT. A room outline is part of the
+     evidence — a stated size is only a ruler next to a polygon — and outlines
+     are editable, so a scale recomputed from them would move every time a corner
+     was dragged. It is read once, written here, and from then on it is the
+     plan's own number exactly as a door pick is. Nothing saves the text layer,
+     so a plan reopened tomorrow could not re-read it in any case. */
+  stated: () => null,
   /* THE PLAN'S ONE CEILING HEIGHT IN FEET — the figure the accent pass quotes
      to a model. NOT the per-space height: that is `ceilingMm`, in millimetres,
      because a flat has a 2700 bedroom and a 3600 living room in one drawing.
@@ -1228,6 +1244,17 @@ export function docReducer(state, action) {
        updater this replaces said too: the width control only exists under a
        chosen door, so this is the unreachable branch made explicit rather than
        a silent write of `{ mm }` with no id on it. */
+    /* THE DRAWING'S OWN SCALE, AND THE MODE THAT MAKES IT COUNT.
+       TWO FIELDS IN ONE ACTION because they are one fact: a `stated` record
+       that the mode does not point at is a reading nothing applies, and a mode
+       of 'stated' with no record is a plan with no scale at all. Writing them
+       separately would put one of those two states on screen for a render. */
+    case 'STATED_SET': {
+      const next = action.stated ?? null;
+      const withRec = put(state, 'stated', next);
+      return put(withRec, 'scaleMode', next ? 'stated' : 'door');
+    }
+
     case 'DOOR_WIDTH_SET': {
       const cur = state.doorPick;
       if (!cur || cur.mm === action.mm) return state;
@@ -1457,6 +1484,9 @@ export function usePlanDoc(seed) {
     addArray: (array, stamp) => dispatch({ type: 'LIST_ADDED_MINTED',
       field: 'cobArrays', idPrefix: 'carr', stamp, item: array }),
     removeArray: (id) => dispatch({ type: 'LIST_REMOVED', field: 'cobArrays', id }),
+    /* ...AND SEVERAL, which is what Delete on a ⌘-gathered selection needs.
+       The same generic action `removeCobs` uses — see LIST_REMOVED_MANY. */
+    removeArrays: (ids) => dispatch({ type: 'LIST_REMOVED_MANY', field: 'cobArrays', ids }),
     setArraySpec: (id, patch) => dispatch({ type: 'LIST_PATCHED', field: 'cobArrays', id,
       patch: { ...(patch.watts != null ? { watts: clampWatts(patch.watts) } : {}),
                ...(patch.beam != null ? { beam: nearestBeam(patch.beam) } : {}) } }),
@@ -1664,6 +1694,9 @@ export function usePlanDoc(seed) {
     setMeasure: (m) => dispatch({ type: 'FIELD_SET', field: 'measure', value: m }),
     clearMeasure: () => dispatch({ type: 'FIELD_SET', field: 'measure',
                                   value: { a: null, b: null } }),
+    /* WHAT THE DRAWING SAID ITS SCALE WAS. Null puts the door route back. */
+    setStated: (stated) => dispatch({ type: 'STATED_SET', stated }),
+
     /* THE WHOLE PICK, RECT AND ALL — see `doorPick`. Null un-picks. */
     setDoorPick: (pick) => dispatch({ type: 'FIELD_SET', field: 'doorPick', value: pick }),
     /* ...AND THE WIDTH, WHICH IS THE SECOND HALF OF ONE ACT. See

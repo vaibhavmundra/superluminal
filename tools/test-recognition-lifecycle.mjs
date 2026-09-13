@@ -64,6 +64,7 @@ async function fixture(kind) {
   const inputs = { source, img, wallLayerSet, isVector: false, projectId: 'residential',
     restoring: { current: false }, readOnly: false,
     roomNonce: 0, doorNonce: 0, detectNonce: 0, provider: 'judge', pxPerFt: null,
+    defer: false,
     docActions, setDoorState: (s) => states.push(s), setDetectState: (s) => states.push(s),
     setBedSets: (v) => actions.push(['bedSets', v]),
   };
@@ -96,6 +97,25 @@ for (const kind of ['Room', 'Door', 'Furniture']) {
   assert.equal(f.states.length, before, `${kind} ignores late success`);
   assert.equal(f.actions.length, 0, `${kind} does not commit stale answers`);
 }
+/* DEFERRED IS A GATE THAT THE NONCE OPENS, which is the whole mechanism the
+   electrical step runs on: a drawing that states its own scale does not pay for
+   a door call on upload (see features/dimension-intelligence), and the wiring
+   asks for one later by bumping the nonce. A deferral the nonce could NOT
+   reopen would mean a plan whose electricals can never be drawn. */
+{
+  const f = await fixture('Door');
+  assert.equal(f.start({ defer: true }), undefined, 'deferred: no call on upload');
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.states.length, 0, 'deferred: and not even a running state');
+}
+{
+  const f = await fixture('Door');
+  const cleanup = f.start({ defer: true, doorNonce: 1 });
+  await tick();
+  assert.equal(f.calls.length, 1, 'deferred: the nonce still asks');
+  cleanup();
+}
+
 for (const gate of [{ isVector: true }, { projectId: null }, { img: null }]) {
   const f = await fixture('Door'); assert.equal(f.start(gate), undefined);
   assert.equal(f.calls.length, 0);
@@ -121,7 +141,7 @@ for (const gate of [{ isVector: true }, { projectId: null }, { img: null }]) {
 }
 {
   const f = await fixture('Door'); const cleanup = f.start();
-  assert.deepEqual(f.deps, [source, img, false, 'residential', 0]);
+  assert.deepEqual(f.deps, [source, img, false, 'residential', 0, false]);
   assert.equal(f.calls[0].base64, shot.base64);
   const found = [{ id: 'door-1' }];
   f.response.resolve({ doors: found, rejected: [], medianPx: 20 }); await tick();

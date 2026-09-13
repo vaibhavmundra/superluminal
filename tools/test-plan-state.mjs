@@ -38,6 +38,7 @@ const STATE = {
   scaleMode: 'door', refId: 'door900', customFt: 3,
   measure: { a: { x: 10, y: 20 }, b: { x: 210, y: 20 } },
   doorPick: { id: 'd2', mm: 900 },
+  stated: null,
   pxPerFt: 18.5, ceilingFt: 10,
   outlines: [
     { id: 'o1', name: 'Living', pointsDu: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 80 }, { x: 0, y: 80 }],
@@ -274,7 +275,7 @@ section('null is survivable');
 // whose last row was deleted.
 // ---------------------------------------------------------------------------
 
-/* A COMPLETE DOCUMENT. Every one of the sixty-two fields at the value App's own
+/* A COMPLETE DOCUMENT. Every one of the sixty-three fields at the value App's own
    `useState` starts it at, so the round trip is tested over the whole shape
    rather than over whichever fields a fixture happened to mention. A field left
    `undefined` here would round-trip as `[]` or `{}` — applyEditor's `??` doing
@@ -282,7 +283,7 @@ section('null is survivable');
 const EMPTY_DOC = {
   unitId: null, pdfPage: null,
   scaleMode: 'door', refId: 'door900', customFt: 3,
-  measure: { a: null, b: null }, doorPick: null, ceilingFt: 10,
+  measure: { a: null, b: null }, doorPick: null, stated: null, ceilingFt: 10,
   outlines: [], litIds: [], dirtyIds: [], focusId: null, selectedOutlineId: null,
   roomState: { status: 'idle' },
   projectType: null, roomTypes: {},
@@ -341,6 +342,7 @@ const WRITTEN_AS = {
   customFt: 'scale.customFt',
   measure: 'scale.measure',
   doorPick: 'scale.doorPick',
+  stated: 'scale.stated',
   layers: 'ui.layers',
   zoom: 'ui.zoom',
   view: 'ui.view',
@@ -612,6 +614,15 @@ function randomAction(r) {
     { type: 'FIELD_SET', field: 'doorPick',
       value: oneOf([null, { id: 'd2', mm: null, rect: { x0: 1, y0: 2, x1: 9, y1: 4 } }]) },
     { type: 'DOOR_WIDTH_SET', mm: oneOf([700, 750, 900, 1200]) },
+    /* THE SCALE A DRAWING STATED ABOUT ITSELF, and it writes TWO fields — the
+       record and the mode — so the walk exercises the pair that STATED_SET
+       keeps together. Null is generated too: it is what a new plan resets to,
+       and it must put `scaleMode` back rather than leaving a mode pointing at
+       a reading that is gone. */
+    { type: 'STATED_SET', stated: oneOf([null,
+        { pxPerFt: 24.5, confidence: 'high', spread: 0.004,
+          from: [{ source: 'room', detail: `18'-0" X 12'-0" in BED 1` }],
+          at: '2026-01-01T00:00:00.000Z' }]) },
     { type: 'FIELD_SET', field: 'projectType',
       value: oneOf([null, 'residential', 'hospitality', 'office']) },
     { type: 'MAP_MERGED', field: 'roomTypes',
@@ -1466,7 +1477,7 @@ section('the reducer owns what it claims to own');
       manualBoards: [], boardKinds: {}, boardHeights: {}, boardOrders: {},
       unitId: null, pdfPage: null,
       scaleMode: 'door', refId: 'door900', customFt: 3,
-      measure: { a: null, b: null }, doorPick: null, ceilingFt: 10,
+      measure: { a: null, b: null }, doorPick: null, stated: null, ceilingFt: 10,
       projectType: null, roomTypes: {},
       outlines: [], litIds: [], dirtyIds: [], focusId: null, selectedOutlineId: null,
       /* THE SEGMENTER STARTS IDLE, AND THAT IS NOT THE SAME AS THE ABSENT KEY.
@@ -1484,8 +1495,8 @@ section('the reducer owns what it claims to own');
       zoom: 1, view: 'spaces',
     }),
     JSON.stringify(initialDoc()));
-  ok('...and it is sixty-two fields, which is the whole document',
-    fields.length === 62, `${fields.length} fields`);
+  ok('...and it is sixty-three fields, which is the whole document',
+    fields.length === 63, `${fields.length} fields`);
   /* AND THE DOCUMENT IS NOW EXACTLY WHAT THE FIXTURE DESCRIBES. While the
      migration was in progress the two could differ — a field App still held in
      `useState` was in EMPTY_DOC and not in DOC_FIELDS — and that slack is gone.

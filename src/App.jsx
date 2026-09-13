@@ -38,6 +38,7 @@ import useExitHold from './hooks/useExitHold.js';
 import { isFormControl } from './lib/escapeHatch.js';
 import useViewPrefs from './hooks/useViewPrefs.js';
 import useScale from './hooks/useScale.js';
+import useDimensionIntelligence from './features/dimension-intelligence/useDimensionIntelligence.js';
 import usePlanSource from './hooks/usePlanSource.js';
 import useOutlines from './hooks/useOutlines.js';
 import usePlanScene from './features/scene/usePlanScene.js';
@@ -70,6 +71,7 @@ import ShapeMenu from './components/ShapeMenu.jsx';
 import { maxRadiusFt, roundable,
          sizeLabel as shapeSizeLabel } from './lib/ceilingShapes.js';
 import ProjectTypeDialog from './components/ProjectTypeDialog.jsx';
+import BusyModal from './components/BusyModal.jsx';
 import PlanLoader from './components/PlanLoader.jsx';
 import ViewerPanel from './components/ViewerPanel.jsx';
 import BOQView from './components/BOQView.jsx';
@@ -633,7 +635,7 @@ export default function App({
   const {
     selObjIds, selObjId, objDrag, objMode, setObjMode,
     armed, setArmed, ghost, setGhost,
-    selCobId, selArrayId, selModuleId, selLightId,
+    selCobId, selCobIds, selArrayId, selArrayIds, selModuleId, selLightId,
     cobOpen, setCobOpen, cobMode, setCobMode,
     cobStanding, setCobStanding, cobLock,
     /* THE ADJUSTABLE SPOT BETWEEN ITS TWO CLICKS — see `spotAim`. Read here
@@ -1399,15 +1401,38 @@ export default function App({
     docActions.clearLit(); docActions.setFocusId(null);
     setOutlinesOpen(false); docActions.clearDirty();
     docActions.setUnitId(null);
+    /* THE SCALE THE LAST DRAWING STATED ABOUT ITSELF. A latched reading is the
+       one thing on this list that would be actively dangerous to carry over: it
+       is a number, it is plausible, and applied to a different plan it puts the
+       whole building at the wrong size while still looking exactly like a plan.
+       Clearing it also puts `scaleMode` back to 'door' — see STATED_SET. */
+    docActions.setStated(null);
   }, [docActions, initialProjectType, geomState.reset, fixtureReset,
       resetLightingRun]);
 
   // --- the plan source ------------------------------------------------------
   const {
     img, setImg, dxf, setDxf,
-    pdfPage, pdfPick, setPdfPick, pdfRun,
+    pdfPage, pdfPick, setPdfPick, pdfRun, planText, textKind,
     invertedSrc, loadFile, openPdfPage, source, isVector,
   } = usePlanSource({ doc, docActions, initialPdfPage, resetForNewPlan, setBusy });
+
+  /* --- DOES THE DRAWING ALREADY SAY HOW BIG IT IS? -------------------------
+     BEFORE `useScale`, BECAUSE IT IS AN INPUT TO IT. A plan dimensioned by the
+     person who drew it has answered the door step's question already — a chain
+     of figures along a wall, or a room labelled `18'-0" X 12'-0"` — and reading
+     it is both faster and more accurate than measuring a detected door leaf.
+     See features/dimension-intelligence, and the note there about why the
+     answer is latched into the document rather than recomputed.
+     IT NEEDS NOTHING THAT NEEDS A SCALE. The outlines it compares against are
+     projected with `fromDu`, which is the identity on a raster — so this sits
+     above every other hook on the screen without an ordering problem. */
+  const dimensions = useDimensionIntelligence({
+    doc, docActions, source, planText, textKind, isVector,
+    /* SO IT CAN TELL "NOT STARTED" FROM "NOT STARTING". A reopened plan never
+       re-runs its detectors, so an 'idle' room state on one is final. */
+    restoredPlan: !!restore });
+
   const {
     ceilingFt, scaleMode, refId, customFt, measure, pxPerFt,
   } = useScale({ doc, isVector, source, doors, doorPick });
@@ -1424,6 +1449,12 @@ export default function App({
   } = usePlanRecognition({
     doc, docActions, source, img, isVector, pxPerFt, wallLayerSet, readOnly,
     restoredPlan: !!restore, useBoundingRect,
+    /* ONLY ONCE THE DRAWING HAS BEEN GIVEN ITS CHANCE TO ANSWER. 'reading' means
+       the room detector is still out and a stated room size may yet settle the
+       scale; 'read' means it already has. In both cases spending a door call now
+       would be paying for a ruler we are about to have, or already hold. Only
+       'none' — nothing found, and nothing more coming — falls through to it. */
+    deferDoors: dimensions.status !== 'none',
   });
   recognitionReset.current = resetRecognition;
   const { refindBeds, absorbBedRows, computeBedFit } = recognitionCommands;
@@ -2018,10 +2049,13 @@ export default function App({
      says which ceilings are switched on. See the space detail's two props. */
   const setAutoplace = fixtureCommands.autoplace.set;
   const { place: placeArray, setSpec: setArraySpec,
-          setShape: setArrayShape, remove: deleteArray } = fixtureCommands.arrays;
+          setShape: setArrayShape, remove: deleteArray,
+          removeSelected: deleteArrays } = fixtureCommands.arrays;
   const { setSpec: setTrackModuleSpec, isRow: isModuleRow,
           remove: deleteModule, allocateOnTrack } = fixtureCommands.modules;
-  const { setSpec: setCobSpec, remove: deleteCob } = fixtureCommands.cob;
+  /* `remove` IS NOT TAKEN OFF HERE — the by-id delete is the panel's own cross,
+     and this file only ever deleted what was PICKED. See `removeSelected`. */
+  const { setSpec: setCobSpec, removeSelected: deleteCobs } = fixtureCommands.cob;
   /* THE TWO OBJECT COMMANDS ARE ALIASED RATHER THAN REACHED THROUGH THE GROUP,
      because the keydown effect names one of them in its dependency array: the
      group is a fresh object every render and naming IT there would re-bind the
@@ -2116,8 +2150,15 @@ export default function App({
      Proceed (`runPipeline`) is how a plan's outlines are taken up, on the screen
      where you can see which ones they are. It is still on `lighting.commands`
      for whoever wants it back. */
-  const { lightOneRoom,
-          run: runPipeline, stop: stopPipeline,
+  /* `run` IS NOT TAKEN OFF HERE ANY MORE, AND NOTHING IN THIS FILE CALLS IT.
+     The whole pipeline — beds, classify, accent zones, task surfaces, behind a
+     checklist — had exactly ONE caller: the tracer's own button, which now calls
+     `confirmOutlines` instead. It is still on `lighting.commands` and still
+     works; what it no longer has is a way in, because placing fittings is the
+     user's job and an automatic layout is not offered. The loader it drives, its
+     Stop, and the `!prep` guards all stay live for it: `prep` simply stays null
+     while nothing runs it. Give it a button and the whole path comes back. */
+  const { lightOneRoom, stop: stopPipeline, confirmOutlines,
           setRowWatts, cycleChunkOption } = lighting.commands;
   const loaderRooms = lighting.pipeline.loaderRooms;
 
@@ -3011,15 +3052,64 @@ export default function App({
     docActions.moveDoor(id, { rect, openingPx: openingPx(rect) });
   }, [docActions]);
 
-  /* CONFIRMING FROM THE TRACER RECORDS THE DECISION AND NOTHING ELSE.
-     Deliberately NOT `electrical.commands.confirmDoors`, which also switches
-     the electrical layer on: that is the right thing when the question was
-     asked BY the wiring switch, and the wrong thing here — there is no layout
-     yet, and turning a layer on now would mean arriving at the design screen
-     with the plates showing before a single light has been placed. */
-  const confirmDoorsOnTracer = useCallback(() => {
-    docActions.setDoorsOk(true);
-  }, [docActions]);
+  /* `confirmDoorsOnTracer` WAS HERE, AND THE STEP IT ANSWERED HAS MOVED.
+     It set `doorsOk` from the tracer, for a "check the doors" step that stood at
+     the front of the flow. That question is about SWITCHBOARDS and is now asked
+     by the wiring itself, the first time the electrical layer goes on — see the
+     door effect above, which runs the detector and opens the editor there.
+     Nothing sets `doorsOk` on this screen any more, which is why the tracer is
+     handed `onConfirmDoors={null}`. */
+
+  /* HAS THE WIRING ALREADY PUT THE DOOR QUESTION UP THIS TIME ROUND?
+     WITHOUT IT THE STEP IS A TRAP. Closing the editor without answering leaves
+     `doorsOk` false and the electrical layer on, which is exactly the state the
+     effect below opens on — so it would reopen on the same render, for ever,
+     and the only way out of the door step would be through it. The gate is
+     offered ONCE per time the wiring is switched on; back out and the wiring
+     shows with its own unanswered-doors gate, which is a state the panel
+     already knows how to draw, and "Modify doors" is still there. */
+  const doorAsked = useRef(false);
+
+  /* --- THE DOORS, ASKED FOR AT THE MOMENT SOMETHING NEEDS THEM -------------
+     A SWITCHBOARD IS PLACED BESIDE A DOOR, and for a long time that was the
+     second reason to run the door detector — the first being the scale, which
+     it answered on upload for every raster plan. A drawing that dimensions
+     itself has taken the first reason away (see features/dimension-intelligence
+     and `deferDoors` above), and the second one is not a question about the
+     drawing at all: it is a question about the WIRING, which most plans never
+     reach. So it is asked here, once, the first time somebody turns the
+     electricals on — and a plan that is only ever lit never spends the call.
+
+     THE SEQUENCE IS DETECT, THEN CONFIRM, THEN WIRING, and each step is one
+     render of this effect rather than a chain of callbacks: bumping the nonce
+     puts the detector into 'running', coming back puts it into 'done', and the
+     editor opens on the boxes it found. `elecScene` is already gated on
+     `!doorEdit`, so the wiring stays behind the question while it is open and
+     appears the moment `confirmDoors` answers it.
+
+     NOT WHILE THE EDITOR IS OPEN, and not once somebody has said the boxes are
+     right: `doorsOk` is exactly that decision, and a plan that answered this on
+     the tracer — the fallback route, where the doors were found for the ruler —
+     arrives here already confirmed and never sees it twice. */
+  useEffect(() => {
+    /* SWITCHING THE WIRING OFF ARMS THE QUESTION AGAIN, and this branch is the
+       only thing that does. See `doorAsked` for what would happen without it. */
+    if (!layers.electrical) { doorAsked.current = false; return; }
+    if (doorsOk || doorEdit || doorAsked.current) return;
+    /* THE DETECTOR'S OWN GATES, RESTATED. Asking for a run this effect's twin
+       will refuse spends the nonce on nothing and leaves the step waiting for a
+       status change that is never coming — see useDoorRecognition, which checks
+       the same five things and returns. */
+    if (!source || isVector || readOnly || !projectId || !img?.el) return;
+    if (doorState.status === 'running') return;
+    if (doorState.status === 'idle') { recognitionCommands.rerunDoors(); return; }
+    // 'done' or 'error' — either way there is nothing more coming, and an empty
+    // set is a perfectly good thing to show somebody: the step's own answer is
+    // "there are no doors", and it draws the boxes they can add by hand.
+    doorAsked.current = true;
+    openDoorEdit();
+  }, [layers.electrical, doorsOk, doorEdit, source, img, isVector, readOnly, projectId,
+      doorState.status, recognitionCommands, openDoorEdit]);
 
   /**
    * The door boxes AS DRAWN — the list, with the box being dragged at where the
@@ -3501,7 +3591,10 @@ export default function App({
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selArrayId && !arrayDrag) {
         e.preventDefault();
-        deleteArray(selArrayId);
+        /* THE WHOLE SELECTION, because ⌘-click can gather several now and a
+           Delete that took only the primary would leave the rest behind. With
+           one picked this is that one. */
+        deleteArrays();
         return;
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selShapeId && !geometry.shapes.dragging) {
@@ -3526,7 +3619,7 @@ export default function App({
          below states, arrived at the same way. */
       if ((e.key === 'Delete' || e.key === 'Backspace') && selCobId && !fixtureDrag.cob) {
         e.preventDefault();
-        deleteCob(selCobId);
+        deleteCobs();   // the whole gathered selection — see the array branch
         return;
       }
       /* A SELECTED RUN, AND THERE ARE THREE KINDS OF IT — see `deleteAccent`
@@ -3625,10 +3718,10 @@ export default function App({
       // one branch per kind of thing Delete can be about, in the order they read
       selLightId, lightDrag, resetLightMove,
       selModuleId, moduleDrag, deleteModule,
-      selArrayId, arrayDrag, deleteArray,
+      selArrayId, arrayDrag, deleteArrays,
       selShapeId, geometry.shapes.dragging, deleteShape,
       selSpotId, deleteSpot,
-      selCobId, fixtureDrag.cob, deleteCob,
+      selCobId, fixtureDrag.cob, deleteCobs,
       selAccId, accDrag, deleteAccent,
       selBoardId, deleteBoard,
       selFlowId, flowDrag,
@@ -5300,6 +5393,35 @@ export default function App({
           busy={doorState.status === 'running' ? 'Looking for doors…' : null}
           note="A door is a standard width, so one of them is the drawing's ruler." />
       )}
+      {/* --- AND THE SPACES, WHICH NOW HAVE NOTHING STANDING IN FRONT OF THEM ---
+          THE SAME MODAL THE DOOR SEARCH USES, for the same reason: a thing the
+          user asked for, that takes a few seconds, that the rest of the screen
+          cannot usefully be used during. It did not exist before because it did
+          not need to — the project question and then the door search covered
+          the segmenter's whole run, so the spaces were always on the plan by
+          the time anybody could look. Reading the scale off the drawing removed
+          BOTH of those waits and left this one uncovered, landing people on an
+          empty tracer that said "nothing traced yet".
+
+          NEVER TWO MODALS AT ONCE. `!projectId` is the question and
+          `doorState.status === 'running'` is the door search; both render the
+          same box above, so this one stands down while either is up.
+
+          `!outlines.length` — A RE-RUN MUST NOT BLANK THE SCREEN. Asking for
+          the spaces again on a plan that already has them is a correction, not
+          a wait: the outlines stay on the plan, the panel's own line reports
+          the second pass, and covering the drawing would hide the very thing
+          being corrected. */}
+      {source && !readOnly && projectId && doorState.status !== 'running'
+        && !outlines.length && (roomState.status === 'running' || dimensions.pending) && (
+        <BusyModal
+          line={roomState.status === 'running'
+            ? 'Finding the spaces…'
+            : 'Reading the dimensions…'}
+          note={roomState.status === 'running'
+            ? 'It proposes one outline per room — you nudge the corners after.'
+            : 'Checking what the drawing says its rooms measure.'} />
+      )}
       {/* A "PLANNING THE ELECTRICALS…" MODAL WAS HERE. It covered the bolt's
           vision call, and there is no call left to cover — the switchboard rules
           read the door boxes, the placed sconces and the bed box, all of which
@@ -6253,7 +6375,13 @@ export default function App({
             onUpdateOutline={updateOutline}
             onDeleteOutline={deleteOutline}
             onConfirm={lightOneRoom}
-            onProceed={runPipeline}
+            /* CONFIRMING THE OUTLINES, NOT RUNNING THE PIPELINE. The press
+               that leaves this screen used to compute a whole design behind a
+               minute-long checklist; it now takes the spaces up and opens the
+               design screen at once, with the classifier and the bed re-check
+               running behind it. See `confirmOutlines`, and the note at the
+               command list above for what became of the old run. */
+            onProceed={confirmOutlines}
             /* --- THE ROUND TRIP, AS THREE PROPS -----------------------------
                `litIds` tells the tracer there is a design behind it, so its foot
                can offer a way back instead of only a way forward; `dirtyIds` is
@@ -6273,7 +6401,33 @@ export default function App({
                gets asked again by the wiring switch, and "Modify doors" in the
                foot of the design screen stays as the way back into them. */
             doorsOk={doorsOk}
-            onConfirmDoors={confirmDoorsOnTracer}
+            /* NEVER THE CONFIRM-THE-DOORS STEP HERE ANY MORE, and passing
+               nothing is how that step is switched off — see `idScreen` in
+               OutlineTracer, where the prop IS the feature switch.
+
+               IT BELONGS TO THE WIRING NOW. "Are these all the doors" is a
+               question about SWITCHBOARDS, which most plans never reach, and it
+               is asked the first time somebody turns the electricals on (see the
+               door effect above). Leaving it here as well meant a plan whose
+               scale could not be read landed on "Check the doors" — a review of
+               a set nothing has used yet — instead of on the one question that
+               actually blocks it: which door is the ruler.
+
+               SO THE TWO LANDINGS ARE NOW EXACTLY TWO. Scale read off the
+               drawing → the outlines. Scale not read → pick a door. */
+            onConfirmDoors={null}
+            /* ...AND DO NOT ASK WHILE THE ANSWER MAY STILL ARRIVE. A stated room
+               size needs the segmenter's polygons, which land a beat after the
+               plan does; putting the door step up in that gap and pulling it
+               away again is worse than the wait. */
+            scalePending={dimensions.pending}
+            /* WHAT THE DRAWING SAID ABOUT ITSELF, IN ONE SENTENCE. Without it
+               the two outcomes are indistinguishable on screen: a plan scaled
+               off its own figures and one that fell through to the door step
+               look the same until somebody is already answering a question they
+               did not need to be asked — and when nothing could be read, the
+               reason is the only thing that makes the door step make sense. */
+            dimensionNote={dimensions.note}
             onAddDoor={addDoorBox}
             onMoveDoor={moveDoorBox}
             onDeleteDoor={deleteDoor}
@@ -6756,6 +6910,7 @@ export default function App({
                  grabbed. */
               selArrayPath={readOnly ? null : selArrayPathPx}
               selArrayId={readOnly ? null : selArrayId}
+              selArrayIds={readOnly ? [] : selArrayIds}
               onArrayPathDown={readOnly || !canGrab(pressState) ? null : arrayGrab}
               /* THE FITTINGS STAND DOWN AND THE GUIDES COME UP WHILE A
                  PRIMITIVE IS ARMED. `shapeMenuOn` alone is not the condition:
@@ -6766,6 +6921,7 @@ export default function App({
                  place geometry". */
               placingGeometry={!readOnly && geometry.canvas.placingGeometry}
               selCobId={readOnly ? null : selCobId}
+              selCobIds={readOnly ? [] : selCobIds}
               onCobPointerDown={readOnly || !canGrab(pressState) ? null : cobPointerDown}
               /* THE GHOST CARRIES THE POOL IT WOULD THROW, so the beam angle on
                  the bar is something you can see rather than only read. Computed

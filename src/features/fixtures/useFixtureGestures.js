@@ -26,7 +26,18 @@
 // ---------------------------------------------------------------------------
 import { useCallback } from 'react';
 import { useDrag } from '../../hooks/useDrag.js';
-import { select, selectMany, clear } from '../../lib/selection.js';
+import { select, selectMany, clear, groupFor } from '../../lib/selection.js';
+/* WHICH MODIFIER GATHERS A SELECTION, IN ONE PLACE.
+   ⌘ IS THE MAC ANSWER AND SHIFT WAS THE ONLY ONE HERE. Every Mac app adds to a
+   discontiguous selection with Command; Shift is range-select. This canvas had
+   Shift alone, so the key a Mac user actually reaches for did nothing — and on
+   the object gesture it did worse than nothing, because ⌘-click fell through to
+   the plain branch and REPLACED the selection somebody was building.
+   BOTH ARE ACCEPTED rather than swapping one for the other: Shift is what this
+   app has taught its users so far, and ctrl is the same gesture on a Windows
+   keyboard. `altKey` is deliberately absent — it is the copy modifier on these
+   drags (see `copy` on the COB's `useDrag`) and cannot also mean gather. */
+const gathering = (e) => !!(e && (e.metaKey || e.shiftKey || e.ctrlKey));
 import { canGrab, owns } from '../../lib/pressOwner.js';
 import { snapPoint } from '../../lib/snapGuides.js';
 import { clampLightMove } from '../../lib/planner.js';
@@ -73,7 +84,8 @@ export default function useFixtureGestures({
 }) {
   const {
     lightDrag, setLightDrag,
-    objDrag, setObjDrag, objMode, setObjMode, selObjIds, toggleSelObj,
+    objDrag, setObjDrag, objMode, setObjMode, selObjIds, toggleSelObj, toggleSel,
+    selCobIds, selArrayIds,
     armed, setArmed, ghost, setGhost, fanSweepMm,
     cobStanding, cobLock, setCobLock,
     setCobAt, cobDraftArray, setCobDraftArray,
@@ -387,7 +399,7 @@ export default function useFixtureGestures({
        Split by gesture instead: Shift-click to gather them up, then press
        WITHOUT Shift on any member to drag the group, adding Shift mid-drag for
        the straight line. Both modifiers are still available for the group. */
-    if (mode === 'move' && e.shiftKey) {
+    if (mode === 'move' && gathering(e)) {
       setObjMode(true); setArmed(null); setGuides([]); setGhost(null);
       toggleSelObj(id);
       return;
@@ -408,7 +420,11 @@ export default function useFixtureGestures({
        A HANDLE IS ALWAYS SINGULAR. Resize and rotate act on one object's own
        frame, and the handles are only drawn when exactly one thing is selected
        (see PlanCanvas), so a resize press can only ever mean `[id]`. */
-    const group = mode === 'move' && selObjIds.includes(id) ? selObjIds : [id];
+    /* `groupFor` IS THE SAME RULE THE OTHER TWO PRESSES USE, and it was this
+       expression written out — see lib/selection.js. A handle press is always
+       singular (the grips are only drawn for one), so `mode` still decides
+       whether the group is even asked for. */
+    const group = mode === 'move' ? groupFor(selObjIds, id) : [id];
     setSel(selectMany('object', group));
 
     const pressPx = svgPoint(e);
@@ -518,7 +534,24 @@ export default function useFixtureGestures({
     if (!c) return;
     e.stopPropagation();
     e.preventDefault();
-    setSel(select('cob', id));
+
+    /* ⌘-CLICK GATHERS AND STARTS NO DRAG, exactly as it does on a ceiling
+       object — see the note at that branch for why one modifier can mean two
+       things without either being ambiguous. Gather on the PRESS; the axis lock
+       and the copy are modifiers held DURING a drag, and a press cannot yet
+       know it is going to become one. */
+    if (gathering(e)) { setArmed(null); toggleSel('cob', id); return; }
+
+    /* PRESSING A MEMBER DRAGS ALL OF IT — `groupFor`, the same rule the object
+       press uses. What made this possible without touching the gesture is that
+       the drag already took a LIST: `members` was `[c]` with a note saying it
+       was kept in the group shape so that adding one would be a change to the
+       selection and nothing else. This is that change. */
+    const group = groupFor(selCobIds, id);
+    const members = group
+      .map((q) => manualCobs.find((m) => m.id === q))
+      .filter(Boolean);
+    setSel(selectMany('cob', members.map((m) => m.id)));
     setArmed(null);
     /* THE SPACE AND THE TAB ARE NOT SET HERE. Selecting a fitting reveals it in
        the Analysis, and that is one behaviour shared by every fitting on this
@@ -530,7 +563,7 @@ export default function useFixtureGestures({
        is a change to the SELECTION and not to this gesture. The hook takes the
        capture, the grab offset, the press anchor and the snapshots from here —
        see hooks/useDrag.js. */
-    cob.down(e, { id, members: [c] });
+    cob.down(e, { id, members });
   };
 
   const cobPointerMove = (e) => { if (pxPerFt) cob.move(e); };
@@ -604,8 +637,28 @@ export default function useFixtureGestures({
        here never reaches the handler that would say yes. */
     e.stopPropagation();
     e.preventDefault();
+
+    /* ⌘-CLICK GATHERS, AND DOES NOT OPEN THE BAR. Opening an array is the act
+       of showing ONE array's specification — see `openArray` — and doing that
+       while somebody is gathering three of them would put a bar about one of
+       them over a selection of all three. */
+    if (gathering(e)) { toggleSel('array', arrayId); return; }
+
+    /* THE GROUP IS READ BEFORE `openArray` AND RESTORED AFTER IT, because that
+       function ends in `setSel(select('array', id))` — deliberately singular,
+       since opening an array is the act of showing ONE array's bar. Called in
+       the middle of a group press it would collapse the very selection this
+       press is about to drag, and the drag would carry twelve lamps while the
+       drawing showed one picked. Its other two jobs — standing every other
+       machine down, and focusing the space — are exactly what is wanted here,
+       so it is called and then corrected rather than bypassed. */
+    const group = groupFor(selArrayIds, arrayId);
+    const members = group
+      .map((q) => cobArrays.find((m) => m.id === q))
+      .filter(Boolean);
     openArray(arrayId);
-    array.down(e, { id: arrayId, members: [a] });
+    if (members.length > 1) setSel(selectMany('array', members.map((m) => m.id)));
+    array.down(e, { id: arrayId, members: members.length ? members : [a] });
   };
 
   const arrayPointerMove = (e) => { if (pxPerFt) array.move(e); };

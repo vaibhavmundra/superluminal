@@ -10,6 +10,9 @@ const LS = 'lightPlanner.v1';
 // owns recognition sessions, and writes saved answers only through docActions.
 export default function usePlanRecognition({
   doc, docActions, source, img, isVector, pxPerFt, wallLayerSet, restoredPlan, readOnly, useBoundingRect,
+  /* HOLD THE DOOR CALL BACK. True while the drawing may yet state its own scale,
+     or has already stated it — see useDoorRecognition. */
+  deferDoors = false,
 }) {
   // TRUE FOR THE WHOLE LIFE OF A RESTORED PLAN, not just until the restore
   // lands. It is what stops the four detectors below from firing on a drawing
@@ -57,7 +60,7 @@ export default function usePlanRecognition({
   useRoomRecognition({ source, img, isVector, restoring, readOnly,
     roomNonce, wallLayerSet, docActions });
   useDoorRecognition({ source, img, isVector, projectId, restoring, readOnly,
-    doorNonce, docActions, setDoorState });
+    doorNonce, defer: deferDoors, docActions, setDoorState });
   useFurnitureRecognition({ source, img, restoring, readOnly, detectNonce,
     provider, pxPerFt, wallLayerSet, docActions, setDetectState, setBedSets });
   const { refindBeds, absorbBedRows, lookAgainAtBeds, bedLook, computeBedFit } = useRoomBeds({

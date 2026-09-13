@@ -13,6 +13,35 @@ COORDINATES the others. `App` composes it with `usePlanDoc`, `usePlanScene`,
 `features/ceiling-geometry/` and `features/fixtures/`; none of those changed,
 and not one of them is reached into.
 
+## The plan is not lit for you any more
+
+**`confirmOutlines` is the press that leaves the tracer**, and it is not a run.
+It takes the spaces up, opens the design screen, and returns — the landing IS
+the response to the press. There is no loader because there is nothing to watch.
+
+Two passes follow it, behind the screen the user is already working on:
+
+- **classify**, which is what sets each space's lux target — `targetAreaFor`
+  reads the room type, so a bedroom and a kitchen stop wanting the same light
+  without anybody saying so twice;
+- **the bed re-check**, which is what lets the ceiling warn someone about to put
+  a downlight over a pillow.
+
+Both only ever ADD, so arriving a few seconds after the user costs nothing.
+Neither places a fitting: **accent zones and task surfaces do not run**, because
+placing fittings is the user's job now.
+
+`run()` — the full pipeline, all four passes, the checklist, the cancellation —
+is still here and still works, and **nothing calls it.** Its one caller was the
+tracer's button. The loader, its Stop and every `!prep` guard stay live for it;
+`prep` simply stays null. Give it a button and the whole path returns.
+
+The order is reversed between the two. `run()` decided the beds BEFORE the
+layout so the geometry memo was built once with their zones in it;
+`confirmOutlines` must have a layout immediately, so it relights first and folds
+the beds in when they arrive — one extra recompute, on a screen already in use,
+for the wait disappearing.
+
 ## What it takes from the other domains, and how
 
 Every cross-domain input is a documented public entry, handed in by `App`:

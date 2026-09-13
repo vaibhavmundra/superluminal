@@ -11,12 +11,21 @@ import { scaleFromDoor } from '../lib/doors.js';
 // a one-way graph.
 // ---------------------------------------------------------------------------
 export default function useScale({ doc, isVector, source, doors, doorPick }) {
-  const { ceilingFt, scaleMode, refId, customFt, measure } = doc;
+  const { ceilingFt, scaleMode, refId, customFt, measure, stated } = doc;
 
   const pxPerFt = useMemo(() => {
     // A DXF states its own scale. There is nothing to measure and nothing to
     // guess, so the scale controls are not offered at all.
     if (isVector) return source.pxPerFt;
+    /* ...AND SO DOES A DRAWING THAT DIMENSIONS ITSELF. Same idea as the line
+       above and the same standing: the number was read off figures the person
+       who drew the plan wrote on it, which is better evidence than a detector
+       box and a guess at a door width. See features/dimension-intelligence.
+       ABOVE 'ref' AND 'door' BUT BELOW NOTHING ELSE, because it is a MODE and
+       not an override. Somebody who thinks the reading is wrong picks a door or
+       drags a line; the mode moves off 'stated' and this branch stops applying,
+       while the record stays in the document so the two can be compared. */
+    if (scaleMode === 'stated') return stated?.pxPerFt > 0 ? stated.pxPerFt : null;
     if (scaleMode === 'ref') {
       if (!measure.a || !measure.b) return null;
       const len = Math.hypot(measure.b.x - measure.a.x, measure.b.y - measure.a.y);
@@ -42,7 +51,7 @@ export default function useScale({ doc, isVector, source, doors, doorPick }) {
     const d = doors.find((q) => q.id === doorPick.id);
     const rect = d?.rect ?? doorPick.rect ?? null;
     return rect ? scaleFromDoor(rect, doorPick.mm) : null;
-  }, [isVector, source, scaleMode, measure, refId, customFt, doors, doorPick]);
+  }, [isVector, source, scaleMode, measure, refId, customFt, doors, doorPick, stated]);
 
-  return { ceilingFt, scaleMode, refId, customFt, measure, pxPerFt };
+  return { ceilingFt, scaleMode, refId, customFt, measure, stated, pxPerFt };
 }

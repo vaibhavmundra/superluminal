@@ -3,7 +3,8 @@ import { detectDoors, doorsFromPayload } from '../../lib/doors.js';
 import { downscaleForDetection } from '../../lib/furniture.js';
 
 export default function useDoorRecognition({
-  source, img, isVector, projectId, restoring, readOnly, doorNonce, docActions, setDoorState,
+  source, img, isVector, projectId, restoring, readOnly, doorNonce, defer,
+  docActions, setDoorState,
 }) {
   // --- find the doors -------------------------------------------------------
   //
@@ -22,9 +23,21 @@ export default function useDoorRecognition({
   // NOT ON A DXF. A drawing states its own scale in its own units; there is
   // nothing to measure and nothing to guess, and asking a detector would be
   // asking a worse source than the one already in the file.
+  //
+  // ...AND NOT ON A PLAN THAT DIMENSIONS ITSELF, which is what `defer` says.
+  // The paragraph above — "THE SCALE COMES FIRST AND FROM A DOOR" — was true of
+  // every raster until a drawing could be read for the figures printed on it.
+  // When it can, the ruler is already in hand and this detector has nothing left
+  // to answer AT UPLOAD: the doors are still wanted, but only by the wiring, and
+  // only when somebody asks to see it. So the call moves to the moment it is
+  // needed and stops being a tax on every plan that never reaches the
+  // electricals. See the electrical-layer effect in App.jsx, which bumps the
+  // nonce — and note the nonce is checked FIRST, so "look again" still works
+  // while deferred; that is the whole mechanism the later ask runs on.
   useEffect(() => {
     if (!source || isVector || !projectId) return;
     if (!img?.el) return;
+    if (defer && doorNonce === 0) return;
     // A REOPENED PLAN ALREADY HAS THIS ANSWER, and it has the user's corrections
     // on top of it. Re-running would cost a model call and throw those away.
     // The nonce is the user asking again, explicitly.
@@ -70,6 +83,6 @@ export default function useDoorRecognition({
 
     return () => { alive = false; ctl.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, img, isVector, projectId, doorNonce]);
+  }, [source, img, isVector, projectId, doorNonce, defer]);
 
 }

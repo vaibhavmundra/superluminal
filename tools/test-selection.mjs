@@ -28,7 +28,8 @@
 //   node tools/test-selection.mjs
 // ---------------------------------------------------------------------------
 
-import { SELECTION_KINDS, NONE, select, selectMany, clear, idOf, idsOf, isSelected }
+import { SELECTION_KINDS, MULTI_KINDS, isMultiKind, NONE, select, selectMany,
+         toggle, groupFor, clear, idOf, idsOf, isSelected }
   from '../src/lib/selection.js';
 
 let fail = 0;
@@ -185,6 +186,68 @@ say('THE REGISTER IS NOT EDITED IN PLACE');
     'NONE cannot be written through');
   ok(idOf(s, 'cob') === 'c1' && idOf(select('shape', 'sh-1'), 'cob') === null,
     'and building a new selection leaves the old value alone');
+}
+
+/* --- 6. CMD-CLICK GATHERS SEVERAL, AND ONLY WHERE ONE CAN BE DRAGGED -------
+   The register could always HOLD a list. What decides MULTI_KINDS is whether
+   the things can be moved as a group — see the note there, and the two kinds
+   deliberately left out. */
+say('WHICH KINDS CAN BE SEVERAL');
+{
+  ok(MULTI_KINDS.every((k) => SELECTION_KINDS.includes(k)),
+    'every multi kind is a kind');
+  ok(isMultiKind('object') && isMultiKind('cob') && isMultiKind('array'),
+    'the three whose drag is already list-shaped');
+  ok(!isMultiKind('light') && !isMultiKind('module'),
+    "a light is a room's own cell and a module rides a track — both stay single");
+  ok(!isMultiKind('shape') && !isMultiKind('board') && !isMultiKind('door'),
+    'and nothing else has been quietly opened up');
+}
+
+say('TOGGLE — ADDING AND TAKING BACK OUT');
+{
+  const a = toggle(NONE, 'cob', 'c1');
+  ok(idsOf(a, 'cob').join() === 'c1', 'the first one is an ordinary selection');
+  const b = toggle(a, 'cob', 'c2');
+  ok(idsOf(b, 'cob').join() === 'c1,c2', 'the second joins it');
+  ok(b.id === 'c2', 'and the LAST one is the primary, which is what the panels read');
+  const c = toggle(b, 'cob', 'c1');
+  ok(idsOf(c, 'cob').join() === 'c2', 'toggling a member again takes it out');
+  ok(c.id === 'c2', '...and the primary is one that is still in');
+  ok(toggle(c, 'cob', 'c2') === NONE, 'taking the last one out is nothing picked');
+
+  // THE RULE THE WHOLE REGISTER EXISTS FOR SURVIVES THE NEW GESTURE.
+  const mixed = toggle(b, 'shape', 's1');
+  ok(mixed.kind === 'shape' && idsOf(mixed, 'cob').length === 0,
+    'cmd-clicking a different KIND replaces, it does not accumulate two kinds');
+
+  // A kind that cannot be several just selects, rather than feeling broken.
+  const one = toggle(selectMany('cob', ['c1', 'c2']), 'light', 'l1');
+  ok(one.kind === 'light' && one.ids.join() === 'l1', 'a single kind selects that one');
+  ok(toggle(select('light', 'l1'), 'light', 'l2').ids.join() === 'l2',
+    '...and cmd-clicking another light is still just that light');
+
+  ok(toggle(NONE, 'cob', null) === NONE, 'a null id changes nothing');
+  ok(threw(() => toggle(NONE, 'nope', 'x')), 'an unknown kind throws here too');
+}
+
+say('WHAT A PRESS DRAGS');
+{
+  const three = idsOf(selectMany('cob', ['c1', 'c2', 'c3']), 'cob');
+  ok(groupFor(three, 'c2').join() === 'c1,c2,c3',
+    'pressing a member drags the whole group');
+  ok(groupFor(three, 'c9').join() === 'c9',
+    'pressing something outside it drags only that — a stale group must not bite');
+  ok(groupFor(idsOf(NONE, 'cob'), 'c1').join() === 'c1',
+    'with nothing picked it is just the one');
+  /* THE KIND CHECK IS `idsOf`'s AND IS NOT MADE TWICE. Reading the ids of a
+     kind the register is not holding already answers empty, so a press on a
+     shape while three cobs are picked is alone by construction. */
+  ok(groupFor(idsOf(selectMany('cob', ['c1', 'c2']), 'shape'), 's1').join() === 's1',
+    'the group only counts for the kind it is holding');
+  ok(groupFor(idsOf(select('light', 'l1'), 'light'), 'l1').join() === 'l1',
+    'a single kind is always alone');
+  ok(groupFor([], null).length === 0, 'a null id drags nothing');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

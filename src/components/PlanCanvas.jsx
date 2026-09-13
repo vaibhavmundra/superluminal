@@ -459,7 +459,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        are momentary and belong to the gesture rather than to the sheet. A ghost
        may also carry `blocked` for a physical ceiling-object clearance; that
        state greys the lamp, marks it prohibited, and is refused by the gesture. */
-    manualCobs = [], selCobId = null, onCobPointerDown = null,
+    /* `selCobIds` IS THE WHOLE GATHERED SELECTION and `selCobId` the primary.
+       Both, because they answer different questions: every member gets the ring,
+       and the panel below asks about one. */
+    manualCobs = [], selCobId = null, selCobIds = [], onCobPointerDown = null,
     cobGhost = null, cobGuide = null,
     /* THE RING AN ARRAY IS BEING SET OUT ON, while the bar is still asking about
        it. Momentary, like the alignment guides: it is the offset path rather
@@ -475,7 +478,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        SEPARATE FROM `arrayPath` BECAUSE ONE ANSWERS THE POINTER AND THE OTHER
        MUST NOT. The draft's ring is drawn while the tool is armed, and a band on
        it would swallow presses meant for the ceiling underneath. */
-    selArrayPath = null, selArrayId = null, onArrayPathDown = null,
+    selArrayPath = null, selArrayId = null, selArrayIds = [], onArrayPathDown = null,
     /* --- THE FITTINGS, STOOD DOWN WHILE GEOMETRY IS BEING SET OUT ----------
        A DRAWN LINE IS WORTH MORE THAN A LAMP AT THIS MOMENT, and that inverts
        the sheet's usual order. A COB carries a glowing aperture and a pool of
@@ -4702,8 +4705,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
            such thing as one selected spot in a run: the array is the object, and
            a ring on only the lamp that happened to be pressed would say the
            opposite of what the bar at the foot of the stage is about to. */
-        const picked = c.id === selCobId
-          || (!!selArrayId && c.arrayId === selArrayId);
+        /* ...AND SEVERAL OF EITHER, now that ⌘-click gathers them. The two
+           lists fall back to the primaries, so a caller that passes neither
+           behaves exactly as before. */
+        const picked = c.id === selCobId || selCobIds.includes(c.id)
+          || (!!c.arrayId && (c.arrayId === selArrayId || selArrayIds.includes(c.arrayId)));
         /* THE RING'S SIZE IS CONSTANT ON SCREEN, like every other selection mark
            on this canvas — a ring in drawing units vanishes at low zoom on the
            one fitting somebody is trying to confirm they have hold of. Same two

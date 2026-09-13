@@ -299,7 +299,7 @@ export default function OutlineTracer({
   onMovePoint, onInsertPoint, onRemovePoint, onProceed,
   detectState = null,
   unitId, unitCandidates, onUnitChange,
-  scale: scaleUI, invert = false,
+  scale: scaleUI, invert = false, scalePending = false, dimensionNote = null,
   litIds = [], dirtyIds = [], onBackToDesign = null,
   /* --- THE DOOR STEP, WHICH NOW STANDS IN FRONT OF EVERYTHING ELSE --------
      `doorsOk` is the document's, and it is the same decision the wiring is
@@ -463,7 +463,14 @@ export default function OutlineTracer({
   // the trace controls refuse the first click. A panel that offers six
   // sections when five of them do nothing is a panel nobody reads, so they are
   // put away until there is a ruler.
-  const doorScreen = isRaster && scaleUI?.mode === 'door' && !hasScale && !idScreen;
+  /* `!scalePending` IS THE FOURTH TERM AND IT IS ABOUT TIMING, NOT STATE. The
+     drawing may be dimensioned — see features/dimension-intelligence — and the
+     half of that which reads a room's stated size cannot answer until the
+     segmenter's polygons arrive, a beat after the plan itself. Without this the
+     step mounts in that gap and vanishes under somebody who has started reading
+     it, which is a worse wait than the wait. */
+  const doorScreen = isRaster && scaleUI?.mode === 'door' && !hasScale && !idScreen
+    && !scalePending;
 
   /* THE TWO FULL-PANEL STEPS, AS ONE NAME. Both take the panel over completely
      and both make everything below them inert, so every gate that used to read
@@ -968,19 +975,48 @@ export default function OutlineTracer({
     return m?.a && m?.b ? Math.hypot(m.b.x - m.a.x, m.b.y - m.a.y) : 0;
   })();
 
+  /* --- THE DETECTOR IS STILL OUT AND THE PLAN IS STILL EMPTY --------------
+     A NEW STATE, AND READING THE SCALE OFF THE DRAWING IS WHAT CREATED IT.
+     The door step used to stand here for as long as the segmenter took, so by
+     the time anybody reached this screen the spaces were already on the plan.
+     A drawing that dimensions itself skips that step entirely and lands here
+     immediately — where the old copy said "Nothing traced yet. Click a corner
+     on the plan to start", which is an instruction to do by hand the work that
+     is already under way, and a count of zero for a list that is still being
+     written.
+
+     `!outlines.length` KEEPS IT OUT OF THE WAY OF A RERUN. Asking for the
+     spaces again on a plan that already has some must not blank the list and
+     put this over the top of it — the existing outlines stay on screen and
+     the panel's own line reports the second pass. */
+  const finding = hasScale && !stepScreen && !outlines.length
+    && detectState?.status === 'running';
+
   const headline = idScreen ? 'Check the doors'
     : measuring ? 'Measure the plan'
+    // READING IS NOT "SET THE SCALE FIRST". For the second or two the drawing is
+    // being read, the honest headline is that it is being read — telling somebody
+    // to set a scale that is about to arrive on its own asks for work twice.
+    : scalePending ? 'Reading the drawing'
     : doorScreen ? 'Pick a door'
     : !hasScale ? 'Set the scale first'
     : tracing ? 'Tracing…'
+    : finding ? 'Finding the spaces'
     : outlines.length ? `${outlines.length} outline${outlines.length > 1 ? 's' : ''}`
     : 'Trace the space';
 
   return (
     <div className="max-w-[1400px] mx-auto">
       <div className="mb-4">
-        <h2 className=" mt-2 mx-0 mb-3 text-[26px] 
+        <h2 className=" mt-2 mx-0 mb-3 text-[26px]
           text-white whitespace-nowrap">{headline}</h2>
+        {/* WHAT THE DRAWING SAID ABOUT ITS OWN SIZE. Above the step's own copy
+            because it is the reason that step is the one on screen: either the
+            scale came off the sheet and there is nothing to answer, or it could
+            not, and the sentence says why a door is being asked for. */}
+        {dimensionNote && (
+          <p className="m-0 mb-2 text-[13px] text-subtle max-w-[78ch]">{dimensionNote}</p>
+        )}
         <p className="m-0 text-muted max-w-[78ch]">
           {idScreen
             ? <>Every switchboard is placed beside a door, and the scale comes off
@@ -2072,7 +2108,15 @@ export default function OutlineTracer({
                        (measuring, picking a door, tracing, dragging a corner,
                        a space selected); standing still, it is quiet. */
                     ? null
-                    : <>Nothing traced yet. Click a corner on the plan to start.</>}
+                    : finding
+                      /* SAYING IT IS NOT BLOCKED IS THE HALF THAT MATTERS.
+                         The detector is a model call and can take a few
+                         seconds; tracing by hand works throughout and always
+                         has, so the foot offers it rather than implying a
+                         wait is compulsory. */
+                      ? <>Finding the spaces on this plan. You can trace by hand
+                          instead if you would rather not wait.</>
+                      : <>Nothing traced yet. Click a corner on the plan to start.</>}
         </div>
         {/* NO BUTTON IN THE FOOT ON THE DOOR STEP. The panel's own full-width
             answer is the one act on that screen, and a second copy of it down
@@ -2145,9 +2189,15 @@ export default function OutlineTracer({
               onClick={() => (outlines.length > 1 || !chosen
                 ? onProceed?.()
                 : onConfirm(chosen.o.id))}>
+              {/* "CONFIRM", NOT "LIGHT", BECAUSE IT NO LONGER LIGHTS ANYTHING.
+                  It used to start a run that placed a whole design; it now says
+                  the outlines are right and opens the screen where the person
+                  places the light themselves. A button that promises a layout
+                  and delivers an empty ceiling is the wrong label, and the count
+                  stays because what is being confirmed is a SET. */}
               {!outlines.length ? 'Trace an outline'
-                : outlines.length === 1 ? 'Light this space →'
-                : `Light all ${outlines.length} spaces →`}
+                : outlines.length === 1 ? 'Confirm this outline →'
+                : `Confirm ${outlines.length} outlines →`}
             </button>
           </div>
         )}
