@@ -390,6 +390,74 @@
   --accent:#0070F3;         /* interactive, selected, focused, and nothing else */
   --input-bg:rgba(255,255,255,.1);
 
+  /* --- THE FITTINGS' PAINT, AND IT IS THE END OF THE AMBER ---------------
+     EVERY COLOUR AND WEIGHT THE SYMBOLS ON THE PLAN ARE DRAWN WITH, HERE AND
+     NOWHERE ELSE. A fitting used to be cut from the brand accent — a cream or
+     amber ramp in its body, the ramp's deepest tone round its edge — and those
+     ramps lived in `THROW_STYLE` in src/lib/settings.js because an SVG shape
+     cannot be filled from a CSS `linear-gradient()`. These six are FLAT, so
+     that reason is gone: they are resolved off this block at runtime by
+     `readFixturePaint` in src/lib/fixturePaint.js, exactly the way the heatmap
+     bands above are, and no JavaScript in this app holds a fitting's colour.
+
+     WHITE BODY, BLACK LINE WORK, AND IT READS ON EITHER GROUND. The body is an
+     opaque white disc, so the symbol sits on top of somebody else's line work
+     instead of having a door jamb showing through it; the outline is black, so
+     the same symbol is still a symbol on a white scan. That pair is the whole
+     scheme — a fitting is white with a thin black edge, and the accent means
+     nothing on this canvas any more.
+
+     `--lp-fixture-tape` IS THE RUN AND `--lp-fixture-led` IS THE DOT INSIDE A
+     REVERSE COVE, and they differ because their grounds do. A strip or a cove
+     is a run on the plan itself, so it is white like every other body. The
+     tape in a reverse cove is drawn INSIDE the slot's own white band, where a
+     white dot would be invisible — so it is black, and reads as the LEDs in a
+     white channel.
+
+     `--lp-hairline-px` IS A COUNT OF CSS PIXELS ON SCREEN, not a drawing unit,
+     and it is the ceiling rather than the value: see `hair()` in
+     PlanCanvas.jsx. Every shape inside `.plan` carries
+     `vector-effect:non-scaling-stroke` — the rule is further down this file —
+     so an authored stroke width is ALREADY a screen width at every zoom, and
+     this needs no zoom term to hold. What it fixes is the other axis: the
+     sheet's own unit is `max(width, height) / 1500`, one pixel on a 1500 px
+     plan and four on a 6000 px survey, so the same layout drew four times
+     heavier on the larger scan. Capped, it does not. Raise this to 1.5 for a
+     heavier sheet; the relative weights underneath are unchanged and reappear
+     as you do. */
+  --lp-fixture-fill:#FFF3B5;   /* a fitting's body, and a reverse cove's band */
+  --lp-fixture-ink:#FFFFFF;    /* every outline, ring, tick and lip on one */
+  --lp-fixture-glow:#FFFFFF;   /* the halo under a fitting, and its pulse */
+  --lp-fixture-tape:#FFFFFF;   /* an LED run: a strip, a cove, a shelf */
+  --lp-fixture-led:#FFFFFF;    /* the dots inside a reverse cove's white band */
+  --lp-hairline-px:1;          /* the fattest any stroke gets, in screen px */
+  --lp-beam-angle-stroke:rgba(255,255,255,0.5);  /* a COB's beam footprint at the floor */
+  --lp-clearance-stroke:rgba(255,255,255,0.5); 
+
+  /* THE TWO DOTTED RINGS, AND THEY ARE NOT THE SAME MARK ---------------------
+     Both are thin dotted circles and both say "this much floor", which is why
+     they look like one thing and are two.
+
+     `--lp-beam-angle-stroke` IS THE LIGHT'S OWN CLAIM. It is the footprint of
+     one COB's cone at the floor plane — drawn only while the Beam angles switch
+     in View is on — so it belongs to the fitting that casts it and it is an
+     offer: this is what I cover. It used to take `--lp-fixture-ink`, which is
+     black, and a black ring is invisible on an inverted plan; that is the other
+     reason it is its own token now rather than a borrowed one.
+
+     `--lp-clearance-stroke` IS SOMEBODY ELSE'S REFUSAL. It is the keep-clear
+     round a fan, a cassette or a hatch — the true offset of the object's own
+     face, which is why it is a rounded rectangle round a rectangular one — and
+     it is a prohibition: no downlight may land in here. It followed the ceiling
+     object's own colour before this, so it went amber on a white plan and white
+     on a dark one along with the fan it surrounds.
+
+     SET THEM TO THE SAME VALUE IF YOU WANT ONE READING, which is what they have
+     out of the box. They are separate because a drawing that stops telling a
+     claim from a refusal has lost something, and getting that back later is one
+     edit here rather than a hunt through the canvas. */
+    /* the keep-clear round a ceiling object */
+
   --font:'The Neue Montreal',-apple-system,'Helvetica Neue',Arial,sans-serif;
   --r:6px;                  /* the radius. One value; the larger one is `--radius-lg`. */
 }

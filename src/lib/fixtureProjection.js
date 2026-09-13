@@ -8,6 +8,7 @@ import { freePoint, resolvePoint } from './point.js';
 import { asPathHost } from './path.js';
 import { arraySpots, arrayPath, throwDiameterFt, DEFAULT_DROP_FT } from './cob.js';
 import { STRIP_OFFSET_FT } from './cove.js';
+import { SYMBOL_FT } from './settings.js';
 
 
 /**
@@ -388,10 +389,17 @@ export function projectPenDraftPx(pxPerFt, shapeMenuOn, shapeTool, pts, at, isEm
    EMPTY IS THE ANSWER WHEN THE LAYER IS OFF, and that is a rule about SNAPPING
    as much as about drawing: you may only aim at what is on the sheet. One gate,
    here, is what keeps the two from drifting — see `suggestPointsPx` in App. */
-const AMBIENT_R_FT = (l) => (l.kind === 'large' ? 0.52 : 0.3)
-  * ((l.fixture || l.kind) === 'small-narrow' ? 0.8 : 1);
+/* THE SAME TABLE THE PLACED FITTING IS DRAWN FROM, and it has to be: a
+   proposal and the thing it becomes appear side by side on one sheet, and a
+   ghost drawn half again the size of the lamp it is offering to place reads as
+   a different fitting rather than as the same one, not yet committed. These two
+   were `0.52` and `0.3` written out here — the third and fourth copies of the
+   numbers `SYMBOL_FT` exists to hold, after PlanCanvas's six. See COB_DIA_IN in
+   settings.js, which is the one knob under all of them. */
+const AMBIENT_R_FT = (l) => (l.kind === 'large' ? SYMBOL_FT.large : SYMBOL_FT.small)
+  * ((l.fixture || l.kind) === 'small-narrow' ? SYMBOL_FT.narrow : 1);
 /** A directional spot's symbol, which is one size whatever it is aimed at. */
-const SPOT_R_FT = 0.3;
+const SPOT_R_FT = SYMBOL_FT.spot;
 
 export function projectSuggestedPointsPx(rooms, taskSpotsPx, pxPerFt,
                                          { on = false, ambient = true, spots = true } = {}) {

@@ -5,13 +5,14 @@ import { specsFor, runMetres, FIXTURE_BY_ID } from '../lib/boq.js';
 import { STRIP_STYLE, THROW_STYLE, GLINT_STYLE, PILL_STYLE,
          COVE_BAND_STYLE } from '../lib/settings.js';
 import { TRACK_DIMS_IN } from '../lib/track.js';
+import { readFixturePaint } from '../lib/fixturePaint.js';
 import { SB_COLOUR, SB_MM } from '../lib/electrical.js';
 import { WIRE_CHAIN, WIRE_PICKED } from '../lib/flows.js';
 import { doorWidthAt } from '../lib/doors.js';
 /* THE SCONCE'S OWN FOUR FIGURES, WHICH THE DXF NOW DRAWS TOO. They were written
    out here and nowhere else, so the file exported a ring on the wall line while
    this drew a crosshair standing off it. See SCONCE_FT in settings.js. */
-import { SCONCE_FT, FAN_FT } from '../lib/settings.js';
+import { SCONCE_FT, FAN_FT, SYMBOL_FT, AIM_FT } from '../lib/settings.js';
 
 // ---------------------------------------------------------------------------
 // PlanCanvas — the finished drawing. EVERY room on it, not one.
@@ -181,12 +182,18 @@ const poolFtFor = (fx) =>
  */
 const WALL_TONE_INK = { light: '#F2F2F2', medium: '#8A8A8A', dark: '#242424' };
 
-/* THE WARNING HATCH, IN CSS PIXELS ON SCREEN — see the `cob-nogo` pattern for
-   why this one texture is measured in screen pixels when every other weight on
-   this canvas is measured in the sheet's own units. 10 and 1.8 read as a fine
-   hatch rather than as stripes, at any zoom. */
+/* THE WARNING HATCH'S TILE, IN CSS PIXELS ON SCREEN — see the `cob-nogo`
+   pattern for why this one texture is measured in screen pixels when every
+   other SIZE on this canvas is measured in the sheet's own units. 10 reads as a
+   fine hatch rather than as stripes, at any zoom.
+
+   `HATCH_LINE_PX` WAS HERE AT 1.8 and is gone, not moved. The hatch's LINE was
+   the one stroke on the drawing already stated in screen pixels, which was the
+   right instinct and the wrong place to keep it: there is a cap on every stroke
+   now (`hair`), it is authored in the stylesheet, and a second screen-pixel
+   weight beside it would be a second thing to edit and a second thing to
+   forget. The line takes `hatchLinePx`. */
 const HATCH_PX = 10;
-const HATCH_LINE_PX = 1.8;
 
 const PlanCanvas = forwardRef(function PlanCanvas(
   { src, srcAsScanned = null, vector = null, wallLayers = null,
@@ -669,7 +676,27 @@ const PlanCanvas = forwardRef(function PlanCanvas(
    * much as for a scan, and this line needs no exception.
    */
   const RAMP = layers.invert ? THROW_STYLE : THROW_STYLE.day;
-  const rim = RAMP.rim;
+
+  /**
+   * THE FITTINGS' OWN PAINT, AND IT IS NOT ON EITHER RAMP ANY MORE.
+   *
+   * Everything above still decides what a light POOL and a lit SURFACE are
+   * washed with — those are claims about the room and they follow its ground.
+   * A FITTING is not: it is white with a black edge on both grounds, for the
+   * reason a symbol on a drawing always has been. The body is opaque, so it
+   * sits on top of somebody else's line work instead of having a door jamb
+   * showing through it; the edge is ink, so it is still a symbol on white
+   * paper. Neither half needs to know whether the scan was inverted.
+   *
+   * READ OFF THE STYLESHEET, ONCE. The six values are `--lp-fixture-*` in the
+   * `:root` block of styles.css and nowhere else — see fixturePaint.js for why
+   * that became possible the moment the ramps went flat. `useState` with a lazy
+   * initialiser rather than `useMemo`: this is a layout query, the stylesheet
+   * does not change for the life of the page, and once is once.
+   */
+  const [PAINT] = useState(readFixturePaint);
+  const rim = PAINT.ink;
+
 
   /**
    * A NO-LIGHT ZONE IS INK, SO IT FOLLOWS THE GROUND.
@@ -740,6 +767,84 @@ const PlanCanvas = forwardRef(function PlanCanvas(
   // layout is an overlay on somebody else's line work and should read as one —
   // heavy strokes make it look like the plan is ours.
   const lw = Math.max(width, height) / 1500;
+
+  /**
+   * THE HATCH LINE INSIDE THE `cob-nogo` PATTERN, AND ONLY THAT.
+   *
+   * Everything else on this sheet has its stroke width read as a SCREEN width
+   * already — see `hair` below — so nothing else on it wants a zoom in the
+   * expression. Pattern content is drawn in the pattern's own tile space rather
+   * than into the plan's viewport, so it does not get that for free and the tile
+   * and its line are both divided by the zoom by hand. That is the arrangement
+   * the `cob-nogo` note describes and it is unchanged; this is the old
+   * `HATCH_LINE_PX / zoom` with the weight taken off the stylesheet's token
+   * instead of a second literal.
+   */
+  const hatchLinePx = PAINT.hairlinePx / (zoom || 1);
+
+  /**
+   * THE HAIRLINE, AND IT IS A CEILING RATHER THAN A WEIGHT.
+   *
+   * `lw` above is the SHEET's unit and everything on the drawing is sized in
+   * multiples of it — radii, offsets, dash lengths, hit bands. It is
+   * `max(width, height) / 1500`, which is ONE PIXEL on a 1500 px plan and four
+   * on a 6000 px survey, so a `lw * 2.4` strip is 2.4 px on the first sheet and
+   * 9.6 px on the second. That is what this caps, and the cap is in screen
+   * pixels because that is the space a stroke width on this canvas already
+   * lands in.
+   *
+   * THERE IS NO ZOOM IN HERE, AND PUTTING ONE IN IS THE MISTAKE TO AVOID.
+   * styles.css gives every shape inside `.plan` `vector-effect:
+   * non-scaling-stroke`, so an authored width is a SCREEN width at every
+   * magnification — dash patterns with it — and the zoom moves the geometry
+   * only. Dividing by the zoom therefore does not hold a stroke at one pixel,
+   * it inverts it: the cap collapses to a quarter pixel at 400% and relaxes to
+   * four pixels at 25%, so the drawing gets FATTER the further out you go,
+   * which is precisely the coarsening that rule exists to stop. The one stroke
+   * on this sheet that does scale opts out with `.real-width`, and it does not
+   * come through here.
+   *
+   * So `min` against a flat number: the designed weight applies wherever it is
+   * already finer than the cap — a 900 px sketch keeps its whole hierarchy —
+   * and above that every mark is one pixel, on every plan and at every zoom.
+   * Raise `--lp-hairline-px` in styles.css for a heavier sheet.
+   *
+   * THREE KINDS OF STROKE DELIBERATELY DO NOT COME THROUGH HERE, and each is a
+   * stroke in name only. A `stroke="transparent"` HIT BAND is a pointer target
+   * and a one-pixel one cannot be hit. A GLOW or halo is a blurred wash that
+   * happens to be painted onto a path. And the track profile and the wall-tone
+   * casings are OBJECTS drawn to their true width — an inch is an inch at every
+   * zoom, which is the one thing scaling them would destroy, and they are the
+   * `.real-width` opt-out the stylesheet names.
+   */
+  const hair = (k = 1) => Math.min(lw * k, PAINT.hairlinePx);
+
+  /**
+   * A FITTING'S DRAWN RADIUS, FROM THE ONE TABLE THAT OWNS IT.
+   *
+   * `SYMBOL_FT` in settings.js is the real size of every aperture on these
+   * drawings, derived from `COB_DIA_IN` — four inches, because that is what a
+   * downlight is specified and bought as. It went in to end a disagreement
+   * between the PDF and the DXF, and this canvas was never wired to it: it held
+   * `0.3` and `0.52` as bare literals in six places, which is 7.2 inches of
+   * drawing for a four inch fitting. Nearly twice real size, and on a dense
+   * ceiling that is the difference between a symbol and a blob — the words are
+   * the ones already written above `COB_DIA_IN`, about exactly this number.
+   * So the screen, the plot and the CAD file now read one table. Change
+   * `COB_DIA_IN` and all three follow.
+   *
+   * THE FLOOR IS A SCREEN CONCERN AND STAYS HERE, which is the same split
+   * `SCONCE_FT` documents. Three line-weights is what keeps a mark legible on a
+   * plan scaled at six pixels to the foot; a drawing FILE must not have it,
+   * because there the symbol is a real size and nothing else.
+   */
+  const symR = (ft) => Math.max((pxPerFt || 12) * ft, lw * 3);
+
+  /** Pixels per foot for an ANNOTATION — the aim arrow, which is stated in feet
+   *  in `AIM_FT` and is the same arrow on the screen, the plot and the DXF. The
+   *  same fallback the symbols take, and no floor: an arrow too short to see is
+   *  a spot with nothing to say, not a spot drawn wrong. */
+  const aimS = pxPerFt || 12;
 
   /**
    * HOW A LINEAR MARK IS CLICKED, and why it needs saying out loud.
@@ -861,8 +966,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       {(plan.gridChunksPx ?? plan.chunksPx ?? []).map((ch, k) => (
         <g key={k}>
           <rect x={ch.x0} y={ch.y0} width={ch.x1 - ch.x0} height={ch.y1 - ch.y0}
-            fill="none" stroke={C.audit} strokeWidth={lw * 1.8} opacity="0.75" />
-          <g stroke={C.audit} strokeWidth={lw} opacity="0.5" strokeDasharray={`${lw * 6} ${lw * 4}`}>
+            fill="none" stroke={C.audit} strokeWidth={hair(1.8)} opacity="0.75" />
+          <g stroke={C.audit} strokeWidth={hair()} opacity="0.5" strokeDasharray={`${lw * 6} ${lw * 4}`}>
             {ch.xLines.slice(1, -1).map((x, i) => <line key={'x' + i} x1={x} y1={ch.y0} x2={x} y2={ch.y1} />)}
             {ch.yLines.slice(1, -1).map((y, i) => <line key={'y' + i} x1={ch.x0} y1={y} x2={ch.x1} y2={y} />)}
           </g>
@@ -988,7 +1093,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
      the sheet, and there is nothing here to order. */
   const suggestGhosts = !suggest ? null : (
     <g pointerEvents="none" opacity={SUGGEST_OPACITY} fill="none" stroke={suggestInk}
-      strokeWidth={lw * 1.6} strokeLinecap="round">
+      strokeWidth={hair(1.6)} strokeLinecap="round">
       {suggestPoints.map((p) => {
         const R = p.r;
         /* --- THE CENTRE, DRAWN, BECAUSE IT IS THE THING YOU AIM AT ---------
@@ -1016,8 +1121,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const arm = R * 0.22;
         const centre = (
           <>
-            <line x1={p.x - arm} y1={p.y} x2={p.x + arm} y2={p.y} strokeWidth={lw} />
-            <line x1={p.x} y1={p.y - arm} x2={p.x} y2={p.y + arm} strokeWidth={lw} />
+            <line x1={p.x - arm} y1={p.y} x2={p.x + arm} y2={p.y} strokeWidth={hair()} />
+            <line x1={p.x} y1={p.y - arm} x2={p.x} y2={p.y + arm} strokeWidth={hair()} />
           </>
         );
         /* ONE GLYPH FOR EVERY AMBIENT PROPOSAL, INCLUDING THE ONES A TRACK HAS
@@ -1035,12 +1140,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           );
         }
         const ux = Math.cos(p.angle), uy = Math.sin(p.angle);
-        // The same reach the placed spot's annotation has, measured from the rim
-        // of the same circle. See the arrow in the solid spots block.
-        const off = R * 1.15, reach = R * 3.5;
+        // The same arrow the placed spot has, off the same table. See the note
+        // by `AIM_FT` in the solid spots block.
+        const off = AIM_FT.start * aimS, reach = AIM_FT.reach * aimS;
         const x0 = p.x + ux * off, y0 = p.y + uy * off;
         const x1 = p.x + ux * reach, y1 = p.y + uy * reach;
-        const head = R * 1.05;
+        const head = AIM_FT.start * AIM_FT.headFrac * aimS;
         const nx = -uy, ny = ux;
         return (
           <g key={p.id}>
@@ -1053,8 +1158,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 meaning — which way the fitting looks. The same triangle the
                 placed spot draws, so the two are recognisably one annotation in
                 two states. */}
-            <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * 0.55},${y1 - uy * head + ny * head * 0.55}`
-                   + ` L${x1 - ux * head - nx * head * 0.55},${y1 - uy * head - ny * head * 0.55} Z`}
+            <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * AIM_FT.headWideFrac},${y1 - uy * head + ny * head * AIM_FT.headWideFrac}`
+                   + ` L${x1 - ux * head - nx * head * AIM_FT.headWideFrac},${y1 - uy * head - ny * head * AIM_FT.headWideFrac} Z`}
               fill={suggestInk} stroke="none" />
           </g>
         );
@@ -1098,7 +1203,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         ))}
         <pattern id="nlz" width={lw * 9} height={lw * 9} patternUnits="userSpaceOnUse"
           patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2={lw * 9} stroke={zoneInk} strokeWidth={lw * 1.6}
+          <line x1="0" y1="0" x2="0" y2={lw * 9} stroke={zoneInk} strokeWidth={hair(1.6)}
             opacity={layers.invert ? 0.6 : 0.45} />
         </pattern>
         {/* THE SAME 45-DEGREE HATCH IN THE WARNING RED, because it is saying
@@ -1131,7 +1236,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         <pattern id="cob-nogo" width={HATCH_PX / (zoom || 1)} height={HATCH_PX / (zoom || 1)}
           patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2={HATCH_PX / (zoom || 1)} stroke={C.nogo}
-            strokeWidth={HATCH_LINE_PX / (zoom || 1)}
+            strokeWidth={hatchLinePx}
             opacity={layers.invert ? 0.75 : 0.6} />
         </pattern>
 
@@ -1176,9 +1281,9 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         </filter>
 
         <radialGradient id="lp-glow">
-          <stop offset="0%" stopColor={C.lit} stopOpacity="0.42" />
-          <stop offset="45%" stopColor={C.lit} stopOpacity="0.20" />
-          <stop offset="100%" stopColor={C.lit} stopOpacity="0" />
+          <stop offset="0%" stopColor={PAINT.glow} stopOpacity="0.42" />
+          <stop offset="45%" stopColor={PAINT.glow} stopOpacity="0.20" />
+          <stop offset="100%" stopColor={PAINT.glow} stopOpacity="0" />
         </radialGradient>
 
         {/* THE FLOOR POOL'S FILL — RADIAL, FROM THE LAMP OUTWARDS.
@@ -1248,10 +1353,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             shape, which is why the track head reads as a lamp lying along its
             profile rather than as a disc floating in a rectangle. That is the
             right answer here; it was the wrong one on a task surface. */}
+        {/* FLAT NOW, AND STILL A GRADIENT ELEMENT. The ramp is gone — a
+            fitting's body is one opaque white — but the twenty-odd marks that
+            paint with it go on saying `url(#lp-core)`, so the paint SERVER
+            stays and only its stops changed. That is the same property the note
+            above prizes about the ids: the body's colour is one edit, here or
+            in the stylesheet, and not twenty. */}
         <radialGradient id="lp-core" cx="50%" cy="50%" r="50%">
-          {RAMP.coreStops.map((st) => (
-            <stop key={st.at} offset={st.at} stopColor={st.color} />
-          ))}
+          <stop offset="0%" stopColor={PAINT.fill} />
+          <stop offset="100%" stopColor={PAINT.fill} />
         </radialGradient>
 
         {/* THE SELECTION OUTLINE'S RAMP. `lp-lit` was the obvious thing to
@@ -1319,7 +1429,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 own margin at worst. */}
             {layers.invert && <rect x="0" y="0" width={width} height={height} fill="#000" />}
             <g fill="none" stroke={layers.invert ? '#8C8C8C' : '#9E9E9E'}
-              strokeWidth={lw * 1.5} opacity="0.6">
+              strokeWidth={hair(1.5)} opacity="0.6">
               {vector.filter((l) => !wallLayers?.has(l.layer))
                      .map((l) => <path key={l.layer} d={l.path} />)}
             </g>
@@ -1335,7 +1445,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 stays proportional at every zoom and on every drawing size —
                 the plan gets heavier without becoming the subject. */}
             <g fill="none" stroke={layers.invert ? '#D9D9D9' : '#3A3A3A'}
-              strokeWidth={lw * 3.2} opacity="0.95" strokeLinecap="round"
+              strokeWidth={hair(3.2)} opacity="0.95" strokeLinecap="round"
               strokeLinejoin="round">
               {vector.filter((l) => wallLayers?.has(l.layer))
                      .map((l) => <path key={l.layer} d={l.path} />)}
@@ -1343,7 +1453,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {vector.flatMap((l) => l.circles.map((c, k) => (
               <circle key={l.layer + k} cx={c.cx} cy={c.cy} r={c.r}
                 fill="none" stroke={layers.invert ? '#8C8C8C' : '#9E9E9E'}
-                strokeWidth={lw * 1.4} opacity="0.6" />
+                strokeWidth={hair(1.4)} opacity="0.6" />
             )))}
           </g>
         /* NO FILTER ON THIS ELEMENT. The bitmap handed down as `src` is
@@ -1433,7 +1543,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               /* The room the panel is talking about is drawn heavier. With eight
                  outlines on one sheet, "which one is Bedroom 2" is otherwise a
                  question the drawing cannot answer. */
-              strokeWidth={lw * (r.id === focusId && laid.length > 1 ? 3.6 : 2.4)}
+              strokeWidth={hair(r.id === focusId && laid.length > 1 ? 3.6 : 2.4)}
               strokeLinejoin="round" />
           )}
           {/* THE SELECTED SPACE, and this is a different thing from the layer
@@ -1470,7 +1580,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     is `lp-sel-ramp` rather than `lp-lit`, which went invisible
                     here. See the note in the defs. */}
                 <polygon points={pts} className="lp-sel" fill="none"
-                  stroke="url(#lp-sel-ramp)" strokeWidth={lw * 1.6}
+                  stroke="url(#lp-sel-ramp)" strokeWidth={hair(1.6)}
                   strokeLinejoin="round" />
                 {/* --- THE GLINT ---------------------------------------------
                     A short bright arc that runs once round the outline in a
@@ -1502,7 +1612,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     drawing's units, which a stylesheet cannot know. */}
                 <polygon key={`glint-${r.id}`} points={pts} className="lp-glint"
                   fill="none" stroke={GLINT_STYLE.color}
-                  strokeWidth={lw * GLINT_STYLE.weight}
+                  strokeWidth={hair(GLINT_STYLE.weight)}
                   strokeLinejoin="round" strokeLinecap="round"
                   /* THE TIMING IS HANDED TO CSS, NOT DUPLICATED IN IT. Same
                      idiom as the strips' breath a few hundred lines up: the
@@ -1670,7 +1780,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  the target. (`pointer-events: stroke` would have: it follows the
                  dashes, and on a dotted line that leaves you clicking dots.) */
               fill="none" stroke={layers.invert ? C.object : rim}
-              strokeWidth={lw}
+              strokeWidth={hair()}
               strokeDasharray={`${lw} ${lw * 3}`} strokeLinecap="round"
               strokeLinejoin="round" opacity="0.85" />
             </g>
@@ -1745,22 +1855,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             // still be scaled off it, which was the whole reason this one element
             // is drawn to size (see `inch`).
             //
-            // THE EDGE IS A GRADIENT ALONG THE RUN, like the strips, because a
-            // rail is the same kind of object: a length of product with the
-            // light graduating down it. Same userSpaceOnUse reasoning as the
-            // strips too — see the note by `gline` — and here the endpoints come
-            // from the extent of every run in the arrangement, so a closed track
-            // grades across its whole rectangle instead of each side restarting.
-            const railPts = t.closed
-              ? t.runs.map((rn) => rn.a)
-              : t.runs.flatMap((rn) => [rn.a, rn.b]);
-            const rgid = `lp-rail-${i}-${ti}`;
-            const rgrad = {
-              x1: Math.min(...railPts.map((q) => q.x)),
-              y1: Math.min(...railPts.map((q) => q.y)),
-              x2: Math.max(...railPts.map((q) => q.x)),
-              y2: Math.max(...railPts.map((q) => q.y)),
-            };
+            // THE EDGE USED TO BE A GRADIENT ALONG THE RUN, on the argument
+            // that a rail is a length of product with the light graduating down
+            // it — a `userSpaceOnUse` ramp pinned to the extent of every run in
+            // the arrangement, so a closed track graded across its rectangle
+            // instead of each side restarting. It was right while the fittings
+            // were cut from the accent. They are not: a rail's profile is the
+            // same opaque white as every other body, so there is nothing left to
+            // grade, and a linear gradient with one colour in it is a paint
+            // server per track earning nothing. The geometry that aimed it went
+            // with it. The black core below is unchanged and is what still makes
+            // the run read as a carrier rather than as a fat white line.
             // ONE INCH, WHICH IS THE PROFILE ITSELF AND NOT A LINE STANDING FOR
             // IT. See `inch` at the top of this file for why this one element is
             // drawn to size. What it buys is the whole drawing: the heads are an
@@ -1810,14 +1915,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               const d = `M${t.runs.map((rn) => `${rn.a.x},${rn.a.y}`).join(' L')} Z`;
               return (
                 <g key={'trk' + t.key}>
-                  <defs>
-                    <linearGradient id={rgid} gradientUnits="userSpaceOnUse" {...rgrad}>
-                      {RAMP.stops.map((st) => (
-                        <stop key={st.at} offset={st.at} stopColor={st.color} />
-                      ))}
-                    </linearGradient>
-                  </defs>
-                  <path d={d} fill="none" stroke={`url(#${rgid})`} strokeWidth={w}
+                  <path d={d} fill="none" stroke={PAINT.fill} strokeWidth={w}
                     className="real-width" strokeLinejoin="miter" pointerEvents="none" />
                   <path d={d} fill="none" stroke={C.ink} strokeWidth={core}
                     className="real-width" strokeLinejoin="miter" pointerEvents="none" />
@@ -1829,13 +1927,6 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             }
             return (
               <g key={'trk' + t.key}>
-                <defs>
-                  <linearGradient id={rgid} gradientUnits="userSpaceOnUse" {...rgrad}>
-                    {RAMP.stops.map((st) => (
-                      <stop key={st.at} offset={st.at} stopColor={st.color} />
-                    ))}
-                  </linearGradient>
-                </defs>
                 {t.runs.map((rn, k) => (
                   <g key={k}>
                     {/* BUTT ENDS, AND NO END-CAP TICK. A hairline needed a tick
@@ -1844,7 +1935,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                         its own, and a tick on top of it would be drawing an end
                         cap that is not a separate item. */}
                     <line x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
-                      stroke={`url(#${rgid})`} strokeWidth={w} strokeLinecap="butt"
+                      stroke={PAINT.fill} strokeWidth={w} strokeLinecap="butt"
                       className="real-width" pointerEvents="none" />
                     <line x1={rn.a.x} y1={rn.a.y} x2={rn.b.x} y2={rn.b.y}
                       stroke={C.ink} strokeWidth={core} strokeLinecap="butt"
@@ -1865,13 +1956,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         <g>
           {zones.map((z) => (
             <rect key={z.id} x={z.x0} y={z.y0} width={z.x1 - z.x0} height={z.y1 - z.y0}
-              fill="url(#nlz)" stroke={zoneInk} strokeWidth={lw * 1.8}
+              fill="url(#nlz)" stroke={zoneInk} strokeWidth={hair(1.8)}
               strokeDasharray={`${lw * 5} ${lw * 3.5}`} opacity="0.9" />
           ))}
           {draftZone && (
             <rect x={Math.min(draftZone.x0, draftZone.x1)} y={Math.min(draftZone.y0, draftZone.y1)}
               width={Math.abs(draftZone.x1 - draftZone.x0)} height={Math.abs(draftZone.y1 - draftZone.y0)}
-              fill={zoneInk} fillOpacity="0.12" stroke={zoneInk} strokeWidth={lw * 2} />
+              fill={zoneInk} fillOpacity="0.12" stroke={zoneInk} strokeWidth={hair(2)} />
           )}
         </g>
       )}
@@ -1907,8 +1998,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           <rect x={wc.rect.x0} y={wc.rect.y0}
             width={wc.rect.x1 - wc.rect.x0} height={wc.rect.y1 - wc.rect.y0}
             fill={wc.colour} fillOpacity="0.22"
-            stroke={wc.colour} strokeWidth={lw * 1.6} strokeOpacity="0.9" />
-          <g stroke={wc.colour} strokeWidth={lw} strokeOpacity="0.45">
+            stroke={wc.colour} strokeWidth={hair(1.6)} strokeOpacity="0.9" />
+          <g stroke={wc.colour} strokeWidth={hair()} strokeOpacity="0.45">
             {wc.rects.slice(1).map((c, k) => (
               wc.horizontal
                 ? <line key={k} x1={c.x0} y1={c.y0} x2={c.x0} y2={c.y1} />
@@ -2055,8 +2146,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           annotates: a cone reaching a wall must not draw its dotted footprint
           across the adjacent room or outside the plan. */}
       {heatmapOn && layers.beamAngles && layers.lights && !placingGeometry && (
-        <g fill="none" stroke={rim} pointerEvents="none"
-          strokeWidth={lw * 0.65} strokeLinecap="round"
+        <g fill="none" stroke={PAINT.beam} pointerEvents="none"
+          strokeWidth={hair(0.65)} strokeLinecap="round"
           strokeDasharray={`${lw * 1.15} ${lw * 3.1}`} opacity="0.72">
           {autoLights && laid.flatMap((r, ri) => (r.plan.lightsPx ?? [])
             .filter((l) => !l.track)
@@ -2204,7 +2295,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     <line key={i} x1={q.x - uy * t} y1={q.y + ux * t}
                       x2={q.x + uy * t} y2={q.y - ux * t}
                       stroke={picked ? WIRE_PICKED : SB_COLOUR}
-                      strokeWidth={lw * 1.5} strokeLinecap="round" />
+                      strokeWidth={hair(1.5)} strokeLinecap="round" />
                   );
                 })}
               {/* WHICH FLOW THIS IS, once per loop, at its first fitting — and
@@ -2322,8 +2413,8 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             // 20% smaller, which is enough to read as deliberate next to a
             // standard downlight and not so much that it reads as a spot.
             const fx = l.fixture || l.kind;
-            const R = (l.kind === 'large' ? 0.52 : 0.3)
-              * (fx === 'small-narrow' ? 0.8 : 1) * s;
+            const R = symR((l.kind === 'large' ? SYMBOL_FT.large : SYMBOL_FT.small)
+              * (fx === 'small-narrow' ? SYMBOL_FT.narrow : 1));
             // `const col = l.kind === 'large' ? C.large : C.small` WAS HERE, and
             // it is gone because nothing in this block wants a hue any more.
             // Every mark on a light — recessed or seated in a track, ambient or
@@ -2378,15 +2469,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       ? (e) => { e.stopPropagation(); onPickChunk(r.id, l.design); }
                       : undefined} />
                   <rect x={l.x - rw / 2} y={l.y - rh / 2} width={rw} height={rh}
-                    fill="url(#lp-core)" stroke={rim} strokeWidth={lw * (warm ? 2.6 : 1.5)}
+                    fill="url(#lp-core)" stroke={rim} strokeWidth={hair(warm ? 2.6 : 1.5)}
                     pointerEvents="none" />
                   {layers.labels && l.gridPx && (
                     <g opacity="0.45" pointerEvents="none">
                       <line x1={l.gridPx.x} y1={l.gridPx.y} x2={l.x} y2={l.y}
-                        stroke={rim} strokeWidth={lw}
+                        stroke={rim} strokeWidth={hair()}
                         strokeDasharray={`${lw * 2} ${lw * 2}`} />
                       <circle cx={l.gridPx.x} cy={l.gridPx.y} r={lw * 1.4}
-                        fill="none" stroke={rim} strokeWidth={lw} />
+                        fill="none" stroke={rim} strokeWidth={hair()} />
                     </g>
                   )}
                   {layers.labels && (
@@ -2430,15 +2521,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     <rect x={l.bandPx.x0} y={l.bandPx.y0}
                       width={l.bandPx.x1 - l.bandPx.x0}
                       height={l.bandPx.y1 - l.bandPx.y0}
-                      fill={C.lit} fillOpacity="0.06" stroke={C.lit} strokeWidth={lw}
+                      fill={C.lit} fillOpacity="0.06" stroke={C.lit} strokeWidth={hair()}
                       strokeDasharray={`${lw * 3} ${lw * 3}`} opacity="0.8" />
                     {l.centrePx && (<>
                       <line x1={l.centrePx.x - R * 0.7} y1={l.centrePx.y}
                         x2={l.centrePx.x + R * 0.7} y2={l.centrePx.y}
-                        stroke={C.lit} strokeWidth={lw} opacity="0.7" />
+                        stroke={C.lit} strokeWidth={hair()} opacity="0.7" />
                       <line x1={l.centrePx.x} y1={l.centrePx.y - R * 0.7}
                         x2={l.centrePx.x} y2={l.centrePx.y + R * 0.7}
-                        stroke={C.lit} strokeWidth={lw} opacity="0.7" />
+                        stroke={C.lit} strokeWidth={hair()} opacity="0.7" />
                     </>)}
                   </g>
                 )}
@@ -2506,26 +2597,26 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                      the schedule, and it is drawn as a rect for exactly that
                      reason. It keeps `col`. */
                   fill="url(#lp-core)"
-                  stroke={rim} strokeWidth={lw * (warm ? 3.1 : 1.7)} />
+                  stroke={rim} strokeWidth={hair(warm ? 3.1 : 1.7)} />
                 {/* THE CENTRE DOT IS GONE, same as on the spot and for the same
                     reason: a solid disc of the accent COLOUR at 0.42R sat right
                     where the ramp is brightest, so it covered the lit core with
                     the one hue this is removing. Its job was to read as the lamp
                     inside a white body; the ramp does that itself now.
                     WHAT TELLS A SMALL FROM A LARGE WITHOUT IT: the radius (a
-                    large is 0.52 to a small's 0.3) and the ORIENTATION BAR, which
-                    only a large carries. Both were already doing the work — the
+                    large keeps its stated ratio to a small — see SYMBOL_FT) and
+                    the ORIENTATION BAR, which only a large carries. Both were already doing the work — the
                     fill and the dot were saying it a third and fourth time. */}
                 {l.kind === 'large' && (
                   <line
                     x1={l.axis === 'v' ? l.x : l.x - R * 1.7} y1={l.axis === 'v' ? l.y - R * 1.7 : l.y}
                     x2={l.axis === 'v' ? l.x : l.x + R * 1.7} y2={l.axis === 'v' ? l.y + R * 1.7 : l.y}
-                    stroke={rim} strokeWidth={lw * 1.1} opacity="0.5" />
+                    stroke={rim} strokeWidth={hair(1.1)} opacity="0.5" />
                 )}
                 {layers.labels && l.kind === 'large' && l.coverPx && l.coverPx.length > 1 && (
                   <g opacity="0.3">
                     {l.coverPx.map((q, k) => (
-                      <line key={k} x1={l.x} y1={l.y} x2={q.x} y2={q.y} stroke={rim} strokeWidth={lw} />
+                      <line key={k} x1={l.x} y1={l.y} x2={q.x} y2={q.y} stroke={rim} strokeWidth={hair()} />
                     ))}
                   </g>
                 )}
@@ -2539,18 +2630,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 {layers.labels && l.gridPx && (
                   <g opacity="0.45" pointerEvents="none">
                     <line x1={l.gridPx.x} y1={l.gridPx.y} x2={l.x} y2={l.y}
-                      stroke={rim} strokeWidth={lw}
+                      stroke={rim} strokeWidth={hair()}
                       strokeDasharray={`${lw * 2} ${lw * 2}`} />
                     <circle cx={l.gridPx.x} cy={l.gridPx.y} r={lw * 1.4}
-                      fill="none" stroke={rim} strokeWidth={lw} />
+                      fill="none" stroke={rim} strokeWidth={hair()} />
                   </g>
                 )}
                 {layers.labels && l.nudged && l.centrePx && (
                   <g opacity="0.5">
                     <line x1={l.centrePx.x} y1={l.centrePx.y} x2={l.x} y2={l.y}
-                      stroke={rim} strokeWidth={lw} strokeDasharray={`${lw * 2} ${lw * 2}`} />
+                      stroke={rim} strokeWidth={hair()} strokeDasharray={`${lw * 2} ${lw * 2}`} />
                     <circle cx={l.centrePx.x} cy={l.centrePx.y} r={lw * 1.5} fill="none"
-                      stroke={rim} strokeWidth={lw} />
+                      stroke={rim} strokeWidth={hair()} />
                   </g>
                 )}
                 {layers.labels && (
@@ -2622,7 +2713,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
            the same size under the finger at every magnification, and geometry
            is the only way to say that. */
         const HS = (Math.max(width, height) / 145) / (zoom || 1);
-        const FW = Math.max(width, height) / 1500;
+        const FW = hair();
         // `.hit` is what makes an element a CONTROL rather than drawing — see
         // the hit-test rule in styles.css. Without it the element is inert and
         // the click falls through to the canvas.
@@ -2866,11 +2957,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               <rect transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}
                 x={f.x - f.w / 2 - CL} y={f.y - f.h / 2 - CL}
                 width={f.w + CL * 2} height={f.h + CL * 2} rx={CL} ry={CL}
-                fill="none" stroke={col} strokeWidth={lw * 1.4}
+                fill="none" stroke={PAINT.clearance} strokeWidth={hair(1.4)}
                 strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
             ) : (
-              <circle cx={f.x} cy={f.y} r={R + CL} fill="none" stroke={col}
-                strokeWidth={lw * 1.4} strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
+              <circle cx={f.x} cy={f.y} r={R + CL} fill="none" stroke={PAINT.clearance}
+                strokeWidth={hair(1.4)} strokeDasharray={`${lw * 5} ${lw * 5}`} opacity="0.8" />
             )}
 
             {f.typeId === 'pendant' ? (
@@ -2896,7 +2987,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  other fitting on the sheet. See `emits` above. */
               <g>
                 <circle cx={f.x} cy={f.y} r={R0 * 0.62} fill="url(#lp-core)"
-                  stroke={rim} strokeWidth={lw * 2} />
+                  stroke={rim} strokeWidth={hair(2)} />
                 {/* THE FOUR TICKS, ORTHOGONAL AND NOT AT THE DIAGONALS, which is
                     what tells this apart from the standing lamp below it at a
                     glance and at print size. They start ON the rim and run
@@ -2906,7 +2997,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   return <line key={k}
                     x1={f.x + Math.cos(a) * R0 * 0.62} y1={f.y + Math.sin(a) * R0 * 0.62}
                     x2={f.x + Math.cos(a) * R0} y2={f.y + Math.sin(a) * R0}
-                    stroke={rim} strokeWidth={lw * 1.9} strokeLinecap="round" />;
+                    stroke={rim} strokeWidth={hair(1.9)} strokeLinecap="round" />;
                 })}
               </g>
             ) : f.kind === 'standing_lamp' ? (
@@ -2935,27 +3026,27 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  which is the mistake the spot's centre dot was removed for. */
               <g>
                 <circle cx={f.x} cy={f.y} r={R0 * 0.86} fill="url(#lp-core)"
-                  stroke={rim} strokeWidth={lw * 2} />
+                  stroke={rim} strokeWidth={hair(2)} />
                 {[0, 1, 2, 3].map((k) => {
                   const a = (k * Math.PI) / 2 + Math.PI / 4;
                   const c = Math.cos(a), sn = Math.sin(a);
                   return <line key={k}
                     x1={f.x + c * R0 * 0.58} y1={f.y + sn * R0 * 0.58}
                     x2={f.x + c * R0 * 1.34} y2={f.y + sn * R0 * 1.34}
-                    stroke={rim} strokeWidth={lw * 1.7} strokeLinecap="round" />;
+                    stroke={rim} strokeWidth={hair(1.7)} strokeLinecap="round" />;
                 })}
                 {/* THE LAMP: a ring with a cross across its full diameter, which
                     is the electrical drawing's own mark for a lamp holder. The
                     chords run to the ring rather than past it, so the two circles
                     stay legibly concentric at small sizes. */}
                 <circle cx={f.x} cy={f.y} r={R0 * 0.34} fill="none"
-                  stroke={rim} strokeWidth={lw * 1.6} />
+                  stroke={rim} strokeWidth={hair(1.6)} />
                 {[0, 1].map((k) => {
                   const a = Math.PI / 4 + (k * Math.PI) / 2;
                   const c = Math.cos(a) * R0 * 0.34, sn = Math.sin(a) * R0 * 0.34;
                   return <line key={k} x1={f.x - c} y1={f.y - sn}
                     x2={f.x + c} y2={f.y + sn}
-                    stroke={rim} strokeWidth={lw * 1.4} strokeLinecap="round" />;
+                    stroke={rim} strokeWidth={hair(1.4)} strokeLinecap="round" />;
                 })}
               </g>
             ) : f.kind === 'chandelier' ? (
@@ -2967,7 +3058,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  this mode is drawing. The stroke is set explicitly for the same
                  reason — inheriting `col` would put a white rim on a white dot
                  in day mode's inverse case. */
-              <g stroke={col} strokeWidth={lw * 1.8} fill="none">
+              <g stroke={col} strokeWidth={hair(1.8)} fill="none">
                 <circle cx={f.x} cy={f.y} r={R0 * 0.68} fill={col} fillOpacity="0.1" />
                 {[0, 1, 2, 3, 4, 5].map((k) => {
                   const a = (k * Math.PI) / 3;
@@ -2980,17 +3071,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             ) : rect ? (
               <g transform={`rotate(${((f.rot || 0) * 180) / Math.PI} ${f.x} ${f.y})`}>
                 <rect x={f.x - f.w / 2} y={f.y - f.h / 2} width={f.w} height={f.h}
-                  fill={col} fillOpacity="0.12" stroke={col} strokeWidth={lw * 2} />
+                  fill={col} fillOpacity="0.12" stroke={col} strokeWidth={hair(2)} />
                 <rect x={f.x - f.w / 2 + lw * 3} y={f.y - f.h / 2 + lw * 3}
                   width={Math.max(0, f.w - lw * 6)} height={Math.max(0, f.h - lw * 6)}
-                  fill="none" stroke={col} strokeWidth={lw} opacity="0.6" />
+                  fill="none" stroke={col} strokeWidth={hair()} opacity="0.6" />
                 {/* A trap door is crossed; a cassette gets a grille tick to say
                     which way is up, so a rotation is legible at all. Two marks
                     rather than one symbol at two sizes: on a printed sheet
                     "small square" and "slightly smaller square" is not a
                     distinction anyone can make. */}
                 {f.kind === 'trapdoor' ? (
-                  <g stroke={col} strokeWidth={lw * 1.2} opacity="0.7">
+                  <g stroke={col} strokeWidth={hair(1.2)} opacity="0.7">
                     <line x1={f.x - f.w / 2} y1={f.y - f.h / 2} x2={f.x + f.w / 2} y2={f.y + f.h / 2} />
                     <line x1={f.x + f.w / 2} y1={f.y - f.h / 2} x2={f.x - f.w / 2} y2={f.y + f.h / 2} />
                   </g>
@@ -3001,7 +3092,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                      three. Three lines across the width say "grille", and they
                      run the length of the unit because that is how the blades
                      actually sit. */
-                  <g stroke={col} strokeWidth={lw} opacity="0.7">
+                  <g stroke={col} strokeWidth={hair()} opacity="0.7">
                     {[-1, 0, 1].map((k) => (
                       <line key={k} x1={f.x - f.w / 2 + lw * 5} y1={f.y + (f.h / 5) * k}
                         x2={f.x + f.w / 2 - lw * 5} y2={f.y + (f.h / 5) * k} />
@@ -3009,7 +3100,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   </g>
                 ) : (
                   <line x1={f.x} y1={f.y - f.h / 2} x2={f.x} y2={f.y - f.h / 2 + Math.min(f.w, f.h) * 0.28}
-                    stroke={col} strokeWidth={lw * 1.8} />
+                    stroke={col} strokeWidth={hair(1.8)} />
                 )}
               </g>
             ) : f.kind === 'geyser' ? (
@@ -3017,7 +3108,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  a fan with its blades missing; the double ring is the tank in
                  its casing, and the stub is the pipework, which is the half of
                  the mark that says this is plumbing rather than a light. */
-              <g stroke={col} strokeWidth={lw * 1.6} fill="none">
+              <g stroke={col} strokeWidth={hair(1.6)} fill="none">
                 <circle cx={f.x} cy={f.y} r={R * 0.92} fill={col} fillOpacity="0.12" />
                 <circle cx={f.x} cy={f.y} r={R * 0.5} />
                 <line x1={f.x} y1={f.y - R * 0.92} x2={f.x} y2={f.y - R * 1.35}
@@ -3036,7 +3127,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   const sp = R0 * FAN_FT.spoke;
                   return <line key={k} x1={f.x} y1={f.y}
                     x2={f.x + Math.cos(a) * sp} y2={f.y + Math.sin(a) * sp}
-                    stroke={col} strokeWidth={lw * 2.2} strokeLinecap="round" opacity="0.75" />;
+                    stroke={col} strokeWidth={hair(2.2)} strokeLinecap="round" opacity="0.75" />;
                 })}
               </g>
             )}
@@ -3141,14 +3232,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       stroke={C.grip} strokeWidth={FW} strokeLinecap="round"
                       style={{ pointerEvents: 'stroke' }} {...grab('rotate')} />
                     <circle cx={f.x} cy={f.y + stem} r={HS * 0.55} fill="#fff"
-                      stroke={C.grip} strokeWidth={FW * 1.6} {...grab('rotate')} />
+                      stroke={C.grip} strokeWidth={hair(1.6)} {...grab('rotate')} />
                   </>)}
 
                   {only && [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy], k) => (
                     <rect key={k}
                       x={f.x + sx * hw - HS / 2} y={f.y + sy * hh - HS / 2}
                       width={HS} height={HS} rx={HS * 0.18} className="hit"
-                      fill="#fff" stroke={C.grip} strokeWidth={FW * 1.6}
+                      fill="#fff" stroke={C.grip} strokeWidth={hair(1.6)}
                       style={{ cursor: sx * sy > 0 ? 'nwse-resize' : 'nesw-resize' }}
                       onPointerDown={(e) => onObjPointerDown?.(e, f.id, 'resize', { sx, sy })} />
                   ))}
@@ -3225,46 +3316,32 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           : c.wall === 'bottom' ? [{ x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x1, y: c.rect.y0 }]
           : c.wall === 'left' ? [{ x: c.rect.x1, y: c.rect.y0 }, { x: c.rect.x1, y: c.rect.y1 }]
           : [{ x: c.rect.x0, y: c.rect.y0 }, { x: c.rect.x0, y: c.rect.y1 }]);
-        // --- THE RAMP, ALONG THE BAND -------------------------------------
+        // --- THE SLOT: WHITE, WITH A BLACK EDGE ---------------------------
         //
-        // THE RUN IS THE GRADIENT'S DIRECTION. A gradient has to run the LENGTH
-        // of the slot: this is linear product, billed by the metre, and the
-        // strips and track rails already grade along themselves. Across the
-        // eight inches the ramp would resolve over a fingernail of drawing and
-        // read as a flat tone with a dirty edge.
+        // THE RAMP ALONG THE BAND IS GONE, and with it the `userSpaceOnUse`
+        // vector that aimed it down the run. The argument for it was sound while
+        // a fitting was cut from the accent — this is linear product, billed by
+        // the metre, so the gradient followed its length rather than grading over
+        // a fingernail of drawing across the eight inches — and it is simply
+        // moot now: the band is one flat white, so there is no direction left for
+        // it to run in.
         //
-        // userSpaceOnUse, and here it is a choice about DIRECTION rather than a
-        // dodge round a degenerate bounding box — a band has real extent both
-        // ways, so objectBoundingBox would work and would grade the wrong way on
-        // half the walls in the room. Pinning the vector to the actual tape run
-        // also makes angled bands grade along their wall; `horizontal` remains
-        // only as the compatibility fallback for old saved coves.
-        const g = c.run?.length >= 2
-          ? { x1: c.run[0].x, y1: c.run[0].y, x2: c.run[1].x, y2: c.run[1].y }
-          : c.horizontal
-            ? { x1: c.rect.x0, y1: c.rect.y0, x2: c.rect.x1, y2: c.rect.y0 }
-            : { x1: c.rect.x0, y1: c.rect.y0, x2: c.rect.x0, y2: c.rect.y1 };
-        const gid = `lp-rcove-${ci}`;
+        // STILL TRANSPARENT, AND THAT IS NOT AN OVERSIGHT. `fillOpacity` is the
+        // knob in COVE_BAND_STYLE and it stays where it was: the wall, the door
+        // jamb and whatever else the slot is set out against have to read THROUGH
+        // it, because those are the edges the eight inches is dimensioned from. A
+        // solid band hides the very thing it is measured to. Take it to 1 there
+        // if you want the slot opaque.
         return (
           <g key={c.id} pointerEvents="none">
-            <defs>
-              <linearGradient id={gid} gradientUnits="userSpaceOnUse" {...g}>
-                {RAMP.stops.map((st) => (
-                  <stop key={st.at} offset={st.at} stopColor={st.color} />
-                ))}
-              </linearGradient>
-            </defs>
-            {/* A COMPLETE FILL, and transparent on purpose — see
-                COVE_BAND_STYLE. The outline and the lip take the ramp's rim tone
-                rather than the ramp itself: they are line work, and the slot's
-                set-out edge has to hold its weight the whole way along where a
-                ramp would fade it out in the middle. That is the same failure
-                the room selection outline hit; it is worth not repeating. */}
+            {/* The outline and the lip are ink rather than the fill: they are
+                line work, and the slot's set-out edge has to hold its weight the
+                whole way along. */}
             <polygon points={band.map((p) => `${p.x},${p.y}`).join(' ')}
-              fill={`url(#${gid})`} fillOpacity={B.fillOpacity}
-              stroke={rim} strokeWidth={lw} strokeOpacity={B.edgeOpacity} />
+              fill={PAINT.fill} fillOpacity={B.fillOpacity}
+              stroke={rim} strokeWidth={hair()} strokeOpacity={B.edgeOpacity} />
             <line x1={lip[0].x} y1={lip[0].y} x2={lip[1].x} y2={lip[1].y}
-              stroke={rim} strokeWidth={lw * B.lipWeight}
+              stroke={rim} strokeWidth={hair(B.lipWeight)}
               strokeOpacity={B.lipOpacity} />
           </g>
         );
@@ -3314,7 +3391,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // zoom-compensated because it is a size, the frame's weight does not
         // because it is a stroke and the stylesheet holds it now.
         const AH = (Math.max(width, height) / 155) / (zoom || 1);
-        const AFW = Math.max(width, height) / 1500;
+        const AFW = hair();
         // THE SYMBOL'S GEOMETRY, WORKED OUT ONCE. It used to live inside the
         // block that draws the sconce, which meant the hit area was put at
         // `a.point` — on the WALL — while the symbol it was supposed to catch
@@ -3370,62 +3447,33 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             return { ...base, rows: [['Wattage', `${o.watts} W`],
                                      ['Output', `${Math.round(o.lumens)} lm`]] };
           })();
-        // --- THE ACCENT GRADIENT, RUNNING ALONG THE TAPE ------------------
+        // --- THE TAPE'S INK, AND THERE ARE TWO OF THEM --------------------
         //
-        // The brand ramp laid down the LENGTH of the run rather than across it,
-        // so a strip reads as one continuous piece of product with the light
-        // graduating along it — which is what the gradient is for and what a
-        // flat #ffb900 could not say.
+        // A RUN ON THE PLAN IS WHITE; THE TAPE INSIDE A REVERSE COVE IS BLACK,
+        // and the split is about the GROUND each one is drawn on rather than
+        // about the product. A strip, a cove or a shelf run sits on the plan
+        // itself, so it is the same white as every other body on the sheet. The
+        // tape of a reverse cove is drawn INSIDE that cove's own white band —
+        // the eight-inch slot a few lines above — where a white dot is a white
+        // dot on white and says nothing at all. Black there reads as what it is:
+        // the LEDs in a white channel. `kind` is set in planProjection.js, which
+        // is the one place that knows a strip came from a slot.
         //
-        // userSpaceOnUse, AND THAT IS THE WHOLE DIFFICULTY. The obvious
-        // implementation is objectBoundingBox with x1=0,x2=1 — the default, and
-        // what the floor pools use — and on a strip it is BROKEN, for exactly
-        // the reason the `lp-strip-glow` filter region above is in user space:
-        // a horizontal or vertical line has a bounding box with zero height or
-        // zero width. A gradient mapped onto a degenerate box has nowhere to
-        // ramp, and most runs on a lighting plan are dead horizontal or dead
-        // vertical. So the stops are pinned to the run's ACTUAL endpoints in
-        // plan pixels, which cannot collapse.
+        // THE ACCENT RAMP ALONG THE RUN IS GONE. It laid the brand gradient down
+        // the LENGTH of the tape so a strip read as one continuous piece of
+        // product with the light graduating along it, pinned to the run's actual
+        // endpoints in plan pixels because objectBoundingBox collapses on a dead
+        // horizontal or vertical line — a real trap, and worth remembering if a
+        // ramp ever comes back here. It bought nothing once the tape went flat:
+        // one gradient per run, per render, with one colour in it.
         //
-        // ONE GRADIENT PER RUN, KEYED ON THE MAP INDEX. It has to be per-run
-        // because the coordinates are — a gradient cannot be shared by two
-        // strips pointing different ways — and it is keyed on `ai` rather than
-        // on `a.id` because an accent id is composed from room and chunk keys
-        // and is not guaranteed to be a legal SVG fragment id. `ai` is unique
-        // within this map, which is all a document-scoped id needs to be.
-        //
-        // A COVE HAS NO ENDPOINTS, so it takes the diagonal of its own bounding
-        // box: a closed circuit has no single direction, and the diagonal is the
-        // one line that grades every side of it rather than leaving two sides
-        // flat. `x0` and friends are read off the loop rather than off `a.rect`
-        // — the rect is the model's box, which the drawing deliberately does
-        // not use for anything (see the note above).
-        const gid = `lp-strip-${ai}`;
-        const gline = a.run
-          ? { x1: a.run[0].x, y1: a.run[0].y, x2: a.run[1].x, y2: a.run[1].y }
-          : a.loop
-            ? {
-                x1: Math.min(...a.loop.map((q) => q.x)),
-                y1: Math.min(...a.loop.map((q) => q.y)),
-                x2: Math.max(...a.loop.map((q) => q.x)),
-                y2: Math.max(...a.loop.map((q) => q.y)),
-              }
-            : null;
-        // The tape's ink. Falls back to the flat accent for a sconce, which has
-        // no run to grade along — it is a crosshair on a wall, not a length of
-        // product.
-        const tape = gline ? `url(#${gid})` : acol;
+        // A SCONCE TAKES `acol` STILL, which is now the same ink as everything
+        // else. It is a crosshair on a wall — line work, not a length of
+        // product — so it never had a run to grade along in the first place.
+        const ledInk = a.kind === 'reverse-cove' ? PAINT.led : PAINT.tape;
+        const tape = (a.run || a.loop) ? ledInk : acol;
         return (
           <g key={a.id} opacity={dim} {...feel(a.id, spec)}>
-            {gline && (
-              <defs>
-                <linearGradient id={gid} gradientUnits="userSpaceOnUse" {...gline}>
-                  {RAMP.stops.map((st) => (
-                    <stop key={st.at} offset={st.at} stopColor={st.color} />
-                  ))}
-                </linearGradient>
-              </defs>
-            )}
             {accSel && a.run && (
               <line x1={a.run[0].x} y1={a.run[0].y} x2={a.run[1].x} y2={a.run[1].y}
                 stroke={C.grip} strokeWidth={AFW * 5} strokeLinecap="round" opacity="0.28" />
@@ -3460,7 +3508,19 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {a.loop && (() => {
               const S = STRIP_STYLE;
               const boost = hot === a.id ? S.hoverBoost : 0;
-              const dot = lw * S.dash, gapl = lw * S.gap;
+              /* THE DOTS SHRINK WITH THE STROKE, so a tape stays a tape.
+                 A dash pattern is measured along the stroke and lands in the
+                 same space it does, so these two are already stable at every
+                 zoom — that is not what this is for. It is for the CAP: `hair`
+                 can take a 2.4 px run down to 1 px on a large sheet while
+                 `dash` and `gap` go on being 3.2 and 5 sheet units, and a 1 px
+                 line with 3.2 px dashes in it is not a row of dots any more, it
+                 is a dashed line. `k` is how much the cap took off the width;
+                 taking the same off the dash and the gap holds the dot's
+                 proportions, whatever the cap is set to. 1 when the cap is not
+                 biting, so a sheet it does not touch is unchanged. */
+              const k = hair(S.stroke + boost) / (lw * (S.stroke + boost));
+              const dot = lw * S.dash * k, gapl = lw * S.gap * k;
               /* `Z` UNLESS THE RUN IS OPEN. Every other loop on this sheet is
                  a closed circuit — a cove round an island, a shelf ring — and
                  closing it is right. A slot drawn wall to wall is not: an
@@ -3471,7 +3531,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 + (a.open ? '' : ' Z');
               return (
                 <g>
-                  <path d={d} fill="none" stroke={tape}
+                  {/* THE GLOW IS LIGHT, SO IT IS NEVER THE TAPE'S OWN INK.
+                      Both are `tape` no longer: a reverse cove's dots are black
+                      so they read inside the slot's white band, and a black
+                      blurred band under them is a shadow, which is the one
+                      thing a fitting saying "I am on" must not look like. The
+                      dots say which product; the glow says it is lit. */}
+                  <path d={d} fill="none" stroke={PAINT.glow}
                     strokeWidth={lw * (S.glow + boost * 2)} strokeLinejoin="round"
                     opacity={S.glowOpacity} filter="url(#lp-strip-glow)"
                     pointerEvents="none" className="lp-breathe"
@@ -3482,7 +3548,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                              animationDelay: `${((ai * 137) % 1000) / 1000 * -S.pulseMs}ms`,
                              animationPlayState: hot === a.id ? 'paused' : 'running' }} />
                   <path d={d} fill="none" stroke={tape}
-                    strokeWidth={lw * (S.stroke + boost)} strokeLinecap="round"
+                    strokeWidth={hair(S.stroke + boost)} strokeLinecap="round"
                     strokeDasharray={`${dot} ${gapl}`} className="lp-flow" />
                   {/* THE TAPE IS THE TARGET, NOT THE AREA IT ENCLOSES.
                       This path used to carry `.hit` itself, and a closed path
@@ -3537,7 +3603,19 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               // describe this strip on a 900px sketch and a 6000px survey.
               const S = STRIP_STYLE;
               const boost = hot === a.id ? S.hoverBoost : 0;
-              const dot = lw * S.dash, gapl = lw * S.gap;
+              /* THE DOTS SHRINK WITH THE STROKE, so a tape stays a tape.
+                 A dash pattern is measured along the stroke and lands in the
+                 same space it does, so these two are already stable at every
+                 zoom — that is not what this is for. It is for the CAP: `hair`
+                 can take a 2.4 px run down to 1 px on a large sheet while
+                 `dash` and `gap` go on being 3.2 and 5 sheet units, and a 1 px
+                 line with 3.2 px dashes in it is not a row of dots any more, it
+                 is a dashed line. `k` is how much the cap took off the width;
+                 taking the same off the dash and the gap holds the dot's
+                 proportions, whatever the cap is set to. 1 when the cap is not
+                 biting, so a sheet it does not touch is unchanged. */
+              const k = hair(S.stroke + boost) / (lw * (S.stroke + boost));
+              const dot = lw * S.dash * k, gapl = lw * S.gap * k;
               return (
                 <g>
                   {/* THE GLOW BREATHES BY GETTING FATTER, NOT BY FADING.
@@ -3555,7 +3633,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       properties because they are multiples of the sheet's line
                       weight, which the stylesheet cannot know. */}
                   <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
-                    stroke={tape} strokeWidth={lw * (S.glow + boost * 2)}
+                    stroke={PAINT.glow} strokeWidth={lw * (S.glow + boost * 2)}
                     strokeLinecap="butt" opacity={S.glowOpacity}
                     filter="url(#lp-strip-glow)" pointerEvents="none"
                     className="lp-breathe"
@@ -3566,7 +3644,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                              animationDelay: `${((ai * 137) % 1000) / 1000 * -S.pulseMs}ms`,
                              animationPlayState: hot === a.id ? 'paused' : 'running' }} />
                   <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
-                    stroke={tape} strokeWidth={lw * (S.stroke + boost)}
+                    stroke={tape} strokeWidth={hair(S.stroke + boost)}
                     strokeLinecap="round"
                     strokeDasharray={`${dot} ${gapl}`}
                     className="lp-flow hit" />
@@ -3604,7 +3682,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               return (
                 <g>
                   <circle cx={cx} cy={cy} r={R} fill="url(#lp-core)" />
-                  <g stroke={acol} strokeWidth={lw * 1.8} strokeLinecap="round">
+                  <g stroke={acol} strokeWidth={hair(1.8)} strokeLinecap="round">
                     {/* the stem: from the wall, through the circle, out the far side */}
                     <line x1={a.point.x} y1={a.point.y}
                       x2={cx + ix * arm} y2={cy + iy * arm} />
@@ -3613,7 +3691,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       x2={cx + ux * arm} y2={cy + uy * arm} />
                   </g>
                   <circle className="hit" cx={cx} cy={cy} r={R} fill="none"
-                    stroke={acol} strokeWidth={lw * (hot === a.id ? 3.4 : 2.1)} />
+                    stroke={acol} strokeWidth={hair(hot === a.id ? 3.4 : 2.1)} />
                 </g>
               );
             })()}
@@ -3673,7 +3751,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     the strip itself selects on a click like any other. */}
                 {(accSel || hot === a.id) && a.run.map((q, k) => (
                   <rect key={k} x={q.x - AH / 2} y={q.y - AH / 2} width={AH} height={AH}
-                    rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
+                    rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={hair(1.6)}
                     className="hit"
                     style={{ cursor: a.derived
                       ? (() => {
@@ -3721,7 +3799,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             )}
             {SG && accSel && (
               <rect x={SG.cx - AH / 2} y={SG.cy - AH / 2} width={AH} height={AH}
-                rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={AFW * 1.6}
+                rx={AH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={hair(1.6)}
                 className="hit" style={{ cursor: 'move' }}
                 onPointerDown={(ev) => onAccPointerDown(ev, a.roomId, a.id, 'slide')} />
             )}
@@ -3882,7 +3960,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 through a solid we are claiming is a solid. */}
             <polygon points={poly} fill="#fff" />
             <polygon className="hit" points={poly} fill={SB_COLOUR}
-              stroke="#fff" strokeWidth={lw * (hot === b.id ? 2.6 : 1.4)}
+              stroke="#fff" strokeWidth={hair(hot === b.id ? 2.6 : 1.4)}
               strokeLinejoin="round" />
             {/* THE FRAME THAT MEANS "THIS ONE", in the accent rather than in the
                 board's blue. The plate is already a filled blue rectangle, so a
@@ -3892,7 +3970,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 eat into the solid it is marking. */}
             {picked && (
               <polygon points={ring} fill="none" stroke={C.grip}
-                strokeWidth={lw * 2} strokeLinejoin="round" pointerEvents="none" />
+                strokeWidth={hair(2)} strokeLinejoin="round" pointerEvents="none" />
             )}
             {/* WHERE A WIRE WOULD LAND. The same frame in the same accent as
                 selection, because it means the same thing at the moment it is
@@ -3903,7 +3981,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 selection, so nothing is ever both. */}
             {flowGrab?.overId === b.id && !picked && (
               <polygon points={ring} fill="none" stroke={C.grip}
-                strokeWidth={lw * 2} strokeLinejoin="round" pointerEvents="none" />
+                strokeWidth={hair(2)} strokeLinejoin="round" pointerEvents="none" />
             )}
           </g>
         );
@@ -3989,7 +4067,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <rect x={r.x0} y={r.y0} width={r.x1 - r.x0} height={r.y1 - r.y0}
                   fill="url(#lp-lit)" fillOpacity={THROW_STYLE.litSurfaceOpacity}
                   stroke={C.lit} strokeOpacity="0.75"
-                  strokeWidth={lw * 1.6} strokeDasharray={`${lw * 6} ${lw * 3}`} />
+                  strokeWidth={hair(1.6)} strokeDasharray={`${lw * 6} ${lw * 3}`} />
                 <text x={r.x0 + lw * 3} y={r.y0 - lw * 2} fill={C.lit}
                   fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
                   {sf.label || sf.type || 'surface'}{sf.rejected ? ' (rejected)' : ''}
@@ -4031,7 +4109,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             <g key={'bed' + z.id}>
               <rect x={z.x0} y={z.y0} width={z.x1 - z.x0} height={z.y1 - z.y0}
                 fill="#C026D3" fillOpacity="0.06" stroke="#C026D3"
-                strokeWidth={lw * 1.8} strokeDasharray={`${lw * 6} ${lw * 4}`} />
+                strokeWidth={hair(1.8)} strokeDasharray={`${lw * 6} ${lw * 4}`} />
               <text x={z.x0 + lw * 3} y={z.y0 - lw * 2} fill="#C026D3"
                 fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
                 {z.cls || 'bed'}
@@ -4064,7 +4142,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             <g key={'dr' + i} opacity="0.45">
               <rect x={d.rect.x0} y={d.rect.y0}
                 width={d.rect.x1 - d.rect.x0} height={d.rect.y1 - d.rect.y0}
-                fill="none" stroke="#C026D3" strokeWidth={lw * 1.2}
+                fill="none" stroke="#C026D3" strokeWidth={hair(1.2)}
                 strokeDasharray={`${lw * 2} ${lw * 3}`} />
               <text x={d.rect.x0 + lw * 3} y={d.rect.y1 + Math.max(width, height) / 120} fill="#C026D3"
                 fontSize={Math.max(width, height) / 150} fontFamily="The Neue Montreal, sans-serif">
@@ -4085,7 +4163,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <rect x={d.rect.x0} y={d.rect.y0}
                   width={d.rect.x1 - d.rect.x0} height={d.rect.y1 - d.rect.y0}
                   fill="#C026D3" fillOpacity={ruler ? 0.12 : 0.05} stroke="#C026D3"
-                  strokeWidth={lw * (ruler ? 2.8 : 1.6)}
+                  strokeWidth={hair(ruler ? 2.8 : 1.6)}
                   strokeDasharray={ruler ? undefined : `${lw * 5} ${lw * 3}`} />
                 {/* The opening itself — the shorter side, which is the number
                     the scale is actually derived from. Drawn as a bar across
@@ -4094,7 +4172,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <line
                   x1={d.rect.x0} y1={d.rect.y1 + lw * 2}
                   x2={d.rect.x0 + d.openingPx} y2={d.rect.y1 + lw * 2}
-                  stroke="#C026D3" strokeWidth={lw * 2} />
+                  stroke="#C026D3" strokeWidth={hair(2)} />
                 <text x={d.rect.x0 + lw * 3} y={d.rect.y0 - lw * 2} fill="#C026D3"
                   fontSize={Math.max(width, height) / 130} fontFamily="The Neue Montreal, sans-serif">
                   {ruler ? 'the ruler · ' : d.typical ? 'typical · ' : ''}
@@ -4154,7 +4232,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
            has always had this test; see the spots loop in pdfPlot.js. */
         if (!spotIsPlaced(sp) || sp.rejected) return null;
         if (!Number.isFinite(sp.x) || !Number.isFinite(sp.y)) return null;
-        const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
+        const R = symR(SYMBOL_FT.spot);
         const ux = Math.cos(sp.angle), uy = Math.sin(sp.angle);
         // --- A DIRECTIONAL HEAD ON A TRACK -------------------------------
         //
@@ -4174,19 +4252,27 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const bodyWide = inch(TRACK_DIMS_IN.spot.wide);
         // The arrow leaves the fitting where the fitting ends. On a circle that
         // is the rim; on a cylinder it is the nose, half a body-length out.
-        const off = onTrack ? bodyLen / 2 + inch(0.6) : R * 1.15;
+        const off = onTrack ? bodyLen / 2 + inch(0.6) : AIM_FT.start * aimS;
         // THE BODY IS DRAWN TO SIZE; THE ARROW IS NOT, AND THAT IS THE LINE
         // BETWEEN THE TWO KINDS OF MARK ON THIS SHEET. The cylinder is an
         // OBJECT — six inches of it, measurable off the drawing. The arrow is an
         // ANNOTATION: it says what the fitting is for, it is read at the same
         // size everywhere on the sheet, and scaling it to a six-inch body would
-        // shrink the one mark whose whole job is to be noticed. So it keeps the
-        // length and the head it has always had, and only its START moves out to
-        // the nose of the body.
-        const reach = onTrack ? off + R * 2.35 : R * 3.5;
+        // shrink the one mark whose whole job is to be noticed.
+        //
+        // WHICH IS WHY IT IS IN FEET AND NOT IN `R` ANY MORE. It was `R * 3.5`,
+        // and that had the arrow riding on the body after all — invisibly,
+        // because the body's radius never moved. It moved the day the aperture
+        // was wired to `SYMBOL_FT` and came down to its real four inches, which
+        // would have taken 45% off the arrow with it and proved the paragraph
+        // above wrong on the sheet. `AIM_FT` is the table the PDF and the DXF
+        // already draw this arrow from; the canvas is the third reader now, so
+        // a spot points the same distance at the same thing on all three. Only
+        // the START still moves out to the nose of a track body.
+        const reach = AIM_FT.reach * aimS;
         const x0 = sp.x + ux * off, y0 = sp.y + uy * off;
         const x1 = sp.x + ux * reach, y1 = sp.y + uy * reach;
-        const head = R * 1.05;
+        const head = AIM_FT.start * AIM_FT.headFrac * aimS;
         const nx = -uy, ny = ux;
         // WHAT IT IS LIGHTING, ON HOVER. The task surfaces came off the drawing
         // because a dashed box round a dining table is working, not design —
@@ -4212,7 +4298,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // is trying to confirm they have hold of.
         // ...and again for the spot's ring: `SR` is a radius, `SFW` a weight.
         const SR = Math.max(R * 2.1, (Math.max(width, height) / 150) / (zoom || 1));
-        const SFW = Math.max(width, height) / 1400;
+        const SFW = hair();
         return (
           // THE SAME SYMBOL FOR BOTH, deliberately. A spot aimed at a painting
           // and one aimed at a desk are the same fitting in the same ceiling and
@@ -4240,7 +4326,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 means selection everywhere else on this canvas. */}
             {spotSel && (
               <circle cx={sp.x} cy={sp.y} r={SR} fill="none"
-                stroke={C.sel} strokeWidth={SFW * 1.6}
+                stroke={C.sel} strokeWidth={hair(1.6)}
                 strokeDasharray={`${SFW * 5} ${SFW * 3.5}`} pointerEvents="none" />
             )}
             {hl && (
@@ -4248,12 +4334,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <rect x={hl.x0} y={hl.y0}
                   width={hl.x1 - hl.x0} height={hl.y1 - hl.y0}
                   rx={lw * 2} fill={C.lit} fillOpacity="0.10"
-                  stroke={C.lit} strokeWidth={lw * 1.4} strokeOpacity="0.55"
+                  stroke={C.lit} strokeWidth={hair(1.4)} strokeOpacity="0.55"
                   strokeDasharray={`${lw * 5} ${lw * 4}`} />
                 {/* The line from the fitting to what it is for. The arrow
                     already points this way; the tether says how far. */}
                 <line x1={sp.x} y1={sp.y} x2={sp.target.x} y2={sp.target.y}
-                  stroke={C.lit} strokeWidth={lw} strokeOpacity="0.4"
+                  stroke={C.lit} strokeWidth={hair()} strokeOpacity="0.4"
                   strokeDasharray={`${lw * 2} ${lw * 3}`} />
               </g>
             )}
@@ -4264,10 +4350,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {layers.labels && sp.gridPx && (
               <g opacity="0.45" pointerEvents="none">
                 <line x1={sp.gridPx.x} y1={sp.gridPx.y} x2={sp.x} y2={sp.y}
-                  stroke={rim} strokeWidth={lw}
+                  stroke={rim} strokeWidth={hair()}
                   strokeDasharray={`${lw * 2} ${lw * 2}`} />
                 <circle cx={sp.gridPx.x} cy={sp.gridPx.y} r={lw * 1.4}
-                  fill="none" stroke={rim} strokeWidth={lw} />
+                  fill="none" stroke={rim} strokeWidth={hair()} />
               </g>
             )}
             <ellipse cx={sp.x} cy={sp.y}
@@ -4301,7 +4387,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   width={bodyLen} height={bodyWide}
                   rx={bodyWide / 2} ry={bodyWide / 2}
                   fill="url(#lp-core)" stroke={rim}
-                  strokeWidth={lw * (hot === sp.id ? 2.4 : 0.7)} pointerEvents="none" />
+                  strokeWidth={hair(hot === sp.id ? 2.4 : 0.7)} pointerEvents="none" />
                 {/* THE LENS, IN THE NOSE. Centred on the capsule's own end
                     radius, so it reads as the round end of the cylinder being
                     the thing that emits — which is what you see looking up at
@@ -4313,7 +4399,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <ellipse cx={sp.x + bodyLen / 2 - bodyWide / 2} cy={sp.y}
                   rx={bodyWide * 0.31} ry={bodyWide * 0.47}
                   fill="url(#lp-core)" stroke={rim}
-                  strokeWidth={lw * (hot === sp.id ? 2.2 : 1.1)} pointerEvents="none" />
+                  strokeWidth={hair(hot === sp.id ? 2.2 : 1.1)} pointerEvents="none" />
               </g>
             ) : (
               <>
@@ -4330,13 +4416,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     still separates a spot from a downlight is what always
                     separated them — the arrow. */}
                 <circle className="hit" cx={sp.x} cy={sp.y} r={R} fill="url(#lp-core)"
-                  stroke={rim} strokeWidth={lw * (hot === sp.id ? 3.4 : 2)} />
+                  stroke={rim} strokeWidth={hair(hot === sp.id ? 3.4 : 2)} />
               </>
             )}
             <line x1={x0} y1={y0} x2={x1} y2={y1}
-              stroke={rim} strokeWidth={lw * 1.9} strokeLinecap="round" />
-            <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * 0.55},${y1 - uy * head + ny * head * 0.55}`
-                   + ` L${x1 - ux * head - nx * head * 0.55},${y1 - uy * head - ny * head * 0.55} Z`}
+              stroke={rim} strokeWidth={hair(1.9)} strokeLinecap="round" />
+            <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * AIM_FT.headWideFrac},${y1 - uy * head + ny * head * AIM_FT.headWideFrac}`
+                   + ` L${x1 - ux * head - nx * head * AIM_FT.headWideFrac},${y1 - uy * head - ny * head * AIM_FT.headWideFrac} Z`}
               fill={rim} />
           </g>
         );
@@ -4370,21 +4456,21 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           INERT, like every other preview on this canvas. The press that
           commits it is the stage's, and a live shape here would swallow it. */}
       {spotAiming && (() => {
-        const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
+        const R = symR(SYMBOL_FT.spot);
         const ux = Math.cos(spotAiming.angle), uy = Math.sin(spotAiming.angle);
-        const off = R * 1.15, reach = R * 3.5;
+        const off = AIM_FT.start * aimS, reach = AIM_FT.reach * aimS;
         const x0 = spotAiming.x + ux * off, y0 = spotAiming.y + uy * off;
         const x1 = spotAiming.x + ux * reach, y1 = spotAiming.y + uy * reach;
-        const head = R * 1.05;
+        const head = AIM_FT.start * AIM_FT.headFrac * aimS;
         const nx = -uy, ny = ux;
         return (
           <g pointerEvents="none" opacity="0.85">
             <circle cx={spotAiming.x} cy={spotAiming.y} r={R}
-              fill="url(#lp-core)" stroke={rim} strokeWidth={lw * 2} />
+              fill="url(#lp-core)" stroke={rim} strokeWidth={hair(2)} />
             <line x1={x0} y1={y0} x2={x1} y2={y1}
-              stroke={rim} strokeWidth={lw * 1.9} strokeLinecap="round" />
-            <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * 0.55},${y1 - uy * head + ny * head * 0.55}`
-                   + ` L${x1 - ux * head - nx * head * 0.55},${y1 - uy * head - ny * head * 0.55} Z`}
+              stroke={rim} strokeWidth={hair(1.9)} strokeLinecap="round" />
+            <path d={`M${x1},${y1} L${x1 - ux * head + nx * head * AIM_FT.headWideFrac},${y1 - uy * head + ny * head * AIM_FT.headWideFrac}`
+                   + ` L${x1 - ux * head - nx * head * AIM_FT.headWideFrac},${y1 - uy * head - ny * head * AIM_FT.headWideFrac} Z`}
               fill={rim} />
           </g>
         );
@@ -4403,7 +4489,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const l = guideLine(g, Math.max(width, height) * 0.012);
         return (
           <g key={'gd' + i}>
-            <line {...l} stroke={C.guide} strokeWidth={lw * 1.1}
+            <line {...l} stroke={C.guide} strokeWidth={hair(1.1)}
               strokeDasharray={`${lw * 6} ${lw * 4}`} opacity="0.9" />
             {layers.labels && (
               <text x={g.axis === 'x' ? g.value + lw * 4 : l.x1 + lw * 4}
@@ -4473,24 +4559,24 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 width={t.wFt * pxPerFt + clearanceFt * pxPerFt * 2}
                 height={t.hFt * pxPerFt + clearanceFt * pxPerFt * 2}
                 rx={clearanceFt * pxPerFt} ry={clearanceFt * pxPerFt}
-                fill="none" stroke={col} strokeWidth={lw * 1.2}
+                fill="none" stroke={PAINT.clearance} strokeWidth={hair(1.2)}
                 strokeDasharray={`${lw * 4} ${lw * 4}`} />
             ) : (
               <circle cx={ghost.x} cy={ghost.y} r={r + clearanceFt * pxPerFt} fill="none"
-                stroke={col} strokeWidth={lw * 1.2} strokeDasharray={`${lw * 4} ${lw * 4}`} />
+                stroke={PAINT.clearance} strokeWidth={hair(1.2)} strokeDasharray={`${lw * 4} ${lw * 4}`} />
             )}
             {isRect(t) ? (
               <rect x={ghost.x - (t.wFt * pxPerFt) / 2} y={ghost.y - (t.hFt * pxPerFt) / 2}
                 width={t.wFt * pxPerFt} height={t.hFt * pxPerFt}
-                fill={col} fillOpacity="0.1" stroke={col} strokeWidth={lw * 1.4} />
+                fill={col} fillOpacity="0.1" stroke={col} strokeWidth={hair(1.4)} />
             ) : (
               <circle cx={ghost.x} cy={ghost.y} r={r * 0.6} fill={col} fillOpacity="0.1"
-                stroke={col} strokeWidth={lw * 1.4} />
+                stroke={col} strokeWidth={hair(1.4)} />
             )}
             <line x1={ghost.x - r * 0.3} y1={ghost.y} x2={ghost.x + r * 0.3} y2={ghost.y}
-              stroke={col} strokeWidth={lw} />
+              stroke={col} strokeWidth={hair()} />
             <line x1={ghost.x} y1={ghost.y - r * 0.3} x2={ghost.x} y2={ghost.y + r * 0.3}
-              stroke={col} strokeWidth={lw} />
+              stroke={col} strokeWidth={hair()} />
           </g>
         );
       })()}
@@ -4508,7 +4594,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         return (
           <g pointerEvents="none">
             <line x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-              stroke={C.lit} strokeWidth={lw * 4.8} strokeLinecap="round"
+              stroke={C.lit} strokeWidth={hair(4.8)} strokeLinecap="round"
               strokeDasharray={`${lw * 3.2} ${lw * 3.4}`} opacity="0.75" />
             <circle cx={a.x} cy={a.y} r={lw * 3.4} fill={C.lit} />
             {pxPerFt > 0 && L > lw * 8 && (
@@ -4540,7 +4626,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 x1={placeSnap.guide.from.x} y1={placeSnap.guide.from.y}
                 x2={placeSnap.guide.axis === 'x' ? placeSnap.x : placeSnap.guide.from.x}
                 y2={placeSnap.guide.axis === 'x' ? placeSnap.guide.from.y : placeSnap.y}
-                stroke={C.guide} strokeWidth={lw} opacity="0.9"
+                stroke={C.guide} strokeWidth={hair()} opacity="0.9"
                 strokeDasharray={`${lw * 3} ${lw * 3}`} />
             )}
             {/* A DIAMOND FOR AN EDGE, A SQUARE FOR AN END, A RING OTHERWISE —
@@ -4552,13 +4638,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  swings it a half-width off the snap it is supposed to mark. */
               <rect x={placeSnap.x - R / 2} y={placeSnap.y - R / 2} width={R} height={R}
                 transform={`rotate(45 ${placeSnap.x} ${placeSnap.y})`}
-                fill="#fff" stroke={C.guide} strokeWidth={lw * 1.6} />
+                fill="#fff" stroke={C.guide} strokeWidth={hair(1.6)} />
             ) : (placeSnap.kind === 'end' || placeSnap.kind === 'vertex') ? (
               <rect x={placeSnap.x - R / 2} y={placeSnap.y - R / 2} width={R} height={R}
-                fill="#fff" stroke={C.guide} strokeWidth={lw * 1.6} />
+                fill="#fff" stroke={C.guide} strokeWidth={hair(1.6)} />
             ) : (
               <circle cx={placeSnap.x} cy={placeSnap.y} r={R * 0.6}
-                fill="#fff" stroke={C.guide} strokeWidth={lw * 1.6} />
+                fill="#fff" stroke={C.guide} strokeWidth={hair(1.6)} />
             )}
           </g>
         );
@@ -4608,7 +4694,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <path className="real-width" d={d} clipPath={`url(#${cid})`} fill="none"
                   stroke="url(#cob-nogo)" strokeWidth={cobGuide.bandPx * 2} />
                 <path d={d} clipPath={`url(#${cid})`} fill="none"
-                  stroke={C.nogo} strokeWidth={HATCH_LINE_PX / (zoom || 1)}
+                  stroke={C.nogo} strokeWidth={hair()}
                   opacity="0.75" />
               </g>
             );
@@ -4623,7 +4709,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               width={cobGuide.bed.x1 - cobGuide.bed.x0}
               height={cobGuide.bed.y1 - cobGuide.bed.y0}
               fill="url(#cob-nogo)"
-              stroke={C.nogo} strokeWidth={HATCH_LINE_PX / (zoom || 1)} opacity="0.9" />
+              stroke={C.nogo} strokeWidth={hair()} opacity="0.9" />
           )}
         </g>
       )}
@@ -4684,7 +4770,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       })}
 
       {layers.lights && manualCobs.map((c) => {
-        const R = Math.max(s * 0.3, lw * 3);
+        const R = symR(SYMBOL_FT.cob);
         /* STOOD DOWN, AND IT IS THE WHOLE GROUP RATHER THAN EACH SYMBOL. The
            pools above are skipped outright; what is left is the aperture, and one
            opacity over it keeps the fitting reading as one mark at low weight.
@@ -4696,7 +4782,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           return (
             <g key={c.id} opacity="0.26" pointerEvents="none">
               <circle cx={c.x} cy={c.y} r={R} fill="url(#lp-core)" stroke={rim}
-                strokeWidth={lw * 1.7} />
+                strokeWidth={hair(1.7)} />
             </g>
           );
         }
@@ -4715,7 +4801,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
            one fitting somebody is trying to confirm they have hold of. Same two
            figures the task spot's ring uses. */
         const SR = Math.max(R * 2.1, (Math.max(width, height) / 150) / (zoom || 1));
-        const SFW = Math.max(width, height) / 1400;
+        /* `SFW` WAS HERE and has no readers left: the ring it weighted is the
+           one selection mark on this canvas with no dashes, so the cap is asked
+           for at the mark itself rather than named first. The radius above still
+           is, because a radius is a size and has to stay constant on screen. */
         /* THE POINTER SAYS THE LAMP CAN BE PICKED UP. `feel` hands back a
            `pointer` cursor, which is right for a mark you can only SELECT and
            wrong for one you can drag — and this is the only thing on screen that
@@ -4735,7 +4824,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               ? (ev) => onCobPointerDown(ev, c.id) : undefined}>
             {picked && (
               <circle cx={c.x} cy={c.y} r={SR} fill="none"
-                stroke={C.sel} strokeWidth={SFW * 1.6} pointerEvents="none" />
+                stroke={C.sel} strokeWidth={hair(1.6)} pointerEvents="none" />
             )}
             {/* THE BREATHING DISC AT THE FITTING, which is a different mark from
                 the pool and both belong. The pool is a claim about the floor;
@@ -4750,7 +4839,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 `${((c.id.charCodeAt(c.id.length - 1) * 137) % 1000) / 1000 * -2.8}s` }} />
             <circle className="hit" cx={c.x} cy={c.y} r={R}
               fill="url(#lp-core)" stroke={rim}
-              strokeWidth={lw * (warm ? 3.1 : 1.7)} />
+              strokeWidth={hair(warm ? 3.1 : 1.7)} />
           </g>
         );
       })}
@@ -4761,7 +4850,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       {arrayPath?.pts?.length > 1 && (
         <path d={arrayPath.pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
           + (arrayPath.closed ? ' Z' : '')}
-          fill="none" stroke={C.sel} strokeWidth={lw * 1.3}
+          fill="none" stroke={C.sel} strokeWidth={hair(1.3)}
           strokeDasharray={`${lw * 5} ${lw * 4}`} opacity="0.85"
           strokeLinejoin="round" pointerEvents="none" />
       )}
@@ -4786,7 +4875,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           + (selArrayPath.closed ? ' Z' : '');
         return (
           <g>
-            <path d={d} fill="none" stroke={C.sel} strokeWidth={lw * 1.6}
+            <path d={d} fill="none" stroke={C.sel} strokeWidth={hair(1.6)}
               strokeDasharray={`${lw * 5} ${lw * 4}`} opacity="0.9"
               strokeLinejoin="round" pointerEvents="none" />
             {onArrayPathDown && (
@@ -4806,7 +4895,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           about the gesture. Unlike the sconce's, it sits exactly where the
           pointer is — because that is exactly where the lamp will land. */}
       {cobGhost && (() => {
-        const R = Math.max(s * 0.3, lw * 3);
+        const R = symR(SYMBOL_FT.cob);
         const blocked = !!cobGhost.blocked;
         /* A BLOCKED PREVIEW IS A FITTING THAT CANNOT EMIT. Grey replaces the
            light ramp, the throw disappears, and the conventional prohibition
@@ -4843,7 +4932,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             <circle cx={cobGhost.x} cy={cobGhost.y} r={R}
               fill={blocked ? C.zone : 'url(#lp-core)'} />
             <circle cx={cobGhost.x} cy={cobGhost.y} r={R} fill="none"
-              stroke={blocked ? C.zone : rim} strokeWidth={lw * 2.1} />
+              stroke={blocked ? C.zone : rim} strokeWidth={hair(2.1)} />
             {blocked && (
               <g stroke={C.nogo} strokeWidth={noW} fill="none" strokeLinecap="round">
                 <circle cx={cobGhost.x} cy={cobGhost.y} r={noR} />
@@ -4862,7 +4951,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           faint, so what you see move along the wall as the pointer moves IS the
           fitting. */}
       {sconceGhost && (() => {
-        const R = Math.max((pxPerFt || 12) * 0.3, lw * 3);
+        const R = symR(SCONCE_FT.r);
         const { x: ix, y: iy } = sconceGhost.inward;
         const ux = sconceGhost.along?.x ?? -iy, uy = sconceGhost.along?.y ?? ix;
         const cx = sconceGhost.point.x + ix * R * 2.6;
@@ -4873,7 +4962,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {sconceGhost.wall && (
               <line x1={sconceGhost.wall.a.x} y1={sconceGhost.wall.a.y}
                 x2={sconceGhost.wall.b.x} y2={sconceGhost.wall.b.y}
-                stroke={C.guide} strokeWidth={lw} opacity="0.7"
+                stroke={C.guide} strokeWidth={hair()} opacity="0.7"
                 strokeDasharray={`${lw * 4} ${lw * 4}`} />
             )}
             {/* THE GHOST TAKES THE SAME GROUND AS THE REAL THING. It previews
@@ -4883,14 +4972,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {/* AND THE GHOST'S LINE WORK MATCHES THE PLACED FITTING'S, for the
                 same reason its ground does: a preview drawn in a colour the
                 click will not produce is a small lie about the gesture. */}
-            <g stroke={rim} strokeWidth={lw * 1.8} strokeLinecap="round">
+            <g stroke={rim} strokeWidth={hair(1.8)} strokeLinecap="round">
               <line x1={sconceGhost.point.x} y1={sconceGhost.point.y}
                 x2={cx + ix * arm} y2={cy + iy * arm} />
               <line x1={cx - ux * arm} y1={cy - uy * arm}
                 x2={cx + ux * arm} y2={cy + uy * arm} />
             </g>
             <circle cx={cx} cy={cy} r={R} fill="none"
-              stroke={rim} strokeWidth={lw * 2.1} />
+              stroke={rim} strokeWidth={hair(2.1)} />
           </g>
         );
       })()}
@@ -4958,13 +5047,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                      `placingGeometry` — so this is one exchange rather than two
                      unrelated nudges. */
                   <path d={path(sh.pts, sh.open)} fill="none" stroke={ink}
-                    strokeWidth={placingGeometry ? lw * 1.4 : lw}
+                    strokeWidth={hair(placingGeometry ? 1.4 : 1)}
                     strokeDasharray={dot} strokeLinecap="round" strokeLinejoin="round"
                     opacity={placingGeometry ? 0.95 : 0.55} pointerEvents="none" />
                 )}
                 {selShapeId === sh.id && (
                   <path d={path(sh.pts, sh.open)} fill="none" stroke={C.lit}
-                    strokeWidth={lw * 2.2} strokeLinejoin="round"
+                    strokeWidth={hair(2.2)} strokeLinejoin="round"
                     opacity="0.95" pointerEvents="none" />
                 )}
                 {/* --- THE LINE, LIT UNDER A TOOL THAT WOULD TAKE IT ---------
@@ -4997,7 +5086,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     press; a cue that could also be pressed would be a cue that
                     changes what the press means. */}
                 <path d={path(sh.pts, sh.open)} fill="none" stroke={ink}
-                  strokeWidth={lw * 2.2} strokeLinecap="round"
+                  strokeWidth={hair(2.2)} strokeLinecap="round"
                   strokeLinejoin="round" pointerEvents="none"
                   style={{ opacity: hoverShapeId === sh.id ? 1 : 0,
                            transition: 'opacity 130ms ease-out' }} />
@@ -5079,7 +5168,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   return (
                     <g>
                       <rect x={F.x0} y={F.y0} width={F.x1 - F.x0} height={F.y1 - F.y0}
-                        fill="none" stroke={C.lit} strokeWidth={lw}
+                        fill="none" stroke={C.lit} strokeWidth={hair()}
                         strokeDasharray={`${lw * 4} ${lw * 3}`}
                         opacity="0.75" pointerEvents="none" />
                       {(sh.handles ?? []).map((h, i) => {
@@ -5087,7 +5176,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                         return (
                           <rect key={i} className={onShapeHandleDown ? 'hit' : undefined}
                             x={q.x - R} y={q.y - R} width={R * 2} height={R * 2}
-                            fill="#fff" stroke={C.lit} strokeWidth={lw * 1.4}
+                            fill="#fff" stroke={C.lit} strokeWidth={hair(1.4)}
                             style={onShapeHandleDown ? { cursor: cur(h) } : undefined}
                             onPointerDown={onShapeHandleDown
                               ? (e) => onShapeHandleDown(e, sh.id, h) : undefined}
@@ -5116,7 +5205,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   <path d={path(draftShape.pts)} fill={C.lit} opacity="0.07" />
                 )}
                 <path d={path(draftShape.pts, draftShape.open)} fill="none" stroke={C.lit}
-                  strokeWidth={lw * 1.8} strokeLinejoin="round"
+                  strokeWidth={hair(1.8)} strokeLinejoin="round"
                   strokeDasharray={`${lw * 5} ${lw * 4}`} strokeLinecap="round" />
               </g>
             )}
@@ -5145,24 +5234,24 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               return (
                 <g pointerEvents="none">
                   {pts.length > 1 && (
-                    <path d={open} fill="none" stroke={C.lit} strokeWidth={lw * 1.8}
+                    <path d={open} fill="none" stroke={C.lit} strokeWidth={hair(1.8)}
                       strokeLinejoin="round" strokeLinecap="round" />
                   )}
                   {closed && pts.length > 2 && (
                     <line x1={last.x} y1={last.y} x2={first.x} y2={first.y}
-                      stroke={C.lit} strokeWidth={lw * 1.4}
+                      stroke={C.lit} strokeWidth={hair(1.4)}
                       strokeDasharray={`${lw * 4} ${lw * 4}`} opacity="0.7" />
                   )}
                   {penDraft.pts.map((q, i) => (
                     <circle key={i} cx={q.x} cy={q.y} r={R} fill="#fff"
-                      stroke={C.lit} strokeWidth={lw * 1.4} />
+                      stroke={C.lit} strokeWidth={hair(1.4)} />
                   ))}
                   {/* THE FIRST POINT, RINGED, because it is a target: clicking it
                       closes the path, and nothing else on the run does anything
                       when clicked. */}
                   {closed && (
                     <circle cx={penDraft.pts[0].x} cy={penDraft.pts[0].y} r={R * 2}
-                      fill="none" stroke={C.lit} strokeWidth={lw} opacity="0.8" />
+                      fill="none" stroke={C.lit} strokeWidth={hair()} opacity="0.8" />
                   )}
                 </g>
               );
@@ -5210,7 +5299,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         return (
           <g>
             {trackEdit.pts.length > 1 && (
-              <path d={d} fill="none" stroke={C.lit} strokeWidth={lw}
+              <path d={d} fill="none" stroke={C.lit} strokeWidth={hair()}
                 strokeDasharray={`${lw * 4} ${lw * 3}`} opacity="0.75"
                 pointerEvents="none" />
             )}
@@ -5218,7 +5307,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               <rect key={i} className={onTrackPointDown ? 'hit' : undefined}
                 x={q.x - R} y={q.y - R} width={R * 2} height={R * 2}
                 fill={selTrackPt === i ? C.lit : '#fff'}
-                stroke={C.lit} strokeWidth={lw * 1.4}
+                stroke={C.lit} strokeWidth={hair(1.4)}
                 style={onTrackPointDown ? { cursor: 'move' } : undefined}
                 onPointerDown={onTrackPointDown
                   ? (e) => onTrackPointDown(e, trackEdit.id, i, trackEdit.of) : undefined}
@@ -5277,25 +5366,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // small plan cannot invert it into a negative stroke width, at which
         // point the rail would vanish.
         const core = Math.max(w - lw * 1.5 * 2, w * 0.25);
-        const gid = `lp-magrail-${ti}`;
-        const xs = t.pts.map((q) => q.x), ys = t.pts.map((q) => q.y);
         return (
           <g key={`mtrack-${t.id}`} pointerEvents="none">
-            {/* THE EDGE IS A GRADIENT ALONG THE RUN, like the strips and like the
-                absorbing rail: a length of product with the light graduating
-                down it. `userSpaceOnUse` across the whole run's extent, so a
-                closed track grades across its rectangle instead of each side
-                restarting. */}
-            <defs>
-              <linearGradient id={gid} gradientUnits="userSpaceOnUse"
-                x1={Math.min(...xs)} y1={Math.min(...ys)}
-                x2={Math.max(...xs)} y2={Math.max(...ys)}>
-                {RAMP.stops.map((st) => (
-                  <stop key={st.at} offset={st.at} stopColor={st.color} />
-                ))}
-              </linearGradient>
-            </defs>
-            <path d={d} fill="none" stroke={`url(#${gid})`} strokeWidth={w}
+            {/* THE EDGE IS THE FITTINGS' OWN WHITE, flat. It was a gradient
+                along the run — same argument as the absorbing rail, a length of
+                product with the light graduating down it — and it went for the
+                same reason: there is one colour in a body now, so the ramp and
+                the run extent it was pinned to bought nothing. */}
+            <path d={d} fill="none" stroke={PAINT.fill} strokeWidth={w}
               className="real-width" strokeLinejoin="miter" strokeLinecap="butt" />
             <path d={d} fill="none" stroke={C.ink} strokeWidth={core}
               className="real-width" strokeLinejoin="miter" strokeLinecap="butt" />
@@ -5351,21 +5429,21 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {picked && m.kind === 'diffuser' && (
               <rect x={-along / 2 - across} y={-across * 1.5} width={along + across * 2}
                 height={across * 3} rx={across} fill="none" stroke={C.sel}
-                strokeWidth={lw * 1.6} pointerEvents="none" />
+                strokeWidth={hair(1.6)} pointerEvents="none" />
             )}
             {picked && spot && (
               <circle cx="0" cy="0" r={spotR * 1.75}
-                fill="none" stroke={C.sel} strokeWidth={lw * 1.6}
+                fill="none" stroke={C.sel} strokeWidth={hair(1.6)}
                 pointerEvents="none" />
             )}
             {m.kind === 'diffuser' ? (
               <rect x={-along / 2} y={-across / 2} width={along} height={across}
                 rx={Math.min(across / 3, lw * 1.2)}
-                fill="url(#lp-core)" stroke={rim} strokeWidth={lw * 1.5}
+                fill="url(#lp-core)" stroke={rim} strokeWidth={hair(1.5)}
                 pointerEvents="none" />
             ) : (
               <circle cx="0" cy="0" r={spotR} fill="url(#lp-core)"
-                stroke={rim} strokeWidth={lw * 1.5} pointerEvents="none" />
+                stroke={rim} strokeWidth={hair(1.5)} pointerEvents="none" />
             )}
             {onModulePointerDown && !placing && (spot ? (
               <circle className="hit" cx="0" cy="0" r={grabW / 2}
@@ -5527,7 +5605,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             <rect x={ch.rect.x0} y={ch.rect.y0}
               width={ch.rect.x1 - ch.rect.x0} height={ch.rect.y1 - ch.rect.y0}
               fill={P.region.fill} fillOpacity={P.region.fillOpacity}
-              stroke={P.region.edge} strokeWidth={lw * P.region.weight}
+              stroke={P.region.edge} strokeWidth={hair(P.region.weight)}
               strokeDasharray={`${lw * 8} ${lw * 5}`} opacity={P.region.opacity}
               pointerEvents="none" />
             {/* THE BODY, AND IT CARRIES THE EDGE. A white chip on a white plan
@@ -5545,7 +5623,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             <rect className="hit" data-pill-body="" x={cx - w / 2} y={cy - h / 2}
               width={w} height={h}
               rx={h / 2} ry={h / 2} fill={pillFill}
-              stroke={P.edge} strokeWidth={lw * P.edgeWeight}
+              stroke={P.edge} strokeWidth={hair(P.edgeWeight)}
               onClick={(e) => e.stopPropagation()}
               /* ON THE BODY AND NOT ON THE GROUP, so resting on an arrow does
                  not raise it: those two have a job of their own and no need to
@@ -5614,7 +5692,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               <g key={'de' + d.id} style={{ cursor: 'move' }}>
                 <rect x={r.x0} y={r.y0} width={w} height={h}
                   fill={SB_COLOUR} fillOpacity={on ? 0.18 : 0.10}
-                  stroke={SB_COLOUR} strokeWidth={lw * (on ? 2.8 : 1.8)} />
+                  stroke={SB_COLOUR} strokeWidth={hair(on ? 2.8 : 1.8)} />
                 {/* THE CORNERS, ON THE SELECTED ONE ONLY. They are not resize
                     grips and are not drawn as anything that looks like one —
                     they say WHICH box the keyboard is about, in the same idiom
@@ -5623,7 +5701,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   .map(([cx, cy], i) => (
                     <rect key={i} x={cx - lw * 2.2} y={cy - lw * 2.2}
                       width={lw * 4.4} height={lw * 4.4}
-                      fill="#fff" stroke={SB_COLOUR} strokeWidth={lw * 1.4} />
+                      fill="#fff" stroke={SB_COLOUR} strokeWidth={hair(1.4)} />
                   ))}
                 {/* ...AND THE ONE WAY TO THROW IT AWAY WITH A MOUSE. Delete and
                     Backspace do the same thing and are what somebody with a
@@ -5638,12 +5716,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                                              onDoorDelete(d.id); }}
                     style={{ cursor: 'pointer' }}>
                     <circle cx={r.x1 + lw * 5} cy={r.y0 - lw * 5} r={lw * 4.6}
-                      fill="#fff" stroke={SB_COLOUR} strokeWidth={lw * 1.6} />
+                      fill="#fff" stroke={SB_COLOUR} strokeWidth={hair(1.6)} />
                     <path d={`M${r.x1 + lw * 3.2},${r.y0 - lw * 6.8}`
                            + `L${r.x1 + lw * 6.8},${r.y0 - lw * 3.2}`
                            + `M${r.x1 + lw * 6.8},${r.y0 - lw * 6.8}`
                            + `L${r.x1 + lw * 3.2},${r.y0 - lw * 3.2}`}
-                      stroke={SB_COLOUR} strokeWidth={lw * 1.7} strokeLinecap="round" />
+                      stroke={SB_COLOUR} strokeWidth={hair(1.7)} strokeLinecap="round" />
                   </g>
                 )}
               </g>
@@ -5659,7 +5737,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               width={Math.abs(doorDraft.x1 - doorDraft.x0)}
               height={Math.abs(doorDraft.y1 - doorDraft.y0)}
               fill={SB_COLOUR} fillOpacity="0.14"
-              stroke={SB_COLOUR} strokeWidth={lw * 2} />
+              stroke={SB_COLOUR} strokeWidth={hair(2)} />
           )}
         </g>
       )}
@@ -5698,7 +5776,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           <g fill="none">
             {onFlowGripDown && all.map((l) => (
               <circle className="hit" key={`g${l.key}`} cx={l.grip.x} cy={l.grip.y}
-                r={lw * 3.2} fill="#fff" stroke={SB_COLOUR} strokeWidth={lw * 1.3}
+                r={lw * 3.2} fill="#fff" stroke={SB_COLOUR} strokeWidth={hair(1.3)}
                 style={{ cursor: 'grab' }}
                 onPointerDown={(e) => {
                   e.stopPropagation(); e.preventDefault();
@@ -5714,7 +5792,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 read as belonging to something else. */}
             {onFlowGripDown && f.from && (
               <circle className="hit" cx={f.from.x} cy={f.from.y} r={lw * 4.4}
-                fill={WIRE_PICKED} stroke="#fff" strokeWidth={lw * 1.5}
+                fill={WIRE_PICKED} stroke="#fff" strokeWidth={hair(1.5)}
                 style={{ cursor: 'grab' }}
                 onPointerDown={(e) => {
                   e.stopPropagation(); e.preventDefault();
@@ -5732,10 +5810,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     colour — the drag only ever happens on the picked one. */}
                 <line x1={f.nodes[0].x} y1={f.nodes[0].y}
                   x2={flowGrab.at.x} y2={flowGrab.at.y}
-                  stroke={WIRE_PICKED} strokeWidth={lw * 1.5}
+                  stroke={WIRE_PICKED} strokeWidth={hair(1.5)}
                   strokeDasharray={`${lw * 2} ${lw * 2}`} strokeLinecap="round" />
                 <circle cx={flowGrab.at.x} cy={flowGrab.at.y} r={lw * 3}
-                  fill={WIRE_PICKED} stroke="#fff" strokeWidth={lw * 1.2} />
+                  fill={WIRE_PICKED} stroke="#fff" strokeWidth={hair(1.2)} />
               </g>
             )}
           </g>
@@ -5743,7 +5821,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
       })()}
 
       {measure?.a && (
-        <g stroke={C.measure} strokeWidth={lw * 2} fill={C.measure}>
+        <g stroke={C.measure} strokeWidth={hair(2)} fill={C.measure}>
           <circle cx={measure.a.x} cy={measure.a.y} r={lw * 4} />
           {measure.b && <>
             <line x1={measure.a.x} y1={measure.a.y} x2={measure.b.x} y2={measure.b.y} />
