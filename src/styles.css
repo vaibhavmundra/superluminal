@@ -209,11 +209,11 @@
      NOT `--color-heatmap-*` BY ACCIDENT: the `--color-` prefix is what makes
      Tailwind emit them as theme colours, so `bg-[--color-heatmap-75-125]` works
      in the legend markup as well as `var()` in a fill. */
-  --color-heatmap-below-25:#1B3FA0;
-  --color-heatmap-25-75:#1FB6D4;
-  --color-heatmap-75-125:#28A85C;
-  --color-heatmap-125-200:#F0A32A; 
-  --color-heatmap-above-200:#EE6A1E;
+  --color-heatmap-below-25:#111111;
+  --color-heatmap-25-75:#7A4100;
+  --color-heatmap-75-125:#F59E0B;
+  --color-heatmap-125-200:#FDE047; 
+  --color-heatmap-above-200:#FFFFFF;
 
 
 
