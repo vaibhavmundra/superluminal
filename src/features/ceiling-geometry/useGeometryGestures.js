@@ -31,10 +31,11 @@ import { select } from '../../lib/selection.js';
 import { canGrab } from '../../lib/pressOwner.js';
 import { penAim } from '../../lib/pen.js';
 import { snapPoint } from '../../lib/snapGuides.js';
-import { COVE_GAP_FT, coveClearOfOutline } from '../../lib/cove.js';
+import { COVE_GAP_FT, coveOutlineClearOfOutline } from '../../lib/cove.js';
 import {
   penShape, clampCoveMove, canTakeGeometry, resizeShape, bigEnough, newShapeId,
-  isBuilt as shapeIsBuilt, bboxFt as shapeBboxFt, isTrack as shapeIsTrack,
+  isBuilt as shapeIsBuilt, outlineFt as shapeOutlineFt, isTrack as shapeIsTrack,
+  insetShape,
 } from '../../lib/ceilingShapes.js';
 import { shapeCanTranslate } from './geometryRules.js';
 
@@ -58,7 +59,7 @@ export function useGeometryGestures({
     shapeMenuOn, shapeTool, shapeRole, shapeSpan, shapeHeld, shapeDrag,
     shapeResize, trackGrip, geomHover, covePen, trackPen,
     setShapeMenuOn, setShapeTool, setShapeSpan, setShapeAt, setShapeHeld,
-    setHeldSrc, setHeldOff, setShapeDrag, setShapeEditId, setShapeResize,
+    setHeldSrc, setHeldRoomId, setHeldOff, setShapeDrag, setShapeEditId, setShapeResize,
     setGeomHover, setTrackEditId, setSelTrackPt, setTrackGrip,
   } = state;
   const { abandonShape, finishOpenCove, finishTrack } = commands;
@@ -185,21 +186,71 @@ export function useGeometryGestures({
    * the selection and swap this bar for the space's own, forty milliseconds after
    * the draft appeared. See `barePress` in App.jsx.
    */
-  const takeGeometry = (e, took) => {
+  const takeGeometry = (e, took, roomId = null) => {
     const { id: _id, role: _role, ...draft } = took;
     e.preventDefault();
     e.stopPropagation();
     setShapeSpan(null); setShapeAt(null); setGuides([]); setGeomHover(null);
+    /* WHICH ROOM IT CAME OFF, WHERE IT CAME OFF ONE. Null for a shape borrowed
+       from the sheet, which is every other caller. See `roomOutlineDown`. */
+    setHeldRoomId(roomId);
     /* THE SOURCE IS KEPT AND THE OFFSET IS RESET. Kept, because every later
        change to the distance is computed from it rather than from the last
-       answer — see `heldSrc`. Reset to "on the line", because the first thing to
-       be sure of is that the right geometry was taken, and the only arrangement
-       that shows that unambiguously is the one drawn on it. The distance is
-       carried at a foot so choosing a side is one press. */
+       answer — see `heldSrc`. Reset to "on the line" for a shape taken off the
+       sheet, because the first thing to be sure of is that the right geometry
+       was taken, and the only arrangement that shows that unambiguously is the
+       one drawn on it. The distance is carried at a foot so choosing a side is
+       one press. */
     setHeldSrc(draft);
-    setHeldOff({ side: 'on', ft: 1 });
-    setShapeHeld(draft);
+    /* --- A ROOM ARRIVES ALREADY SET IN, AND THAT IS THE WHOLE OF THE CHOICE --
+       PRESSING A ROOM'S OUTLINE IS ALWAYS ABOUT GOING INWARDS. Outside it is
+       the next flat, and ON it is the plaster — a cove there is refused six
+       inches later by the clearance rule, and a track screwed to the wall line
+       is not a detail either. So the side is not a question for a room: the
+       draft is inset by the default foot the moment it is taken and the bar
+       asks for one figure. See `heldAsks`, which draws no side chips for one.
+       THE FALLBACK IS THE OUTLINE ITSELF. `insetShape` returns null when the
+       offset eats the shape, and a room too small for a foot should still hand
+       over something the distance box can work down from. */
+    const inset = roomId ? insetShape(draft, -1) : null;
+    setHeldOff({ side: roomId ? 'in' : 'on', ft: 1 });
+    setShapeHeld(inset ?? draft);
     return true;
+  };
+
+  /**
+   * ...AND TAKE A ROOM'S OUTLINE THE SAME WAY.
+   *
+   * THE ONE GEOMETRY ON THIS SHEET NOBODY DREW. A cove six inches off the
+   * plaster all the way round a room is the most ordinary detail there is, and
+   * until this the only way to it was to trace the room again by hand with the
+   * pen — four to a dozen clicks, by eye, on a line already in the document to
+   * the millimetre. The room outline IS the setting-out line; the bar's offset
+   * control is what turns it into the one you want.
+   *
+   * IT IS THE SAME ACT AS BORROWING A GUIDE, so it is the same function: the
+   * outline becomes a held draft, the bar offers Inside / On the line and a
+   * distance, and the tick commits it in whatever ROLE the bar is open in — a
+   * guide to set out from, a cove, a magnetic track. Nothing here decides which.
+   *
+   * A PEN SHAPE BECAUSE THAT IS WHAT AN ARBITRARY OUTLINE IS. A room is not a
+   * rectangle — an L-shaped living room is the common case, not the exception —
+   * and `penShape` is the one primitive that holds a path of any shape, with the
+   * centroid and relative points every other shape is stored as (see it), so
+   * everything downstream treats this exactly as a drawn one: `insetShape` runs
+   * the real bisector solver on it, the drag moves it, the grips resize it.
+   *
+   * THE ROOM IS REMEMBERED AND THE BAR READS IT — see `heldAsks`, which strikes
+   * OUTSIDE off the sides for a room, because outside a room's outline is the
+   * next flat.
+   */
+  const roomOutlineDown = (e, room) => {
+    if (e.button != null && e.button !== 0) return false;
+    const poly = room?.geo?.polygonPlanFt;
+    if (!poly || poly.length < 3) return false;
+    const draft = penShape(poly);
+    if (!draft) return false;
+    return takeGeometry(e, draft, room.id);
   };
 
   /**
@@ -456,9 +507,14 @@ export function useGeometryGestures({
          is a rule about where the cove IS, not about how it got there. There is
          nothing to slide along here — a resize has one degree of freedom and it
          is already at its limit — so the side simply stops. */
+      /* THE OUTLINE AND NOT ITS BOX, which is the same correction the layout's
+         own filter needed: an L-shaped cove's bounding box covers a notch that
+         is outside the room, so a box test refuses every grip on a concave
+         shape in a concave room — including the one pulling it back out of
+         trouble. See `coveOutlineClearOfOutline`. */
       const room = roomAt({ x: q.x * pxPerFt, y: q.y * pxPerFt });
       const poly = room?.geo?.polygonPlanFt;
-      if (poly && !coveClearOfOutline(shapeBboxFt(next), poly, COVE_GAP_FT)) return q;
+      if (poly && !coveOutlineClearOfOutline(shapeOutlineFt(next), poly, COVE_GAP_FT)) return q;
       return next;
     }));
   };
@@ -740,7 +796,7 @@ export function useGeometryGestures({
   };
 
   return {
-    shapePointerDown, shapeHandleDown, trackPointDown,
+    shapePointerDown, shapeHandleDown, trackPointDown, roomOutlineDown,
     shapeToolDown, trackPenPress, trackPenMove,
     spanMove, hoverMove, penMove, dragMove, spanUp, gestureUp,
   };

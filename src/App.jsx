@@ -2733,7 +2733,9 @@ export default function App({
   });
   const {
     abandonShape, closeShapeTool, clearShapeEdit, openShapeTool,
-    commitShape, pickShapeTool, duplicateShape, deleteShape,
+    /* NO `duplicateShape`. It is still a geometry command — see the note in
+       ShapeMenu where its key was — and nothing on this screen calls it. */
+    commitShape, pickShapeTool, deleteShape,
     finishTrack, finishOpenCove, setHeldOffset,
     deleteTrack, deleteTrackPoint, openTrackEdit, closeTrackEdit,
   } = geometryCommands;
@@ -5574,10 +5576,10 @@ export default function App({
   /* A SELECTED RUN'S OWN SPECIFICATION, FOR THE SHAPE BAR. Null unless a shape
      is what is selected — the window below takes the other half of that. */
   const selShapeRow = selShapeId ? highlightedRow : null;
-  /* AND WHETHER THAT SHAPE IS A MAGNETIC TRACK. `role` is written out for
-     anything but the default — see `sealShape` — so this is the whole test, and
-     it is the one term that decides which acts the bar offers on a run. */
-  const selShapeIsTrack = geometry.shapes.selected?.role === 'track';
+  /* THERE IS NO `selShapeIsTrack` ANY MORE. It existed to withhold the bar's
+     duplicate and bin from a run, and the bar draws neither for anything now —
+     see the note where they were, in ShapeMenu. A run and a cove differ on that
+     bar only in what the analysis has to say about each. */
   const selectedFixtureRow = verticalMode && !selShapeId
     && !selArrayBar && !fanBarOn && !shapeBarArmed
     && highlightedRow && wattsChangeable(highlightedRow) ? highlightedRow : null;
@@ -7326,6 +7328,27 @@ export default function App({
               onShapeHandleDown={readOnly ? null : geometryPointer.shapeHandleDown}
               onShapePointerDown={readOnly || !canGrab(pressState)
                 ? null : geometryPointer.shapePointerDown}
+              /* --- AND THE ROOM'S OWN OUTLINE, WHILE THE BAR IS OPEN -------
+                 A SPACE IS A GEOMETRY TOO, and the bar that a space click
+                 already raises is the thing that can set a line out from it:
+                 press the perimeter, choose Inside and a distance, press the
+                 tick, and what commits is the room's own outline moved in by
+                 that much — as a guide, a cove or a magnetic track, whichever
+                 role the bar is open in. See `roomOutlineDown`.
+                 THE SAME CONDITION `canTakeGeometry` USES FOR A SHAPE, said
+                 about a room: the bar OPEN and no primitive armed. With one
+                 armed the press is a drag that draws, and with the bar shut
+                 there is nothing for a borrowed outline to be offered to — a
+                 press near a wall then means what it always meant, which is why
+                 the band is not even rendered. `penEmpty` because a click
+                 mid-path is a corner and not a press anything else may take. */
+              onRoomOutlineDown={readOnly || !geometry.status.menuOn
+                || geometry.status.tool || !geometry.status.penEmpty
+                ? null
+                : (e, roomId) => {
+                  const room = rooms.find((r) => r.id === roomId);
+                  if (room) geometryPointer.roomOutlineDown(e, room);
+                }}
               /* WHICH GEOMETRY THE TOOL IN HAND WOULD TAKE, so the line itself
                  says it before the press — the third of the three cues
                  `geomHover` drives, alongside the cursor and the array's ghost. */
@@ -7681,23 +7704,11 @@ export default function App({
                      and painting its final value are never held behind layout. */
                   if (id) startTransition(() => docActions.patchShape(id, { radiusFt: ft }));
                 }}
-                /* --- A RUN OFFERS NEITHER OF THESE ---------------------
-                   A MAGNETIC TRACK IS A PRODUCT AND NOT A DRAWING. Duplicating
-                   a cove is a real act — the same detail again, a foot over —
-                   while a run is a length of extruded profile fed from one end:
-                   a second one is a second supply, a second driver and a second
-                   position on the ceiling, none of which a copy dropped beside
-                   the first can answer for. And the bin sat one key from the
-                   wattage somebody came to this bar to change, on an object
-                   that carries every diffuser clipped along it.
-                   THE KEYBOARD STILL TAKES IT OFF. Delete and Backspace on a
-                   selected shape call `deleteShape`, which removes the run and
-                   its modules together — see the key handler. What goes is the
-                   pair of keys, not the act. */
-                onDuplicate={selShapeIsTrack ? null
-                  : () => geometry.shapes.selected && duplicateShape(geometry.shapes.selected.id)}
-                onDelete={selShapeIsTrack ? null
-                  : () => geometry.shapes.selected && deleteShape(geometry.shapes.selected.id)} />
+                /* NO `onDuplicate` AND NO `onDelete`. The bar is what the
+                   selected object IS; both of those were acts on the document
+                   sitting beside its specification — see the note where they
+                   were drawn, in ShapeMenu. Delete and Backspace still take a
+                   selected shape off the drawing. */ />
             )}
           </div>
         )}

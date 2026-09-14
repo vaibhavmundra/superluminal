@@ -139,6 +139,13 @@ export function useGeometryState() {
      It applies to a cove borrowed from a guide identically, because it is the
      same act — see `insetShape`. */
   const [heldSrc, setHeldSrc] = useState(null);
+  /* ...AND WHETHER WHAT WAS BORROWED IS A ROOM. A space's outline can be taken
+     the same way a guide's can — that is how a cove is set out six inches off
+     the plaster all the way round — and it is the one source with a side that
+     means nothing: OUTSIDE a room's outline is the next flat. The id rather
+     than a flag, because the room is the thing that was pressed and a later
+     reader will want to know which one. See `heldAsks`. */
+  const [heldRoomId, setHeldRoomId] = useState(null);
   const [heldOff, setHeldOff] = useState({ side: 'on', ft: 1 });
   const [shapeDrag, setShapeDrag] = useState(null);        // moving one already there
   /* WHICH SHAPE IS SHOWING ITS HANDLES, and it is NOT the same thing as which
@@ -221,6 +228,7 @@ export function useGeometryState() {
     shapeAt, setShapeAt,
     shapeHeld, setShapeHeld,
     heldSrc, setHeldSrc,
+    heldRoomId, setHeldRoomId,
     heldOff, setHeldOff,
     shapeDrag, setShapeDrag,
     shapeEditId, setShapeEditId,

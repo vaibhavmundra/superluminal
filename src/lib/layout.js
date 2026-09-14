@@ -9,7 +9,7 @@
 import { planLights, withTargetArea, cellKey, centreBandBox } from './planner.js';
 import { designChunking, planCeilingDesign, chunkKey } from './ceilingDesign.js';
 import { STRIP_OFFSET_FT, coveHostFor, bandBetween, bandFixtureFor, COVE_GAP_FT,
-         coveClearOfOutline } from './cove.js';
+         coveOutlineClearOfOutline } from './cove.js';
 import { planDrawnTrack } from './track.js';
 import { bbox, pointInPolygon } from './geometry.js';
 import { regionFromOutline, outlineStats } from './outline.js';
@@ -219,7 +219,11 @@ export function layoutRooms(input) {
            accent run instead — see `accentZonesPx`. */
         .filter((sh) => !shapeIsOpen(sh))
         .filter((sh) => pointInPolygon({ x: sh.x * pxPerFt, y: sh.y * pxPerFt }, polygonPx))
-        .map((sh) => ({ sh, rect: localRect(coveRectFt(sh)) }))
+        /* THE OUTLINE IS TAKEN ONCE, HERE, because two of the rules below ask
+           about it and so does the geometry built at the end of this chain —
+           and two conversions of one outline is two things that can disagree. */
+        .map((sh) => ({ sh, rect: localRect(coveRectFt(sh)),
+                        outline: shapeOutlineFt(sh).map(localPt) }))
         /* AND IT MAY NOT COME WITHIN SIX INCHES OF THE ROOM'S OWN OUTLINE. Same
            figure and same argument as the gap between two coves: a pocket four
            inches from the plaster leaves four inches of board between them, and
@@ -227,8 +231,16 @@ export function layoutRooms(input) {
            outside the room altogether, fails the same test.
            REFUSED AND NOT NUDGED. Moving somebody's shape six inches so it
            qualifies is the app editing a drawing on their behalf; leaving it
-           visible and inert is the app saying no where they can see it. */
-        .filter(({ rect }) => coveClearOfOutline(rect, polygonFt))
+           visible and inert is the app saying no where they can see it.
+           ...AND IT IS THE OUTLINE THAT IS TESTED, NOT ITS BOUNDING BOX. The
+           box test refused every concave cove in a concave room: an L-shaped
+           room offset inward is an L-shaped cove, and an L's box covers the
+           notch, which is outside the room by definition. So the shape was
+           never taken up, and the drawing showed a setting-out line with no
+           tape on it while the same gesture in a rectangular room worked. See
+           `coveOutlineClearOfOutline`, which measures between the two outlines
+           and catches the same three refusals this always caught. */
+        .filter(({ outline }) => coveOutlineClearOfOutline(outline, polygonFt))
         /* AND TWO COVES MAY NOT COME WITHIN SIX INCHES OF EACH OTHER. Rings
            can be stopped short — they are a claim about ceiling and they give up
            the part they cannot have — but BOXES cannot: they are where the
@@ -249,7 +261,7 @@ export function layoutRooms(input) {
           if (!clash) shapeBoxes.push(rect);
           return !clash;
         })
-        .map(({ sh, rect }, i, all) => {
+        .map(({ sh, rect, outline }, i, all) => {
           const out = {
             shape: sh, rect,
             /* --- THE RING OF CEILING THIS COVE OWNS ----------------------
@@ -274,7 +286,7 @@ export function layoutRooms(input) {
               // fixed, and the boxes of the coves still to come.
               avoid: [...hostsSoFar, ...all.slice(i + 1).map((q) => q.rect)],
             }),
-            outline: shapeOutlineFt(sh).map(localPt),
+            outline,
             stripOutline: shapeOutlineFt(sh, STRIP_OFFSET_FT).map(localPt),
           };
           hostsSoFar.push(out.host);

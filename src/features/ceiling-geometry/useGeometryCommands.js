@@ -66,7 +66,7 @@ export function useGeometryCommands({
   const {
     shapeMenuOn, shapeTool, shapeRole, covePen, trackPen,
     setShapeMenuOn, setShapeTool, setShapeRole, setShapeAskSides,
-    setShapeSpan, setShapeAt, setShapeHeld, setHeldSrc, setHeldOff,
+    setShapeSpan, setShapeAt, setShapeHeld, setHeldSrc, setHeldRoomId, setHeldOff,
     setShapeDrag, setShapeEditId, setShapeResize, setGeomHover,
     setTrackEditId, setSelTrackPt, setTrackGrip, heldSrc,
   } = state;
@@ -86,9 +86,9 @@ export function useGeometryCommands({
     // AND THE BORROWED SOURCE WITH IT. It exists for the length of one held
     // draft; left behind, the offset control would appear over a shape dragged
     // out from scratch and offer to set it in from a geometry it never came from.
-    setHeldSrc(null);
+    setHeldSrc(null); setHeldRoomId(null);
     setShapeAskSides(false); setGuides([]);
-  }, [covePen, setShapeSpan, setShapeAt, setShapeHeld, setHeldSrc,
+  }, [covePen, setShapeSpan, setShapeAt, setShapeHeld, setHeldSrc, setHeldRoomId,
       setShapeAskSides, setGuides]);
 
   const closeShapeTool = useCallback(() => {

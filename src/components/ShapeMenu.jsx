@@ -192,14 +192,26 @@ function RadiusControl({ radius, onCommit }) {
   };
 
   return (<>
-    <input type="number" min="0" max={limitMm} step="5" value={draft}
+    <input type="number" inputMode="numeric" min="0" max={limitMm} value={draft}
       aria-label="Corner radius in millimetres"
+      /* THE FIELD IS THE WHOLE CONTROL AND THE SPINNER IS SUPPRESSED, which is
+         the same decision — and the same three lines — as the ceiling height in
+         SpaceDetail. It is not only twenty pixels of chrome on a four-digit box:
+         a spinner's arrows fire `change` and NOT `blur`, so on a field that
+         commits on blur they moved the number and wrote nothing. The radius
+         appeared to do nothing, which is exactly how it was reported. A corner
+         radius is a detail dimension — you type it, you do not arrive at it.
+         ENTER LEAVES THE FIELD RATHER THAN COMMITTING SEPARATELY, so there is
+         one commit path and not two that can disagree. */
       className="w-[56px] ml-1 px-1.5 py-[3px] text-[11.5px] tabular-nums
         rounded-[6px] border border-black/12 bg-transparent text-black
+        [appearance:textfield]
+        [&::-webkit-outer-spin-button]:appearance-none
+        [&::-webkit-inner-spin-button]:appearance-none
         focus-visible:outline-2 focus-visible:outline-offset-[-2px]
         focus-visible:outline-black/40"
       onChange={(e) => setDraft(e.target.value === '' ? '' : Number(e.target.value))}
-      onKeyDown={(e) => { if (e.key === 'Enter') commit(e.currentTarget.value); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
       onBlur={(e) => commit(e.currentTarget.value)} />
     <span className={CAP}>mm</span>
   </>);
@@ -257,7 +269,7 @@ export default function ShapeMenu({
      anything. */
   wattage = null,
   onWatts = null,
-  onTool, onSides, onCommit, onCancel, onRadius, onDuplicate, onDelete,
+  onTool, onSides, onCommit, onCancel, onRadius,
   onOffsetSide, onOffsetFt,
 }) {
   return (
@@ -316,6 +328,11 @@ export default function ShapeMenu({
             of buttons is ambiguous about its unit. */}
         {offset && (<>
           {SEP}
+          {/* NO CHIPS MEANS THE SIDE WAS NEVER A QUESTION — a room's outline,
+              which is only ever offset inwards (see `heldAsks`). The word is
+              the label those three chips would otherwise have been, and the
+              number beside it has to say what it is a distance FROM. */}
+          {offset.sides.length === 0 && <span className={CAP}>Inside</span>}
           {offset.sides.map((sd) => (
             <button key={sd.id} type="button" aria-pressed={offset.sideId === sd.id}
               className={`${NUM_SHELL} w-auto px-2 `
@@ -383,31 +400,25 @@ export default function ShapeMenu({
           <RadiusControl radius={radius} onCommit={onRadius} />
           {SEP}
         </>)}
-        {/* --- THE TWO ACTS, AND EACH IS DRAWN ONLY WHERE IT IS OFFERED ----
-            THEY WERE UNCONDITIONAL, so the caller's only way to withhold one was
-            to hand in a handler that does nothing — a key that looks like every
-            other key on the bar and answers no press. A magnetic track offers
-            neither (see the ShapeMenu call in App), so on a run this slot is
-            simply not there. */}
-        {onDuplicate && (
-          <button type="button" title="Duplicate" className={BTN} onClick={onDuplicate}>
-            <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"
-              fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
-              <rect x="2.8" y="2.8" width="10" height="10" rx="1.4" />
-              <rect x="7.2" y="7.2" width="10" height="10" rx="1.4" fill="#fff" />
-            </svg>
-          </button>
-        )}
-        {onDelete && (
-          <button type="button" title="Delete" className={BTN}
-            style={{ color: '#b3261e' }} onClick={onDelete}>
-            <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"
-              fill="none" stroke="currentColor" strokeWidth="1.7"
-              strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3.6 5.6h12.8M8 5.6V3.8h4v1.8M5.4 5.6l.8 10.6h7.6l.8-10.6" />
-            </svg>
-          </button>
-        )}
+        {/* --- THE TWO ACTS ARE GONE, AND THE BAR IS THE SPECIFICATION ----
+            A DUPLICATE AND A BIN WERE THE WHOLE OF THIS SLOT and neither is
+            what a contextual menu on this canvas is for. The bar is what the
+            selected object IS — a run's wattage, a cove's wattage and its
+            corner — and those two were acts on the DOCUMENT sitting one key
+            away from them: the bin in particular, hard against the wattage
+            somebody opened the bar to change, on an object that carries every
+            fitting set out along it.
+            DELETE IS NOT LOST, IT IS ON THE KEY IT IS ON EVERYWHERE ELSE.
+            Delete and Backspace take a selected shape off the drawing — the
+            cove, the guide, the run and its diffusers with it — see the key
+            handler in App. It is the same key that removes a module, an array,
+            a spot and a door, which is the point: one gesture for one meaning
+            across the canvas rather than a bin per bar.
+            DUPLICATE HAS NO KEY AND IS SIMPLY WITHDRAWN. `duplicateShape` is
+            still in the geometry commands, unreferenced, for whenever there is
+            somewhere honest to put it. Drawing the same detail again is one
+            press on a primitive and a drag; that is not what the slot was
+            worth. */}
       </>)}
     </StageBar>
   );

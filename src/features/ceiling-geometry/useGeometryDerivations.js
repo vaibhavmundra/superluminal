@@ -31,7 +31,7 @@ export function useGeometryDerivations({
 }) {
   const {
     shapeMenuOn, shapeTool, shapeRole, shapeSides, shapeAskSides,
-    shapeSpan, shapeAt, shapeHeld, heldSrc, heldOff, covePen,
+    shapeSpan, shapeAt, shapeHeld, heldSrc, heldRoomId, heldOff, covePen,
   } = state;
 
   /* --- THE ROOM A SLOT IS BEING SPANNED IN ---------------------------------
@@ -129,12 +129,21 @@ export function useGeometryDerivations({
     if (!heldSrc || shapeIsOpen(heldSrc)) return null;
     const pts = shapeOutlineFt(heldSrc);
     return { sideId: heldOff.side, ft: heldOff.ft,
-             sides: ARRAY_SIDES,
+             /* NO SIDES AT ALL FOR A ROOM, AND THAT IS NOT THREE NARROWED TO
+                ONE — it is a question that does not arise. Outside a room's
+                outline is the next flat; ON it is the plaster, which the
+                clearance rule refuses six inches later. Inwards is the only
+                answer, so the bar prints the word and asks for the distance —
+                see the empty case in ShapeMenu, and `takeGeometry`, which sets
+                the draft in by the default foot on the way in. Every other
+                source keeps all three: a track set out exactly on the guide
+                that positioned it is the ordinary case there. */
+             sides: heldRoomId ? [] : ARRAY_SIDES,
              // HOW FAR IN THE CONTROL MAY GO, from the geometry itself — see
              // `maxInset`, which bisects on the real offset rather than guessing
              // at an inradius, because an L-shaped outline has not got one.
              maxFt: Math.max(0, maxInset(pts) - SHAPE_MIN_SPAN_FT / 2) };
-  }, [heldSrc, heldOff]);
+  }, [heldSrc, heldRoomId, heldOff]);
 
   /* --- FINISHING A PEN PATH OPEN, WHICH IS THE L-SHAPED COVE ----------------
      THE PEN HAS TWO ENDINGS NOW AND THEY MEAN DIFFERENT DETAILS. Clicking the

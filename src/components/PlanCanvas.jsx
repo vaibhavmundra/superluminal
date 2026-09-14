@@ -319,6 +319,9 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        somebody clipped on, which is the same relationship `manualCobs` has to
        the ambient grid. Two lists, because they have two different lifetimes and
        one of them is rebuilt every time a fan moves. */
+    /* THE ROOM PERIMETER'S PRESS, and `null` is the ordinary case — see the
+       band in the room group for when it is offered and why it is drawn first. */
+    onRoomOutlineDown = null,
     magTracks = [], trackModules = [], selTrackId = null,
     /* A MODULE CAN BE PICKED UP AND SLID ALONG ITS RUN. `selModuleId` is which
        one is held — a ring, so Delete has something visible to act on — and the
@@ -1631,6 +1634,34 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               UNDERNEATH the layout it produced. */}
           {showGrid && (
             <g clipPath={`url(#roomclip-${i})`}>{gridPath(r.plan)}</g>
+          )}
+          {/* --- THE OUTLINE AS SOMETHING YOU CAN TAKE ---------------------
+              A ROOM IS A GEOMETRY, AND THE ONLY ONE ON THIS SHEET NOBODY DREW.
+              A cove six inches off the plaster, a magnetic track a foot in from
+              it, a guide to set either out from — all three start from this
+              line, and until this band the only way to reach it was to trace it
+              again with the pen. So while the geometry bar is open with no
+              primitive armed, the perimeter answers a press: see
+              `roomOutlineDown`, which hands it to the bar as a held draft.
+              ONLY THEN, WHICH IS WHAT KEEPS IT OUT OF THE WAY. The handler is
+              withheld for every other state (see the ShapeMenu gate in App), so
+              on an ordinary sheet this element does not exist and a press near a
+              wall means what it always meant.
+              AND IT IS DRAWN BEFORE EVERYTHING ELSE IN THE ROOM. SVG hit-tests
+              the topmost painted thing, so a fitting, a shape's own band or a
+              plate on that wall all win over it — which is the right order: the
+              outline is the coarsest subject in the room and the last thing a
+              press should resolve to.
+              `copy` IS THE CURSOR, the same one a magnetic track's band uses for
+              the same meaning: the press does not pick this object up, it takes
+              something from it. */}
+          {onRoomOutlineDown && (
+            <polygon className="hit" points={points(r.plan.polygonPx)}
+              fill="none" stroke="transparent" strokeWidth={HIT_BAND}
+              strokeLinejoin="round"
+              style={{ pointerEvents: 'stroke', cursor: 'copy' }}
+              onPointerDown={(e) => onRoomOutlineDown(e, r.id)}
+              onClick={(e) => e.stopPropagation()} />
           )}
           {layers.region && (
             <polygon points={points(r.plan.polygonPx)}

@@ -60,7 +60,7 @@
 // The one import, and it is pure geometry: a drawn cove's ring has to be grown
 // into the room rather than out of a chunk, so this file now has to be able to
 // ask whether a rectangle is inside an outline. See coveHostFor.
-import { pointInPolygon } from './geometry.js';
+import { pointInPolygon, distanceToBoundary } from './geometry.js';
 
 
 /**
@@ -280,6 +280,48 @@ export function coveClearOfOutline(box, polygon = [], gap = COVE_GAP_FT) {
   if (!polygon.length) return true;
   return rectInPolygon(rect(box.x0 - gap, box.y0 - gap,
                             box.x1 + gap, box.y1 + gap), polygon);
+}
+
+/**
+ * THE SAME QUESTION ASKED OF THE SHAPE SOMEBODY ACTUALLY DREW.
+ *
+ * THE BOX TEST ABOVE REFUSES EVERY CONCAVE COVE IN A CONCAVE ROOM, and that is
+ * the bug this exists to fix. An L-shaped room offset inward is an L-shaped
+ * cove, and an L's BOUNDING BOX covers the notch — which is outside the room by
+ * definition. So `rectInPolygon` said no, the layout never took the shape up,
+ * and what appeared on the drawing was the setting-out line and no tape at all.
+ * A rectangular room offset inward worked, because there a box IS the shape.
+ * Reported exactly that way round, and the same for an L drawn by hand with the
+ * pen: it is the shape's concavity that decides it, not how it was made.
+ *
+ * SO THE CLEARANCE IS MEASURED BETWEEN THE TWO OUTLINES, and it is exact rather
+ * than approximate: the least distance between two polygons always falls on a
+ * vertex of one and an edge of the other, so testing every vertex of each
+ * against the other's boundary finds it. Both halves are needed — the cove's
+ * vertices catch a side run too close to a wall, and the ROOM's vertices catch a
+ * notch poking at a long cove edge whose own corners are nowhere near it.
+ *
+ * CONTAINMENT IS THE FIRST TEST AND NOT A CONSEQUENCE OF THE SECOND. A cove
+ * drawn wholly outside the room is `gap` clear of every wall and has to be
+ * refused anyway, which distance alone cannot say.
+ *
+ * A COVE THAT FAILS THIS IS STILL NOT MOVED — see the filter in lib/layout.js.
+ */
+export function coveOutlineClearOfOutline(outline, polygon = [], gap = COVE_GAP_FT) {
+  if (!polygon.length) return true;
+  if (!outline || outline.length < 3) return false;
+  const e = 1e-6;
+  for (const p of outline) {
+    if (!pointInPolygon(p, polygon)) return false;
+    if (distanceToBoundary(p, polygon) < gap - e) return false;
+  }
+  /* THE ROOM'S OWN CORNERS, AGAINST THE COVE'S PATH. One inside the cove would
+     mean the cove had swallowed a piece of wall, which the loop above has
+     already refused — so this is only ever the distance. */
+  for (const v of polygon) {
+    if (distanceToBoundary(v, outline) < gap - e) return false;
+  }
+  return true;
 }
 
 /**
