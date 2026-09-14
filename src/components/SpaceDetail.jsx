@@ -161,10 +161,11 @@ function HeightRow({ ceilingMm, onCeilingMm, disabled }) {
 
 export default function SpaceDetail({
   name, meta, ceilingMm, onCeilingMm, materials, wallLabel,
-  onTone, onConfigureWalls, onRename = null,
+  onTone, onConfigureWalls, onAllWallsTone = null, wallTone = null,
+  onRename = null,
   analysis, onWatts, onBeam = null, onToggleOff = null,
   highlight = [], autoplace = null, onAutoplace = null,
-  disabled = false,
+  disabled = false, vertical = false,
 }) {
   /* WHICH OF THE TWO VIEWS, AND IT IS LOCAL. Whether somebody is looking at the
      figures or at the fittings is a fact about the next few seconds — it must
@@ -180,6 +181,7 @@ export default function SpaceDetail({
      paint the readout for one frame and then replace it. */
   const answer = (highlight ?? []).join('|');
   const [lights, setLights] = useState(!!answer);
+  const [materialSurface, setMaterialSurface] = useState('ceiling');
 
   /* --- AND THE VIEW FOLLOWS THE SELECTION FROM THEN ON -------------------
      A FITTING SELECTED IS THE LIST; NOTHING SELECTED IS THE FIGURES. One line
@@ -212,6 +214,65 @@ export default function SpaceDetail({
     if (next && next !== name) onRename?.(next);
     setDraft(null);
   };
+
+  if (vertical) {
+    const tone = materialSurface === 'walls'
+      ? wallTone
+      : materials[materialSurface];
+    const pickTone = (next) => {
+      if (materialSurface === 'walls') onAllWallsTone?.(next);
+      else onTone(materialSurface, next);
+    };
+
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex-none">
+          <div className="flex items-center gap-2 min-h-[24px] mb-1.5">
+            {/* --- `w-auto flex-none` IS WHY THIS IS THE WIDTH OF ITS WORDS --
+                EVERY `select` IN THIS APP IS `width:100%` — see the text-entry
+                rule in styles.css, written for the login and the project forms,
+                where a full-width field is right. This one is a three-word
+                picker in a row that also holds a caption and three tone chips,
+                and at 100% it took every pixel the chips did not: a 148px box
+                around the word "Ceiling" at 10.5px.
+                A `w-*` UTILITY IS THE INTENDED WAY OUT, which that rule says of
+                itself — a utility outranks `@layer base` — and `w-auto` is a
+                select's shrink-to-fit width: the widest option, its arrow and
+                the padding, and nothing else. `flex-none` is the other half,
+                because a flex item with a definite width can still be stretched
+                or shrunk by the line it is in. */}
+            <select aria-label="Material surface" value={materialSurface}
+              disabled={disabled}
+              onChange={(e) => setMaterialSurface(e.target.value)}
+              className="h-[22px] w-auto flex-none rounded border border-border/15
+                bg-white/[0.08] px-1.5 text-[10.5px] text-text focus-visible:outline-2
+                focus-visible:outline-accent focus-visible:outline-offset-1">
+              <option value="ceiling">Ceiling</option>
+              <option value="walls">Walls</option>
+              <option value="floor">Floor</option>
+            </select>
+            <span className={LBL}>material</span>
+            <div className="ml-auto flex gap-0.5">
+              {TONES.map((t) => (
+                <button key={t} type="button" disabled={disabled}
+                  aria-pressed={tone === t}
+                  className={tone === t ? CHIP_ON : CHIP_OFF}
+                  onClick={() => pickTone(t)}>{TONE_LABEL[t]}</button>
+              ))}
+            </div>
+          </div>
+          {materialSurface === 'walls' && wallTone == null && (
+            <p className="m-0 mb-1.5 text-[10px] leading-[1.35] text-subtle">
+              Mixed walls · choosing a tone applies it to every wall.
+            </p>
+          )}
+        </div>
+        <div className="min-h-0 flex-1">
+          <Lumens analysis={analysis} compact />
+        </div>
+      </div>
+    );
+  }
 
   return (
     /* NO PADDING OF ITS OWN. The window's scroller already sets the gutters; a

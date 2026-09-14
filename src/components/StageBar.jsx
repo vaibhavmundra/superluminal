@@ -34,6 +34,13 @@ import { useCallback, useEffect, useState } from 'react';
 /** Its clearance from the foot of the stage. */
 export const BOTTOM = 26;
 
+/* --- ...AND FROM THE HEAD OF IT, WHICH IS WHERE THE COLUMN WANTS IT --------
+   TWELVE AND NOT TWENTY-SIX, because it is the same twelve the floating light
+   window uses: in the vertical column both are handed the canvas band, and a
+   bar and a window that appear in the same slot have to appear in the SAME
+   PLACE. See the window's `mt-[68px]` — 56 for the top bar, 12 into the band. */
+export const TOP = 12;
+
 /**
  * WHERE THE BAR SITS. Centred over the stage, near its foot — the position
  * every drawing tool in every editor has trained people to look at, and the one
@@ -104,6 +111,33 @@ export const SCENE = 'flex items-center h-9 px-2.5 rounded-[7px] border-0 '
   + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] '
   + 'focus-visible:outline-black/40';
 
+/* --- THE SAME KEY ON THE OTHER GROUND -------------------------------------
+   THE BLACK FOOTER HAD ITS OWN SWITCH AND IT DID NOT WORK. `FooterSwitch` in
+   App drew a WHITE track in both states and moved a black knob along it, so on
+   and off differed by fourteen pixels of knob position and nothing else —
+   nobody could tell at a glance whether the heatmap was on. This is that
+   control's ONE remaining difference from the bar's: the ground it stands on.
+
+   IT IS THE MIRROR AND NOT A NEW DESIGN. On the white bar the track carries the
+   state (ink when on, a whisper of ink when off) and the knob is the GROUND's
+   colour. Said on black, the ink is white and the ground is black, so the pair
+   swaps and the reading is identical: a bright pill is on, a dim one is off.
+   Same 34x20 track, same 14px knob, same travel. It is the rule `Mark` in
+   ShapeMenu follows for a symbol on a latched chip, said about a switch. */
+const TONE = {
+  light: { btn: SCENE,
+           on: 'bg-black', off: 'bg-black/[0.13]', knob: 'bg-white' },
+  dark: { btn: 'flex items-center h-9 px-2.5 rounded-[7px] border-0 '
+            + 'bg-transparent cursor-pointer text-[11.5px] leading-none '
+            + 'tracking-[-0.01em] text-faint whitespace-nowrap '
+            + 'transition-colors duration-[120ms] '
+            + 'enabled:hover:bg-white/[0.07] enabled:hover:text-white '
+            + 'disabled:opacity-100 disabled:cursor-not-allowed '
+            + 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] '
+            + 'focus-visible:outline-accent',
+          on: 'bg-white', off: 'bg-white/[0.18]', knob: 'bg-black' },
+};
+
 /* --- A SCENE THAT IS A STATE RATHER THAN A DESTINATION ---------------------
    THE OTHER TAIL BUTTONS LEAVE and this one does not: the wiring is drawn over
    the layout you are already looking at, so the honest picture of it is a
@@ -113,18 +147,21 @@ export const SCENE = 'flex items-center h-9 px-2.5 rounded-[7px] border-0 '
    POSITION AND COLOUR CARRY THE STATE; the visible label says what the switch
    controls and `aria-checked` says its state to assistive technology. Keeping
    ON and OFF out of the track makes these compact controls easier to scan. */
-export function SceneSwitch({ label, on = false, title = null, onClick }) {
+export function SceneSwitch({ label, on = false, title = null, onClick,
+                              tone = 'light' }) {
+  const t = TONE[tone] ?? TONE.light;
   return (
     <button type="button" role="switch" aria-checked={on} title={title ?? undefined}
-      className={`${SCENE} gap-2`} onClick={onClick}>
+      className={`${t.btn} gap-2`} onClick={onClick}>
       {label}
       <span aria-hidden="true"
         className={'relative flex-none block w-[34px] h-[20px] rounded-full '
           + 'transition-colors duration-150 '
-          + (on ? 'bg-black' : 'bg-black/[0.13]')}>
+          + (on ? t.on : t.off)}>
         {/* `left` AND NOT A TRANSFORM keeps the knob's travel independent of
             any transform a caller might apply to the complete switch. */}
-        <span className={'absolute top-[3px] w-[14px] h-[14px] rounded-full bg-white '
+        <span className={'absolute top-[3px] w-[14px] h-[14px] rounded-full '
+          + t.knob + ' '
           + 'shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-[left] duration-150 '
           + (on ? 'left-[17px]' : 'left-[3px]')} />
       </span>
@@ -148,9 +185,12 @@ export function SceneSwitch({ label, on = false, title = null, onClick }) {
  * grouping without a caption on any of them.
  */
 export default function StageBar({ stage, className = '', label = null,
-                                   lead = null, tail = null, children = null }) {
+                                   lead = null, tail = null, children = null,
+                                   placement = 'bottom' }) {
   const box = useStageRect(stage);
   if (!box) return null;
+
+  const atTop = placement === 'top';
 
   return (
     <div
@@ -191,9 +231,20 @@ export default function StageBar({ stage, className = '', label = null,
       className={'fixed z-30 flex flex-nowrap items-center gap-0.5 rounded-[11px] '
         + 'whitespace-nowrap '
         + 'bg-white border border-black/[0.10] shadow-[0_6px_24px_rgba(0,0,0,0.22)] '
-        + 'px-1.5 py-1.5 ' + className}
+        + 'px-1.5 py-1.5 '
+        /* --- `top` IS A POSITION AND NOTHING ELSE ----------------------
+           IT USED TO BE A SECOND BAR. `placement="top"` rethemed the pill dark,
+           fixed it at the column's 380, gave it a 109px floor and squared its
+           top corners, because it was hanging off the bottom of the top bar as
+           chrome. It is a floating bar over the drawing now, in the same slot
+           the light window takes, and it looks like the bar it is everywhere
+           else: white, shrink-wrapped, rounded all round. The one thing that
+           changes with placement is which edge it is measured from. */
+        + className}
       style={{ left: (box.left + box.right) / 2,
-               bottom: Math.max(12, window.innerHeight - box.bottom + BOTTOM),
+               ...(atTop
+                 ? { top: box.top + TOP }
+                 : { bottom: Math.max(12, window.innerHeight - box.bottom + BOTTOM) }),
                transform: 'translateX(-50%)' }}
       /* THE BAR MUST NOT START A GESTURE ON THE PLAN. The stage's own pointer
          handlers are on the SVG, so a press here never reaches them — but the

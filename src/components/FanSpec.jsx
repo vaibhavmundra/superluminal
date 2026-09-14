@@ -69,11 +69,12 @@ const CHIP_ON = `${CHIP} text-white border-black bg-black hover:bg-black`;
  * see StageBar's three slots.
  */
 export default function FanSpec({
-  stage, lead = null, tail = null, label = 'Fan',
+  stage, lead = null, tail = null, label = 'Fan', placement = 'bottom',
   sweepMm, sweeps = FAN_SWEEPS, onSweep,
 }) {
   return (
-    <StageBar stage={stage} lead={lead} tail={tail} label={label}>
+    <StageBar stage={stage} lead={lead} tail={tail} label={label}
+      placement={placement}>
       <span className={CAP}>{label}</span>
       {SEP}
 

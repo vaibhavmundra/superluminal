@@ -65,11 +65,12 @@ const CHIP_ON = `${CHIP} text-white border-black bg-black hover:bg-black`;
 export default function ModuleSpec({
   /* `lead` IS THE BAR'S NEAR END and `tail` its far one, both there whatever
      the middle is doing — see StageBar's three slots. */
-  stage, lead = null, tail = null, label,
+  stage, lead = null, tail = null, label, placement = 'bottom',
   watts, wattList = [], beam = null, onWatts, onBeam,
 }) {
   return (
-    <StageBar stage={stage} lead={lead} tail={tail} label={label}>
+    <StageBar stage={stage} lead={lead} tail={tail} label={label}
+      placement={placement}>
       <span className={CAP}>{label}</span>
       {SEP}
 

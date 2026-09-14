@@ -912,8 +912,65 @@ const PlanCanvas = forwardRef(function PlanCanvas(
    * The band is generous on purpose. A cove line is 1.6 lw and a track profile
    * an inch: both are far finer than a pointer, and both are the only mark their
    * piece of ceiling has.
-   */
-  const HIT_BAND = lw * 10;
+   *
+   * --- AND IT IS A SCREEN WIDTH, WHICH IS THE BUG THIS FIXES ----------------
+   *
+   * `lw` IS A PLAN WIDTH AND A POINTER IS NOT. Every VISIBLE stroke on this
+   * sheet is already read as a screen width — see `hair`, and the
+   * `non-scaling-stroke` rule its note points at — and this band, the one mark
+   * on the drawing that exists purely to be hit, was the one left in plan units.
+   * So its on-screen thickness fell with the zoom: a track run at the reading
+   * column's fit, around a quarter, was a TWO-PIXEL line. You could not select
+   * the run, could not move it and could not reach its grips to scale it —
+   * while the diffusers clipped along it stayed hittable, because a module's
+   * target is a BOX around a body and not a stroke along a path, so it shrank
+   * to something you could still just about land on. That is exactly how it was
+   * reported, and it is one `Math.max` wide.
+   *
+   * 11 SCREEN PIXELS IS THE FLOOR AND THE PLAN WIDTH STILL WINS ABOVE IT, so
+   * nothing changes on a sheet at actual size — where `lw * 10` is already
+   * about eleven — and zooming out no longer takes the object away. The figure
+   * is a pointer's worth: the same argument the modules' own band makes about
+   * 38mm, said in the unit the pointer is actually in. */
+  /* --- A LINEAR MARK'S BAND, AND IT HAS TO BEAT THE THINGS SITTING ON IT ---
+     THE RUN COULD NOT BE SELECTED, AND THIS IS WHY. A magnetic track's own band
+     was `Math.max(lw * 8, 6)` while every module clipped along it took a grab
+     box floored at `HIT_BAND` — `lw * 10` — so a diffuser's target was WIDER
+     ACROSS than the profile's own, at every zoom. The boxes covered the band
+     along their whole length, and the allocator fills a run end to end, so
+     there was nowhere left to press: the diffusers selected perfectly and the
+     run they were clipped to could not be picked up, moved, or double-pressed
+     for the grips that resize it. Exactly as reported, in both modes.
+     SO THE BAND IS THE WIDER OF THE TWO NOW, and the modules keep their own
+     smaller figure below (`HIT_BODY`). The band protrudes past every module on
+     both sides, which is what makes the profile pressable along its whole
+     length rather than only in whatever gaps the fill happened to leave.
+     AND IT IS FLOORED IN SCREEN PIXELS. `lw` is a PLAN width, so this band —
+     the one mark on the sheet that exists purely to be hit — was the only thing
+     here whose on-screen thickness fell with the zoom: at the reading column's
+     fit, about a quarter, a run was a two-pixel line. Every visible stroke is
+     already read as a screen width (see `hair`); this one now is too. */
+  const HIT_BAND = Math.max(lw * 12, 13 / (zoom || 1));
+
+  /* AN OBJECT'S OWN TARGET, AND IT IS THE SMALLER OF THE PAIR ON PURPOSE.
+     A FLOOR AND NOT A SIZE: a module's body is usually bigger than this on its
+     long axis and this only ever raises the thin one. Seven screen pixels
+     against the band's thirteen leaves three of run exposed on each side at
+     EVERY zoom, which is the whole point of stating both in the same unit — a
+     plan-unit floor here was what made a diffuser's target wider than the
+     profile it is clipped to, and the run unpressable. A box also has an easy
+     axis, its length, where a band has only its thickness. */
+  const HIT_BODY = 7 / (zoom || 1);
+
+  /* --- A GRIP IS THE SAME ARGUMENT, SAID ABOUT A SQUARE --------------------
+     THE EIGHT HANDLES ON A SHAPE AND THE POINTS OF A DRAWN RUN were
+     `Math.max(lw * 3, 3)` — plan units, with a floor against a tiny PLAN and
+     none against a small ZOOM. In the reading column that is a 2px square: too
+     small to see and far too small to hit, so a run could be selected and still
+     not resized. Unlike the band above, a grip is DRAWN as well as pressed, so
+     one floor keeps it both legible and hittable. The plan width still wins
+     above it, which is what leaves a sheet at actual size alone. */
+  const GRIP_R = Math.max(lw * 3, 3, 4.5 / (zoom || 1));
   const bandStyle = placing ? INERT.style : { cursor: 'pointer', pointerEvents: 'stroke' };
 
   const laid = plans.filter((r) => r.plan?.ok);
@@ -5157,8 +5214,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   style={{ opacity: hoverShapeId === sh.id ? 1 : 0,
                            transition: 'opacity 130ms ease-out' }} />
                 {onShapePointerDown && [sh.pts, sh.tape].filter(Boolean).map((band, i) => (
+                  /* `HIT_BAND` AND NOT `Math.max(lw * 8, 6)`: the same figure
+                     every other grab band on this sheet uses, and the reason is
+                     in its note — a band measured in PLAN units is two pixels
+                     thick at the reading column's zoom, which is a run you
+                     cannot pick up. The 6 was a floor against a tiny plan and
+                     never against a small zoom. */
                   <path key={i} className="hit" d={path(band, sh.open)} fill="none"
-                    stroke="transparent" strokeWidth={Math.max(lw * 8, 6)}
+                    stroke="transparent" strokeWidth={HIT_BAND}
                     strokeLinejoin="round"
                     /* --- A PLUS OVER A MAGNETIC TRACK, AND A MOVE OVER
                         EVERYTHING ELSE. The band is one target answering one
@@ -5220,7 +5283,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                      is deliberately not the accent: the accent on this canvas
                      means "this emits light", and a grip does not. */
                   const F = sh.frame;
-                  const R = Math.max(lw * 3, 3);
+                  const R = GRIP_R;   // see its note: floored in screen px
                   const at = (h) => ({
                     x: h.sx > 0 ? F.x1 : h.sx < 0 ? F.x0 : (F.x0 + F.x1) / 2,
                     y: h.sy > 0 ? F.y1 : h.sy < 0 ? F.y0 : (F.y0 + F.y1) / 2,
@@ -5359,7 +5422,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           THE SELECTED POINT IS FILLED, because Delete acts on it and a key with
           no visible target is a key that deletes something at random. */}
       {trackEdit && trackEdit.pts.length > 0 && (() => {
-        const R = Math.max(lw * 3, 3);
+        const R = GRIP_R;   // see its note: floored in screen px
         const d = trackEdit.pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ')
           + (trackEdit.closed ? ' Z' : '');
         return (
@@ -5481,8 +5544,13 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const spot = m.kind === 'spot';
         /* Radius equals the profile width, so diameter is exactly twice it. */
         const spotR = inch(TRACK_DIMS_IN.profile);
-        const grabW = spot ? Math.max(spotR * 2, HIT_BAND) : Math.max(along, HIT_BAND);
-        const grabH = spot ? Math.max(spotR * 2, HIT_BAND) : Math.max(across * 3, HIT_BAND);
+        /* `HIT_BODY` AND NOT `HIT_BAND` — see both notes. Floored on the
+           object's own figure, so a row of diffusers no longer covers the band
+           of the run they are clipped to. `across * 2` rather than `* 3` for
+           the same reason, said about a module wide enough not to need the
+           floor at all. */
+        const grabW = spot ? Math.max(spotR * 2, HIT_BODY) : Math.max(along, HIT_BODY);
+        const grabH = spot ? Math.max(spotR * 2, HIT_BODY) : Math.max(across * 2, HIT_BODY);
         const picked = selModuleId === m.id;
         const glowRx = m.kind === 'diffuser' ? along / 2 + inch(3) : spotR + inch(3);
         const glowRy = m.kind === 'diffuser' ? across / 2 + inch(3) : spotR + inch(3);

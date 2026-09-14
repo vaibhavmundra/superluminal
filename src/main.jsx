@@ -16,6 +16,7 @@ import AdminUsers from './routes/AdminUsers.jsx';
 import AdminUserView from './routes/AdminUserView.jsx';
 import AdminUserProject from './routes/AdminUserProject.jsx';
 import AdminPlanViewer from './routes/AdminPlanViewer.jsx';
+import VerticalPreview from './routes/VerticalPreview.jsx';
 import { FloatingScheduleDemoButton } from './components/ScheduleDemoButton.jsx';
 import './styles.css';
 
@@ -72,6 +73,7 @@ createRoot(document.getElementById('root')).render(
             disagree by a click. */}
         <BillingProvider>
         <Routes>
+          <Route path="/__vertical-preview" element={<VerticalPreview />} />
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           {/* PUBLIC, AND NOT AN OVERSIGHT. A price a visitor cannot read without

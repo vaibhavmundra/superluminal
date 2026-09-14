@@ -191,6 +191,11 @@ import FanSpec from './components/FanSpec.jsx';
 import { useHeatmap, HeatmapOverlay, HeatmapLegend,
          HeatmapSwitch } from './features/heatmap/index.js';
 import SpaceDetail from './components/SpaceDetail.jsx';
+/* THE SELECTED FITTING'S TWO CONTROLS, IN THE HEAD OF THE VERTICAL COLUMN.
+   Everywhere else the analysis is reached through SpaceDetail, which is why App
+   had none of it; this is the one place that specifies a fitting without the
+   panel around it. See `selectedFixtureRow`. */
+import { FixtureSpec, wattsChangeable } from './components/SpaceAnalysis.jsx';
 import WallTonePopup from './components/WallTonePopup.jsx';
 import { DEFAULT_CEILING_MM, CEILING_MM_MIN, CEILING_MM_MAX,
          materialsOf, wallMix, wallMixLabel } from './lib/materials.js';
@@ -220,7 +225,7 @@ const COB_SOON = [];
 // knows is how to turn its own state into one object and back again, and that
 // contract lives in planState.js so the writer and the reader stay in step.
 import { serialiseEditor, applyEditor, statsFrom, statusFrom, NOT_UNDOABLE, setterFor,
-         LAYER_DEFAULTS }
+         LAYER_DEFAULTS, clampZoom }
   from './lib/planState.js';
 import { usePlanDoc } from './hooks/usePlanDoc.js';
 
@@ -268,6 +273,18 @@ const ftin = (v) => {
   const f = Math.floor(v), i = Math.round((v - f) * 12);
   return i === 12 ? `${f + 1}'0"` : `${f}'${i}"`;
 };
+
+/* --- THE FOOTER'S SWITCHES ARE THE BAR'S SWITCH -----------------------------
+   `FooterSwitch` WAS A SECOND SWITCH AND A BROKEN ONE. It drew a white track in
+   both states and moved a black knob along it, so on and off were told apart by
+   the knob's position and by nothing else — a 46px track with a 14px knob in
+   it, on a black bar, at the far end of the screen from the thing it controls.
+   Nobody could see whether the heatmap was on.
+   SO THERE IS ONE SWITCH IN THIS APP AND IT KNOWS WHICH GROUND IT IS ON. See
+   `SceneSwitch` and `TONE` in StageBar: the track carries the state and the
+   knob is the ground's colour, which is the design the contextual bar over the
+   drawing has always used. `tone="dark"` is the same control said on black. */
+const FooterSwitch = (props) => <SceneSwitch {...props} tone="dark" />;
 
 /**
  * THE EDITOR. It was the whole app; it is now one route of five, and the props
@@ -1488,6 +1505,11 @@ export default function App({
   const [shareMenu, setShareMenu] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
   const [adminMenu, setAdminMenu] = useState(false);
+  /* ADMIN-ONLY AND SESSION-ONLY. This is a different arrangement of the same
+     editor, not plan data; opening the plan elsewhere must not inherit an
+     operator's narrow workspace. */
+  const [verticalMode, setVerticalMode] = useState(false);
+  const normalZoom = useRef(null);
   const shareRef = useRef(null);
   const viewRef = useRef(null);
   const adminRef = useRef(null);
@@ -4074,6 +4096,64 @@ export default function App({
   const [panning, setPanning] = useState(false);
   const panFrom = useRef(null);
 
+  /* --- WHICH BOX IS THE SCROLLER, AND THERE ARE TWO OF THEM NOW -------------
+     THE STAGE IS THE SCROLLER ON THE OPEN CANVAS and it is the wrong box in
+     vertical mode: there the stage is the whole window and the drawing lives in
+     a 380px column that does its own clipping, so the stage has no overflow to
+     give and every pan wrote to a container already at its end stops. See the
+     note on the viewport in the markup.
+     ONE ACCESSOR AND NOT A SECOND PAIR OF HANDLERS. Three places write a scroll
+     offset — the pan, the wheel-zoom's anchor and the button that zooms from the
+     middle of the view — and all three mean "the box the drawing is read in".
+     Asking once is what keeps them from disagreeing. */
+  /* IN STATE AND NOT ONLY IN A REF, because it is MEASURED as well as scrolled:
+     `useStageRect` reads its box on mount and cannot know a ref filled in after
+     it ran, so a bar keyed on one would sometimes never appear. The memo is what
+     keeps the ref-shaped object stable per element — a fresh one every render
+     would re-attach that hook's three listeners every render. */
+  const [canvasBox, setCanvasBox] = useState(null);
+  const canvasBoxRef = useMemo(() => ({ current: canvasBox }), [canvasBox]);
+  /* --- THE VIEW OPENS ON THE SHEET, NOT ON THE ROOM AROUND IT --------------
+     `--lp-canvas-room` PUTS THE SHEET IN THE MIDDLE OF A BOX BIGGER THAN THE
+     VIEWPORT, and a scroll container opens at its origin — which is now the
+     top-left corner of the slack, with the drawing off to the bottom-right. So
+     the offsets are set once, where the content is centred. It is two lines
+     rather than an alignment property for the reason `safe center` exists: a
+     centred overflow puts half of itself off the start edge, where scrolling
+     cannot reach it. */
+  const centreScroll = (el) => {
+    if (!el) return;
+    el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2);
+    el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2);
+  };
+  /* ONE SHOT, AND IT IS THE ZOOM'S OWN LAYOUT PASS THAT SPENDS IT. Fitting the
+     sheet changes its size, and the box can only be centred once that size has
+     landed — the same two-halves problem the wheel anchor below solves, so it is
+     handed to the same effect. */
+  const centreWanted = useRef(false);
+  const scrollBox = useCallback(() => (
+    (verticalMode ? canvasBox : null) ?? stageRef.current
+  ), [verticalMode, canvasBox]);
+
+  /* --- AND THE SAME BOX IS WHAT EVERY CONTEXTUAL BAR MEASURES OFF ----------
+     THE BARS STAND AT THE FOOT OF THE DRAWING, and in the column the drawing is
+     the band rather than the window: measured off the stage they pinned
+     themselves 26px above the analysis card's bottom edge, which is under it.
+     One name so the four call sites cannot drift — the downlight's bar, a
+     selected array's, the module's and the fan's — and so the shape bar, which
+     found this first, is saying the same thing as the rest. */
+  const barBox = verticalMode ? canvasBoxRef : stageRef;
+  /* --- AND WHICH END OF IT THEY STAND AT ----------------------------------
+     THE FOOT OF THE DRAWING IS THE POSITION EVERY EDITOR HAS TRAINED PEOPLE TO
+     LOOK AT, and the 9:16 column is the one place it is the wrong one: the foot
+     of the band is where the analysis card begins, so a bar there is the last
+     thing before a wall of readings. The head of the column is the slot the
+     light window already uses — ONE place where something appears about what you
+     just did, whether that is a fitting you clicked or a gesture you armed.
+     Both are handed the same box and the same 12px clearance, so they land on
+     the same line to the pixel; only one is ever up. */
+  const barPlace = verticalMode ? 'top' : 'bottom';
+
   /**
    * ZOOMING THE LAYOUT, THE WAY THE TRACER DOES IT.
    *
@@ -4137,15 +4217,69 @@ export default function App({
   // SVG's new size, so it has to run once the browser has applied it and before
   // it paints — otherwise the drawing visibly jumps to the wrong place and back.
   useLayoutEffect(() => {
+    /* THE FIT'S SECOND HALF COMES FIRST. It is not an anchored zoom — there is
+       no point under a cursor to hold still, the whole view is being placed —
+       and it happens on the one pass where both could be pending. */
+    if (centreWanted.current) {
+      centreWanted.current = false;
+      zoomAnchor.current = null;
+      centreScroll(scrollBox());
+      return;
+    }
     const a = zoomAnchor.current;
     if (!a) return;
     zoomAnchor.current = null;
-    const svg = svgRef.current, el = stageRef.current;
+    const svg = svgRef.current, el = scrollBox();
     if (!svg || !el) return;
     const r = svg.getBoundingClientRect();
     el.scrollLeft += (r.left + a.px * r.width) - a.clientX;
     el.scrollTop += (r.top + a.py * r.height) - a.clientY;
-  }, [zoom]);
+  }, [zoom, scrollBox]);
+
+  /* --- THE SHEET IS SIZED TO THE BAND, AND THE BAND IS MEASURED ------------
+     IT WAS `min(356 / w, 268 / h)`, WHICH IS THE BAND AT ONE WINDOW HEIGHT.
+     380 minus a gutter is a fair guess at the column's width because the column
+     is fixed; 268 is not a guess at anything — the band is whatever the window
+     leaves between the fixture rail and the analysis card, so on a tall screen
+     the drawing sat in the middle of it with a hundred pixels of the page's own
+     black above and below, and on a short one it was bigger than the band and
+     clipped. The box is right there and can say how big it is.
+     A LAYOUT EFFECT AND NOT A `requestAnimationFrame`, which is the same
+     argument the zoom anchor above makes: this reads a box whose size depends
+     on classes React has only just committed, and a frame callback races that
+     commit rather than following it. A measurement taken one frame early is
+     zero, and a zoom fitted to zero is the drawing at ZOOM_MIN.
+     AND IT IS DECLARED AFTER THE ANCHOR ABOVE, WHICH IS LOAD-BEARING. React
+     runs layout effects in source order: written first, this one set the zoom
+     and raised `centreWanted` in the same commit the anchor then consumed —
+     centring the box against the size the sheet had a moment ago, which the
+     browser promptly clamped when the sheet was re-laid out. Second, the flag
+     survives to the pass the new size lands on.
+     ONCE PER ENTRY, which is what the latch is for. It is the sheet's STARTING
+     size, not a rule about it — re-running on every resize would take the zoom
+     out of somebody's hands the moment they touched the window. */
+  const fittedVertical = useRef(false);
+  useLayoutEffect(() => {
+    if (!verticalMode) { fittedVertical.current = false; return; }
+    if (fittedVertical.current) return;
+    const el = canvasBox;
+    if (!el || !source?.w || !source?.h) return;
+    /* NO AIR, AND THAT IS DELIBERATE. A gutter here is a strip of the band's
+       ground showing on the limiting axis, which on the inverted plan is the
+       page's black — the very thing the band's padding was fixed to remove. The
+       sheet fills the band and the panels are its margins. */
+    const w = el.clientWidth, h = el.clientHeight;
+    if (!(w > 0) || !(h > 0)) return;
+    fittedVertical.current = true;
+    /* CLAMPED HERE AS WELL AS IN THE REDUCER, so the comparison below is
+       against the figure that will actually be stored. Without it a fit outside
+       the zoom range would look like a change, no re-render would follow, and
+       the pass that centres the view would never run. */
+    const z = clampZoom(Math.min(w / source.w, h / source.h));
+    if (z === zoom) { centreScroll(el); return; }
+    centreWanted.current = true;
+    docActions.setZoom(z);
+  }, [verticalMode, canvasBox, source, docActions, zoom]);
 
   /* --- ...AND IT STARTS THE WAIT AT THE TOP OF IT -------------------------
      `overflow-hidden` STOPS THE WHEEL BUT DOES NOT REWIND THE BOX. A hidden
@@ -4175,11 +4309,15 @@ export default function App({
   /** The middle of the stage, in screen coordinates — the button's stand-in
    *  for a pointer. */
   const stageCentre = useCallback(() => {
-    const el = stageRef.current;
+    /* THE VIEWPORT'S MIDDLE AND NOT THE WINDOW'S. In vertical mode the stage
+       carries the rail's and the analysis card's clearance as padding, so its
+       own centre is some way below the middle of the band the drawing is
+       actually read in — and this figure is a stand-in for a pointer. */
+    const el = scrollBox();
     if (!el) return null;
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, []);
+  }, [scrollBox]);
 
   // THE WHEEL, ON THE ELEMENT AND NOT THROUGH REACT. React attaches wheel
   // listeners passively at the root, and a passive listener cannot
@@ -4225,7 +4363,7 @@ export default function App({
 
   const stageMouseDown = (e) => {
     if (e.button !== 1) return;
-    const el = stageRef.current;
+    const el = scrollBox();
     if (!el) return;
     e.preventDefault();
     panFrom.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
@@ -4238,7 +4376,7 @@ export default function App({
     // leaves the stage is a pan that ends every time you reach the edge of the
     // thing you were trying to pan away from.
     const move = (e) => {
-      const el = stageRef.current, f = panFrom.current;
+      const el = scrollBox(), f = panFrom.current;
       if (!el || !f) return;
       el.scrollLeft = f.left - (e.clientX - f.x);
       el.scrollTop = f.top - (e.clientY - f.y);
@@ -4258,7 +4396,7 @@ export default function App({
       window.removeEventListener('auxclick', aux, true);
       window.removeEventListener('blur', stop);
     };
-  }, [panning]);
+  }, [panning, scrollBox]);
 
 
   /* THE CAPTURE PHASE, AND IT IS THE HALF THAT CANNOT BE FORGOTTEN. It runs
@@ -5237,6 +5375,11 @@ export default function App({
   const stepPanel = doorEdit || boardPlace || zoneEdit
     || geometry.panel.coveDraw || wallEdit || !!stepTool;
 
+  /* Vertical mode always has one analysis card under the sheet. When no room
+     is explicitly open, the planner's existing focus fallback supplies it;
+     normal mode keeps the current selection-driven floating-window rule. */
+  const panelRoom = verticalMode ? (openRoom ?? focus) : openRoom;
+
   /* --- IS THERE ANYTHING FOR THE FLOATING WINDOW TO SAY? ------------------
      IT TAKES NO LAYOUT, SO IT MUST NOT BE DRAWN EMPTY. The window was a grid
      track and an empty column is merely empty; it is a card floating over the
@@ -5255,7 +5398,7 @@ export default function App({
      is right in all four cases. */
   const windowSpeaks = !!source && !boardsOpen && (
     boqOpen || readOnly || prep || stepPanel || showTrace
-    || (elecScene ? true : !!openRoom)
+    || (elecScene ? true : !!panelRoom)
     || !!selBoardParts
     || (!!armed || !pxPerFt)
     || troubles.length > 0 || !rooms.length
@@ -5332,6 +5475,113 @@ export default function App({
     && addTool !== 'cob' && !selArrayBar && (armed === 'fan' || !!selFan);
   const fanBarSweep = selFan ? sweepMm(selFan) : fanSweepMm;
 
+  /* One write path serves both the ordinary analysis window and the compact
+     selected-fixture card in vertical mode. The UI is duplicated in position,
+     not in behaviour. */
+  const changeRowWatts = (room, row, w) => (isModuleRow(row.key)
+    ? setTrackModuleSpec(row.key, { watts: w })
+    : cobArrays.some((a) => a.id === row.key)
+      ? setArraySpec(row.key, { watts: w })
+      : ceilingObjs.some((o) => o.id === row.key)
+        ? docActions.patchObject(row.key, { watts: w })
+        : row.wattRange
+          ? setCobSpec(row.key, { watts: w })
+          : setRowWatts(room.id, row, w));
+  const changeRowBeam = (row, deg) => (isModuleRow(row.key)
+    ? setTrackModuleSpec(row.key, { beam: deg })
+    : cobArrays.some((a) => a.id === row.key)
+      ? setArraySpec(row.key, { beam: deg })
+      : setCobSpec(row.key, { beam: deg }));
+
+  const roomWallMix = panelRoom
+    ? wallMix(panelRoom.geo.polygonFt, materialsOf(materials, panelRoom.id).walls)
+    : [];
+  const wallTonesInUse = roomWallMix.filter((m) => m.pct > 0);
+  const panelWallTone = wallTonesInUse.length === 1 ? wallTonesInUse[0].tone : null;
+
+  /* --- THE ONE THING THAT EARNS THE HEAD OF THE COLUMN --------------------
+     109px OF A 9:16 FRAME IS THE MOST EXPENSIVE PIXEL REAL ESTATE IN THIS APP,
+     and until now three different things spent it: a selected fitting, a tool
+     in hand, and any of the three specification bars. The last two are gone from
+     up there — see the note at the foot of the band, where the bars stand now —
+     and this is the only claim left. It is also the narrowest it can be:
+
+       A LIGHT, CLICKED, WHOSE WATTAGE CAN ACTUALLY BE CHANGED. `wattsChangeable`
+       is the test (see SpaceAnalysis): a range or a product list. A fitting
+       specified at one wattage has nothing on this window a press can do, so the
+       window would be a caption over the drawing — and a caption is exactly what
+       the strip stopped being.
+
+     THE ROW IS THE CONDITION, NOT THE HIGHLIGHT LIST. It used to hand the whole
+     panel its keys and let it filter, which is how the card came up for a
+     selection this room's analysis had no row for and then drew an empty box.
+
+     ARRAYS AND FANS KEEP THEIR OWN BARS. Both own richer controls than a
+     wattage and an optic, and both stand at the foot of the band like every
+     other contextual bar; two controls for one fitting in two places is the
+     one-bar-at-a-time rule broken in the vertical. */
+  /* --- ...AND THE CONTEXTUAL BARS STAND IN THE SAME SLOT NOW --------------
+     THE BAR WITH A PRIMITIVE IN HAND OUTRANKS THE WINDOW, and only that one.
+     The geometry bar arrives UNARMED on a space click — the most ordinary press
+     on this drawing — and it does not close when a lamp is then picked up (see
+     `standDown`, which only the array flow calls), so a rule that simply let the
+     bar win would mean clicking a light showed nothing at all for most of a
+     session. With a shape tool live it is the other way round: somebody is
+     mid-gesture, the tick and the bin are on that bar, and a readout about a
+     lamp they selected earlier must not take its place.
+     THE OTHER THREE BARS CANNOT COLLIDE WITH THIS. Arming the downlight or the
+     module clears the selection (see the rail's own handlers, and the note on
+     `moduleBarOn`), and an array's bar and a fan's are already terms here. */
+  /* --- AND A SELECTED GEOMETRY IS NOT A SELECTED FITTING --------------------
+     `!selShapeId` IS A FIX AND IT IS ONE CONDITION WIDE. A magnetic track is a
+     SHAPE (see ceilingShapes) and `highlightRows` reads `selShapeId` — so
+     pressing a run lit up the modules clipped along it, and because a module
+     has a wattage list the test below said yes and this window opened. What it
+     opened over is that track's OWN contextual menu: its corner radius, its
+     duplicate, its bin. And it says nothing about the thing a press on a run is
+     usually about, which is where the run goes.
+     A GEOMETRY ANSWERS TO THE SHAPE BAR, A FITTING TO THIS WINDOW, so the two
+     can never want the same slot. The modules clipped along the track still
+     raise it when one of THEM is pressed — a module is a fitting. */
+  const shapeBarArmed = !readOnly && !!geometry.bar.mode && !!geometry.status.tool;
+  /* --- THE ROW THE SELECTION IS, WORKED OUT ONCE ---------------------------
+     TWO BARS ASK THE SAME QUESTION OF THE SAME ANALYSIS. The light window wants
+     a FITTING's wattage and optic; the shape bar wants a RUN's wattage per
+     metre. `highlightRows` answers both from one place — it reads `selShapeId`
+     alongside every fitting id — so the lookup is one call and the two readers
+     differ only in which kind of selection they accept. Computed when there is
+     something highlighted and something to draw it in, so an ordinary press on
+     bare plan costs nothing. */
+  const panelAnalysis = panelRoom && analysisHighlight.keys.length > 0
+    && (verticalMode || selShapeId) && !readOnly
+    ? spaceAnalysis(panelRoom) : null;
+  const highlightedRow = panelAnalysis
+    ? (panelAnalysis.rows.find((r) => analysisHighlight.keys.includes(r.key)) ?? null)
+    : null;
+  /* A SELECTED RUN'S OWN SPECIFICATION, FOR THE SHAPE BAR. Null unless a shape
+     is what is selected — the window below takes the other half of that. */
+  const selShapeRow = selShapeId ? highlightedRow : null;
+  const selectedFixtureRow = verticalMode && !selShapeId
+    && !selArrayBar && !fanBarOn && !shapeBarArmed
+    && highlightedRow && wattsChangeable(highlightedRow) ? highlightedRow : null;
+  const selectedFixtureAtTop = !!selectedFixtureRow;
+  /* --- THE TOOL CARD IS GONE, AND NOTHING REPLACED IT ---------------------
+     IT WAS A ✦, A FIXTURE'S NAME AND A SENTENCE TELLING YOU TO CLICK THE PLAN,
+     standing in that same strip whenever anything was armed — a cove, a socket,
+     a sconce. Three things were wrong with it and they are the same thing: it
+     was CHROME EXPLAINING CHROME. The rail cell you just pressed is latched and
+     on screen, the cursor over the drawing is already the tool's, and the bar at
+     the foot of the band says what the next press will place. It spent the
+     dearest strip in the layout on a caption for all three.
+     SO PLACING A COVE RAISES NO WINDOW AT ALL, and placing spots raises the
+     white bar at the foot of the drawing with the engine's recommendation on it
+     — which is what that bar has always been for. */
+  /* THERE IS NO `verticalTopTaken` AND NO `verticalClose` EITHER. The first hid
+     the fixture rail and then set the band's padding — two ways for a contextual
+     card to move the drawing underneath itself. The second was a cross for
+     putting the thing in hand down, which is what pressing its own rail cell
+     again does, and what Escape does, in both modes. */
+
   /* --- THE LAYOUT SWITCHES ON THE FLOATING BAR ----------------------------
      THE ELECTRICAL LAYER SWITCH IS DELIBERATELY NOT HERE. Wiring remains
      available from the Electrical tool and the View menu, while this contextual
@@ -5365,7 +5615,7 @@ export default function App({
      pipeline is still making one; and a viewer gets the sheet as it was left
      rather than switches over it. Sharing the list is what keeps the bar from
      arriving with one of its three switches missing. */
-  const autoLead = !source || showTrace || prep || readOnly || sheetOpen ? null : (
+  const autoLead = verticalMode || !source || showTrace || prep || readOnly || sheetOpen ? null : (
     <>
       <SceneSwitch label="Suggested Grid" on={layers.suggestGrid}
         title="Draw the planner's answer as dotted suggestions instead of fittings"
@@ -5373,6 +5623,21 @@ export default function App({
       <HeatmapSwitch on={layers.heatmap} onClick={toggle('heatmap')} />
     </>
   );
+
+  const toggleVerticalMode = () => {
+    if (!isAdmin || !source || prep || showTrace || sheetOpen) return;
+    if (!verticalMode) {
+      normalZoom.current = zoom;
+      /* AND THE SHEET IS SIZED TO THE BAND BY THE LAYOUT EFFECT THAT WATCHES
+         THIS FLAG — see `fittedVertical`, which measures the band rather than
+         being told two numbers about it. */
+      setVerticalMode(true);
+      return;
+    }
+    setVerticalMode(false);
+    if (normalZoom.current != null) docActions.setZoom(normalZoom.current);
+    normalZoom.current = null;
+  };
 
   return (
     /* --- THE DRAWING TAKES THE SCREEN, AND THE CHROME SITS ON THE EDGES ----
@@ -5401,10 +5666,11 @@ export default function App({
        grid row rather than something absolute over the drawing: a scroll
        container with chrome floating in front of its own last inch is a
        container whose bottom edge you cannot reach. */
-    <div className="lp-shell relative grid grid-cols-[auto_1fr] grid-rows-[1fr_auto] h-full gap-0
-      [@media(max-width:960px)]:grid-cols-1
-      [@media(max-width:960px)]:grid-rows-[auto_1fr_auto]
-      [@media(max-width:960px)]:overflow-auto">
+    <div className={'lp-shell relative grid grid-cols-[auto_1fr] grid-rows-[1fr_auto] h-full gap-0 '
+      + '[@media(max-width:960px)]:grid-cols-1 '
+      + '[@media(max-width:960px)]:grid-rows-[auto_1fr_auto] '
+      + '[@media(max-width:960px)]:overflow-auto '
+      + (verticalMode ? 'lp-shell-vertical ' : '')}>
       {/* ONE QUESTION, BEFORE ANYTHING ELSE. Shown the moment a plan is
           readable and dismissed only by answering — see ProjectTypeDialog. */}
       {source && !readOnly && (!projectId || doorState.status === 'running') && (
@@ -6045,6 +6311,18 @@ export default function App({
         <div aria-hidden="true" className="row-span-2
           [@media(max-width:960px)]:row-span-1" />
       ) : (
+        /* --- ONE RAIL, DOWN THE LEFT EDGE, IN BOTH MODES -----------------
+           IT WAS `orientation="top"` IN VERTICAL MODE — the same cells in a
+           380px strip across the head of the column — and with it went a second
+           set of behaviours: the flyouts opened DOWNWARD, the rail measured
+           itself off the stage instead of sitting in the grid, and it had to be
+           hidden every time a fixture bar wanted that strip, which is what took
+           the light menu away mid-gesture. The rail is chrome on an edge that
+           never scrolls; that is as true of the column as it is of the open
+           canvas, and one rail with one set of behaviours is the whole point of
+           the component. ToolRail's `top` branch is still there and unused.
+           NO `stage` EITHER: it was only ever the box the top variant measured
+           itself against. This is the call the open canvas makes. */
         <ToolRail
           tool={addTool} objArmed={armed} boardOn={boardPlace}
           disabled={!pxPerFt || !rooms.length}
@@ -6285,8 +6563,68 @@ export default function App({
           }} />
       )}
 
+      {selectedFixtureAtTop && (
+        /* --- CENTRED ON THE STAGE AND NOT ON THE WINDOW -------------------
+           A GRID ITEM IN THE STAGE'S OWN CELL, which is what keeps this card,
+           the analysis card, the canvas band and the two hairlines on one centre
+           line. They were `absolute left-1/2` — the middle of the WINDOW — and
+           that was the same thing only while the stage was the whole window;
+           with the fixture rail back in the grid's first column the stage is
+           86px narrower and everything measured off it moved 43px right of
+           these. `justify-self-center` asks the layout instead of arithmetic, so
+           it stays true whether or not the rail is drawn — and the rail comes
+           and goes with the step, the viewer and the door editor. */
+        /* --- A WINDOW OVER THE DRAWING, NOT A STRIP HUNG OFF THE CHROME ---
+           IT WAS FLUSH WITH THE TOP BAR — square top corners, no top border,
+           and the band's padding opening up underneath it to make room. Reading
+           it as chrome is what made it push the sheet down. It is a WINDOW: it
+           is about the fitting you just clicked, it lasts exactly as long as
+           that selection, and a press anywhere on bare plan clears it (see
+           `setSel(clear())` in `onCanvasClick`). So it floats clear of the top
+           bar with all four corners rounded and its own shadow, and the drawing
+           under it does not move.
+           NO BACKDROP FILTER. The ground is opaque `--color-panel`, so the sheet
+           behind it is either covered or untouched — nothing is blurred, which
+           on a drawing would read as the plan itself going soft.
+           NARROWER THAN THE COLUMN BY ITS OWN GUTTER, which is what makes it
+           read as floating rather than as another panel: it was the column's
+           full 380 and sat edge to edge with the hairlines, which is the one
+           thing the two fixed panels do. `--lp-float-w` is the column less
+           `--lp-col-pad` at each end — the same gutter the analysis card sets
+           its own contents in by, so the window's sides line up with the type
+           in the panel below it rather than merely being near it. */
+        <div className="col-start-2 row-start-1 justify-self-center self-start
+          [@media(max-width:960px)]:col-start-1 [@media(max-width:960px)]:row-start-2
+          mt-[68px] z-30 h-[44px] w-[var(--lp-float-w)]
+          overflow-hidden rounded-[11px] border border-border/10
+          bg-panel shadow-[0_10px_34px_rgba(0,0,0,0.45)]"
+          onPointerDown={(e) => e.stopPropagation()}>
+          {/* ONE ROW, 44px, AND NOTHING ON IT THAT IS NOT A CONTROL — see
+              FixtureSpec. It was a 109px card with the fitting's name and its
+              lumen contribution on it; a bar in the dearest strip of a 9:16
+              frame earns its height in presses, and a name is a caption for the
+              thing ringed on the drawing right under it.
+              `overflow-hidden` AND NEVER A SCROLLBAR. One row cannot overflow,
+              and a scrollbar here would mean the bar was holding more than it
+              can show — the state that put a fitting's wattage below the fold
+              when this was the whole analysis panel. */}
+            <div className="h-full overflow-hidden px-3">
+              <FixtureSpec key={selectedFixtureRow.key} row={selectedFixtureRow}
+                disabled={readOnly}
+                onWatts={(w) => changeRowWatts(panelRoom, selectedFixtureRow, w)}
+                onBeam={(d) => changeRowBeam(selectedFixtureRow, d)}
+                /* THE SAME WRITE THE PANEL'S OWN EYE MAKES — see `setRowOff`,
+                   which zeroes the fitting once in `analyseSpace` so the
+                   readout, the heatmap and the drawing all follow from one
+                   flag. */
+                onToggleOff={(off) => setRowOff(panelRoom.id, selectedFixtureRow, off)} />
+            </div>
+        </div>
+      )}
+
       <div ref={stageRef}
         className={'relative col-start-2 row-start-1 '
+          + (verticalMode ? 'lp-stage-vertical ' : '')
           /* --- THE WAIT DOES NOT SCROLL, AND THAT IS A ONE-WORD FIX --------
              THE LOADER IS `absolute inset-0` INSIDE THIS BOX (see PlanLoader),
              so it is sized to the stage's VISIBLE area and pinned to the origin
@@ -6297,7 +6635,7 @@ export default function App({
              up and off, leaving the drawing it was covering on show underneath.
              Nothing is lost by clipping instead: what overflows is the sheet,
              and the sheet is what the loader exists to cover. */
-          + (prep ? 'overflow-hidden ' : 'overflow-auto ')
+          + (prep || verticalMode ? 'overflow-hidden ' : 'overflow-auto ')
           + '[@media(max-width:960px)]:col-start-1 [@media(max-width:960px)]:row-start-2 '
           /* --- AND THE RE-CENTRING IS A GLIDE RATHER THAN A CUT -------------
              THIS IS THE JUMP. The right pad below swings between 18px and
@@ -6337,7 +6675,35 @@ export default function App({
              ONLY WHILE THE WINDOW IS UP, which is what `windowSpeaks` answers,
              and never below 960px where the window stops floating and goes
              underneath. */
-          + (sheetOpen || showPicker || showTrace
+          /* --- THE BAND IS THE GAP BETWEEN THE TWO PANELS, TO THE PIXEL ----
+             IT WAS 194 AND 270 AND THE PANELS ARE AT 165 AND 242, which left a
+             29px strip of the page's own black under the fixture card and a 28px
+             one over the analysis card — two black bands across the column with
+             nothing in them, and they cut the sheet off from the two panels it
+             belongs between.
+             SO THE PADDING IS THE PANELS' OWN EDGES, and it is arithmetic
+             rather than a guess: the fixture card is `top-14` and 109 tall, so
+             it ends at 165 from the top of the stage; the analysis card is
+             `bottom-12` and 242 tall, and the stage's foot is that same 12 above
+             the window's, so its top edge is 242 up from the stage's bottom.
+             Change either card's height or offset and these two move with it. */
+          /* --- THE BAND IS FIXED, AND WHAT SITS IN THE HEAD OF THE COLUMN
+             FLOATS OVER IT ----------------------------------------------------
+             `pt` SWUNG BETWEEN 56 AND 165 AS THE FIXTURE CARD CAME AND WENT,
+             which resized the band and re-centred the sheet inside it: clicking
+             a light pushed the whole drawing down. A card about a thing you just
+             clicked must not move the thing you clicked. So the band runs from
+             the top bar to the analysis card and stays there, and the card is a
+             window over it — see the note where it is drawn.
+             THE FOOT IS THE ANALYSIS CARD'S HEIGHT, AND IT IS THAT CARD'S OWN
+             FIGURE. `--lp-analysis-h` is the readout plus `--lp-safe-foot` — the
+             empty ground the column is recorded against — and both this padding
+             and the card read it, so the band can never overlap the card or
+             leave a strip of page between them. Tune the foot in styles.css. */
+          + (verticalMode && source && !sheetOpen && !showPicker && !showTrace
+            ? 'pt-14 px-[18px] pb-[var(--lp-analysis-h)] '
+              + 'flex [justify-content:safe_center] items-center '
+            : sheetOpen || showPicker || showTrace
             ? 'block pt-[68px] pl-[22px] pb-6 '
               + (windowSpeaks
                 ? 'pr-[374px] [@media(max-width:960px)]:pr-[22px]' : 'pr-[22px]')
@@ -6518,7 +6884,76 @@ export default function App({
              and a token that can be retuned into glass is exactly what broke it
              once. */
           <div className={'flex-none inline-block '
-            + (layers.invert ? '' : 'bg-white border border-border rounded-lg p-3 shadow')}>
+            /* `min-h` IS THE FLOOR UNDER `h-full`. The band is the stage's
+               height less 464px of padding, so a window short enough (or a
+               pane dragged small enough) makes it zero — and a viewport of no
+               height clips the drawing away entirely, which reads as the canvas
+               having gone black. Below the floor it overflows into the padding
+               the way it did before the band was a box, which is the honest
+               degradation: the sheet is cramped, not absent. */
+            + (verticalMode ? 'w-[380px] max-w-[380px] h-full min-h-[140px] ' : '')
+            /* --- THE PAPER IS THE WHOLE BAND IN THE COLUMN ------------------
+               THE CARD'S ROUNDING, BORDER AND SHADOW ARE WHAT PUT THE PAGE BACK
+               AROUND IT. On the open canvas the sheet is a card floating on a
+               dark page and all three say so; in the column the band runs from
+               the fixture card to the analysis card with nothing either side of
+               it, so a radius is four black corners and a shadow is a dark edge
+               against the two panels it butts onto. Squared and full-bleed, the
+               paper IS the band.
+               NOTHING HERE WHEN THE PLAN IS INVERTED, which is the rule the note
+               below states: that sheet's own ground is black, and the band's is
+               the same black, so the two are already one surface. */
+            + (layers.invert ? ''
+              : verticalMode ? 'bg-white '
+              : 'bg-white border border-border rounded-lg p-3 shadow')}>
+            {/* VERTICAL MODE IS A VIEWPORT, NOT A SECOND CANVAS. The same
+                PlanCanvas stays mounted with the same handlers and layers, but
+                its paint is clipped at the shared 380px panel width. That keeps
+                future canvas behaviour common to both modes while preventing a
+                zoomed drawing from bleeding past either side of the vertical
+                column. */}
+            {/* --- ...AND A VIEWPORT IS THE THING A PAN SCROLLS ---------------
+                IT CLIPPED AND DID NOT SCROLL, WHICH IS WHY THE DRAWING WOULD
+                NOT MOVE. Panning on this screen is scrolling the box the
+                drawing sits in — see `stageMouseDown`, which says why that is
+                the whole implementation — and in vertical mode the box that
+                clips is THIS one, not the stage: the stage is the full window
+                and its only child is 380px wide, so it has nothing to scroll
+                sideways however far in somebody zooms. A middle-drag wrote
+                offsets to a container that was already at its end stops.
+                SO IT IS THE SCROLLER, and `canvasBox` is what the pan and the
+                wheel-zoom's anchor both reach for — see `scrollBox`. It is the
+                box the shape bar is measured off as well, for the same reason
+                said about position rather than about scrolling.
+                `overflow-auto` RATHER THAN `hidden`, so the wheel, the keyboard
+                and a trackpad keep working inside the column exactly as they do
+                over the open canvas; the bars are hidden in CSS (see
+                `.lp-canvas-viewport`) because a scrollbar down the middle of a
+                380px reading column is chrome inside the picture.
+                `h-full` ON BOTH BOXES is what gives it a viewport to be: the
+                stage's padding already reserves the rail and the analysis card,
+                so 100% of what is left is exactly the band the drawing is read
+                in. Without a height the box grows to the drawing and clips
+                nothing vertically. */}
+            <div ref={setCanvasBox}
+              className={verticalMode
+                ? 'lp-canvas-viewport w-full max-w-full h-full min-h-[140px] overflow-auto'
+                : 'contents'}>
+            {/* THE CENTRING MOVED IN HERE, AND THE SIZING IS THE WHOLE POINT OF
+                IT. A drawing centred in a box it OVERFLOWS puts half of that
+                overflow off the start edge, where no amount of scrolling reaches
+                it — `scrollLeft` does not go negative. That is the trap `safe
+                center` answers for on the stage, and this answers it with
+                geometry instead, which needs no alignment keyword to be
+                supported: the box is `max-content` wide and never narrower than
+                the viewport, so a small drawing is centred in the column and a
+                zoomed one sits in a box exactly its own size — no offset to
+                scroll back past. `min-h-full` says the same thing down the other
+                axis, where a block box grows to its content on its own. */}
+            <div className={verticalMode
+              ? 'flex w-max min-w-full min-h-full items-center justify-center '
+                + 'p-[var(--lp-canvas-room)]'
+              : 'contents'}>
             <PlanCanvas ref={svgRef}
               src={isVector ? null : (invertedSrc ?? source.src)}
               srcAsScanned={isVector ? null : source.src}
@@ -6966,6 +7401,8 @@ export default function App({
                       (cobRoom ? ceilingMmFor(cobRoom.id) / 304.8 : 0) || DEFAULT_DROP_FT) }
                 : null}
               cobGuide={!readOnly && addTool === 'cob' ? cobGuide : null} />
+            </div>
+            </div>
             <FixtureTip tip={tip} />
             {/* --- WHAT THE NEXT COB WILL BE, AT THE FOOT OF THE DRAWING -----
                 UP FOR AS LONG AS THE GESTURE IS ARMED, and not only while the
@@ -6997,8 +7434,8 @@ export default function App({
                 bar's `edit` state is withheld (`otherBar` in `shapeBarMode`),
                 so `geometry.bar.mode` is null unless something opened it. */}
             {!readOnly && addTool === 'cob' && !geometry.bar.mode && (
-              <CobSpec key={cobMode} stage={stageRef} lead={autoLead}
-                watts={cobShow.watts} beam={cobShow.beam}
+              <CobSpec key={cobMode} stage={barBox} lead={autoLead}
+                placement={barPlace} watts={cobShow.watts} beam={cobShow.beam}
                 recommended={!cobStanding}
                 /* THE MODE IS ALSO THE EDITOR'S LIFETIME, hence the key. React
                    otherwise preserves CobSpec's local `specOpen` while a
@@ -7060,7 +7497,7 @@ export default function App({
                 the press that selects an array disarms every tool anyway, so
                 this is belt and braces rather than a live case. */}
             {!readOnly && addTool !== 'cob' && selArrayBar && (
-              <CobSpec stage={stageRef} lead={autoLead}
+              <CobSpec stage={barBox} lead={autoLead} placement={barPlace}
                 watts={selArrayBar.watts} beam={selArrayBar.beam}
                 array={selArrayBar.array}
                 onWatts={(w) => setArraySpec(selArrayId, { watts: w })}
@@ -7080,7 +7517,7 @@ export default function App({
                 plus, press it and the modules arrive beside the rail cell, pick
                 one and this says what the next press will clip in. */}
             {moduleBarOn && (
-              <ModuleSpec stage={stageRef} lead={autoLead}
+              <ModuleSpec stage={barBox} lead={autoLead} placement={barPlace}
                 label={MODULE_BY_ID[trackMode]?.label ?? 'Module'}
                 watts={moduleSpec.watts} wattList={moduleWattList(trackMode)}
                 beam={moduleSpec.beam}
@@ -7098,14 +7535,15 @@ export default function App({
                 one-bar-at-a-time rule; see it, and FanSpec's header for why the
                 Design column no longer holds a second copy of this. */}
             {fanBarOn && (
-              <FanSpec stage={stageRef} lead={autoLead}
+              <FanSpec stage={barBox} lead={autoLead} placement={barPlace}
                 sweepMm={fanBarSweep} onSweep={setFanSweep} />
             )}
             {/* `!fanBarOn` joins the other ownership gates so a tool and the
                 plain layout controls never stack in the same position. */}
             {!(!readOnly && (addTool === 'cob' || selArrayBar || geometry.bar.mode))
               && !moduleBarOn && !fanBarOn && autoLead && (
-              <StageBar stage={stageRef} lead={autoLead} label="Drawing" />
+              <StageBar stage={barBox} lead={autoLead} placement={barPlace}
+                label="Drawing" />
             )}
             {/* --- THE HEATMAP'S KEY ----------------------------------------
                 OUTSIDE THE BAR'S OWN CONDITION, because it is not part of the
@@ -7140,8 +7578,29 @@ export default function App({
                 sits in the tree decides only what it is a sibling of.
                 NOT ON THE READ-ONLY SHEET. Every button on it changes the
                 ceiling. */}
-            {!readOnly && geometry.bar.mode && (
-              <ShapeMenu stage={stageRef} lead={autoLead} mode={geometry.bar.mode}
+            {!readOnly && geometry.bar.mode && !selectedFixtureAtTop && (
+              /* --- AND IT STANDS AT THE FOOT OF THE DRAWING, NOT OF THE WINDOW
+                 THE BOX IT IS MEASURED OFF IS THE WHOLE OF THE FIX. Every bar
+                 here is fixed to the bottom centre of whatever it is handed (see
+                 StageBar), and in vertical mode the stage is the entire window:
+                 its last inch is under the analysis card, so this bar — the one
+                 contextual bar that does not move to the head of the column, for
+                 the reason given at `selectedFixtureAtTop` — came up over the
+                 readings instead of over the ceiling it is editing. The canvas
+                 band is the box that IS the drawing there, and it is already
+                 measured for the pan; handing it over puts the bar back on the
+                 sheet, clear of the card, with no second position invented for
+                 it. */
+              <ShapeMenu stage={barBox} lead={autoLead} placement={barPlace}
+                mode={geometry.bar.mode}
+                /* THE RUN'S OWN WATTAGE, WHERE THE ANALYSIS HAS ONE FOR IT —
+                   see `selShapeRow`, and the note on `wattage` in ShapeMenu for
+                   why a lighting figure belongs on the geometry bar. */
+                wattage={selShapeRow && selShapeRow.wattOptions?.length > 1
+                  ? { watts: selShapeRow.watts, options: selShapeRow.wattOptions,
+                      unit: selShapeRow.unit }
+                  : null}
+                onWatts={(w) => changeRowWatts(panelRoom, selShapeRow, w)}
                 tool={geometry.status.tool} sides={geometry.bar.sides}
                 sizeLabel={geometry.bar.mode === 'draw' && geometry.bar.toCommit
                   ? shapeSizeLabel(geometry.bar.toCommit)
@@ -7358,6 +7817,20 @@ export default function App({
           </div>
 
           <div className="flex-1" />
+
+          {verticalMode && (
+            <>
+              <FooterSwitch label="Heatmap" on={layers.heatmap}
+                onClick={toggle('heatmap')} />
+              <FooterSwitch label="Electrical" on={layers.electrical}
+                onClick={toggle('electrical')} />
+            </>
+          )}
+
+          {isAdmin && !sheetOpen && !showTrace && (
+            <FooterSwitch label="Vertical Mode" on={verticalMode}
+              onClick={toggleVerticalMode} />
+          )}
 
           {/* --- ADMIN, AND IT IS A PANEL FOR A DIFFERENT AUDIENCE ---------
               ROLE 1 IN `profiles` — an owner of this app rather than a user of
@@ -7948,14 +8421,35 @@ export default function App({
            `undefined` removes it. */
         aria-hidden={windowSpeaks ? undefined : true}
         inert={windowSpeaks ? undefined : ''}
-        className={'lp-window absolute top-[68px] right-4 w-[340px] z-[4] '
-        + 'max-h-[calc(100%-68px-72px)] '
-        + 'rounded-lg bg-panel '
-        + 'shadow-[0_10px_34px_rgba(0,0,0,0.55)] '
-        + 'flex flex-col min-h-0 overflow-hidden '
-        + '[@media(max-width:960px)]:static [@media(max-width:960px)]:w-auto '
-        + '[@media(max-width:960px)]:max-h-none [@media(max-width:960px)]:rounded-none '
-        }>
+        className={verticalMode
+          /* THE SAME GRID CELL THE FIXTURE CARD TAKES, and centred the same
+             way — see the note there. `self-end` puts its foot on the stage's
+             own bottom edge, which is the footer's top: exactly where
+             `bottom-12` had it, without a figure that has to be kept in step
+             with the footer's height. */
+          /* --- 442 IS 242 OF READOUT AND 200 OF DELIBERATE NOTHING --------
+             THE FOOT OF THIS CARD IS A SAFE ZONE. The column is recorded for a
+             feed that draws its own controls over the bottom of the frame, so
+             the last 200px carry the card's ground and no content: the readout
+             and its verdict stay above the line anything covers. The body is
+             top-aligned inside it (see the Lumens wrapper in SpaceDetail), so
+             the space is simply what is left over rather than a spacer element.
+             THE STAGE'S `pb` READS THE SAME PROPERTY, so the band and the card
+             cannot drift apart. Both are `--lp-analysis-h` in styles.css. */
+          ? 'col-start-2 row-start-1 justify-self-center self-end '
+            + '[@media(max-width:960px)]:col-start-1 '
+            + '[@media(max-width:960px)]:row-start-2 '
+            + 'z-[4] h-[var(--lp-analysis-h)] w-[380px] rounded-t-[11px] bg-panel '
+            + 'shadow-[0_-8px_30px_rgba(0,0,0,0.42)] '
+            + 'flex flex-col min-h-0 overflow-hidden '
+            + (windowSpeaks ? '' : 'hidden ')
+          : 'lp-window absolute top-[68px] right-4 w-[340px] z-[4] '
+            + 'max-h-[calc(100%-68px-72px)] '
+            + 'rounded-lg bg-panel '
+            + 'shadow-[0_10px_34px_rgba(0,0,0,0.55)] '
+            + 'flex flex-col min-h-0 overflow-hidden '
+            + '[@media(max-width:960px)]:static [@media(max-width:960px)]:w-auto '
+            + '[@media(max-width:960px)]:max-h-none [@media(max-width:960px)]:rounded-none '}>
         {/* --- THE GRIP, AND IT IS THE ONLY PART THAT PICKS THE WINDOW UP ---
             A WINDOW YOU CAN DRAG BY ITS BODY IS A WINDOW THAT MOVES WHEN
             SOMEBODY MEANT TO SELECT A READING IN IT. Forty rows of analysis,
@@ -7976,7 +8470,7 @@ export default function App({
           onDoubleClick={panelDrag.moved ? panelDrag.home : undefined}
           className={'flex-none flex items-center justify-center h-6 '
             + 'select-none touch-none '
-            + '[@media(max-width:960px)]:hidden '
+            + (verticalMode ? 'hidden ' : '[@media(max-width:960px)]:hidden ')
             + (panelDrag.dragging ? 'cursor-grabbing' : 'cursor-grab')}>
           <svg width="26" height="8" viewBox="0 0 26 8" aria-hidden="true"
             className={'transition-opacity duration-150 '
@@ -8013,9 +8507,12 @@ export default function App({
         {/* `pb-4` AND NOT `pb-10`. The column's ten was clearance above a
             pinned footer that is no longer under it; a window sized to its own
             content would render the extra as an inch of empty glass. */}
+        {/* `--lp-col-pad` AND NOT A LITERAL 26: the floating light window is
+            inset by this same figure (see `--lp-float-w`), so the two cannot
+            drift into looking almost-aligned. */}
         {holdPanelBody(() => (
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4
-          flex flex-col gap-1.5">
+        <div className={'flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5 '
+          + (verticalMode ? 'px-[var(--lp-col-pad)] py-[18px]' : 'px-4 py-4')}>
         {/* --- THE WALKTHROUGH, UNDER IT ------------------------------------
             ONLY ON THE OUTLINES STEP, AND THAT IS THE WHOLE PLACEMENT. On this
             step the panel holds the Share button and nothing else — everything
@@ -8476,16 +8973,36 @@ export default function App({
              coves are the ones that need it: nothing on the drawing says that a
              line has to land on a wall at both ends, and nothing suggests that a
              pen path can be finished without closing it. */
+          /* --- ...AND IN THE COLUMN IT IS THE SAME STEP, HALF THE HEIGHT ---
+             IT SCROLLED, WHICH A STEP MUST NOT. This card is a title, a drawing
+             of the gesture, a sentence, sometimes a refusal and one or two
+             buttons — about 320px of it — and the analysis card it sits in is
+             267px of content in the vertical column. A step you have to scroll
+             to reach the way out of is a step people get stuck in, which is the
+             one thing this shape exists to prevent.
+             THE DRAWING IS WHAT GOES. It is the instruction on the open canvas,
+             where the panel has a column's worth of room for it — and it is the
+             tallest thing here by a factor of three. The sentence under it says
+             the same thing in words and is the half that still fits, so the
+             column keeps the words and the buttons. Everything else just
+             tightens: 17px to 13, `py-6` to `py-2`, `gap-4` to `gap-2`. */
           <div className={`${SEC} flex-1 flex flex-col min-h-0`}>
-            <div className="flex-1 flex flex-col items-center justify-center gap-4
-              text-center px-1 py-6">
-              <p className="m-0 text-[17px] leading-[1.35] tracking-[-0.02em] text-white
-                max-w-[22ch]">{geometry.panel.coveDraw.title}</p>
+            <div className={'flex-1 flex flex-col items-center justify-center '
+              + 'text-center px-1 '
+              + (verticalMode ? 'gap-2 py-2' : 'gap-4 py-6')}>
+              <p className={'m-0 tracking-[-0.02em] text-white max-w-[22ch] '
+                + (verticalMode
+                  ? 'text-[13px] leading-[1.3]' : 'text-[17px] leading-[1.35]')}>
+                {geometry.panel.coveDraw.title}
+              </p>
 
-              <div className="flex flex-col items-center gap-2 px-4 pt-3.5 pb-3
-                border border-border rounded-[10px] bg-input-bg text-center">
-                {geometry.panel.coveDraw.art}
-                <p className="m-0 text-[11px] leading-[1.5] text-muted max-w-[30ch]">
+              <div className={'flex flex-col items-center gap-2 text-center '
+                + 'border border-border rounded-[10px] bg-input-bg '
+                + (verticalMode ? 'px-3 py-2' : 'px-4 pt-3.5 pb-3')}>
+                {!verticalMode && geometry.panel.coveDraw.art}
+                <p className={'m-0 text-muted max-w-[30ch] '
+                  + (verticalMode
+                    ? 'text-[10.5px] leading-[1.4]' : 'text-[11px] leading-[1.5]')}>
                   {geometry.panel.coveDraw.hint}
                 </p>
               </div>
@@ -8727,7 +9244,7 @@ export default function App({
               SO THE WINDOW IS ABOUT A SELECTION OR IT IS NOT THERE. With no
               room picked there is nothing to say about one, and `windowSpeaks`
               is what stops an empty card floating in the corner of the plan. */}
-          {!elecScene && openRoom && (
+          {!elecScene && panelRoom && (
             /* --- ONE SPACE, AND IT REPLACES THE LIST ----------------------
                 IT WAS AN ACCORDION and the accordion is what had to go. A
                 room's height, its three finishes and its illuminance are four
@@ -8738,21 +9255,23 @@ export default function App({
                 So opening a space REPLACES the list, and the way back is the
                 first thing in the view. See SpaceDetail. */
             <SpaceDetail
-              key={openRoom.id}
-              name={openRoom.outline.name || 'Space'}
+              key={panelRoom.id}
+              vertical={verticalMode}
+              name={panelRoom.outline.name || 'Space'}
               meta={[
-                roomTypes[openRoom.id]
-                  ? roomTypeIn(projectId, roomTypes[openRoom.id].type)?.label ?? 'Other'
+                roomTypes[panelRoom.id]
+                  ? roomTypeIn(projectId, roomTypes[panelRoom.id].type)?.label ?? 'Other'
                   : null,
-                `${ftin(openRoom.stats.widthFt)} × ${ftin(openRoom.stats.heightFt)}`,
-                `${Math.round(openRoom.stats.areaSqft)} sqft`,
+                `${ftin(panelRoom.stats.widthFt)} × ${ftin(panelRoom.stats.heightFt)}`,
+                `${Math.round(panelRoom.stats.areaSqft)} sqft`,
               ].filter(Boolean).join(' · ')}
               disabled={readOnly}
-              ceilingMm={ceilingMmFor(openRoom.id)}
-              onCeilingMm={(v) => setCeilingMmFor(openRoom.id, v)}
-              materials={materialsOf(materials, openRoom.id)}
-              wallLabel={wallMixLabel(
-                wallMix(openRoom.geo.polygonFt, materialsOf(materials, openRoom.id).walls))}
+              ceilingMm={ceilingMmFor(panelRoom.id)}
+              onCeilingMm={(v) => setCeilingMmFor(panelRoom.id, v)}
+              materials={materialsOf(materials, panelRoom.id)}
+              wallLabel={wallMixLabel(roomWallMix)} wallTone={panelWallTone}
+              onAllWallsTone={(tone) => panelRoom.geo.polygonFt.forEach((_, edge) =>
+                setWallTone(panelRoom.id, edge, tone))}
               /* `materialsLabel`, `editing`, `onEdit` AND `onDone` WENT WITH
                  THE FOLD. The finishes were a one-line summary you pressed to
                  open, and opening them replaced the analysis; the window shows
@@ -8762,14 +9281,14 @@ export default function App({
                  lib/materials.js has no caller now, and it is left there rather
                  than deleted because it is the one place that knows how to say
                  "Default" versus what actually differs. */
-              onTone={(surface, tone) => setSurfaceTone(openRoom.id, surface, tone)}
+              onTone={(surface, tone) => setSurfaceTone(panelRoom.id, surface, tone)}
               /* RENAMING A SPACE MARKS NOTHING DIRTY, which is `updateOutline`'s
                  own rule and the reason it is safe to offer here: `rectify`
                  moves corners and costs a relight, a better name does not. */
               onRename={readOnly ? null
-                : (next) => updateOutline(openRoom.id, { name: next })}
-              onConfigureWalls={() => openWallEdit(openRoom.id)}
-              analysis={spaceAnalysis(openRoom)}
+                : (next) => updateOutline(panelRoom.id, { name: next })}
+              onConfigureWalls={() => openWallEdit(panelRoom.id)}
+              analysis={spaceAnalysis(panelRoom)}
               /* TWO STORES BEHIND ONE CONTROL, AND THE ROW SAYS WHICH. A row
                  with a `wattRange` is a fitting somebody placed by hand and its
                  key is that fitting's id; everything else is a family this room
@@ -8795,15 +9314,7 @@ export default function App({
                  carry a slider, and a row that reached `setCobSpec` would be a
                  patch aimed at a list this fitting is not in — a silent no-op,
                  and a slider that moved and changed nothing. */
-              onWatts={(row, w) => (isModuleRow(row.key)
-                ? setTrackModuleSpec(row.key, { watts: w })
-                : cobArrays.some((a) => a.id === row.key)
-                  ? setArraySpec(row.key, { watts: w })
-                  : ceilingObjs.some((o) => o.id === row.key)
-                    ? docActions.patchObject(row.key, { watts: w })
-                    : row.wattRange
-                      ? setCobSpec(row.key, { watts: w })
-                      : setRowWatts(openRoom.id, row, w))}
+              onWatts={(row, w) => changeRowWatts(panelRoom, row, w)}
               /* SWITCHED OFF, AND IT NEEDS NONE OF THE FAN-OUT ABOVE. A
                  wattage has to reach whichever list the fitting actually lives
                  in — the module, the array, the object, the lamp — because that
@@ -8811,12 +9322,8 @@ export default function App({
                  property of the fitting at all: it is the ROOM's record of which
                  of its rows are dark, keyed exactly as its wattage overrides
                  are, so there is one door for every family. */
-              onToggleOff={(row, off) => setRowOff(openRoom.id, row, off)}
-              onBeam={(row, deg) => (isModuleRow(row.key)
-                ? setTrackModuleSpec(row.key, { beam: deg })
-                : cobArrays.some((a) => a.id === row.key)
-                  ? setArraySpec(row.key, { beam: deg })
-                  : setCobSpec(row.key, { beam: deg }))}
+              onToggleOff={(row, off) => setRowOff(panelRoom.id, row, off)}
+              onBeam={changeRowBeam}
               /* WHICH ROWS ARE THE FITTING THAT IS SELECTED ON THE DRAWING.
                  A LIST OF ROW KEYS AND NOT A FITTING ID, because the two are not
                  the same thing and only this file knows the mapping: a placed
@@ -8829,9 +9336,9 @@ export default function App({
               /* THE AMBIENT GRID, FILLED OR NOT. Per space, because it is a
                  decision about one ceiling: a flat can have its bedrooms laid
                  out automatically and its living room by hand. */
-              autoplace={lighting.status.autoplaceOn(openRoom.id)}
+              autoplace={lighting.status.autoplaceOn(panelRoom.id)}
               onAutoplace={readOnly ? null
-                : (on) => lighting.commands.setAutoplace(openRoom.id, on)} />
+                : (on) => lighting.commands.setAutoplace(panelRoom.id, on)} />
           )}
 
           {step !== 'chunks' && step !== 'trace' && <>

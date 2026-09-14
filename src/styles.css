@@ -1224,3 +1224,71 @@ input:focus,select:focus,textarea:focus{
 /* The shimmer on a table skeleton — a refetch fades rather than blanking. */
 @keyframes skel{0%{background-position:100% 0}100%{background-position:0 0}}
 } /* end @layer base */
+
+/* `.lp-stagebar-top` WAS HERE AND IT IS GONE. It rethemed the stage bar dark
+   for the strip that used to hang off the top bar in vertical mode. The bars
+   float over the drawing now and stay WHITE in both modes — one bar, one
+   palette, legible on paper and on an inverted plan alike, which is the argument
+   the pill was built on. Only its position changes; see `TOP` in StageBar. */
+
+/* --- THE READING COLUMN'S FIGURES, IN ONE PLACE ---------------------------
+   THE KNOBS FOR VERTICAL MODE, and they are here rather than in the markup
+   because they are the kind of number somebody sits and tunes with the thing on
+   screen in front of them. Every one of them is read from more than one place,
+   which is the other half of the reason: the band's bottom padding and the
+   analysis card's height are the SAME figure, and a pair of literals that have
+   to agree is a pair that eventually will not.
+
+   `--lp-safe-foot` IS THE ONE TO PLAY WITH. It is empty ground under the
+   readout, for recording the column into a feed that draws its own controls over
+   the bottom of the frame. Set it to 0 and the card is just the readout; the
+   band above grows into whatever it gives back, because the stage's padding is
+   the card's height and not a number of its own.
+
+   `--lp-col-pad` IS THE ANALYSIS CARD'S GUTTER, and the floating light window is
+   inset by it at both ends — `--lp-float-w` is what makes that one figure rather
+   than two that look alike. Widen the gutter and the window narrows with it. */
+:root{
+  --lp-safe-foot:25px;
+  --lp-col-pad:26px;
+  /* --- HOW FAR OFF CENTRE THE SHEET CAN BE DRAGGED ------------------------
+     THE SLACK AROUND THE PLAN INSIDE THE SCROLLABLE CANVAS, on every side. It
+     used to be nothing: the scroll content was the sheet and not a pixel more,
+     so a plan smaller than the band could not be moved at all and a bigger one
+     could only be panned as far as its own edges — there was no way to push a
+     corner of the drawing out from under the window at the top or the bar at the
+     foot. This is the room to do it in. Raise it for more freedom; it costs only
+     scroll range, never layout. */
+  --lp-canvas-room:240px;
+  /* 242px IS THE READOUT ITSELF: the material row, the two figures, the verdict. */
+  --lp-analysis-h:calc(242px + var(--lp-safe-foot));
+  /* 380px IS THE COLUMN. See the note below, and the hairlines that draw it. */
+  --lp-float-w:calc(380px - 2 * var(--lp-col-pad));
+}
+
+/* VERTICAL MODE IS ONE 380PX READING COLUMN. The body grid belongs to the
+   ordinary open canvas; here the space outside that column is deliberately
+   quiet, and the two hairlines make the canvas viewport share the exact edges
+   of the fixture and analysis panels. The canvas itself is clipped in App so
+   this rule remains presentation only. */
+.lp-shell-vertical{background:#000}
+.lp-stage-vertical{background:#000}
+/* THE CANVAS BAND SCROLLS AND DOES NOT SAY SO. It is a real scroll container
+   because that is what a pan writes to (see `scrollBox` in App), and a pair of
+   bars down the middle of a 380px reading column would be chrome drawn inside
+   the picture — the open canvas puts its bars outside the sheet, this column has
+   no outside. The gesture is unaffected: hiding a scrollbar takes away the
+   drawn bar, not the scrolling. */
+.lp-canvas-viewport{scrollbar-width:none;-ms-overflow-style:none}
+.lp-canvas-viewport::-webkit-scrollbar{width:0;height:0;display:none}
+
+.lp-stage-vertical::before{
+  content:"";
+  position:absolute;
+  inset:0 auto 0 50%;
+  width:380px;
+  transform:translateX(-50%);
+  border-left:1px solid rgba(255,255,255,.16);
+  border-right:1px solid rgba(255,255,255,.16);
+  pointer-events:none
+}

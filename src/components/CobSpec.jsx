@@ -139,7 +139,7 @@ const Glyph = ({ d }) => (
  * further down where those controls stood.
  */
 export default function CobSpec({
-  stage, watts, beam, recommended = false,
+  stage, watts, beam, recommended = false, placement = 'bottom',
   /* THE ARRAY BEING SET OUT, or null in manual mode. It carries what has been
      picked and what may be asked about it — see `arrayAsks` in lib/cob.js, which
      decides the controls from the GEOMETRY rather than leaving this bar to work
@@ -239,7 +239,8 @@ export default function CobSpec({
        optics — so it was the one that hit the cap and split, and a contextual
        bar in two rows is a bar whose buttons move under your finger as you use
        it. It grows sideways instead; see the note on `flex-nowrap` in StageBar. */
-    <StageBar stage={stage} lead={lead} tail={tail} label="Downlight">
+    <StageBar stage={stage} lead={lead} tail={tail} label="Downlight"
+      placement={placement}>
 
       {/* --- WHAT THE ARRAY IS BEING SET OUT ON, AND HOW ------------------
           AHEAD OF THE SPECIFICATION, because it is the question that comes

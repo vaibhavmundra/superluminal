@@ -73,26 +73,47 @@ function useAnchorRect(anchor) {
  * the foot of it — the lowest cell in the rail is the one this matters for, and
  * it is also the one with the most in it.
  */
-export default function RailFlyout({ anchor, label, children }) {
+export default function RailFlyout({ anchor, label, children, placement = 'right', boundary = null }) {
   const box = useAnchorRect(anchor);
   if (!box) return null;
 
   const n = React.Children.toArray(children).length;
-  const cols = n > 3 ? 2 : 1;
-  const width = cols * FLYOUT_CELL_WIDTH + 2;
+  /* THE TOP RAIL READS LEFT TO RIGHT, SO ITS DRAWER DOES TOO. Every option in
+     the opened category stays in one row immediately beneath its parent cell;
+     unlike the side rail, there is no second vertical navigation hiding inside
+     the first. The drawer is allowed to extend over the drawing. */
+  const cols = placement === 'down' ? Math.max(1, n) : (n > 3 ? 2 : 1);
+  const naturalWidth = cols * FLYOUT_CELL_WIDTH + 2;
+  /* A DOWNWARD TRAY BELONGS TO THE 9:16 VIEWPORT. Four lamps can still sit in
+     one row; a longer group keeps that one-row reading and scrolls sideways
+     inside the viewport instead of growing beyond it. */
+  const width = placement === 'down' && boundary
+    ? Math.min(naturalWidth, boundary.width)
+    : naturalWidth;
   const vh = typeof window === 'undefined' ? 800 : window.innerHeight;
   /* THE CELLS ARE SQUARE PLUS A CAPTION, so a row is a shade over its width —
      enough to keep the panel off the bottom of the screen without measuring it
      after the fact and moving it under somebody's hand. */
-  const rows = Math.ceil(n / cols);
+  const rows = placement === 'down' ? 1 : Math.ceil(n / cols);
   const tall = rows * (FLYOUT_CELL_WIDTH + 14) + 2;
-  const top = Math.max(8, Math.min(box.top, vh - tall - 8));
+  const top = placement === 'down'
+    ? Math.max(8, Math.min(box.bottom, vh - tall - 8))
+    : Math.max(8, Math.min(box.top, vh - tall - 8));
+
+  const left = placement === 'down'
+    ? boundary
+      ? Math.max(boundary.left,
+          Math.min(box.left, boundary.left + boundary.width - width))
+      : Math.max(8, Math.min(box.left, window.innerWidth - width - 8))
+    : box.right;
 
   return (
     <div
-      className="fixed z-30 grid bg-chrome border border-border/10
-        rounded-r-[7px] overflow-hidden"
-      style={{ left: box.right, top, width,
+      className={'fixed z-30 grid bg-chrome border border-border/10 '
+        + (placement === 'down' ? 'overflow-x-auto overflow-y-hidden ' : 'overflow-hidden ')
+        + (placement === 'down' ? 'rounded-b-[7px]' : 'rounded-r-[7px]')}
+      style={{ left,
+               top, width,
                gridTemplateColumns: `repeat(${cols}, ${FLYOUT_CELL_WIDTH}px)` }}
       /* A PRESS IN HERE IS NOT A PRESS ON THE PLAN. The document-level pointer
          handler that clears the canvas selection does not know this panel

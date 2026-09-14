@@ -6,6 +6,7 @@ import { TRACK_MODULES } from '../lib/magTrack.js';
 import { LIGHT_TOOLS, LIGHT_ICON } from './LightPalette.jsx';
 import { CEILING_GROUPS } from './CeilingPalette.jsx';
 import { CEILING_BY_ID } from '../lib/ceilingObjects.js';
+import { useStageRect } from './StageBar.jsx';
 
 /* ---------------------------------------------------------------------------
    THE TOOLS, DOWN THE LEFT EDGE, BESIDE THE THING THEY ACT ON.
@@ -76,7 +77,7 @@ const MARK = {
    SENTENCE CASE AND NOT THE CAPS THE FLYOUT CELLS USE. Those are captions under
    pictures; these are the five words the whole rail is, and small caps at 8.5px
    is a size for a label on a symbol rather than for a heading. */
-function RailCell({ mark, label, on, disabled, title, onClick }) {
+function RailCell({ mark, label, on, disabled, title, onClick, compact = false }) {
   return (
     <button type="button" disabled={disabled} onClick={onClick}
       title={title ?? label} aria-expanded={on}
@@ -90,8 +91,10 @@ function RailCell({ mark, label, on, disabled, title, onClick }) {
          invisible. The rule is always the same: make them alternatives, not
          layers — and the "off" case is `bg-transparent`, so the rail's own grey
          is what shows through rather than a second copy of it. */
-      className={'w-full flex flex-col items-center justify-center gap-[7px] '
-        + 'pt-[15px] pb-[13px] px-1 border-0 cursor-pointer '
+      className={(compact ? 'w-[76px] h-[108px] ' : 'w-full ')
+        + 'flex flex-col items-center justify-center gap-[7px] '
+        + (compact ? 'p-1 ' : 'pt-[15px] pb-[13px] px-1 ')
+        + 'border-0 cursor-pointer '
         + 'transition-colors duration-[120ms] '
         + 'disabled:opacity-[.45] disabled:cursor-not-allowed '
         + 'focus-visible:outline-2 focus-visible:outline-accent '
@@ -217,7 +220,15 @@ export default function ToolRail({
   /* NO `onGeometry`. The guide primitives are the same bar the cove opens and
      they are reached by clicking a SPACE rather than by picking a tool up. */
   disabled = false, objDisabled = false,
+  orientation = 'side', stage = null,
 }) {
+  const stageBox = useStageRect(stage);
+  const top = orientation === 'top';
+  const topStyle = top && stageBox ? {
+    left: (stageBox.left + stageBox.right) / 2 - 190,
+    top: stageBox.top + 56,
+  } : undefined;
+  const flyoutBoundary = topStyle ? { left: topStyle.left, width: 380 } : null;
   /* EACH FLYOUT MEASURES OFF ITS OWN CELL. They cannot be children of the
      cells — the rail clips its overflow, so a panel inside one would be cut off
      at the rail's edge and never seen. See RailFlyout. */
@@ -340,14 +351,19 @@ export default function ToolRail({
          AND ONE ROW ON A NARROW SCREEN, where the shell is a single column and
          this lies down across the top of it — a span of two there would eat the
          stage's row. */
-      className="w-[86px] flex-none row-span-2 pt-14 h-full overflow-hidden bg-chrome
-        [@media(max-width:960px)]:row-span-1
-        [@media(max-width:960px)]:w-full [@media(max-width:960px)]:h-auto
-        [@media(max-width:960px)]:pt-0 [@media(max-width:960px)]:border-b">
+      style={topStyle}
+      className={top
+        ? 'fixed z-20 w-[380px] h-[109px] overflow-visible bg-chrome '
+          + 'rounded-b-[11px] border border-t-0 border-border/10 '
+          + (stageBox ? '' : 'invisible pointer-events-none')
+        : 'w-[86px] flex-none row-span-2 pt-14 h-full overflow-hidden bg-chrome '
+          + '[@media(max-width:960px)]:row-span-1 '
+          + '[@media(max-width:960px)]:w-full [@media(max-width:960px)]:h-auto '
+          + '[@media(max-width:960px)]:pt-0 [@media(max-width:960px)]:border-b'}>
       {/* NO GAP AND NO PADDING. A gap between full-bleed cells would put the
           rail's ground back between them as a stripe, which is the box this
           removed, drawn in negative. */}
-      <div className="flex flex-col [@media(max-width:960px)]:flex-row">
+      <div className={top ? 'flex flex-row' : 'flex flex-col [@media(max-width:960px)]:flex-row'}>
 
         {/* --- SPOTS, AND IT IS FIRST BECAUSE IT IS THE FITTING -------------
             A lighting plan is mostly downlights: the recessed COB is the thing
@@ -361,7 +377,7 @@ export default function ToolRail({
             guard instead. */}
         {onCob && (
           <div ref={spotsRef} className="flex-none">
-            <RailCell mark={MARK.spots} label="Spots" on={spotsLive}
+            <RailCell mark={MARK.spots} label="Spots" on={spotsLive} compact={top}
               title="Recessed COBs and directional spots"
               onClick={() => {
                 /* THE CELL IS THE COB DRAWER'S OWN TOGGLE, which is what keeps
@@ -375,7 +391,8 @@ export default function ToolRail({
           </div>
         )}
         {onCob && cobOpen && (
-          <RailFlyout anchor={spotsRef} label="Spots">
+          <RailFlyout anchor={spotsRef} label="Spots" placement={top ? 'down' : 'right'}
+            boundary={flyoutBoundary}>
             {COB_MODES.map((m) => (
               <PaletteButton key={m.id} icon={m.icon} label={m.label} title={m.title}
                 on={cobMode === m.id}
@@ -401,13 +418,14 @@ export default function ToolRail({
             same word. */}
         {onShape && (
           <div ref={covesRef} className="flex-none">
-            <RailCell mark={MARK.coves} label="Coves" on={covesLive}
+            <RailCell mark={MARK.coves} label="Coves" on={covesLive} compact={top}
               title="Coves, reverse coves and LED strip"
               onClick={() => openOnly('coves')} />
           </div>
         )}
         {onShape && openId === 'coves' && (
-          <RailFlyout anchor={covesRef} label="Coves">
+          <RailFlyout anchor={covesRef} label="Coves" placement={top ? 'down' : 'right'}
+            boundary={flyoutBoundary}>
             <PaletteButton icon="/icons/new_icons/normal_cove.png" label="Cove" title="Cove"
               on={shapeOn} disabled={disabled} onClick={onShape} />
             {byId(IN_COVES).map(cell)}
@@ -421,13 +439,14 @@ export default function ToolRail({
             NOT DISABLED WITH THE REST, for the Spots cell's reason. */}
         {onTrack && (
           <div ref={trackRef} className="flex-none">
-            <RailCell mark={MARK.tracks} label="Tracks" on={tracksLive}
+            <RailCell mark={MARK.tracks} label="Tracks" on={tracksLive} compact={top}
               title="Magnetic track"
               onClick={() => { openOnly('tracks'); onTrack(); }} />
           </div>
         )}
         {onTrackPick && trackDrawer && (
-          <RailFlyout anchor={trackRef} label="Magnetic track">
+          <RailFlyout anchor={trackRef} label="Magnetic track" placement={top ? 'down' : 'right'}
+            boundary={flyoutBoundary}>
             {TRACK_MODULES.map((m) => (
               /* `airy`, BECAUSE THESE THREE PICTURES REACH THE BOTTOM EDGE.
                  Each is a rail with a beam thrown downward off it, so the bright
@@ -461,12 +480,13 @@ export default function ToolRail({
             and a flyout cell is a photograph at 64, which is the same split
             every one of these five cells makes. */}
         <div ref={lampsRef} className="flex-none">
-          <RailCell mark={MARK.lamps} label="Lamps" on={lampsLive}
+          <RailCell mark={MARK.lamps} label="Lamps" on={lampsLive} compact={top}
             title="Chandeliers, pendants, standing lamps and sconces"
             onClick={() => openOnly('lamps')} />
         </div>
         {openId === 'lamps' && (
-          <RailFlyout anchor={lampsRef} label="Lamps">
+          <RailFlyout anchor={lampsRef} label="Lamps" placement={top ? 'down' : 'right'}
+            boundary={flyoutBoundary}>
             {byId(IN_LAMPS).map(cell)}
           </RailFlyout>
         )}
@@ -477,12 +497,13 @@ export default function ToolRail({
             point; the socket opens a step. The group says which machine it
             wants — see CeilingPalette. */}
         <div ref={elecRef} className="flex-none">
-          <RailCell mark={MARK.electrical} label="Electrical" on={elecLive}
+          <RailCell mark={MARK.electrical} label="Electrical" on={elecLive} compact={top}
             title="Sockets, fans, air conditioners and hatches"
             onClick={() => openOnly('electrical')} />
         </div>
         {openId === 'electrical' && (
-          <RailFlyout anchor={elecRef} label="Electrical">
+          <RailFlyout anchor={elecRef} label="Electrical" placement={top ? 'down' : 'right'}
+            boundary={flyoutBoundary}>
             {CEILING_GROUPS.map((g) => {
               const board = g.arms === 'board';
               const on = board ? boardOn : g.ids.includes(objArmed);

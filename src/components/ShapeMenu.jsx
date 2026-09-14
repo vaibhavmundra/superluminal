@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SHAPE_TOOLS, SHAPE_BY_ID, POLY_SIDES } from '../lib/ceilingShapes.js';
 import StageBar from './StageBar.jsx';
 
@@ -155,136 +155,53 @@ const NUM_ON = 'bg-black hover:bg-black text-white';
 const SEP = <span className="w-px h-5 bg-black/10 mx-0.5" aria-hidden="true" />;
 const CAP = 'text-[10.5px] leading-none tracking-[0.02em] text-black/55 px-1.5 select-none';
 
-/** A pointer position resolved to the range's own hundred-step scale. */
-function radiusAtPointer(clientX, el, max) {
-  const box = el.getBoundingClientRect();
-  if (!(box.width > 0) || !(max > 0)) return 0;
-  const f = Math.max(0, Math.min(1, (clientX - box.left) / box.width));
-  const step = max / 100 || 0.01;
-  return +Math.max(0, Math.min(max, Math.round((f * max) / step) * step)).toFixed(6);
-}
+/* --- THE CORNER RADIUS, IN MILLIMETRES, IN A BOX --------------------------
+   IT WAS A SLIDER AND THIS BAR CANNOT AFFORD ONE. Ninety-two pixels of track,
+   a caption and a readout is a third of the reading column's width spent on the
+   least-used control in the bar — and the bar now has to hold the run's wattage
+   as well, which is the thing somebody actually came to it for. A box is sixty.
 
-/**
- * A CORNER-RADIUS GESTURE IS ONE DOCUMENT EDIT, NOT ONE EDIT PER PIXEL.
- *
- * Changing the stored shape invalidates the full ceiling plan: every room is
- * re-chunked, its fittings are replanned, the heatmap is rebuilt and the plan
- * is queued for persistence. A native range input emits scores of changes in a
- * single drag, so writing through on every one turns a small control into a
- * tight loop of whole-plan rebuilds and eventually starves the pointer event
- * that would finish the drag.
- *
- * Keep the thumb and readout live locally, then commit the value once the
- * pointer is released. Keyboard changes commit on key-up, and blur is the
- * fallback for assistive input. The `id` in `radius` resets the local value
- * when selection moves to another shape; a committed value also flows back in
- * after the document rebuild completes.
- */
+   MILLIMETRES BECAUSE THAT IS WHAT THE DETAIL IS BUILT IN. A cove's corner is
+   set out by a carpenter working in mm; "0.4 ft" is a figure nobody can cut to,
+   and it was the slider's unit only because the shape's own geometry is in feet.
+   The conversion is this file's — the document keeps feet, as everything on this
+   canvas does. See `radiusFt`.
+
+   AND IT STILL WRITES ONCE PER GESTURE, which is the rule the slider existed to
+   obey: changing the stored shape re-chunks every room, replans its fittings,
+   rebuilds the heatmap and queues the plan for saving, so a write per keystroke
+   is a whole-plan rebuild per digit. The draft is local while typing and lands
+   on Enter or on blur. */
+const MM_PER_FT = 304.8;
+
 function RadiusControl({ radius, onCommit }) {
-  const limit = Math.max(0, Number(radius.max) || 0);
-  const fromProp = Math.max(0, Math.min(limit, Number(radius.ft) || 0));
-  const [draft, setDraft] = useState(fromProp);
-  const draftRef = useRef(fromProp);
-  const dragRef = useRef(null);
-  const liveRef = useRef({ limit, fromProp, onCommit });
-  liveRef.current = { limit, fromProp, onCommit };
+  const limitMm = Math.round(Math.max(0, Number(radius.max) || 0) * MM_PER_FT);
+  const fromMm = Math.min(limitMm,
+    Math.round(Math.max(0, Number(radius.ft) || 0) * MM_PER_FT));
+  const [draft, setDraft] = useState(fromMm);
 
-  useEffect(() => {
-    draftRef.current = fromProp;
-    setDraft(fromProp);
-  }, [radius.id, fromProp]);
+  /* THE STORED FIGURE WHENEVER IT CHANGES UNDER US — an undo, a plan reloaded,
+     or the selection moving to another shape (hence `radius.id`). */
+  useEffect(() => { setDraft(fromMm); }, [radius.id, fromMm]);
 
-  const write = (next) => {
-    draftRef.current = next;
-    setDraft(next);
-  };
-
-  /* READ THE POINTER AGAINST THE TRACK WE ACTUALLY DRAW. The native range
-     drag is deliberately suppressed below: mixing its hidden pointer state
-     with ours was what let the thumb remain attached after pointer-up. */
-  useEffect(() => {
-    const finish = (commit) => {
-      if (!dragRef.current) return;
-      dragRef.current = null;
-      const live = liveRef.current;
-      if (commit && draftRef.current !== live.fromProp) live.onCommit?.(draftRef.current);
-      if (!commit) write(live.fromProp);
-    };
-    const move = (e) => {
-      const drag = dragRef.current;
-      if (!drag || e.pointerId !== drag.pointerId) return;
-      /* PRIMARY BUTTON DOWN IS THE LICENSE TO MOVE. A lost pointer-up cannot
-         leave the control dragging: the first move with no button ends it. */
-      if ((e.buttons & 1) === 0) { finish(true); return; }
-      e.preventDefault();
-      write(radiusAtPointer(e.clientX, drag.el, liveRef.current.limit));
-    };
-    const up = (e) => {
-      const drag = dragRef.current;
-      if (drag && e.pointerId === drag.pointerId) finish(true);
-    };
-    const cancel = (e) => {
-      const drag = dragRef.current;
-      if (drag && e.pointerId === drag.pointerId) finish(false);
-    };
-    const windowBlur = () => finish(true);
-    window.addEventListener('pointermove', move, { passive: false });
-    window.addEventListener('pointerup', up);
-    window.addEventListener('pointercancel', cancel);
-    window.addEventListener('blur', windowBlur);
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      window.removeEventListener('pointercancel', cancel);
-      window.removeEventListener('blur', windowBlur);
-    };
-  }, []); // all changing values are intentionally read through liveRef
-
-  const readInput = (el) => Math.max(0, Math.min(limit, Number(el.value) || 0));
-  const commitInput = (el) => {
-    const next = readInput(el);
-    write(next);
-    if (!dragRef.current && next !== fromProp) onCommit?.(next);
+  const commit = (raw) => {
+    const mm = Math.max(0, Math.min(limitMm, Math.round(Number(raw) || 0)));
+    setDraft(mm);
+    const ft = +(mm / MM_PER_FT).toFixed(6);
+    if (Math.abs(ft - (Number(radius.ft) || 0)) > 1e-6) onCommit?.(ft);
   };
 
   return (<>
-    <input type="range" min="0" max={limit} step={limit / 100 || 0.01}
-      value={draft} aria-label="Corner radius"
-      className="w-[92px] mx-1 accent-black cursor-pointer"
-      onPointerDown={(e) => {
-        if (e.button !== 0 || !(limit > 0)) return;
-        /* NO POINTER CAPTURE. A window-level release above is enough, and
-           capture was the source of the sticky drag the user was seeing. */
-        e.preventDefault();
-        e.stopPropagation();
-        e.currentTarget.focus({ preventScroll: true });
-        dragRef.current = { pointerId: e.pointerId, el: e.currentTarget };
-        write(radiusAtPointer(e.clientX, e.currentTarget, limit));
-      }}
-      onChange={(e) => {
-        // Pointer changes are ours; native changes here are keyboard input.
-        if (!dragRef.current) write(readInput(e.currentTarget));
-      }}
-      onKeyUp={(e) => {
-        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
-             'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
-          commitInput(e.currentTarget);
-        }
-      }}
-      onBlur={(e) => {
-        /* Losing focus while pressed is also a release boundary. The global
-           blur handler covers the browser losing focus; this covers the input. */
-        if (dragRef.current) {
-          const live = liveRef.current;
-          dragRef.current = null;
-          if (draftRef.current !== live.fromProp) live.onCommit?.(draftRef.current);
-        } else {
-          commitInput(e.currentTarget);
-        }
-      }} />
-    <span className={CAP + ' tabular-nums w-[42px] text-right'}>
-      {draft.toFixed(1)} ft
-    </span>
+    <input type="number" min="0" max={limitMm} step="5" value={draft}
+      aria-label="Corner radius in millimetres"
+      className="w-[56px] ml-1 px-1.5 py-[3px] text-[11.5px] tabular-nums
+        rounded-[6px] border border-black/12 bg-transparent text-black
+        focus-visible:outline-2 focus-visible:outline-offset-[-2px]
+        focus-visible:outline-black/40"
+      onChange={(e) => setDraft(e.target.value === '' ? '' : Number(e.target.value))}
+      onKeyDown={(e) => { if (e.key === 'Enter') commit(e.currentTarget.value); }}
+      onBlur={(e) => commit(e.currentTarget.value)} />
+    <span className={CAP}>mm</span>
   </>);
 }
 
@@ -321,11 +238,31 @@ export default function ShapeMenu({
   /* ...AND THE VIEW SWITCHES AT THE NEAR END, on the same terms: whatever this
      bar is currently doing, `lead` is there. See StageBar's three slots. */
   lead = null,
+  /* WHICH END OF THE BOX IT STANDS AT, HANDED STRAIGHT THROUGH. Every bar on
+     this canvas takes it and they all take the same value — see `barPlace` in
+     App: the foot of the drawing on the open canvas, the head of it in the
+     vertical column, where the slot is shared with the light window. */
+  placement = 'bottom',
+  /* --- WHAT THE SELECTED RUN DRAWS, AND IT IS THE LIGHTING DOMAIN'S --------
+     `{ watts, options, unit }` OR NULL, from the space analysis row for this
+     shape — see `selShapeRow` in App. It is on a GEOMETRY bar because a cove is
+     the one object on this canvas whose geometry and whose specification are the
+     same press: you draw a line and a run of tape appears on it, and the only
+     thing left to decide is how much light per metre. The bar showed the
+     shape's DIMENSIONS in that slot, which is a figure you can read off the
+     drawing and cannot act on.
+     NULL WHERE THE ROOM HAS NOTHING TO SAY — a guide, a shape the layout has
+     not taken up yet, a run with one wattage in its family. Then the slot is
+     simply not drawn; a single latched chip is a control that cannot do
+     anything. */
+  wattage = null,
+  onWatts = null,
   onTool, onSides, onCommit, onCancel, onRadius, onDuplicate, onDelete,
   onOffsetSide, onOffsetFt,
 }) {
   return (
-    <StageBar stage={stage} lead={lead} tail={tail} label="Ceiling shapes">
+    <StageBar stage={stage} lead={lead} tail={tail} placement={placement}
+      label="Ceiling shapes">
 
       {mode === 'pick' && SHAPE_TOOLS.map((t) => (
         <button key={t.id} type="button" title={t.label} aria-pressed={tool === t.id}
@@ -419,17 +356,33 @@ export default function ShapeMenu({
       </>)}
 
       {mode === 'edit' && (<>
-        {sizeLabel && <span className={CAP}>{sizeLabel}</span>}
-        {/* THE CORNER RADIUS, AND IT IS A SLIDER BECAUSE IT IS A FEEL.
-            Nobody knows they want an 18-inch corner; they know they want it
-            rounder than it is. The thumb and readout stay live while it moves,
-            and the tape settles once on release — see RadiusControl. */}
-        {radius && (<>
+        {/* --- WHAT IT DRAWS, WHERE ITS SIZE USED TO BE -------------------
+            THE DIMENSIONS WERE THE WRONG THING IN THE ONLY SLOT THIS BAR HAS.
+            "10.6 x 7.4 ft" is a reading of the shape on the drawing — true, and
+            nothing you can do anything about from here — while the run's
+            wattage was reachable only by going to the analysis list and finding
+            its row. A contextual menu is for the acts available on the thing
+            under it. The size is still printed while the shape is being DRAWN,
+            which is the moment it is a decision rather than a fact. */}
+        {wattage && wattage.options.length > 1 && (<>
+          <span className={CAP}>Wattage</span>
+          {wattage.options.map((w) => (
+            <button key={w} type="button" aria-pressed={wattage.watts === w}
+              className={`${NUM_SHELL} w-auto px-2 `
+                + (wattage.watts === w ? NUM_ON : NUM_OFF)}
+              onClick={() => onWatts?.(w)}>
+              {w}W{wattage.unit === 'm' ? '/m' : ''}
+            </button>
+          ))}
           {SEP}
+        </>)}
+        {/* THE CORNER RADIUS, IN MILLIMETRES AND IN A BOX — see RadiusControl
+            for why it stopped being a slider. */}
+        {radius && (<>
           <span className={CAP}>Corner</span>
           <RadiusControl radius={radius} onCommit={onRadius} />
+          {SEP}
         </>)}
-        {SEP}
         <button type="button" title="Duplicate" className={BTN} onClick={onDuplicate}>
           <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"
             fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">

@@ -96,7 +96,7 @@ const LCD = "font-lcd tabular-nums [font-feature-settings:normal]";
    face, divide 42.8 by its digit height in em — that is what these are. */
 const FIG = `${LCD} text-[16px] text-text shrink-0`;
 
-export default function Lumens({ analysis }) {
+export default function Lumens({ analysis, compact = false }) {
   const { required, achieved, contributions } = analysis;
   const { ambient = 0, task = 0 } = contributions ?? {};
 
@@ -108,10 +108,13 @@ export default function Lumens({ analysis }) {
      and AMBIENT_SHARE_MIN in lib/lumens.js. */
   const share = ambientShare(contributions);
   const low = ambientIsLow(contributions);
+  const rowClass = compact
+    ? 'flex justify-between items-baseline gap-3 py-px'
+    : ROW;
 
   return (
-    <div className="rounded-lg bg-surface px-4 py-3.5">
-      <div className={ROW}>
+    <div className={'rounded-lg bg-surface ' + (compact ? 'px-4 py-2.5' : 'px-4 py-3.5')}>
+      <div className={rowClass}>
         <span className={LBL}>Lumens required</span>
         <span className={FIG}>{lm(required)}</span>
       </div>
@@ -124,10 +127,10 @@ export default function Lumens({ analysis }) {
           number itself rather than a sentence beneath it — the reading and the
           verdict on it are one fact, and this panel has room for one loud
           thing. `aria-label` because a colour is not readable aloud. */}
-      <div className="mt-1.5 mb-3 text-right">
+      <div className={compact ? 'mt-0.5 mb-1.5 text-right' : 'mt-1.5 mb-3 text-right'}>
         <div aria-label={`${lm(achieved)} lumens achieved,`
           + ` ${met ? 'requirement met' : 'below requirement'}`}
-          className={`${LCD} text-[66px] leading-[0.92] tracking-[0.01em] `
+          className={`${LCD} ${compact ? 'text-[46px]' : 'text-[66px]'} leading-[0.92] tracking-[0.01em] `
             + (met ? 'text-lcd' : 'text-danger')}>
           {lm(achieved)}
         </div>
@@ -143,21 +146,32 @@ export default function Lumens({ analysis }) {
           something in it, on the reasoning that three printed figures had to add
           up to the big one. There is no third layer left to print — see the note
           at the top of this file. */}
-      <div className={ROW}>
-        <span className={LBL}>Ambient lights contribution</span>
-        <span className={FIG}>{lm(ambient)}</span>
-      </div>
-      <div className={ROW}>
-        <span className={LBL}>Task lights contribution</span>
-        <span className={FIG}>{lm(task)}</span>
+      {/* ONE LINE AND NOT TWO, AND THE LABELS SHORTEN TO PAY FOR IT. These are
+          the two halves of the figure above — read against each other far more
+          often than either is read on its own — and on two lines the eye has to
+          travel the width of the card and back to compare them. Side by side the
+          comparison is the layout.
+          "Ambient" AND "Task" CARRY IT. The word they lost is "contribution",
+          and it is still on the card: the verdict under the rule says "Ambient
+          lights contribution is", which is the same vocabulary in the one place
+          that has room for it. */}
+      <div className={rowClass}>
+        <span className="flex items-baseline gap-2 min-w-0">
+          <span className={LBL}>Ambient</span>
+          <span className={FIG}>{lm(ambient)}</span>
+        </span>
+        <span className="flex items-baseline gap-2 min-w-0">
+          <span className={LBL}>Task</span>
+          <span className={FIG}>{lm(task)}</span>
+        </span>
       </div>
 
       {/* --- AND WHETHER THE AMBIENT LAYER IS DOING ITS JOB -----------------
           A BADGE ON ITS OWN LINE, above a rule, because it is a judgement OF
           the two lines above rather than a third reading. */}
       {share != null && (
-        <div className="flex items-center justify-between gap-3 mt-3 pt-3
-          border-t border-white/10">
+        <div className={'flex items-center justify-between gap-3 border-t border-white/10 '
+          + (compact ? 'mt-1.5 pt-1.5' : 'mt-3 pt-3')}>
           <span className={LBL}>Ambient lights contribution is</span>
           <span aria-label={`Ambient contribution ${Math.round(share * 100)} per cent,`
             + ` ${low ? 'low' : 'ok'}`}

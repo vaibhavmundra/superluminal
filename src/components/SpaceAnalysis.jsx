@@ -332,12 +332,152 @@ function WattSlider({ range, watts, disabled, onCommit }) {
   );
 }
 
+/* --- IS THERE A WATTAGE TO CHANGE ON THIS ROW? -----------------------------
+   ONE DEFINITION, BECAUSE TWO PLACES ASK. The card below draws the wattage in
+   whichever of three shapes the row wants, and the vertical column asks a
+   different question of the same fact: is this fitting worth 109px of a 9:16
+   frame at all? A range is a slider and two or more options are chips; a single
+   catalogue wattage is a figure nobody can press, and a window whose only
+   control is inert is a window that should not have opened.
+   IT IS THE PANEL'S OWN RULE, lifted out of the branch that was already making
+   it — see the wattage block in the row, and `FixtureSpec`. */
+export const wattsChangeable = (row) => !!row?.wattRange
+  || (row?.wattOptions?.length ?? 0) > 1;
+
+/* ---------------------------------------------------------------------------
+   ONE FITTING, THREE CONTROLS, ONE ROW — the bar at the head of the column.
+
+   IT WAS THIS WHOLE PANEL WITH `onlyHighlighted` ON, then a four-row card, and
+   both were the same mistake at different sizes: a 9:16 frame cannot spend a
+   hundred pixels on a readout. A row here carries a name, a count, a
+   disclosure, a contribution in lumens and a floor reading in lux — twelve
+   lines of answer where the column has room for three questions.
+
+   SO IT IS A THIN BAR AND EVERYTHING ON IT IS A CONTROL. What it draws, where
+   it throws, and whether it is lit. No name: you pressed the fitting, it is
+   ringed on the drawing directly under this, and a caption repeating what you
+   are looking at is the thing this app removes everywhere else. No lumens: that
+   figure is on the analysis card at the foot of the column, where the room's
+   whole budget is, and printing it twice is two places for one number to be
+   read from.
+
+   DROPDOWNS AND NOT CHIPS, which is what makes it one row. Eight optics is
+   eight keys and a wattage list is four or five more: thirteen buttons is a bar
+   as wide as the screen, or two rows, and this bar is one row by rule. A closed
+   `<select>` is the width of its own answer.
+
+   THE SAME PARTS THE PANEL USES for the eye — `OffSwitch`, down to the glyph
+   pair and the tone it takes when the light is out. */
+
+/* --- A FIGURE AND TWO ARROWS, AND IT IS THE SMALLEST OF THE THREE ---------
+   CHIPS, THEN A DROPDOWN, NOW THIS. Eight optics as chips is eight keys and a
+   bar as wide as the screen. A `<select>` closed is the width of its own
+   answer, which was the point of it — except that a native select is never just
+   its answer: it carries the platform's own chrome, a disclosure glyph and the
+   padding around it, so "30°" arrives eighty pixels wide. In a 380px column
+   that is two controls and there is no room for the third.
+
+   SO THE VALUE IS TYPE AND THE CONTROL IS TWO 9px ARROWS beside it — about
+   forty pixels all in, and the figure is more legible than it was inside a
+   select. It is the shape of a number field's spinner, which is what makes it
+   read as adjustable without a caption.
+
+   IT STEPS THROUGH A LIST AND DOES NOT DO ARITHMETIC. A wattage is which
+   product is in the fitting and a beam angle is which reflector — see
+   BEAM_ANGLES — so up is "the next one they sell", not "one more watt". The
+   ends are ends: the arrow disables rather than wrapping, because wrapping from
+   60° to 6° on a press is a control that can undo a decision by overshooting.
+
+   UP IS MORE, which is why the lists it is handed have to be ascending. */
+const ARROW = 'flex h-[9px] w-[13px] items-center justify-center border-0 '
+  + 'bg-transparent p-0 leading-none cursor-pointer text-faint '
+  + 'enabled:hover:text-white disabled:opacity-30 disabled:cursor-default '
+  + 'focus-visible:outline-1 focus-visible:outline-accent';
+
+function Stepper({ label, value, options, disabled = false, onPick, unit = '' }) {
+  const i = options.indexOf(value);
+  const step = (d) => {
+    const next = options[(i < 0 ? 0 : i) + d];
+    if (next != null && next !== value) onPick?.(next);
+  };
+  const end = (d) => disabled || i < 0 || options[i + d] == null;
+  return (
+    <span className="flex flex-none items-center gap-1">
+      <span className="text-[11.5px] tabular-nums text-text whitespace-nowrap">
+        {value}{unit}
+      </span>
+      {/* THE PAIR IS ONE CONTROL AND THEY STACK, so the two together are no
+          taller than the figure beside them and no wider than a glyph. */}
+      <span className="flex flex-col">
+        <button type="button" className={ARROW} disabled={end(1)}
+          aria-label={`${label} up`} onClick={() => step(1)}>
+          <svg width="7" height="5" viewBox="0 0 7 5" aria-hidden="true"
+            fill="currentColor"><path d="M3.5 0 L7 5 H0 Z" /></svg>
+        </button>
+        <button type="button" className={ARROW} disabled={end(-1)}
+          aria-label={`${label} down`} onClick={() => step(-1)}>
+          <svg width="7" height="5" viewBox="0 0 7 5" aria-hidden="true"
+            fill="currentColor"><path d="M3.5 5 L0 0 H7 Z" /></svg>
+        </button>
+      </span>
+    </span>
+  );
+}
+
+/** A list with the current value in it, in order. See its caller. */
+const withValue = (list, v) => (list.includes(v) || v == null
+  ? list : [...list, v].sort((a, b) => a - b));
+
+/** The wattages a row can be set to, as a list even where it is stored as a
+ *  range: a stepper has to enumerate. The step is the product's own. */
+function wattChoices(row) {
+  if (!row?.wattRange) return row?.wattOptions ?? [];
+  const { min, max, step } = row.wattRange;
+  const at = step > 0 ? step : 1;
+  const out = [];
+  for (let w = min; w <= max + 1e-9; w += at) out.push(+w.toFixed(3));
+  return out;
+}
+
+export function FixtureSpec({ row, disabled = false, onWatts, onBeam = null,
+                              onToggleOff = null }) {
+  /* THE STORED FIGURE IS ALWAYS IN THE LIST, AND SORTED. A wattage set from
+     the bar on the drawing, or by a plan made before this family's list
+     changed, is not necessarily one of the steps — and a stepper that cannot
+     find its own value has no idea which way is up: both arrows would be ends.
+     Folding it in gives it a place in the order, so the next press moves to a
+     real product from wherever the fitting happens to be. */
+  const watts = withValue(wattChoices(row), row.watts);
+  const beams = withValue(BEAM_ANGLES, row.beam);
+  const unit = row.unit === 'm' ? '/m' : '';
+  return (
+    <div className="flex h-full items-center gap-3 overflow-hidden">
+      <Stepper label="Wattage" value={row.watts} options={watts} unit={`W${unit}`}
+        disabled={disabled} onPick={(w) => onWatts?.(w)} />
+      {row.beam != null && onBeam && (
+        <Stepper label="Beam angle" value={row.beam} options={beams} unit="°"
+          disabled={disabled} onPick={(d) => onBeam(d)} />
+      )}
+      {onToggleOff && (
+        <span className="ml-auto flex items-center">
+          <OffSwitch on={!row.off} disabled={disabled}
+            onToggle={() => onToggleOff(!row.off)} />
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
                                         onToggleOff = null,
                                         highlight = [], autoplace = null,
-                                        onAutoplace = null, disabled = false }) {
+                                        onAutoplace = null, disabled = false,
+                                        compact = false, onlyHighlighted = false }) {
   const { rows } = analysis;
   const lit = new Set(highlight ?? []);
+  const shownRows = onlyHighlighted && lit.size
+    ? rows.filter((row) => lit.has(row.key))
+    : rows;
 
   /* WHICH ROWS ARE OPEN. Local, because it is a fact about how somebody is
      reading this panel right now and nothing outside it has any business
@@ -412,7 +552,7 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
 
   return (
     <>
-      <h3 className={H3}>Analysis</h3>
+      {!compact && <h3 className={H3}>Analysis</h3>}
 
       {/* THE READOUT IS NOT IN THIS VIEW AT ALL NOW. Required, achieved and the
           two figures that make it up are Lumens.jsx, and it is on the window's
@@ -428,10 +568,10 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
           of one room, not four objects, and four boxes in a 340px column would
           read as four subjects. The section headings are the only structure. */}
       {LAYERS.map((L) => {
-        const mine = rows.filter((r) => (r.layer ?? 'ambient') === L.id);
+        const mine = shownRows.filter((r) => (r.layer ?? 'ambient') === L.id);
         if (!mine.length) return null;
         return (
-          <section key={L.id} className="mt-4 first-of-type:mt-3">
+          <section key={L.id} className={compact ? 'mt-0' : 'mt-4 first-of-type:mt-3'}>
             {/* THE AUTOPLACE CHECKBOX WAS HERE, ON THE AMBIENT HEADING, and it
                 is gone by request rather than by argument. It sat with the rows
                 it produced — the grid's lamps are the ambient layer's, so a
@@ -444,9 +584,11 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
                 exist, still take back only the lamps that are still the rule's
                 answer, and are still what the space's stored flag drives. What
                 has gone is this panel's way of pressing it. */}
-            <div className="mb-1">
-              <h4 className={SEC_H}>{L.label}</h4>
-            </div>
+            {!compact && (
+              <div className="mb-1">
+                <h4 className={SEC_H}>{L.label}</h4>
+              </div>
+            )}
             {mine.map((row) => (
         <div key={row.key}
           ref={(el) => { rowRefs.current[row.key] = el; }}
