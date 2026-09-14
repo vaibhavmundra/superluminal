@@ -383,21 +383,31 @@ export default function ShapeMenu({
           <RadiusControl radius={radius} onCommit={onRadius} />
           {SEP}
         </>)}
-        <button type="button" title="Duplicate" className={BTN} onClick={onDuplicate}>
-          <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"
-            fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
-            <rect x="2.8" y="2.8" width="10" height="10" rx="1.4" />
-            <rect x="7.2" y="7.2" width="10" height="10" rx="1.4" fill="#fff" />
-          </svg>
-        </button>
-        <button type="button" title="Delete" className={BTN}
-          style={{ color: '#b3261e' }} onClick={onDelete}>
-          <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"
-            fill="none" stroke="currentColor" strokeWidth="1.7"
-            strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3.6 5.6h12.8M8 5.6V3.8h4v1.8M5.4 5.6l.8 10.6h7.6l.8-10.6" />
-          </svg>
-        </button>
+        {/* --- THE TWO ACTS, AND EACH IS DRAWN ONLY WHERE IT IS OFFERED ----
+            THEY WERE UNCONDITIONAL, so the caller's only way to withhold one was
+            to hand in a handler that does nothing — a key that looks like every
+            other key on the bar and answers no press. A magnetic track offers
+            neither (see the ShapeMenu call in App), so on a run this slot is
+            simply not there. */}
+        {onDuplicate && (
+          <button type="button" title="Duplicate" className={BTN} onClick={onDuplicate}>
+            <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"
+              fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+              <rect x="2.8" y="2.8" width="10" height="10" rx="1.4" />
+              <rect x="7.2" y="7.2" width="10" height="10" rx="1.4" fill="#fff" />
+            </svg>
+          </button>
+        )}
+        {onDelete && (
+          <button type="button" title="Delete" className={BTN}
+            style={{ color: '#b3261e' }} onClick={onDelete}>
+            <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"
+              fill="none" stroke="currentColor" strokeWidth="1.7"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3.6 5.6h12.8M8 5.6V3.8h4v1.8M5.4 5.6l.8 10.6h7.6l.8-10.6" />
+            </svg>
+          </button>
+        )}
       </>)}
     </StageBar>
   );

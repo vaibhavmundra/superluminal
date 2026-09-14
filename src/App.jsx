@@ -34,6 +34,9 @@ import { useDrag } from './hooks/useDrag.js';
 import { useEscapeHatch, useEscapeClaim } from './hooks/useEscapeHatch.js';
 import { useUndoKeys } from './hooks/useUndoKeys.js';
 import usePanelDrag from './hooks/usePanelDrag.js';
+/* THE NATIVE TOOLTIPS, OFF IN THE VERTICAL COLUMN. One sweep rather than a flag
+   threaded through twenty components — see the hook's header. */
+import useNoTooltips from './hooks/useNoTooltips.js';
 import useExitHold from './hooks/useExitHold.js';
 import { isFormControl } from './lib/escapeHatch.js';
 import useViewPrefs from './hooks/useViewPrefs.js';
@@ -3479,6 +3482,16 @@ export default function App({
 
   useEscapeHatch(standDown);
 
+  /* A `title` PAINTS A BOX THE BROWSER SIZES TO ITS OWN TEXT, over whatever the
+     pointer is resting on — which in a 380px reading column is the drawing. Off
+     while the column is up, and put back on the way out. */
+  useNoTooltips(verticalMode);
+
+  /* AND THE ONE CARD THIS APP DRAWS ITSELF GOES WITH THEM. `onFixture` is
+     withheld in the column so no new tip is raised; this clears one that was
+     already up at the moment the switch was pressed. */
+  useEffect(() => { if (verticalMode) setTip(null); }, [verticalMode]);
+
   /* --- UNDO IS ITS OWN LISTENER NOW, AND THAT IS THE FIX --------------------
      IT USED TO BE TWO BRANCHES OF THE HANDLER BELOW, and it broke twice from
      living there: once behind a focus guard that stood the whole handler down
@@ -5561,6 +5574,10 @@ export default function App({
   /* A SELECTED RUN'S OWN SPECIFICATION, FOR THE SHAPE BAR. Null unless a shape
      is what is selected — the window below takes the other half of that. */
   const selShapeRow = selShapeId ? highlightedRow : null;
+  /* AND WHETHER THAT SHAPE IS A MAGNETIC TRACK. `role` is written out for
+     anything but the default — see `sealShape` — so this is the whole test, and
+     it is the one term that decides which acts the bar offers on a run. */
+  const selShapeIsTrack = geometry.shapes.selected?.role === 'track';
   const selectedFixtureRow = verticalMode && !selShapeId
     && !selArrayBar && !fanBarOn && !shapeBarArmed
     && highlightedRow && wattsChangeable(highlightedRow) ? highlightedRow : null;
@@ -7163,7 +7180,16 @@ export default function App({
               onZoneDownCapture={onZoneDownCapture}
               onZoneMove={readOnly ? null : onZoneMove}
               onZoneUp={readOnly ? null : onZoneUp}
-              accents={accentZonesPx} switchboards={switchboardsPx} onFixture={setTip}
+              accents={accentZonesPx} switchboards={switchboardsPx}
+              /* --- NO HOVER CARD IN THE READING COLUMN, AT THE SOURCE --------
+                 WITHHELD HERE AS WELL AS AT THE RENDER, and the pair is
+                 deliberate rather than belt-and-braces: with the handler gone
+                 the canvas raises no tip at all in vertical mode, so there is
+                 no state to be shown by any path — a second render of the card
+                 added later, a `tip` read by something that is not the card.
+                 See FixtureTip below for what the card costs in a 380px
+                 column. */
+              onFixture={verticalMode ? null : setTip}
               /* WHAT A FITTING ON THE SHEET IS RATED AT AND PUTS OUT, for its
                  hover card. A FUNCTION AND NOT A PAIR OF FIGURES, because the
                  answer is per space and per country — see `fittingOutput`
@@ -7403,7 +7429,23 @@ export default function App({
               cobGuide={!readOnly && addTool === 'cob' ? cobGuide : null} />
             </div>
             </div>
-            <FixtureTip tip={tip} />
+            {/* --- ...AND THE ONE TOOLTIP THIS APP DRAWS ITSELF --------------
+                NOT A `title`, SO THE SWEEP CANNOT REACH IT. `useNoTooltips`
+                takes the browser's own boxes off; this is a 260x150 frosted
+                card of our own, raised on hover over any fitting — which is
+                two thirds of the width of the reading column and most of the
+                height of the band, landing on the drawing beside the thing it
+                describes. On the open canvas it has the page to sit on.
+                GATED AT THE RENDER AND NOT AT THE HOVER. `tip` is written by
+                half a dozen pointer handlers across the canvas and the fittings
+                feature; withholding it here is one line, where withholding it
+                there is six and a seventh the next time a fitting gets a hover.
+                A null card costs a render of nothing. */}
+            <FixtureTip tip={verticalMode ? null : tip} />
+            {/* ...AND ANY TIP LEFT STANDING FROM BEFORE THE SWITCH GOES WITH
+                IT. `onFixture` above stops new ones; a card already up when
+                somebody pressed Vertical Mode would otherwise sit there with
+                nothing to clear it, since the handler that used to is gone. */}
             {/* --- WHAT THE NEXT COB WILL BE, AT THE FOOT OF THE DRAWING -----
                 UP FOR AS LONG AS THE GESTURE IS ARMED, and not only while the
                 pointer is on a ceiling: it is the one thing on screen saying
@@ -7639,8 +7681,23 @@ export default function App({
                      and painting its final value are never held behind layout. */
                   if (id) startTransition(() => docActions.patchShape(id, { radiusFt: ft }));
                 }}
-                onDuplicate={() => geometry.shapes.selected && duplicateShape(geometry.shapes.selected.id)}
-                onDelete={() => geometry.shapes.selected && deleteShape(geometry.shapes.selected.id)} />
+                /* --- A RUN OFFERS NEITHER OF THESE ---------------------
+                   A MAGNETIC TRACK IS A PRODUCT AND NOT A DRAWING. Duplicating
+                   a cove is a real act — the same detail again, a foot over —
+                   while a run is a length of extruded profile fed from one end:
+                   a second one is a second supply, a second driver and a second
+                   position on the ceiling, none of which a copy dropped beside
+                   the first can answer for. And the bin sat one key from the
+                   wattage somebody came to this bar to change, on an object
+                   that carries every diffuser clipped along it.
+                   THE KEYBOARD STILL TAKES IT OFF. Delete and Backspace on a
+                   selected shape call `deleteShape`, which removes the run and
+                   its modules together — see the key handler. What goes is the
+                   pair of keys, not the act. */
+                onDuplicate={selShapeIsTrack ? null
+                  : () => geometry.shapes.selected && duplicateShape(geometry.shapes.selected.id)}
+                onDelete={selShapeIsTrack ? null
+                  : () => geometry.shapes.selected && deleteShape(geometry.shapes.selected.id)} />
             )}
           </div>
         )}
