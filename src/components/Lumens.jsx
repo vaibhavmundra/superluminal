@@ -1,4 +1,5 @@
 import React from 'react';
+import { ambientShare, ambientIsLow } from '../lib/lumens.js';
 
 /* ---------------------------------------------------------------------------
    THE READING. Four figures, and it is an instrument panel.
@@ -33,13 +34,27 @@ import React from 'react';
    note beside it in lib/lumens.js, which is also the one place that decides
    which layer feeds which figure.
 
-   --- AND THERE IS NO VERDICT ON THE BALANCE --------------------------------
-   THERE WAS ONE: a LOW/OK badge under a rule, firing when the ambient figure
-   carried less than AMBIENT_SHARE_MIN of what the ROOM needed. It went when the
-   split did and has not come back with it — the four figures are what was asked
-   for, and a badge is a fifth thing that reads as a judgement rather than a
-   reading. The ambient figure against `required` is the same fact, stated by
-   two numbers somebody can compare themselves.
+   --- AND THE VERDICT ON THE BALANCE IS BACK ---------------------------------
+   LOW MEANS THE AMBIENT LAYER IS NOT CARRYING THE ROOM. It fires when the
+   ambient figure is less than AMBIENT_SHARE_MIN of the TOTAL — the two
+   contributions added up, which is `achieved` — so it is a judgement about the
+   BALANCE and about nothing else. Whether there is enough light at all is
+   already said, in colour, by the big figure itself, and the two facts are kept
+   apart on purpose: a room can be short of its target and well balanced, or over
+   it and lit entirely on spots.
+
+   THE RULE IS NOT IN THIS FILE. `AMBIENT_SHARE_MIN` and the arithmetic are in
+   lib/lumens.js beside the model they judge — this file prints the answer and
+   owns no part of deciding it, which is the same rule the two figures above
+   already follow. That is also where the note lives on why the denominator is
+   the total rather than the requirement.
+
+   AND NO BADGE AT ALL ON A ROOM WITH NO LIGHT IN IT. `ambientShare` returns
+   null there, because a verdict on the balance of nothing is a judgement about
+   nothing — and OK would be the wrong one of the two to guess. Every room that
+   HAS a fitting gets the badge in both directions: a verdict that only ever
+   appears when something is wrong is a verdict you cannot trust the absence
+   of.
 
    JUDGED ON THE ROUNDED FIGURES, so the colour on the big number can never
    contradict the digits printed. The same rule the whole-plan readout follows.
@@ -87,6 +102,13 @@ export default function Lumens({ analysis }) {
 
   const met = Math.round(achieved) >= Math.round(required);
 
+  /* THE BALANCE, AND BOTH HALVES OF IT COME OUT OF THE MODEL. `share` is null
+     for a room with nothing in it and is what decides whether the badge is drawn
+     at all; `low` is the verdict. Neither is computed here — see the note above
+     and AMBIENT_SHARE_MIN in lib/lumens.js. */
+  const share = ambientShare(contributions);
+  const low = ambientIsLow(contributions);
+
   return (
     <div className="rounded-lg bg-surface px-4 py-3.5">
       <div className={ROW}>
@@ -129,6 +151,23 @@ export default function Lumens({ analysis }) {
         <span className={LBL}>Task lights contribution</span>
         <span className={FIG}>{lm(task)}</span>
       </div>
+
+      {/* --- AND WHETHER THE AMBIENT LAYER IS DOING ITS JOB -----------------
+          A BADGE ON ITS OWN LINE, above a rule, because it is a judgement OF
+          the two lines above rather than a third reading. */}
+      {share != null && (
+        <div className="flex items-center justify-between gap-3 mt-3 pt-3
+          border-t border-white/10">
+          <span className={LBL}>Ambient lights contribution is</span>
+          <span aria-label={`Ambient contribution ${Math.round(share * 100)} per cent,`
+            + ` ${low ? 'low' : 'ok'}`}
+            className={'text-[9.5px] tracking-[0.12em] uppercase leading-none '
+              + 'px-2 py-[5px] rounded shrink-0 '
+              + (low ? 'bg-danger text-white' : 'bg-lcd text-ink')}>
+            {low ? 'Low' : 'Ok'}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AUTOPLACE_AT_FRACTION, BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.js';
+import { BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.js';
 
 /* ---------------------------------------------------------------------------
    IS THIS SPACE BRIGHT ENOUGH, AND WHAT IS MAKING IT SO.
@@ -44,11 +44,14 @@ import { AUTOPLACE_AT_FRACTION, BEAM_ANGLES, COB_WATT_RANGE } from '../lib/cob.j
    directional spot and an art spot are the same FAMILY in two different
    layers.
 
-   A SECTION WITH NOTHING IN IT IS NOT DRAWN, with one exception. An empty
-   heading is a promise of rows that are not there — except Ambient, which
-   carries the autoplace toggle: that switch is how a space with no lamps in it
-   GETS some, so hiding it until there are some would be hiding the control
-   behind its own effect.
+   A SECTION WITH NOTHING IN IT IS NOT DRAWN, AND THERE IS NO EXCEPTION LEFT.
+   An empty heading is a promise of rows that are not there. Ambient used to be
+   the one exception because it carried the autoplace toggle — that switch is
+   how a space with no lamps in it GETS some, so hiding it until there were some
+   would have hidden the control behind its own effect. The checkbox has gone
+   (see the heading block below), so the thing the exception was protecting is
+   not there to protect, and an empty Ambient heading would now be exactly the
+   broken promise the rule forbids.
 
    THESE TWO SECTIONS ARE THE SCHEME AND THEY ARE ALSO THE READOUT'S TWO
    FIGURES. Both come off the same `layer` on the same rows, and they are now the
@@ -152,6 +155,61 @@ const Caret = ({ open }) => (
     strokeLinecap="round" strokeLinejoin="round">
     <path d="M3.5 1.5 L7 5 L3.5 8.5" />
   </svg>
+);
+
+/* --- THE SWITCH, AND IT IS HEROICONS' EYE ---------------------------------
+   THE TWO PATHS ARE COPIED IN RATHER THAN INSTALLED. `@heroicons/react` is a
+   dependency and a build step for two glyphs, and this app already draws every
+   other mark it needs — the caret above, the whole plan canvas — as inline SVG.
+   These are the 24/outline `eye` and `eye-slash`, unaltered, at the stroke this
+   panel's other marks use.
+
+   TWO GLYPHS AND NOT ONE ROTATED, which is the opposite of the caret beside
+   them and is the right way round for a different reason. A caret says OPEN or
+   SHUT about the thing under it, and the same arrow turned is the plainest way
+   to say that. This says ON or OFF about the fitting itself, and a struck-out
+   eye is a mark people already read as off — the slash IS the meaning, so there
+   is a second glyph to draw. */
+const EYE = 'M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5'
+  + 'c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5'
+  + ' 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z';
+const EYE_PUPIL = 'M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z';
+const EYE_SLASH = 'M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244'
+  + ' 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12'
+  + ' 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774'
+  + 'M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65'
+  + 'm0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88';
+
+/**
+ * ON OR OFF, FOR ONE FITTING.
+ *
+ * ITS OWN BUTTON AND NOT PART OF THE ROW'S, which the markup has to be careful
+ * about: the row name is already a full-width button that opens the row, and a
+ * button inside a button is invalid and does not receive its own clicks. So the
+ * two are siblings in a flex line and the name takes `flex-1`.
+ *
+ * IT SAYS WHICH STATE IT IS IN, NOT WHICH ONE IT WILL GO TO. An eye means this
+ * light is on; pressing it switches the light off and the glyph becomes the
+ * struck-out one. That is the way every visibility control anybody has used
+ * behaves, and the alternative — showing the eye you are about to get — reads
+ * backwards on a panel where nine rows are listed together.
+ */
+const OffSwitch = ({ on, disabled, onToggle }) => (
+  <button type="button" disabled={disabled} aria-pressed={!on}
+    aria-label={on ? 'Switch this fitting off' : 'Switch this fitting on'}
+    onClick={onToggle}
+    className={'shrink-0 bg-transparent border-0 p-0 leading-none '
+      + 'cursor-pointer disabled:cursor-default disabled:opacity-40 '
+      + 'focus-visible:outline-2 focus-visible:outline-accent '
+      + 'focus-visible:outline-offset-2 '
+      + (on ? 'text-subtle enabled:hover:text-text'
+            : 'text-danger enabled:hover:text-danger')}>
+    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"
+      fill="none" stroke="currentColor" strokeWidth="1.6"
+      strokeLinecap="round" strokeLinejoin="round">
+      {on ? (<><path d={EYE} /><path d={EYE_PUPIL} /></>) : <path d={EYE_SLASH} />}
+    </svg>
+  </button>
 );
 
 /**
@@ -275,9 +333,10 @@ function WattSlider({ range, watts, disabled, onCommit }) {
 }
 
 export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
+                                        onToggleOff = null,
                                         highlight = [], autoplace = null,
                                         onAutoplace = null, disabled = false }) {
-  const { required, achieved, rows } = analysis;
+  const { rows } = analysis;
   const lit = new Set(highlight ?? []);
 
   /* WHICH ROWS ARE OPEN. Local, because it is a fact about how somebody is
@@ -342,9 +401,14 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
      has to: switching autoplace on adds lamps, which moves `achieved`, and a
      control that vanished at the moment it took effect would be a control you
      could not undo. Hiding the way out is the one thing this app's steps never
-     do — see the Done button on every one of them. */
-  const gridReady = required > 0 && achieved >= required * AUTOPLACE_AT_FRACTION;
-  const showAutoplace = !!onAutoplace && (autoplace || gridReady);
+     do — see the Done button on every one of them.
+
+     `gridReady` AND `showAutoplace` WERE COMPUTED HERE and are gone with the
+     checkbox they gated. The whole of the argument above is kept because it is
+     the answer to "when should this be offered", and that question survives the
+     control: `AUTOPLACE_AT_FRACTION` in lib/cob.js is still the figure, and
+     `autoplace`/`onAutoplace` are still taken as props so the caller need not
+     change. Nothing in this file presses them now. */
 
   return (
     <>
@@ -365,37 +429,23 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
           read as four subjects. The section headings are the only structure. */}
       {LAYERS.map((L) => {
         const mine = rows.filter((r) => (r.layer ?? 'ambient') === L.id);
-        const carries = L.always && showAutoplace;
-        if (!mine.length && !carries) return null;
+        if (!mine.length) return null;
         return (
           <section key={L.id} className="mt-4 first-of-type:mt-3">
-            {/* THE HEADING, AND WHATEVER THAT LAYER CAN BE SWITCHED ON.
-                SPACE-BETWEENED rather than stacked: the toggle is a control OVER
-                this section and belongs on its line, and a heading with a lone
-                switch under it reads as the first row of the list. */}
-            <div className="flex items-center justify-between gap-2 mb-1">
+            {/* THE AUTOPLACE CHECKBOX WAS HERE, ON THE AMBIENT HEADING, and it
+                is gone by request rather than by argument. It sat with the rows
+                it produced — the grid's lamps are the ambient layer's, so a
+                switch that filled one section from the heading of another would
+                have been the one control on this panel you could not follow —
+                and that reasoning is kept here because it is where the control
+                goes back if it ever does.
+                THE COMMAND BEHIND IT IS UNTOUCHED. `setAutoplace` and
+                `autoplaceIn` in features/fixtures/useFixtureCommands.js still
+                exist, still take back only the lamps that are still the rule's
+                answer, and are still what the space's stored flag drives. What
+                has gone is this panel's way of pressing it. */}
+            <div className="mb-1">
               <h4 className={SEC_H}>{L.label}</h4>
-              {L.id === 'ambient' && showAutoplace && (
-                /* --- AUTOPLACE, ON THE AMBIENT HEADING ---------------------
-                    IT SITS WITH THE ROWS IT PRODUCES. The lamps it puts down are
-                    the ambient grid's — one per cell, at the cell's own wattage
-                    and optic — so they are listed under this heading, and a
-                    switch that filled one section from the heading of another
-                    would be the one control on this panel you could not follow.
-                    A CHECKBOX AND NOT A BUTTON, because it is reversible and it
-                    is a STATE of the space rather than an act: switching it off
-                    takes back the lamps that are still the rule's answer, and
-                    leaves alone every one that has since been moved or
-                    re-specified. See `autoplaceIn` in
-                    features/fixtures/useFixtureCommands.js. */
-                <label className="flex items-center gap-1.5 text-[10.5px] text-muted
-                  cursor-pointer select-none shrink-0">
-                  <input className="lp-check" type="checkbox" disabled={disabled}
-                    checked={!!autoplace}
-                    onChange={(e) => onAutoplace(e.target.checked)} />
-                  Autoplace
-                </label>
-              )}
             </div>
             {mine.map((row) => (
         <div key={row.key}
@@ -417,15 +467,28 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
               you have to aim at. The caret is a MARK of state, not the handle.
               `aria-expanded` because that is the whole of what this button says,
               and the region it opens is the rest of the row. */}
+          {/* THE NAME AND THE SWITCH ARE SIBLINGS, and they have to be: the
+              name is a full-width button and a button cannot contain another
+              one. `items-center` on the line rather than `items-baseline`,
+              because an icon has no baseline to sit on — the text inside the
+              name button still aligns to its own. */}
+          <div className="flex items-center gap-2">
           <button type="button" aria-expanded={open.has(row.key)}
             onClick={() => toggle(row.key)}
-            className={'w-full flex items-baseline justify-between gap-2 '
+            className={'flex-1 min-w-0 flex items-baseline justify-between gap-2 '
               + 'bg-transparent border-0 p-0 cursor-pointer text-left '
               + 'focus-visible:outline-2 focus-visible:outline-accent '
               + 'focus-visible:outline-offset-2 '
               + (open.has(row.key) ? 'mb-1' : '')}>
+            {/* AN OFF FITTING'S NAME STANDS DOWN, and that is the only other
+                mark the state gets. Nine rows is a list you scan, and the
+                figures under a closed row are not on screen to tell you which
+                one is dark — the eye beside it is, but it is 14px and to the
+                right. The tone is the same one this panel already uses for a
+                figure that is working rather than an answer. */}
             <span className={'flex items-center gap-1.5 min-w-0 text-[11.5px] leading-[1.4] '
-              + (lit.has(row.key) ? 'text-white' : 'text-text')}>
+              + (row.off ? 'text-subtle'
+                 : lit.has(row.key) ? 'text-white' : 'text-text')}>
               <Caret open={open.has(row.key)} />
               <span className="truncate">{row.label}</span>
             </span>
@@ -433,6 +496,11 @@ export default function SpaceAnalysis({ analysis, onWatts, onBeam = null,
               {quantity(row)}
             </span>
           </button>
+          {onToggleOff && (
+            <OffSwitch on={!row.off} disabled={disabled}
+              onToggle={() => onToggleOff(row, !row.off)} />
+          )}
+          </div>
           {open.has(row.key) && (<>
           {/* --- THE WATTAGE, IN WHICHEVER OF ITS THREE SHAPES THE ROW WANTS --
               A RANGE IS A SLIDER, AND ONLY A HAND-PLACED FITTING HAS ONE. The

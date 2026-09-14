@@ -199,6 +199,18 @@ const PlanCanvas = forwardRef(function PlanCanvas(
   { src, srcAsScanned = null, vector = null, wallLayers = null,
     width, height, plans = [], focusId = null, selectedId = null,
     fansPx = [], pxPerFt, layers, zoom, measure, onCanvasClick, toPx,
+    /* IS THIS FITTING SWITCHED OFF — one test per kind of drawn thing, built in
+       features/lighting-planner and handed in finished. See `fittingOffTest`
+       there for why the canvas is given the tests and not the store: a row key
+       is a different handle per family, and that mapping is the feature's.
+       DEFAULTED TO "EVERYTHING IS ON", so a caller that does not pass it — the
+       viewer, the render fixtures, tools/test-render.mjs — draws what it always
+       drew. An off fitting is still DRAWN; what it stops doing is CLAIMING
+       light, which on this sheet is the pool on the floor, the breathing halo
+       under the aperture and the dotted beam footprint. The lumen model already
+       agrees (see `off` in analyseSpace) and the heatmap follows the model, so
+       this is what stops the drawing being the last reader still saying lit. */
+    fittingOff = null,
     zones = [], draftZone = null, zoneMode = false,
     onZoneDown, onZoneDownCapture, onZoneMove, onZoneUp,
     accents = [], objMode = false, onObjPointerDown,
@@ -839,6 +851,32 @@ const PlanCanvas = forwardRef(function PlanCanvas(
    * because there the symbol is a real size and nothing else.
    */
   const symR = (ft) => Math.max((pxPerFt || 12) * ft, lw * 3);
+
+  /* THE TESTS, WITH THE "EVERYTHING IS ON" DEFAULT APPLIED ONCE. Written out
+     here rather than `fittingOff?.light?.(...)` at each site, because a typo in
+     an optional chain reads as `undefined` and silently means LIT — which is
+     the one wrong answer this can give. */
+  const OFF = {
+    light: (roomId, l) => !!fittingOff?.light?.(roomId, l),
+    spot: (sp) => !!fittingOff?.spot?.(sp),
+    cob: (c) => !!fittingOff?.cob?.(c),
+    run: (a) => !!fittingOff?.run?.(a),
+    module: (m) => !!fittingOff?.module?.(m),
+    object: (o) => !!fittingOff?.object?.(o),
+  };
+
+  /* WHAT A FITTING'S BODY IS FILLED WITH, and it is the one POSITIVE mark that
+     says a lamp is off. Everything else about an off fitting is a subtraction —
+     no pool, no halo, no beam ring — and subtractions alone leave a lamp that
+     reads as lit but shy. Filled with `--lp-fixture-off` the aperture closes up
+     into the line round it, which is how a drawing says a thing is dead.
+     THE LIT SIDE STAYS THE PAINT SERVER. `url(#lp-core)` is what twenty marks
+     on this sheet already say, and it is flat now — see the note in the defs —
+     so this is a choice between two fills rather than a second scheme. Previews
+     and ghosts never come through here: nothing that has not been placed can be
+     switched off, and a proposal drawn dark would read as a lamp somebody had
+     already turned down. */
+  const body = (dead) => (dead ? PAINT.offFill : 'url(#lp-core)');
 
   /** Pixels per foot for an ANNOTATION — the aim arrow, which is stated in feet
    *  in `AIM_FT` and is the same arrow on the screen, the plot and the DXF. The
@@ -2070,6 +2108,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         // placed, and a wash with no symbol over it is a stain.
         if (autoLights) {
           for (const l of r.plan.lightsPx) {
+            // A LAMP SOMEBODY SWITCHED OFF THROWS NOTHING. The pool is this
+            // drawing's claim that a fitting is lighting that floor, and the
+            // schedule beside it now says the fitting emits zero.
+            if (OFF.light(r.id, l)) continue;
             const ft = poolFtFor(l.fixture || l.kind);
             if (ft) pools.push({ k: l.id, x: l.x, y: l.y, ft });
           }
@@ -2102,6 +2144,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         for (const sp of taskSpots) {
           if (!spotIsPlaced(sp)) continue;
           if (sp.rejected || sp.roomId !== r.id || sp.x == null) continue;
+          if (OFF.spot(sp)) continue;
           const ft = poolFtFor(sp.fixture || 'spot');
           if (!ft) continue;
           const c = sp.target ?? { x: sp.x, y: sp.y };
@@ -2150,7 +2193,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           strokeWidth={hair(0.65)} strokeLinecap="round"
           strokeDasharray={`${lw * 1.15} ${lw * 3.1}`} opacity="0.72">
           {autoLights && laid.flatMap((r, ri) => (r.plan.lightsPx ?? [])
-            .filter((l) => !l.track)
+            /* AND NOT ONE FOR A LAMP THAT IS SWITCHED OFF. This ring is the
+               footprint of a cone at the floor — the fitting's own claim about
+               what it covers — and an off fitting covers nothing. */
+            .filter((l) => !l.track && !OFF.light(r.id, l))
             .map((l) => {
               const fixture = l.fixture || l.kind;
               const ft = beamDiameterFtFor?.(r.id, fixture) ?? poolFtFor(fixture);
@@ -2163,7 +2209,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             }))}
           {manualCobs.map((c) => {
             const ri = laid.findIndex((r) => r.id === c.roomId);
-            return c.throwFt > 0 && ri >= 0 ? (
+            return c.throwFt > 0 && ri >= 0 && !OFF.cob(c) ? (
               <circle key={`beam-manual-${c.id}`}
                 className="lp-beam-footprint"
                 clipPath={`url(#roomclip-${ri})`}
@@ -2460,16 +2506,22 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               const px = Math.max(rw / 2, lw * 5), py = Math.max(rh / 2, lw * 5);
               return (
                 <g key={l.id} {...feel(l.id, specsFor(fx))}>
+                  {/* THE HALO IS THE APERTURE READING AS LIT, so a lamp that is
+                      switched off does not have one. The body stays: it is still
+                      a fitting in the ceiling and still on the schedule. */}
+                  {!OFF.light(r.id, l) && (
                   <ellipse cx={l.x} cy={l.y} rx={gw} ry={gh} fill="url(#lp-glow)"
                     className="lp-pulse" pointerEvents="none"
                     style={{ animationDelay: `${((li * 137) % 1000) / 1000 * -2.8}s` }} />
+                  )}
                   <rect className="hit" x={l.x - px} y={l.y - py}
                     width={px * 2} height={py * 2} fill="transparent"
                     onClick={pickable && l.design
                       ? (e) => { e.stopPropagation(); onPickChunk(r.id, l.design); }
                       : undefined} />
                   <rect x={l.x - rw / 2} y={l.y - rh / 2} width={rw} height={rh}
-                    fill="url(#lp-core)" stroke={rim} strokeWidth={hair(warm ? 2.6 : 1.5)}
+                    fill={body(OFF.light(r.id, l))} stroke={rim}
+                    strokeWidth={hair(warm ? 2.6 : 1.5)}
                     pointerEvents="none" />
                   {layers.labels && l.gridPx && (
                     <g opacity="0.45" pointerEvents="none">
@@ -2540,9 +2592,11 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     element, and forty on their own beats read as forty lamps.
                     A prime-ish multiplier keeps the pattern from settling into
                     rows, since the lights are laid out on a grid. */}
+                {!OFF.light(r.id, l) && (
                 <circle cx={l.x} cy={l.y} r={R * 2.6} fill="url(#lp-glow)"
                   className="lp-pulse" pointerEvents="none"
                   style={{ animationDelay: `${((li * 137) % 1000) / 1000 * -2.8}s` }} />
+                )}
                 {l.kind === 'large' && (
                   <circle cx={l.x} cy={l.y} r={R * 1.9} fill={rim} opacity="0.07" />
                 )}
@@ -2596,7 +2650,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                      not cut into the ceiling at all, it is a different line on
                      the schedule, and it is drawn as a rect for exactly that
                      reason. It keeps `col`. */
-                  fill="url(#lp-core)"
+                  fill={body(OFF.light(r.id, l))}
                   stroke={rim} strokeWidth={hair(warm ? 3.1 : 1.7)} />
                 {/* THE CENTRE DOT IS GONE, same as on the spot and for the same
                     reason: a solid disc of the accent COLOUR at 0.42R sat right
@@ -2932,7 +2986,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 SET OUT. `placingGeometry` means the question on screen is where
                 the next line goes, and three breathing discs over a faint dashed
                 one is the exchange that flag exists to make. */}
-            {emits && !placingGeometry && (
+            {emits && !placingGeometry && !OFF.object(f) && (
               <circle cx={f.x} cy={f.y} r={R0 * 2.6} fill="url(#lp-glow)"
                 className="lp-pulse" pointerEvents="none"
                 style={{ animationDelay: `${(((f.id ?? '')
@@ -2986,7 +3040,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  THE BODY IS THE RAMP AND THE TICKS ARE ITS RIM TONE, like every
                  other fitting on the sheet. See `emits` above. */
               <g>
-                <circle cx={f.x} cy={f.y} r={R0 * 0.62} fill="url(#lp-core)"
+                <circle cx={f.x} cy={f.y} r={R0 * 0.62} fill={body(OFF.object(f))}
                   stroke={rim} strokeWidth={hair(2)} />
                 {/* THE FOUR TICKS, ORTHOGONAL AND NOT AT THE DIAGONALS, which is
                     what tells this apart from the standing lamp below it at a
@@ -3025,7 +3079,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                  would put an opaque disc over the brightest part of the fitting,
                  which is the mistake the spot's centre dot was removed for. */
               <g>
-                <circle cx={f.x} cy={f.y} r={R0 * 0.86} fill="url(#lp-core)"
+                <circle cx={f.x} cy={f.y} r={R0 * 0.86} fill={body(OFF.object(f))}
                   stroke={rim} strokeWidth={hair(2)} />
                 {[0, 1, 2, 3].map((k) => {
                   const a = (k * Math.PI) / 2 + Math.PI / 4;
@@ -3531,12 +3585,17 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 + (a.open ? '' : ' Z');
               return (
                 <g>
-                  {/* THE GLOW IS LIGHT, SO IT IS NEVER THE TAPE'S OWN INK.
+                  {/* ...AND A RUN THAT IS SWITCHED OFF HAS NO GLOW AT ALL. The
+                      dotted tape stays — the product is still installed and
+                      still on the schedule — and what goes is the band under it
+                      saying the tape is lit.
+                      THE GLOW IS LIGHT, SO IT IS NEVER THE TAPE'S OWN INK.
                       Both are `tape` no longer: a reverse cove's dots are black
                       so they read inside the slot's white band, and a black
                       blurred band under them is a shadow, which is the one
                       thing a fitting saying "I am on" must not look like. The
                       dots say which product; the glow says it is lit. */}
+                  {!OFF.run(a) && (
                   <path d={d} fill="none" stroke={PAINT.glow}
                     strokeWidth={lw * (S.glow + boost * 2)} strokeLinejoin="round"
                     opacity={S.glowOpacity} filter="url(#lp-strip-glow)"
@@ -3547,6 +3606,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                              animationDuration: `${S.pulseMs}ms`,
                              animationDelay: `${((ai * 137) % 1000) / 1000 * -S.pulseMs}ms`,
                              animationPlayState: hot === a.id ? 'paused' : 'running' }} />
+                  )}
                   <path d={d} fill="none" stroke={tape}
                     strokeWidth={hair(S.stroke + boost)} strokeLinecap="round"
                     strokeDasharray={`${dot} ${gapl}`} className="lp-flow" />
@@ -3632,6 +3692,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       caps twice a cycle. The two widths go in as custom
                       properties because they are multiples of the sheet's line
                       weight, which the stylesheet cannot know. */}
+                  {!OFF.run(a) && (
                   <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
                     stroke={PAINT.glow} strokeWidth={lw * (S.glow + boost * 2)}
                     strokeLinecap="butt" opacity={S.glowOpacity}
@@ -3643,6 +3704,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                              animationDuration: `${S.pulseMs}ms`,
                              animationDelay: `${((ai * 137) % 1000) / 1000 * -S.pulseMs}ms`,
                              animationPlayState: hot === a.id ? 'paused' : 'running' }} />
+                  )}
                   <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y}
                     stroke={tape} strokeWidth={hair(S.stroke + boost)}
                     strokeLinecap="round"
@@ -3681,7 +3743,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               const { R, arm, ix, iy, ux, uy, cx, cy } = SG;
               return (
                 <g>
-                  <circle cx={cx} cy={cy} r={R} fill="url(#lp-core)" />
+                  <circle cx={cx} cy={cy} r={R} fill={body(OFF.run(a))} />
                   <g stroke={acol} strokeWidth={hair(1.8)} strokeLinecap="round">
                     {/* the stem: from the wall, through the circle, out the far side */}
                     <line x1={a.point.x} y1={a.point.y}
@@ -4356,6 +4418,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   fill="none" stroke={rim} strokeWidth={hair()} />
               </g>
             )}
+            {!OFF.spot(sp) && (
             <ellipse cx={sp.x} cy={sp.y}
               rx={onTrack ? bodyLen / 2 + inch(2.4) : R * 2.4}
               ry={onTrack ? bodyWide / 2 + inch(2.4) : R * 2.4}
@@ -4363,6 +4426,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 ? `rotate(${(sp.angle * 180) / Math.PI} ${sp.x} ${sp.y})` : undefined}
               fill="url(#lp-glow)" className="lp-pulse" pointerEvents="none"
               style={{ animationDelay: `${((sp.x | 0) % 1000) / 1000 * -2.8}s` }} />
+            )}
             {onTrack ? (
               <g transform={`rotate(${(sp.angle * 180) / Math.PI} ${sp.x} ${sp.y})`}>
                 {/* A wider, invisible target — see the profile's `grab`. */}
@@ -4386,7 +4450,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 <rect x={sp.x - bodyLen / 2} y={sp.y - bodyWide / 2}
                   width={bodyLen} height={bodyWide}
                   rx={bodyWide / 2} ry={bodyWide / 2}
-                  fill="url(#lp-core)" stroke={rim}
+                  fill={body(OFF.spot(sp))} stroke={rim}
                   strokeWidth={hair(hot === sp.id ? 2.4 : 0.7)} pointerEvents="none" />
                 {/* THE LENS, IN THE NOSE. Centred on the capsule's own end
                     radius, so it reads as the round end of the cylinder being
@@ -4398,7 +4462,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     switched off. */}
                 <ellipse cx={sp.x + bodyLen / 2 - bodyWide / 2} cy={sp.y}
                   rx={bodyWide * 0.31} ry={bodyWide * 0.47}
-                  fill="url(#lp-core)" stroke={rim}
+                  fill={body(OFF.spot(sp))} stroke={rim}
                   strokeWidth={hair(hot === sp.id ? 2.2 : 1.1)} pointerEvents="none" />
               </g>
             ) : (
@@ -4415,7 +4479,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                     job by itself: the bright middle IS the aperture now. What
                     still separates a spot from a downlight is what always
                     separated them — the arrow. */}
-                <circle className="hit" cx={sp.x} cy={sp.y} r={R} fill="url(#lp-core)"
+                <circle className="hit" cx={sp.x} cy={sp.y} r={R} fill={body(OFF.spot(sp))}
                   stroke={rim} strokeWidth={hair(hot === sp.id ? 3.4 : 2)} />
               </>
             )}
@@ -4759,7 +4823,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           against a field. */}
       {!heatmapOn && layers.lights && !placingGeometry && manualCobs.map((c) => {
         const ri = laid.findIndex((r) => r.id === c.roomId);
-        if (ri < 0 || !(c.throwFt > 0)) return null;
+        if (ri < 0 || !(c.throwFt > 0) || OFF.cob(c)) return null;
         return (
           <g key={`cobthrow-${c.id}`} clipPath={`url(#roomclip-${ri})`}
             pointerEvents="none">
@@ -4781,7 +4845,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         if (placingGeometry) {
           return (
             <g key={c.id} opacity="0.26" pointerEvents="none">
-              <circle cx={c.x} cy={c.y} r={R} fill="url(#lp-core)" stroke={rim}
+              <circle cx={c.x} cy={c.y} r={R} fill={body(OFF.cob(c))} stroke={rim}
                 strokeWidth={hair(1.7)} />
             </g>
           );
@@ -4833,12 +4897,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 than a plan with circles on it. Staggered off the lamp's own id
                 so a row of them does not blink as one element — the grid's rule,
                 with a string to hash instead of an index. */}
+            {!OFF.cob(c) && (
             <circle cx={c.x} cy={c.y} r={R * 2.6} fill="url(#lp-glow)"
               className="lp-pulse" pointerEvents="none"
               style={{ animationDelay:
                 `${((c.id.charCodeAt(c.id.length - 1) * 137) % 1000) / 1000 * -2.8}s` }} />
+            )}
             <circle className="hit" cx={c.x} cy={c.y} r={R}
-              fill="url(#lp-core)" stroke={rim}
+              fill={body(OFF.cob(c))} stroke={rim}
               strokeWidth={hair(warm ? 3.1 : 1.7)} />
           </g>
         );
@@ -5422,10 +5488,12 @@ const PlanCanvas = forwardRef(function PlanCanvas(
         const glowRy = m.kind === 'diffuser' ? across / 2 + inch(3) : spotR + inch(3);
         return (
           <g key={m.id} transform={`translate(${m.x} ${m.y}) rotate(${deg})`}>
+            {!OFF.module(m) && (
             <ellipse cx="0" cy="0" rx={glowRx} ry={glowRy}
               fill="url(#lp-glow)" className="lp-pulse" pointerEvents="none"
               style={{ animationDelay:
                 `${((m.id.charCodeAt(m.id.length - 1) * 137) % 1000) / 1000 * -2.8}s` }} />
+            )}
             {picked && m.kind === 'diffuser' && (
               <rect x={-along / 2 - across} y={-across * 1.5} width={along + across * 2}
                 height={across * 3} rx={across} fill="none" stroke={C.sel}
@@ -5439,10 +5507,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
             {m.kind === 'diffuser' ? (
               <rect x={-along / 2} y={-across / 2} width={along} height={across}
                 rx={Math.min(across / 3, lw * 1.2)}
-                fill="url(#lp-core)" stroke={rim} strokeWidth={hair(1.5)}
+                fill={body(OFF.module(m))} stroke={rim} strokeWidth={hair(1.5)}
                 pointerEvents="none" />
             ) : (
-              <circle cx="0" cy="0" r={spotR} fill="url(#lp-core)"
+              <circle cx="0" cy="0" r={spotR} fill={body(OFF.module(m))}
                 stroke={rim} strokeWidth={hair(1.5)} pointerEvents="none" />
             )}
             {onModulePointerDown && !placing && (spot ? (

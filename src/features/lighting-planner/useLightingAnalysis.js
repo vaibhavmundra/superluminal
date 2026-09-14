@@ -4,7 +4,8 @@ import { materialsOf } from '../../lib/materials.js';
 import { buildBOQ } from '../../lib/boq.js';
 import { boqToCSV, boqToXLSX, boqToPDF, CSV_BOM } from '../../lib/boqExport.js';
 import { MODULE_BY_ID } from '../../lib/magTrack.js';
-import { planTotals, fixtureGroups, highlightRows, troubleLines } from './lightingRules.js';
+import { planTotals, fixtureGroups, highlightRows, troubleLines,
+         fittingOffTest } from './lightingRules.js';
 
 /**
  * WHAT THIS PLAN ADDS UP TO — the feature's SECOND call site, and the one
@@ -38,7 +39,7 @@ export default function useLightingAnalysis({
   accentZonesPx, taskSpotsPx,
   magTracksPx, trackModulesPx, arrayCobsPx,
   manualCobs, cobArrays, ceilingObjs,
-  materials, fixtureWatts, ceilingMmFor,
+  materials, fixtureWatts, fixtureOff, ceilingMmFor,
   selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
   selObjIds,
   docActions, setOptionPick,
@@ -83,8 +84,13 @@ export default function useLightingAnalysis({
        legacy figure rather than a per-row one, so the only place that can apply
        it is the one deciding what the rows ARE. See the grid block. */
     roomWatts: fixtureWatts[r.id] ?? {},
+    /* WHICH OF THEM ARE SWITCHED OFF. Same shape and same handle as the wattages
+       above — a sparse map keyed by row — and handed in at the same step for the
+       same reason: the only thing that can match a stored key to a fitting is
+       the function deciding what the rows are. */
+    roomOff: fixtureOff[r.id] ?? {},
   }), [accentZonesPx, taskSpotsPx, pxPerFt, manualCobs, cobArrays, arrayCobsPx,
-       magTracksPx, trackModulesPx, fixtureWatts]);
+       magTracksPx, trackModulesPx, fixtureWatts, fixtureOff]);
 
   /**
    * IS THIS SPACE BRIGHT ENOUGH — the Analysis section of the space detail.
@@ -263,9 +269,27 @@ export default function useLightingAnalysis({
              mime: 'application/pdf' };
   }, [boq, source]);
 
+  /**
+   * IS THIS DRAWN FITTING SWITCHED OFF — for the canvas, which draws from the
+   * projected lists and knows nothing about rows.
+   *
+   * BUILT HERE BECAUSE THIS IS WHERE THE STORE ARRIVES, and the mapping it
+   * closes over is `lightingRules`' — see `fittingOffTest`. The canvas is handed
+   * the finished tests rather than the store, so the one place that decides what
+   * a row IS stays the one place that can resolve a key.
+   *
+   * WHAT IT IS FOR IS THE CLAIMS AND NOT THE SYMBOLS. An off lamp is still a
+   * hole in the ceiling and is still drawn; what it must stop doing is claiming
+   * light — the pool on the floor, the halo under it, the dotted beam footprint.
+   * The lumen model already agrees (see `off` in `analyseSpace`), and the
+   * heatmap follows the lumen model, so this is what keeps the third reader —
+   * the drawing — from being the only one still saying the lamp is lit.
+   */
+  const fittingOff = useMemo(() => fittingOffTest(fixtureOff), [fixtureOff]);
+
   return {
     analysis: { totals, planLumens, spaceAnalysis, groupsFor, highlight,
-                stripRuns, spotsPlaced, troubles },
+                fittingOff, stripRuns, spotsPlaced, troubles },
     boq: { table: boq, file: boqFile },
   };
 }

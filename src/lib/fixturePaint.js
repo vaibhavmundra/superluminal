@@ -33,6 +33,10 @@
  */
 export const FIXTURE_PAINT_TOKENS = {
   fill: '--lp-fixture-fill',
+  /* THE SAME BODY, SWITCHED OFF — see the note beside the pair in styles.css for
+     why it is a colour rather than a fade, and its own token rather than a rule
+     applied to one of the others. */
+  offFill: '--lp-fixture-off',
   ink: '--lp-fixture-ink',
   glow: '--lp-fixture-glow',
   tape: '--lp-fixture-tape',
@@ -68,6 +72,7 @@ export const HAIRLINE_TOKEN = '--lp-hairline-px';
  */
 export const FIXTURE_PAINT_OFF_DOCUMENT = Object.freeze({
   fill: '#FFFFFF',
+  offFill: '#000000',
   ink: '#000000',
   glow: '#FFFFFF',
   tape: '#FFFFFF',

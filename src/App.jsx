@@ -547,7 +547,7 @@ export default function App({
   const [doc, docActions, docSetters] = usePlanDoc({
     projectType: initialProjectType ?? null,
   });
-  const { ceilingMm, materials, fixtureWatts,
+  const { ceilingMm, materials, fixtureWatts, fixtureOff,
           manualCoves, manualTracks, manualCobs, manualSpots, cobArrays, trackFixtures,
           autoSpots,
           ceilingShapes, designPicks, ceilingKinds, chunkPicks,
@@ -1980,7 +1980,7 @@ export default function App({
     accentZonesPx, taskSpotsPx,
     magTracksPx, trackModulesPx, arrayCobsPx,
     manualCobs, cobArrays, ceilingObjs,
-    materials, fixtureWatts, ceilingMmFor,
+    materials, fixtureWatts, fixtureOff, ceilingMmFor,
     selCobId, selArrayId, selModuleId, selAccId, selSpotId, selLightId, selShapeId,
     /* AND THE CEILING OBJECTS, because a chandelier is one. It is the only
        fitting on this drawing whose selection lives in the OBJECT register —
@@ -2159,7 +2159,7 @@ export default function App({
      Stop, and the `!prep` guards all stay live for it: `prep` simply stays null
      while nothing runs it. Give it a button and the whole path comes back. */
   const { lightOneRoom, stop: stopPipeline, confirmOutlines,
-          setRowWatts, cycleChunkOption } = lighting.commands;
+          setRowWatts, setRowOff, cycleChunkOption } = lighting.commands;
   const loaderRooms = lighting.pipeline.loaderRooms;
 
   /* `outlinesOpen` IS THE FLAG THAT USED NOT TO EXIST — see its declaration.
@@ -2929,10 +2929,30 @@ export default function App({
      the panel. The test of a line belonging here is simple: would a page reload
      have cleared it?
 
-     `focusId` IS IN THE LIST, and it is the one judgement call. It is not a
-     command — it is which space the panel is describing — so it survived every
-     earlier draft of this. It is here because the brief was "back to how it
-     would be if refreshed", and a reload has no space in the panel. */
+     `focusId` IS NOT IN THE LIST, AND IT WAS. It is the one judgement call here
+     and it has been made the other way round: it is not a command — it is which
+     space the panel is describing — so it survived every early draft, went in on
+     the reading that the brief was "back to how it would be if refreshed", and a
+     reload has no space in the panel.
+
+     THAT READING WAS TOO WIDE. Escape's job is to get you out of what you
+     STARTED; a panel you are reading is not something you started, and closing
+     it was a second consequence of a press aimed at the first. In practice that
+     is the expensive half: arm a tool, change your mind, press Escape, and the
+     analysis you were working against goes with the tool — so the next act is
+     always finding the room in the list again.
+
+     THE PANEL STILL HAS A WAY OUT, which is what makes this safe rather than a
+     trap: clicking bare plan clears the focus (see the stage's click handler,
+     `setFocusId(hit ? hit.id : null)`), and so does picking a different space in
+     the list. What has gone is Escape as a THIRD way, and it was the only one of
+     the three nobody was asking for.
+
+     ONE THING RIDES WITH IT. Delete acts on the focused room — it unlights it,
+     see the keydown handler — and Escape used to make that press safe by
+     dropping the focus. It no longer does, so a focused room stays deletable
+     after an Escape. That is the same exposure as any other moment the panel is
+     open, which is the state this now preserves. */
   standDownRef.current = (except) => {
     setSel(clear());
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
@@ -2949,7 +2969,6 @@ export default function App({
     setTrackMode(null);
     setObjMode(false);
     setOptionPick(null); setTip(null); hideCoach();
-    docActions.setFocusId(null);
     // LAST, because it is the biggest of them: the add tool, the half-made
     // gesture under it, the module armed on a run and the track pen's path.
     disarmAdd();
@@ -6738,6 +6757,11 @@ export default function App({
                 night={canvasLayers.invert} />}
               heatmapOn={canvasLayers.heatmap}
               beamDiameterFtFor={beamDiameterFtFor}
+              /* WHICH FITTINGS ARE SWITCHED OFF, as tests rather than as the
+                 store — see `fittingOffTest`. The drawing is the third reader
+                 of that fact: the readout and the heatmap both take it off the
+                 lumen model, which already zeroes an off row. */
+              fittingOff={lightingAnalysis.fittingOff}
               /* A PLATE CAN BE PICKED AND THROWN AWAY, and that is all it can
                  be — see `deleteBoard` for why there is no drag. Null in the
                  viewer, like every other editing handler here. */
@@ -8780,6 +8804,14 @@ export default function App({
                     : row.wattRange
                       ? setCobSpec(row.key, { watts: w })
                       : setRowWatts(openRoom.id, row, w))}
+              /* SWITCHED OFF, AND IT NEEDS NONE OF THE FAN-OUT ABOVE. A
+                 wattage has to reach whichever list the fitting actually lives
+                 in — the module, the array, the object, the lamp — because that
+                 is where the figure is stored. Being switched off is not a
+                 property of the fitting at all: it is the ROOM's record of which
+                 of its rows are dark, keyed exactly as its wattage overrides
+                 are, so there is one door for every family. */
+              onToggleOff={(row, off) => setRowOff(openRoom.id, row, off)}
               onBeam={(row, deg) => (isModuleRow(row.key)
                 ? setTrackModuleSpec(row.key, { beam: deg })
                 : cobArrays.some((a) => a.id === row.key)

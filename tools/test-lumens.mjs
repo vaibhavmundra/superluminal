@@ -4,7 +4,8 @@ import { SURFACE_REFLECTANCE, LUMENS_PER_SQFT, LUMENS_PER_SQFT_DEFAULT,
          STRIP_LUMENS_PER_WATT,
          FIXTURE_FAMILIES, FAMILY_BY_ID,
          reflectanceOf, surfaceAreas, lumensPerSqftFor, lumensPerWattFor,
-         lumensRequired, bounceOf, unitOutput, wattsFor, analyseSpace, ftToM }
+         lumensRequired, bounceOf, unitOutput, wattsFor, analyseSpace, ftToM,
+         AMBIENT_SHARE_MIN, ambientShare, ambientIsLow }
   from '../src/lib/lumens.js';
 
 /* --- THE TABLE IS THE SPECIFICATION, SO THE TEST READS IT ------------------
@@ -613,6 +614,81 @@ sec('a length of tape, derived end to end from the five constants');
   });
   ok('   ...and dark walls cut it by most of itself',
     withDarkWalls.achieved < a.achieved * 0.45);
+}
+
+sec('a fitting somebody switched off');
+{
+  const groups = [{ key: 'cob@c1', familyId: 'cob', count: 4 }];
+  const lit = analyseSpace({ polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+    projectId: 'residential', country: 'India', groups });
+  const off = analyseSpace({ polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+    projectId: 'residential', country: 'India',
+    groups: [{ ...groups[0], off: true }] });
+
+  ok('a. it contributes nothing at all', off.achieved === 0, `${off.achieved}`);
+  ok('   ...where the same row lit contributes something', lit.achieved > 0);
+
+  /* THE ROW HAS TO SURVIVE, and this is the assertion that says why the model
+     zeroes rather than skips: the row is where the switch to turn the fitting
+     back ON lives, so a `continue` would make an off lamp unreachable. */
+  const row = off.rows.find((r) => r.key === 'cob@c1');
+  ok('b. ...but the row is still there, with its count and its wattage',
+    !!row && row.count === 4 && row.watts > 0, JSON.stringify(row));
+  ok('   ...and it says so', row?.off === true);
+  ok('   ...and a lit row does not', lit.rows[0].off === false);
+
+  /* WHAT THE HEATMAP ASKS FOR. `indexAnalysisRows` divides `totalOutput` by the
+     quantity, so this is the figure one off lamp lights a cell with. */
+  ok('c. its per-fitting output is zero, which is what the heatmap reads',
+    row?.totalOutput === 0 && row?.netLumens === 0);
+  ok('   ...and it claims no floor lux either', !row?.floorLux);
+
+  // ...and switching one of two off leaves exactly the other one's light.
+  const two = [{ key: 'a', familyId: 'cob', count: 1 },
+               { key: 'b', familyId: 'cob', count: 1 }];
+  const both = analyseSpace({ polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+    projectId: 'residential', country: 'India', groups: two });
+  const one = analyseSpace({ polygonFt: ROOM, ceilingMm: 2700, materials: LIGHT,
+    projectId: 'residential', country: 'India',
+    groups: [two[0], { ...two[1], off: true }] });
+  ok('d. switching one of two off halves the room', at(one.achieved, both.achieved / 2));
+}
+
+sec('is the ambient layer carrying the room');
+{
+  /* THE RATIO IS THE SPECIFICATION AND IT IS ASSERTED AS ONE — see the note at
+     the top of this file. What is tested around it is the ARITHMETIC: that the
+     line is where the constant says, that it is measured against the TOTAL, and
+     that an empty room is not judged at all. */
+  ok('a. the threshold is a fraction somebody can move',
+    AMBIENT_SHARE_MIN > 0 && AMBIENT_SHARE_MIN <= 1, `${AMBIENT_SHARE_MIN}`);
+
+  // The figures from the readout this rule was asked for: 3,000 and 4,285.
+  ok('b. 3,000 ambient against 4,285 task is low', ambientIsLow({ ambient: 3000, task: 4285 }));
+  ok('   ...and it is 41% of the total, not of anything else',
+    at(ambientShare({ ambient: 3000, task: 4285 }), 3000 / 7285));
+
+  /* EXACTLY ON THE LINE IS NOT LOW, which is the one boundary worth pinning:
+     the rule is "less than", so a scheme that is exactly the minimum passes. */
+  const onTheLine = { ambient: AMBIENT_SHARE_MIN * 1000, task: 1000 - AMBIENT_SHARE_MIN * 1000 };
+  ok('c. exactly the minimum is not low', !ambientIsLow(onTheLine));
+  ok('   ...and a hair under it is', ambientIsLow({ ...onTheLine, ambient: onTheLine.ambient - 1 }));
+
+  ok('d. all ambient is never low', !ambientIsLow({ ambient: 500, task: 0 }));
+  ok('   ...and no ambient always is', ambientIsLow({ ambient: 0, task: 500 }));
+
+  /* AN EMPTY ROOM IS NOT A BALANCE THAT IS WRONG. `null` is what stops the badge
+     being drawn at all — nought over nought is a room with no fittings in it,
+     and OK would be the wrong one of the two to guess. */
+  ok('e. a room with no light in it is not judged',
+    ambientShare({ ambient: 0, task: 0 }) === null);
+  ok('   ...and neither is one with no contributions at all',
+    ambientShare(undefined) === null && ambientShare({}) === null);
+
+  /* JUDGED ON THE ROUNDED FIGURES, both of them, so the badge can never
+     contradict the digits printed beside it. */
+  ok('f. it rounds before it divides, like the digits the panel prints',
+    at(ambientShare({ ambient: 699.6, task: 300.4 }), 700 / 1000));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

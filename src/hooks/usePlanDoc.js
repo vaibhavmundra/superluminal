@@ -71,6 +71,20 @@ export const DOC_FIELDS = {
   // nothing, so a default changed in lumens.js moves every plan that never
   // overruled it.
   fixtureWatts: () => ({}),
+  /* room id -> row key -> true, for a fitting somebody has SWITCHED OFF.
+     Sparse in the other direction from its neighbour and deliberately so: a
+     light that is ON stores nothing, so the absent key reads as "lit" on every
+     plan saved before this existed and on every plan since. An off fitting is
+     still installed and still on the schedule — it contributes no lumens, casts
+     no pool and lights no cell of the heatmap. See `fixtureGroups`, which is
+     where a row learns it, and `analyseSpace`, which is where it costs nothing.
+
+     KEYED BY ROW AND NOT BY FITTING ID, which is the same handle `fixtureWatts`
+     uses and is safe for the same reason: the panel's rule is that the row IS
+     the fitting (see the grid block in lightingRules.js), a row key is stable
+     across a re-layout where an id is not, and a row that stops existing takes
+     its entry out of use rather than switching off whatever lands in its slot. */
+  fixtureOff: () => ({}),
 
   /* --- domain 2: the fittings and runs somebody put down by hand -----------
      ALL SEVEN ARE THE RECORD AND NOT AN ADJUSTMENT TO ONE. There is no finding
@@ -645,6 +659,24 @@ export function docReducer(state, action) {
       // which decisions were actually taken.
       if (tone === 'light') delete walls[edge]; else walls[edge] = tone;
       return put(state, 'materials', { ...m, [id]: { ...cur, walls } });
+    }
+
+    /* SWITCHING ONE FITTING OFF, AND ON IS THE ABSENCE OF THE ENTRY. The same
+       shape as ROW_WATTS_SET below it and for the same reasons — see the note on
+       the field. `off` false DELETES rather than storing `false`, so a lamp
+       somebody switched off and on again leaves a plan holding nothing, and a
+       room with nothing off drops out of the map entirely. */
+    case 'ROW_OFF_SET': {
+      const { roomId, key, off } = action;
+      const m = state.fixtureOff;
+      const room = { ...(m[roomId] ?? {}) };
+      if (off) room[key] = true; else delete room[key];
+      if (!Object.keys(room).length) {
+        if (!(roomId in m)) return state;
+        const next = { ...m }; delete next[roomId];
+        return put(state, 'fixtureOff', next);
+      }
+      return put(state, 'fixtureOff', { ...m, [roomId]: room });
     }
 
     case 'ROW_WATTS_SET': {
@@ -1438,6 +1470,8 @@ export function usePlanDoc(seed) {
       dispatch({ type: 'WALL_TONE_SET', id, edge, tone }),
     setRowWatts: (roomId, key, watts, defaultWatts) =>
       dispatch({ type: 'ROW_WATTS_SET', roomId, key, watts, defaultWatts }),
+    setRowOff: (roomId, key, off) =>
+      dispatch({ type: 'ROW_OFF_SET', roomId, key, off }),
 
     /* --- domain 2 -----------------------------------------------------------
        ONE NAMED CREATOR PER EDIT THAT EXISTS TODAY. The generic reducer cases

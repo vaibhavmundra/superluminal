@@ -114,6 +114,14 @@ export function fixtureGroups(r, {
      reason: a grid light's row opens at the figure the ROOM was set to before
      these rows existed. See `gridRowKey` and the block that builds them. */
   roomWatts = {},
+  /* ...AND WHICH OF THIS ROOM'S FITTINGS ARE SWITCHED OFF, by the same row key.
+     Applied at the END of this function rather than inside `bump`, and that is
+     the whole of why it is safe: several of these rows are MERGED from more than
+     one fitting — every sconce in a room is one row, and so is every grid lamp
+     with no cell of its own — so an off test inside the loop would have to
+     decide what half an off row means. A row is a fitting (see the grid block
+     below) and a fitting is on or off, so the flag belongs to the row. */
+  roomOff = {},
 }) {
   const g = new Map();
   /* `key` IS THE ROW'S IDENTITY and `familyId` is what it is made of — see
@@ -437,8 +445,55 @@ export function fixtureGroups(r, {
      `FIXTURE_FAMILIES` is ordered the way the work happens — the surface
      details first, the things mounted on them after. */
   const order = new Map(FIXTURE_FAMILIES.map((f, i) => [f.id, i]));
+  /* AND THE SWITCH, LAST. `off` rides on the group rather than being looked up
+     again by `analyseSpace`, for the reason every other per-row fact does: this
+     function is the one place that decides what a row IS, so it is the only
+     place that can say which store entry belongs to it. */
+  for (const row of g.values()) if (roomOff[row.key]) row.off = true;
   return [...g.values()].sort(
     (a, b) => (order.get(a.familyId) ?? 99) - (order.get(b.familyId) ?? 99));
+}
+
+/**
+ * IS THIS FITTING SWITCHED OFF — asked of the thing on the DRAWING rather than
+ * of a row.
+ *
+ * THE SAME TRANSLATION `highlightRows` DOES, POINTING THE OTHER WAY, and it is
+ * in this file for the identical reason: a row key is a different kind of handle
+ * per family — a cell's geometry for a grid lamp, a catalogue line for a spot,
+ * the fitting's own id for a run or a hand-placed COB — and `fixtureGroups`
+ * above is the only thing that decides which. A canvas given a lamp could not
+ * resolve any of them without learning the grouping rules, so it is handed this
+ * instead.
+ *
+ * ONE TEST PER KIND OF DRAWN THING, and each takes what that list actually
+ * carries. They are separate functions rather than one that sniffs at its
+ * argument because the canvas always knows which list it is drawing from, and a
+ * sniffer would quietly answer "on" for anything it failed to recognise — which
+ * is the one wrong answer this can give: an off lamp that goes on claiming a
+ * pool of light is the drawing disagreeing with its own schedule.
+ *
+ * AN ARRAY'S LAMPS ANSWER FOR THE ARRAY, which is what `fixtureGroups` decided
+ * they are: twelve lamps on one ring are one decision and one row, so switching
+ * that row off switches all twelve. `arrayId ?? id` is the whole of it.
+ */
+export function fittingOffTest(fixtureOff = {}) {
+  const off = (roomId, key) => !!(roomId && key && fixtureOff[roomId]?.[key]);
+  return {
+    /** A lamp on the engine's grid. Its cell is its row; one without a cell
+     *  falls into the shared `cob` row, exactly as the panel lists it. */
+    light: (roomId, l) => off(roomId, l?.cellKey ? gridRowKey(l.cellKey) : 'cob'),
+    /** Every directional spot in a room is one row, and every art spot another
+     *  — they are two catalogue lines. */
+    spot: (sp) => off(sp?.roomId, sp?.fixture === 'art-spot' ? 'art-spot' : 'spot'),
+    /** A hand-placed COB is its own row; one on a ring answers for the ring. */
+    cob: (c) => off(c?.roomId, c?.arrayId ?? c?.id),
+    /** A length of tape is its own row. Every sconce in a room shares one. */
+    run: (a) => off(a?.roomId, a?.type === 'sconce' ? 'sconce' : a?.id),
+    /** A module on a track, and a decorative lamp on a ceiling: both their own. */
+    module: (m) => off(m?.roomId, m?.id),
+    object: (o) => off(o?.roomId, o?.id),
+  };
 }
 
 /**

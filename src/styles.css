@@ -407,6 +407,24 @@
      scheme — a fitting is white with a thin black edge, and the accent means
      nothing on this canvas any more.
 
+     `--lp-fixture-off` IS THE SAME BODY, DE-ENERGISED. A fitting somebody has
+     switched off is still DRAWN — it is still a hole in the ceiling and still on
+     the schedule — so what changes is what fills it. Everything else about an
+     off fitting is a SUBTRACTION: no pool on the floor, no breathing halo under
+     the aperture, no dotted beam footprint. Subtractions alone leave a lamp that
+     reads as lit but shy, so this is the one POSITIVE mark that says off.
+
+     A COLOUR AND NOT AN OPACITY, which is the choice worth recording. A faded
+     body reads as "not sure" — the same thing this canvas already uses for a
+     preview, a proposal and a layer that has stood down — and off is not an
+     uncertainty. Filled dark against the line round it, the aperture closes up,
+     which is how a drawing has always said a thing is dead.
+
+     IT IS ITS OWN TOKEN AND NOT DERIVED FROM THE OTHER TWO. "The off one is the
+     ink" is true of the pair as shipped and stops being true the first time
+     either moves; on a dark ground where the line work has gone white, off is
+     still black. Two knobs, no rule between them.
+
      `--lp-fixture-tape` IS THE RUN AND `--lp-fixture-led` IS THE DOT INSIDE A
      REVERSE COVE, and they differ because their grounds do. A strip or a cove
      is a run on the plan itself, so it is white like every other body. The
@@ -426,6 +444,7 @@
      heavier sheet; the relative weights underneath are unchanged and reappear
      as you do. */
   --lp-fixture-fill:#FFF3B5;   /* a fitting's body, and a reverse cove's band */
+  --lp-fixture-off:#7A4100;    /* ...and that same body once it is switched OFF */
   --lp-fixture-ink:#FFFFFF;    /* every outline, ring, tick and lip on one */
   --lp-fixture-glow:#FFFFFF;   /* the halo under a fitting, and its pulse */
   --lp-fixture-tape:#FFFFFF;   /* an LED run: a strip, a cove, a shelf */

@@ -106,6 +106,22 @@ export default function useLightingPlanner({
         row.defaultWatts ?? FAMILY_BY_ID[row.familyId]?.defaultWatts),
     [docActions]);
 
+  /** SWITCHING ONE FITTING OFF, OR BACK ON.
+   *
+   *  NO DEFAULT TO PASS, unlike the wattage above it: lit is the default, and
+   *  the reducer already treats "on" as the absence of an entry. So the row is
+   *  not needed whole — only its key — and the caller hands the state it WANTS
+   *  rather than a toggle, because two presses racing on a toggle would land
+   *  wherever the second one happened to read.
+   *
+   *  WHAT IT COSTS IS ONE LINE IN `analyseSpace`: an off row emits nothing, and
+   *  every reader of the lumen model — the readout, the two contributions and
+   *  the heatmap, which asks this same model what a fitting puts out — follows
+   *  from that without being told separately. */
+  const setRowOff = useCallback(
+    (roomId, row, off) => docActions.setRowOff(roomId, row.key, off),
+    [docActions]);
+
   /**
    * FLIP ONE CHUNK THROUGH ITS OPTIONS.
    *
@@ -149,7 +165,7 @@ export default function useLightingPlanner({
       /* THE THREE EDITS THAT CHANGE WHAT A SPACE ADDS UP TO. Filling a ceiling's
          grid is `features/fixtures/`'s command, re-exposed here because the
          control it sits under is this panel's — see the space detail. */
-      setRowWatts, cycleChunkOption, setAutoplace,
+      setRowWatts, setRowOff, cycleChunkOption, setAutoplace,
     },
     status: {
       /* IS A RUN ON. One flag rather than every caller testing `prep` for

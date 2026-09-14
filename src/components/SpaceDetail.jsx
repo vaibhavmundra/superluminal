@@ -162,7 +162,7 @@ function HeightRow({ ceilingMm, onCeilingMm, disabled }) {
 export default function SpaceDetail({
   name, meta, ceilingMm, onCeilingMm, materials, wallLabel,
   onTone, onConfigureWalls, onRename = null,
-  analysis, onWatts, onBeam = null,
+  analysis, onWatts, onBeam = null, onToggleOff = null,
   highlight = [], autoplace = null, onAutoplace = null,
   disabled = false,
 }) {
@@ -281,6 +281,7 @@ export default function SpaceDetail({
             <span aria-hidden="true">←</span> Analysis
           </button>
           <SpaceAnalysis analysis={analysis} onWatts={onWatts} onBeam={onBeam}
+            onToggleOff={onToggleOff}
             highlight={highlight} autoplace={autoplace} onAutoplace={onAutoplace}
             disabled={disabled} />
         </>

@@ -298,7 +298,7 @@ const EMPTY_DOC = {
   cobArrays: [], trackFixtures: [], renderRefs: {},
   boardsOff: [], boardMoves: {}, boardPoints: {}, flowBoards: {}, flowBends: {},
   manualBoards: [], boardKinds: {}, boardHeights: {}, boardOrders: {},
-  ceilingMm: {}, materials: {}, fixtureWatts: {},
+  ceilingMm: {}, materials: {}, fixtureWatts: {}, fixtureOff: {},
   /* THE REAL DEFAULTS AND NOT A PLAUSIBLE SUBSET. This was a hand-written
      four-key object — `{ plan, lights, labels, electrical }` — which passed
      every assertion in this file for as long as `layers` was a `useState` in
@@ -784,6 +784,15 @@ function randomAction(r) {
     // 'light' is the default and deletes the entry — the sparse rule, exercised.
     return { type: 'WALL_TONE_SET', id: room, edge: Math.floor(r() * 4),
              tone: ['light', 'mid', 'dark'][Math.floor(r() * 3)] };
+  }
+  /* ...or a fitting switched off, and switched back on — which deletes the
+     entry and can empty the room out of the map. The same sparse rule as the
+     wattage below it, exercised from the other side: there an entry appears when
+     you DIFFER from the family default, here when you differ from lit. */
+  if (r() < 0.25) {
+    return { type: 'ROW_OFF_SET', roomId: room,
+             key: ['cob', 'cove', `run-${Math.floor(r() * 2)}`][Math.floor(r() * 3)],
+             off: r() < 0.6 };
   }
   // ...and a wattage written, then written back to its family's default, which
   // deletes the row and can empty the room out of the map entirely.
@@ -1461,7 +1470,7 @@ section('the reducer owns what it claims to own');
      agree with any mistake. */
   ok('a new document starts at the defaults',
     same(initialDoc(), {
-      ceilingMm: {}, materials: {}, fixtureWatts: {},
+      ceilingMm: {}, materials: {}, fixtureWatts: {}, fixtureOff: {},
       manualCoves: [], manualTracks: [], manualCobs: [], manualSpots: [],
       cobArrays: [], trackFixtures: [], autoSpots: [],
       ceilingShapes: [], designPicks: {}, ceilingKinds: {}, chunkPicks: {},
@@ -1495,8 +1504,8 @@ section('the reducer owns what it claims to own');
       zoom: 1, view: 'spaces',
     }),
     JSON.stringify(initialDoc()));
-  ok('...and it is sixty-three fields, which is the whole document',
-    fields.length === 63, `${fields.length} fields`);
+  ok('...and it is sixty-four fields, which is the whole document',
+    fields.length === 64, `${fields.length} fields`);
   /* AND THE DOCUMENT IS NOW EXACTLY WHAT THE FIXTURE DESCRIBES. While the
      migration was in progress the two could differ — a field App still held in
      `useState` was in EMPTY_DOC and not in DOC_FIELDS — and that slack is gone.

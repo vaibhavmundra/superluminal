@@ -624,6 +624,13 @@ export function serialiseEditor(doc, { pxPerFt } = {}) {
        moves every plan that never overruled it.
        Optional on read — every plan saved before this existed has no key. */
     fixtureWatts: s.fixtureWatts ?? {},
+    /* THE FITTINGS SOMEBODY HAS SWITCHED OFF, by room and row key. Kept for the
+       reason every dismissal in this file is: nothing re-derives it, so a switch
+       that is not recorded is a lamp that comes back on the next time the plan
+       is opened. Sparse the other way from its neighbour — an entry means OFF —
+       so a plan saved before this existed reads as a plan with everything lit,
+       which is what it was. Optional on read for the same reason. */
+    fixtureOff: s.fixtureOff ?? {},
     /* THE DERIVED RUNS SOMEBODY DELETED — reverse coves and shelf strips, by
        their own ids. See the note on the state in App.
        IT HAS TO BE KEPT FOR THE REASON EVERY DISMISSAL IN THIS FILE DOES:
@@ -757,6 +764,7 @@ export function applyEditor(p, set) {
   set.setCeilingMm?.(p.ceilingMm ?? {});
   set.setMaterials?.(p.materials ?? {});
   set.setFixtureWatts?.(p.fixtureWatts ?? {});
+  set.setFixtureOff?.(p.fixtureOff ?? {});
   set.setRunsOff?.(p.runsOff ?? []);
 
   if (p.ui?.layers) set.setLayers(p.ui.layers);

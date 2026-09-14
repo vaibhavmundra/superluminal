@@ -786,6 +786,68 @@ export function netPerUnit(familyId, watts, { ref, lumensPerWatt } = {}) {
   return out > 0 ? out * bounceOf(family.split, ref) : 0;
 }
 
+/**
+ * HOW MUCH OF THE LIGHT IN A ROOM HAS TO BE AMBIENT BEFORE THE SCHEME IS SOUND.
+ *
+ * A ROOM THAT REACHES ITS NUMBER ON DOWNLIGHTS IS NOT A LIT ROOM. That is the
+ * fact the split between the two contributions exists to state, and this is the
+ * line under it: below this share, the ambient layer is not carrying the room
+ * and the readout says so.
+ *
+ * 0.7 IS A WORKING FIGURE AND NOT A STANDARD. Turn it up to demand a scheme that
+ * is mostly ambient, down to let a heavily task-lit room pass. It is the one
+ * number in this rule and it is here so it can be changed without touching the
+ * component that prints the verdict.
+ *
+ * IT IS MEASURED AGAINST THE TOTAL — the two contributions added up, which is
+ * `achieved` — so it is a pure question about BALANCE. Whether there is enough
+ * light at all is a different question and is already answered, in colour, by
+ * the big figure itself; a room can be short of its target and still be
+ * balanced, or over it and badly lit, and those are the two facts the panel
+ * keeps apart.
+ *
+ * THE OTHER DENOMINATOR IS `required`, AND IT IS WORTH KNOWING WHY NOT. Against
+ * what the room NEEDS, a room with ample ambient light stays OK however many
+ * spots are added to it — where against the total, adding task light can tip a
+ * well-lit room to LOW. That is the trade: measured against the total this says
+ * "is this scheme mostly ambient", measured against the requirement it says "is
+ * the ambient layer carrying the room". The total is what is wanted here. If
+ * that judgement is ever revisited, this paragraph is the argument and
+ * `ambientShare` below is the one line to change.
+ */
+export const AMBIENT_SHARE_MIN = 0.60;
+
+/**
+ * THE AMBIENT LAYER'S SHARE OF THE LIGHT IN THE ROOM, or `null` when there is
+ * no light in it to take a share of.
+ *
+ * `null` AND NOT ZERO FOR AN EMPTY ROOM, which is the one case worth being
+ * careful about. Nought over nought is not a balance that is badly wrong; it is
+ * a room with no fittings in it, and a verdict on the balance of no light is a
+ * judgement about nothing. The caller draws no badge. A room that HAS light and
+ * none of it ambient is a real 0, and reads LOW as it should.
+ *
+ * ROUNDED BEFORE IT IS DIVIDED, both figures, so the verdict can never
+ * contradict the digits printed beside it — the panel prints
+ * `Math.round(ambient)` and `Math.round(task)`, and a rule judged on the
+ * unrounded numbers can land on the other side of the line from what the reader
+ * can see. The same rule the big figure's own colour follows.
+ */
+export function ambientShare(contributions) {
+  const ambient = Math.round(contributions?.ambient ?? 0);
+  const task = Math.round(contributions?.task ?? 0);
+  const total = ambient + task;
+  return total > 0 ? ambient / total : null;
+}
+
+/** ...and the verdict on it. `false` where there is nothing to judge, so a
+ *  caller that draws the badge unconditionally says OK rather than LOW about an
+ *  empty room — but see `ambientShare`, which is what the panel asks first. */
+export function ambientIsLow(contributions) {
+  const share = ambientShare(contributions);
+  return share == null ? false : share < AMBIENT_SHARE_MIN;
+}
+
 export function analyseSpace({
   polygonFt, ceilingMm, materials, projectId, country,
   groups = [], watts = {},
@@ -815,7 +877,25 @@ export function analyseSpace({
        See `manualCobs` in App.jsx. */
     const w = g.watts != null ? Number(g.watts)
       : wattsFor(family.id, watts, key, g.defaultWatts ?? null);
-    const perUnit = unitOutput(family, w, lumensPerWatt);
+    /* --- AND A FITTING SOMEBODY HAS SWITCHED OFF PUTS OUT NOTHING -----------
+       ZERO AT THE SOURCE, WHICH IS WHY IT IS ONE LINE HERE AND NOT FIVE
+       ELSEWHERE. `achieved` is the sum of these rows, `contributions` is the
+       same sum grouped by layer, and the heatmap asks this file what one fitting
+       emits — `indexAnalysisRows` divides `totalOutput` by the quantity, so a
+       row at zero lights no cell. Every reader of the lumen model therefore
+       agrees about an off lamp without being told about it separately, which is
+       the only way a readout and a heatmap stay in step.
+
+       THE ROW SURVIVES, AND THAT IS THE POINT OF ZEROING RATHER THAN SKIPPING.
+       An off fitting is still installed: it is still on the schedule, it still
+       has a wattage and an optic somebody chose, and it still needs a row in the
+       panel — because the row is where the switch to turn it back ON lives. A
+       `continue` here would make a switched-off lamp unreachable.
+
+       `perUnit` GOES WITH IT, so `floorLux` below reports nothing rather than
+       what this lamp would put on the floor if it were lit. */
+    const off = !!g.off;
+    const perUnit = off ? 0 : unitOutput(family, w, lumensPerWatt);
     const totalOutput = qty * perUnit;
     const bounce = bounceOf(family.split, ref);
     rows.push({
@@ -874,6 +954,10 @@ export function analyseSpace({
          the thing that knows what a fitting is FOR can say that, and that is the
          caller. See the note on `layer` in FIXTURE_FAMILIES. */
       layer: g.layer ?? family.layer ?? 'ambient',
+      /* SWITCHED OFF, FOR THE PANEL TO DRAW AND FOR THE DRAWING TO READ. The
+         figures above already carry the consequence; this is the fact itself,
+         and the eye button in SpaceAnalysis is what sets it. */
+      off,
       totalOutput, bounce, netLumens: totalOutput * bounce,
       /* AND WHAT ONE OF THEM PUTS ON THE FLOOR, where the fitting has an optic
          to say it with. Null on everything sold by the metre and on any lamp
