@@ -189,12 +189,20 @@ export default function usePlanSource({
   const source = useMemo(() => {
     if (dxf?.drawing) {
       const chosen = unitId ? UNITS.find((u) => u.id === unitId) : null;
+      /* THE SPREAD IS WHY `geometryKey` HAS TO BE PASSED IN RATHER THAN DERIVED
+         INSIDE. Choosing a unit builds a NEW drawing object here, so anything
+         downstream reading `source.drawing` sees a fresh reference on every
+         unit change and cannot tell a re-interpretation from a re-import.
+         `dxf.drawing` is the parsed original and is replaced only by loading a
+         different file, which is exactly the fact the detectors want. */
       const drawing = chosen
         ? { ...dxf.drawing, units: { ...chosen, source: 'chosen' } }
         : dxf.drawing;
-      return vectorSource(drawing, { name: dxf.name });
+      return vectorSource(drawing, { name: dxf.name, geometryKey: dxf.drawing });
     }
-    if (img) return rasterSource(img);
+    /* `img.el` AND NOT `img`, for the same reason. The decoded bitmap is the
+       thing that is genuinely a different picture when it changes. */
+    if (img) return rasterSource(img, { geometryKey: img.el ?? img });
     return null;
   }, [dxf, img, unitId]);
   const isVector = source?.kind === 'vector';

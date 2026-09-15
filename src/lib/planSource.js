@@ -30,7 +30,7 @@ const MAX_PX_PER_FT = 40;
  * `pad` leaves a margin so a wall on the extreme edge is not clipped by the
  * viewport, and so the room outline's stroke has somewhere to live.
  */
-export function vectorSource(drawing, { name = 'drawing.dxf', padFt = 1 } = {}) {
+export function vectorSource(drawing, { name = 'drawing.dxf', padFt = 1, geometryKey = null } = {}) {
   const f = drawing.units.toFeet;
   const b = drawing.bbox;
   const minXft = b.minX * f - padFt;
@@ -62,6 +62,26 @@ export function vectorSource(drawing, { name = 'drawing.dxf', padFt = 1 } = {}) 
   return {
     kind: 'vector',
     name,
+    /* WHAT THIS DRAWING IS, AS OPPOSED TO HOW IT IS BEING READ.
+     *
+     * Everything else on this object — w, h, pxPerFt, every projected point —
+     * is derived from the UNIT INTERPRETATION, so the whole source is rebuilt
+     * when somebody changes the unit. That is correct: a different unit really
+     * is a different pixel space. But the GEOMETRY did not change. The same
+     * walls are in the same places; only the ruler against them moved.
+     *
+     * `geometryKey` is a stable reference to the parsed drawing, and it changes
+     * only when a genuinely different drawing is loaded. Anything that cares
+     * about WHAT IS DRAWN rather than HOW BIG IT IS keys on this — see the
+     * detection effects in src/features/recognition, which used to depend on
+     * the source object itself and therefore fired a model call every time the
+     * unit dropdown was touched. Outlines are stored in drawing units precisely
+     * so they survive that change without being recomputed (see toDu below);
+     * the detectors simply had no way to say the same thing.
+     *
+     * NULL IS FINE and means "no stable identity was supplied" — the callers
+     * that pass one are the ones whose effects depend on it. */
+    geometryKey,
     w, h, pxPerFt,
     widthFt, heightFt,
     unitLabel: drawing.units.label,
@@ -93,11 +113,15 @@ export function vectorSource(drawing, { name = 'drawing.dxf', padFt = 1 } = {}) 
  * pixels and the pair collapses. Keeping them means App.jsx stores an outline
  * one way for both routes.
  */
-export function rasterSource(img) {
+export function rasterSource(img, { geometryKey = null } = {}) {
   const same = (p) => ({ x: p.x, y: p.y });
   return {
     kind: 'raster',
     name: img.name,
+    /* The same identity as a vector source carries — see the note there. For a
+       raster it is the decoded bitmap, which is replaced when a new file or a
+       new PDF page is opened and never otherwise. */
+    geometryKey,
     w: img.w, h: img.h,
     pxPerFt: null,          // measured elsewhere; not knowable from the file
     src: img.src,

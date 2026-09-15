@@ -91,7 +91,24 @@ export default function useRoomRecognition({
     })();
 
     return () => { alive = false; ctl.abort(); };
+    /* KEYED ON THE DRAWING, NOT ON THE SOURCE OBJECT.
+     *
+     * This used to be `[source, roomNonce]`, and `source` is rebuilt whenever
+     * the unit dropdown changes — so picking centimetres instead of inches
+     * spent a model call re-answering a question whose answer could not have
+     * moved. The rooms in a drawing are the same rooms whatever you call the
+     * units; only their measured size changes, and outlines are stored in
+     * drawing units so that they survive exactly this.
+     *
+     * `source` is still READ inside the effect and is still correct when it
+     * runs: the closure is rebuilt on every render, so whenever the geometry or
+     * the nonce does change, the source in hand is the current one.
+     *
+     * THE NONCE IS STILL THE WAY TO ASK AGAIN. If a wrong unit ever did produce
+     * a worse answer — the area floor below is computed from pxPerFt — "look
+     * again" re-runs this deliberately, which is the right way round: an
+     * explicit ask rather than a call on every keystroke of a dropdown. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, roomNonce]);
+  }, [source?.geometryKey, roomNonce]);
 
 }

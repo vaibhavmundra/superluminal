@@ -234,7 +234,13 @@ export default function useFurnitureRecognition({
     // `provider` is a dependency because switching provider is a deliberate act
     // whose whole purpose is to see the other answer — waiting for a second
     // click would just be a click. The nonce is the explicit re-run.
+    //
+    // KEYED ON THE DRAWING AND NOT ON THE SOURCE OBJECT, for the reason set out
+    // at the foot of useRoomRecognition: `source` is rebuilt by the unit
+    // dropdown, and a bed is in the same place whatever the ruler says. `img`
+    // goes with it — for a raster the geometry key IS the decoded bitmap, so
+    // naming both would be saying one thing twice.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, img, detectNonce, provider]);
+  }, [source?.geometryKey, detectNonce, provider]);
 
 }

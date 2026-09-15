@@ -14,7 +14,19 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 const polygon = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
-const source = { kind: 'raster', w: 1200, h: 900, toDu: (p) => p, fromDu: (p) => p };
+/* THE PARSED DRAWING, AND THE SOURCE THAT WRAPS IT, ARE TWO DIFFERENT THINGS —
+   which is the distinction the detectors now key on. `geometryKey` is a stable
+   reference to what was loaded; everything else on a source is derived from how
+   it is being MEASURED, and is rebuilt whenever the unit dropdown moves. See
+   vectorSource in src/lib/planSource.js. */
+const drawing = { parsed: 'the same walls either way' };
+const source = { kind: 'raster', w: 1200, h: 900, geometryKey: drawing,
+                 toDu: (p) => p, fromDu: (p) => p };
+/* WHAT A UNIT CHANGE ACTUALLY PRODUCES: a brand-new source object, a different
+   pixel space, and the SAME geometry. Nothing in it is shared with `source`
+   except the one field that says which drawing it is. */
+const reunited = { kind: 'raster', w: 480, h: 360, geometryKey: drawing,
+                   pxPerFt: 12, toDu: (p) => p, fromDu: (p) => p };
 const img = { el: {} }, wallLayerSet = new Set(['walls']);
 const shot = { w: 600, h: 450, base64: 'pixels', mime: 'image/png' };
 
@@ -122,7 +134,11 @@ for (const gate of [{ isVector: true }, { projectId: null }, { img: null }]) {
 }
 {
   const f = await fixture('Room'); const cleanup = f.start();
-  assert.deepEqual(f.deps, [source, 0], 'rooms do not rerun for scale, tracing, or project type');
+  assert.deepEqual(f.deps, [drawing, 0],
+    'rooms key on the DRAWING, so they do not rerun for scale, tracing, project type — or units');
+  assert.notEqual(source, reunited, '...and the two sources really are different objects');
+  assert.equal(f.deps[0], reunited.geometryKey,
+    'so re-reading the same drawing in another unit is not a new question');
   assert.equal(f.calls[0].pxPerFt, null, 'raster/PDF rooms run before scale');
   const hand = { id: 'drawn-while-waiting', name: 'Kitchen', pointsDu: polygon };
   f.setOutlines([hand]);
@@ -141,6 +157,10 @@ for (const gate of [{ isVector: true }, { projectId: null }, { img: null }]) {
 }
 {
   const f = await fixture('Door'); const cleanup = f.start();
+  /* DOORS STILL KEY ON THE SOURCE OBJECT, DELIBERATELY. This detector never
+     runs on a vector plan (see the isVector gate above), and a raster has no
+     unit dropdown to touch — so there is no re-interpretation for it to ignore,
+     and narrowing it would only hide a genuine reload. */
   assert.deepEqual(f.deps, [source, img, false, 'residential', 0, false]);
   assert.equal(f.calls[0].base64, shot.base64);
   const found = [{ id: 'door-1' }];
@@ -150,7 +170,8 @@ for (const gate of [{ isVector: true }, { projectId: null }, { img: null }]) {
 }
 {
   const f = await fixture('Furniture'); const cleanup = f.start(); await tick();
-  assert.deepEqual(f.deps, [source, img, 0, 'judge'], 'scale changes do not launch a second bed request');
+  assert.deepEqual(f.deps, [drawing, 0, 'judge'],
+    'scale AND unit changes do not launch a second bed request');
   assert.deepEqual(f.calls[0].image, { w: 1200, h: 900 });
   assert.equal(f.calls[0].w, 600); assert.equal(f.calls[0].polygon, null);
   assert.equal(f.calls[0].pxPerFt, null);
