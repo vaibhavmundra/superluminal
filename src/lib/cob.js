@@ -331,26 +331,22 @@ export function chunkSpec(cells, chunk, { dropFt = DEFAULT_DROP_FT,
  * on a plan with no fittings placed at all, which is the ordinary state of this
  * app now and was the real cause of the 7 W bathroom.
  *
- * --- ...AND A CHUNK THAT HAS ALREADY BEEN DECIDED WINS -----------------------
+ * --- ...AND IT ASKS THE CEILING AND NOTHING ELSE ----------------------------
  *
- * `inForce` is asked about the cell first, and if it names a wattage and an
- * optic that is the answer. A chunk is one piece of ceiling and one run of
- * lamps: the moment somebody specifies one of them, the rest are not a fresh
- * question any more — they are the same decision, and a grid that came out at
- * three wattages across one flat plane is a grid nobody would build. The caller
- * owns what "already decided" means, because it is the only thing that knows
- * which lamps are on the drawing.
+ * AN `inForce` HOOK USED TO BE CONSULTED FIRST, and it was a link between
+ * fittings dressed as a rule. It answered with the wattage and beam of whichever
+ * hand-specified lamp was already standing in this chunk — so one lamp's figures
+ * became the recommendation for every lamp placed near it, and a companion pass
+ * (`reconcileCobSpecs`) wrote them onto the lamps already there. Place three in
+ * a row, change one, and all three moved.
  *
- * --- A WARNING ABOUT UNITS, BECAUSE THE CELLS CARRY TWO ----------------------
- * `gridCellsPx` is built by spreading the planner's cell and overwriting ONLY
- * `x0/x1/y0/y1` with pixels (see `rectToPx` in lib/layout.js). So `w`, `h`, `cx` and
- * `cy` on the same object are still in the room's own FEET. That is what makes
- * the area and the short side below correct without a division — and it is
- * exactly the sort of thing that reads as a bug six months from now, so: the
- * bounds are pixels, the dimensions are feet, and both are used here on purpose.
+ * BOTH ARE DELETED. A recommendation is a fact about the cell under the pointer
+ * — its area, its short side, the drop — and a fitting somebody placed answers
+ * for itself alone. An array is the one object that speaks for several lamps,
+ * and it says so by being one.
  */
 export function recommendCob(room, p, {
-  dropFt = DEFAULT_DROP_FT, lumensPerWatt = 75, inForce = null,
+  dropFt = DEFAULT_DROP_FT, lumensPerWatt = 75,
 } = {}) {
   const cells = room?.plan?.gridCellsPx ?? room?.plan?.cellsPx ?? [];
 
@@ -358,8 +354,6 @@ export function recommendCob(room, p, {
     const cell = cells.find((c) => p.x >= c.x0 && p.x <= c.x1
                                 && p.y >= c.y0 && p.y <= c.y1);
     if (cell) {
-      const held = inForce?.(cell);
-      if (held) return { ...held, cell, from: 'overruled' };
       /* THE CHUNK'S ANSWER AND NOT THIS CELL'S. It was the cell's, and that was
          the bug: a run of downlights across one plane came out at two different
          wattages because two boxes of the grid were different sizes. See

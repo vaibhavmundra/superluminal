@@ -330,31 +330,15 @@ export function cobObstacleBlocked({ room, at, pxPerFt, clearanceFt }) {
   return obstacles.some((f) => !f.offCeiling && surfaceDistance(f, at) < clearancePx);
 }
 
-/**
- * WHAT A CHUNK HAS ALREADY BEEN DECIDED AT, if anybody has decided.
- *
- * Only a lamp somebody OVERRULED — on the bar, or in the Analysis panel — is a
- * decision. Mere presence counted as one would freeze the chunk at the first
- * lamp's own cell's answer and every larger cell beside it would inherit a lamp
- * too small. See `placeCob` and the spec setter.
- *
- * BY CHUNK AND NOT BY CELL, so the lookup is on `cell.chunk`, which the planner
- * stamps on every cell it cuts.
- */
-export function chunkSpecInForce({ cobs, room, pxPerFt }) {
-  return (cell) => {
-    if (!room || cell?.chunk == null || !(pxPerFt > 0)) return null;
-    const cells = room.plan?.gridCellsPx ?? [];
-    for (const c of cobs) {
-      if (c.roomId !== room.id || !c.spec) continue;
-      const at = { x: c.xFt * pxPerFt, y: c.yFt * pxPerFt };
-      const home = cells.find((q) => at.x >= q.x0 && at.x <= q.x1
-                                  && at.y >= q.y0 && at.y <= q.y1);
-      if (home?.chunk === cell.chunk) return { watts: c.watts, beam: c.beam };
-    }
-    return null;
-  };
-}
+/* `chunkSpecInForce` STOOD HERE AND IS DELETED.
+   It answered "what has this chunk already been decided at" by scanning for a
+   hand-specified lamp standing in the chunk and handing back ITS wattage and
+   beam. Paired with `reconcileCobSpecs` below it, that made one lamp somebody
+   overruled the rule for every other lamp in its chunk — place three in a row,
+   change the beam of one, and all three move. A hand-placed fitting is a
+   decision about a point and answers for itself; an array is the one thing that
+   speaks for several lamps, and it says so by being one object. */
+
 
 /**
  * FILL A SPACE'S GRID CELLS WITH LAMPS — the autoplace toggle's whole job.
@@ -462,59 +446,15 @@ export function autoplaceCobs({ room, list, pxPerFt, basis, ownedCells = [] }) {
   return add.length ? [...list, ...add] : list;
 }
 
-/**
- * EVERY LAMP NOBODY HAS OVERRULED FOLLOWS ITS CHUNK.
- *
- * `chunkSpec` makes a run of downlights uniform at the moment they are PLACED;
- * this keeps them uniform afterwards, which is when it actually matters —
- * because the two things the rule reads both move under the drawing:
- *
- *   THE GRID GETS RE-CUT. A fan is dropped, a cove is added, a chunking is
- *   re-picked, and the chunk that was four equal boxes is now three unequal
- *   ones. The lamps standing in it were sized for a ceiling that no longer
- *   exists.
- *   SOMEBODY OVERRULES ONE. Set a lamp to 12 W on the bar or in the Analysis
- *   panel and every other lamp in its chunk should become 12 W — that is what
- *   `inForce` is for, and until now it only reached lamps placed AFTER the
- *   decision.
- *
- * IT TOUCHES ONLY `spec: false`, WHICH IS THE WHOLE SAFETY OF IT. Such a lamp
- * carries no decision — its wattage IS the rule's answer, recorded at the
- * moment it was placed — so re-deriving it is not overwriting anybody's work,
- * it is keeping a memo in step with what it is a memo OF. A lamp somebody set
- * by hand is never touched, whatever the grid does around it. Same doctrine
- * `lightMoves` follows when a cell is re-cut: a stored override survives, a
- * stored derivation lapses.
- *
- * IT CONVERGES IN ONE EXTRA PASS AND CANNOT LOOP. An unchanged list is
- * returned BY REFERENCE — React bails out of the re-render, so the
- * dependencies that brought us here do not change again. `chunkSpec` is a pure
- * function of the cells and the basis, so there is nothing for it to oscillate
- * between.
- */
-export function reconcileCobSpecs({ list, rooms, pxPerFt, basisFor }) {
-  let changed = false;
-  const next = list.map((c) => {
-    if (c.spec) return c;
-    const room = rooms.find((r) => r.id === c.roomId);
-    const cells = room?.plan?.gridCellsPx ?? [];
-    if (!cells.length) return c;
-    const at = { x: c.xFt * pxPerFt, y: c.yFt * pxPerFt };
-    const home = cells.find((q) => at.x >= q.x0 && at.x <= q.x1
-                                && at.y >= q.y0 && at.y <= q.y1);
-    /* A LAMP IN NO CELL IS LEFT ALONE — dragged into a cove pocket, or into
-       a chunk the design has since taken away. There is nothing to derive
-       from, and the figures it is carrying are the last honest answer
-       anybody had for it. */
-    if (!home) return c;
-    const basis = basisFor(room);
-    const want = basis.inForce?.(home) ?? chunkSpec(cells, home.chunk, basis);
-    if (!want || (want.watts === c.watts && want.beam === c.beam)) return c;
-    changed = true;
-    return { ...c, watts: want.watts, beam: want.beam };
-  });
-  return changed ? next : list;
-}
+/* `reconcileCobSpecs` STOOD HERE AND IS DELETED WITH IT.
+   It re-derived every `spec: false` lamp from its chunk on every render — the
+   pass that actually WROTE the shared figure onto the lamps, so the link was
+   live rather than only applied at placement. A lamp now keeps the figures it
+   was placed with until somebody changes that lamp. The cost is that a lamp
+   whose grid is re-cut under it no longer follows the new cell; that is a stale
+   recommendation on a fitting nobody has touched, visible on its row and
+   corrected by setting it. */
+
 
 /**
  * A LAMP DROPPED OFF EVERY CEILING GOES BACK WHERE IT CAME FROM.

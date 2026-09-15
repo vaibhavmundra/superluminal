@@ -3,7 +3,7 @@ import { useSceneTrackProjections,
          useSceneArrayProjections } from '../scene/useSceneFixtureProjections.js';
 import { lumensPerWattFor } from '../../lib/lumens.js';
 import { DEFAULT_DROP_FT } from '../../lib/cob.js';
-import { arrayBarFor, arrayDraftBar, chunkSpecInForce } from './fixtureRules.js';
+import { arrayBarFor, arrayDraftBar } from './fixtureRules.js';
 
 /**
  * WHAT IS ON THE CEILING, PROJECTED — the feature's SECOND call site, and the
@@ -72,10 +72,6 @@ export default function useFixtures({
     return arrayDraftBar({ draft: d, geo, pxPerFt });
   }, [cobDraftArray, arrayOutline, pxPerFt]);
 
-  /** WHAT A CHUNK HAS ALREADY BEEN DECIDED AT — see `chunkSpecInForce`. */
-  const cobChunkSpec = useCallback((room) => chunkSpecInForce({
-    cobs: manualCobs, room, pxPerFt }), [manualCobs, pxPerFt]);
-
   /* WHERE THE BUILDING IS AND HOW HIGH THE CEILING IS — the two facts outside
      the cell that the rule needs. Both callers share this so the bar and the
      toggle cannot come to disagree.
@@ -90,8 +86,14 @@ export default function useFixtures({
   const cobBasisFor = useCallback((room) => ({
     lumensPerWatt: lumensPerWattFor(country),
     dropFt: (room ? ceilingMmFor(room.id) / 304.8 : 0) || DEFAULT_DROP_FT,
-    inForce: cobChunkSpec(room),
-  }), [country, ceilingMmFor, cobChunkSpec]);
+    /* `inForce` IS GONE, AND IT WAS THE LINK. It answered "what has this chunk
+       already been decided at" by finding any hand-specified lamp standing in
+       the chunk and handing back ITS wattage and beam — so one lamp somebody
+       set became the rule for every other lamp there. The recommendation is a
+       fact about the CEILING now (the cell's area, its short side, the drop),
+       not about whichever neighbour was touched last. See chunkSpecInForce,
+       deleted with it. */
+  }), [country, ceilingMmFor]);
 
   return {
     tracks: { runsPx: magTracksPx, byId: magTrackById,
@@ -99,6 +101,6 @@ export default function useFixtures({
     arrays: { lampsPx: arrayCobsPx, draftPx: draftArrayPx,
               selPathPx: selArrayPathPx, bar: selArrayBar,
               draftBar: draftArrayBar },
-    cob: { basisFor: cobBasisFor, specInForce: cobChunkSpec },
+    cob: { basisFor: cobBasisFor },
   };
 }

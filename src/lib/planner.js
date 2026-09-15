@@ -1812,6 +1812,29 @@ export function cellKey(c) {
 }
 
 /**
+ * THE SAME HANDLE FOR A LIGHT THAT SPANS SEVERAL CELLS.
+ *
+ * A large downlight sits on a grid LINE and lights two or four boxes, so it has
+ * no single cell and used to come through with no key at all — and a fitting
+ * with no key cannot carry an override, so every one of them fell into the one
+ * shared `cob` row and moved together. That is the last place in the wattage
+ * path where two lamps were one decision without anybody asking for it.
+ *
+ * THE RECTANGLE THEY COVER IS THE IDENTITY, which is `cellKey`'s own rule one
+ * level up: a light still covering the same boxes keeps what was done to it, and
+ * one whose boxes were re-cut loses it — exactly as a cell does. Nothing here
+ * depends on cell IDS, which are indices into a list rebuilt on every layout.
+ */
+export function coverKey(cells = []) {
+  const real = cells.filter(Boolean);
+  if (!real.length) return null;
+  return cellKey({
+    x0: Math.min(...real.map((c) => c.x0)), y0: Math.min(...real.map((c) => c.y0)),
+    x1: Math.max(...real.map((c) => c.x1)), y1: Math.max(...real.map((c) => c.y1)),
+  });
+}
+
+/**
  * HOW FAR A SMALL LIGHT MAY GO FROM ITS OWN CELL CENTRE, as a rectangle.
  *
  * This is `centreBand` said out loud. It is a FRACTION of the cell and not a

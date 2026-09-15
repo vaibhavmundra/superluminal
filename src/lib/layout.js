@@ -6,7 +6,7 @@
    was the only reason none of tools/test-*.mjs could reach it. The twenty keys
    of `input` are exactly what the memo's dependency array named.
    --------------------------------------------------------------------------- */
-import { planLights, withTargetArea, cellKey, centreBandBox } from './planner.js';
+import { planLights, withTargetArea, cellKey, coverKey, centreBandBox } from './planner.js';
 import { designChunking, planCeilingDesign, chunkKey } from './ceilingDesign.js';
 import { STRIP_OFFSET_FT, coveHostFor, bandBetween, bandFixtureFor, COVE_GAP_FT,
          coveOutlineClearOfOutline } from './cove.js';
@@ -949,7 +949,13 @@ export function layoutRooms(input) {
              out to the profile, and dragging it would be arguing with the run
              it is clipped into. Both come through with `bandPx` null, and the
              canvas offers no grip on a light that has none. */
-          cellKey: l.cell ? cellKey(l.cell) : null,
+          /* A LARGE LIGHT HAS NO CELL AND STILL HAS A HANDLE — the rectangle
+             its boxes cover. Without it every multi-cell lamp came through
+             unnamed, and an unnamed lamp shares one row with every other
+             unnamed lamp in the room: change one wattage and they all move.
+             See `coverKey`. */
+          cellKey: l.cell ? cellKey(l.cell)
+            : coverKey((l.cells ?? []).map((id) => res.cells.find((x) => x.id === id))),
           bandPx: (l.kind === 'small' && l.cell && !l.track)
             ? (() => { const b = centreBandBox(l.cell, roomOpt);
                        const a = toPx({ x: b.x0, y: b.y0 }), c = toPx({ x: b.x1, y: b.y1 });

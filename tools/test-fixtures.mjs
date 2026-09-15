@@ -18,13 +18,12 @@
 import assert from 'node:assert/strict';
 import {
   lightKey, clampContext, cobAlignTargets, cobWallGuide, cobObstacleBlocked,
-  chunkSpecInForce,
   absorbAutoplaceSpots,
-  autoplaceCobs, reconcileCobSpecs, rollbackCobs, arrayLanded,
+  autoplaceCobs, rollbackCobs, arrayLanded,
   arrayBarFor, arrayDraftBar, nextArrayDraft, draftCount, moduleU,
   gridSpotsOnTrack, gridSpotsOwnedByTrack, roomForTrackPath,
 } from '../src/features/fixtures/fixtureRules.js';
-import { chunkSpec, WALL_CLEARANCE_FT } from '../src/lib/cob.js';
+import { chunkSpec, recommendCob, placeCob, WALL_CLEARANCE_FT } from '../src/lib/cob.js';
 import { snapPoint } from '../src/lib/snapGuides.js';
 
 const PPF = 30;
@@ -249,35 +248,46 @@ console.log('the two things worth saying before the click');
 }
 
 // --------------------------------------------------------------------------
-console.log('what a chunk has already been decided at');
+console.log('a lamp answers for itself and for nothing else');
 {
-  const cells = [cell(0, 0, 0, 5, 5), cell(1, 150, 0, 5, 5)];
+  /* THIS BLOCK USED TO ASSERT THE OPPOSITE, and the assertion it replaced read
+     "a lamp somebody overruled answers for its whole chunk". `chunkSpecInForce`
+     found any hand-specified lamp standing in a chunk and made its wattage and
+     beam the answer for that chunk; `reconcileCobSpecs` then wrote that answer
+     onto every un-overruled lamp there. Place three lamps in a row, change the
+     beam of one, and all three moved. Both are deleted — see the notes left in
+     their place in fixtureRules.js — and what is pinned here is their absence,
+     because a link like that is easy to reintroduce by accident. */
+  const mod = await import('../src/features/fixtures/fixtureRules.js');
+  assert.equal(mod.chunkSpecInForce, undefined,
+    'fixtureRules exports no chunk-ruler');
+  assert.equal(mod.reconcileCobSpecs, undefined,
+    '...and no pass that rewrites a lamp from its chunk');
+  ok('no fitting speaks for its chunk');
+
+  /* AND THE RECOMMENDATION ASKS THE CEILING, NOT THE NEIGHBOURS. A lamp already
+     standing in the cell — specified or not — changes nothing about what the
+     next one is recommended at. */
+  const cells = [cell(0, 0, 0, 5, 5)];
   const r = room({ cells });
-  // one lamp in chunk 0, at 2ft/2ft, somebody set to 24 W
-  const cobs = [{ id: 'a', roomId: 'r1', xFt: 2, yFt: 2, watts: 24, beam: 36, spec: true }];
-  const inForce = chunkSpecInForce({ cobs, room: r, pxPerFt: PPF });
-  assert.deepEqual(inForce(cells[0]), { watts: 24, beam: 36 });
-  ok('a lamp somebody overruled answers for its whole chunk');
-  assert.equal(inForce(cells[1]), null);
-  ok('and for no other chunk');
-
-  const onRule = [{ ...cobs[0], spec: false }];
-  assert.equal(chunkSpecInForce({ cobs: onRule, room: r, pxPerFt: PPF })(cells[0]), null);
-  ok('a lamp still on the rule is not a decision — `spec` and not "exists"');
-
-  const other = [{ ...cobs[0], roomId: 'r2' }];
-  assert.equal(chunkSpecInForce({ cobs: other, room: r, pxPerFt: PPF })(cells[0]), null);
-  ok('a lamp in another space answers for nothing here');
-
-  assert.equal(chunkSpecInForce({ cobs, room: r, pxPerFt: 0 })(cells[0]), null);
-  assert.equal(chunkSpecInForce({ cobs, room: null, pxPerFt: PPF })(cells[0]), null);
-  assert.equal(chunkSpecInForce({ cobs, room: r, pxPerFt: PPF })({ chunk: null }), null);
-  ok('no scale, no room and no chunk all answer null');
+  const at = { x: 2 * PPF, y: 2 * PPF };
+  const basis = { lumensPerWatt: 75, dropFt: 9 };
+  const bare = recommendCob(r, at, basis);
+  const loud = recommendCob(r, at, basis);
+  assert.deepEqual(
+    { watts: loud.watts, beam: loud.beam },
+    { watts: bare.watts, beam: bare.beam },
+    'the recommendation is a fact about the cell');
+  assert.equal(bare.from, 'chunk', '...derived from the ceiling, never "overruled"');
+  ok('a recommendation is the same whatever the neighbours were set to');
 }
 
 // --------------------------------------------------------------------------
 console.log('the autoplace toggle');
-const BASIS = { lumensPerWatt: 75, dropFt: 9, inForce: () => null };
+/* NO `inForce` ON THE BASIS ANY MORE — the hook it fed is deleted. See
+   `recommendCob`: a recommendation is a fact about the cell, not about whichever
+   neighbouring lamp somebody last overruled. */
+const BASIS = { lumensPerWatt: 75, dropFt: 9 };
 {
   const cells = [cell(0, 0, 0, 5, 5), cell(0, 150, 0, 5, 5)];
   const r = room({ cells });
@@ -355,41 +365,37 @@ const BASIS = { lumensPerWatt: 75, dropFt: 9, inForce: () => null };
 }
 
 // --------------------------------------------------------------------------
-console.log('every lamp nobody overruled follows its chunk');
+console.log('a placed lamp keeps what it was given');
 {
+  /* THE PASS THAT STOOD HERE RE-DERIVED EVERY `spec: false` LAMP FROM ITS CHUNK
+     on every render, which is what made the link live rather than merely
+     applied at placement. A lamp is a decision about a point: it is specified
+     when it is put down and keeps those figures until somebody changes THAT
+     lamp. An array is the one object that speaks for several lamps, and it says
+     so by being one.
+     WHAT IS GIVEN UP: a lamp whose grid is re-cut under it no longer follows the
+     new cell. That is a stale recommendation on a fitting nobody has touched —
+     visible on its row and corrected by setting it — against every lamp in a
+     chunk chained to whichever one was overruled last. */
   const cells = [cell(0, 0, 0, 5, 5)];
-  const rooms = [room({ cells })];
-  const basisFor = () => BASIS;
-  const want = chunkSpec(cells, 0, BASIS);
+  const r = room({ cells });
+  const a = placeCob({ p: { x: 1 * PPF, y: 1 * PPF }, pxPerFt: PPF, roomId: 'r1',
+                       watts: 7, beam: 36, seq: 0 });
+  const b = placeCob({ p: { x: 3 * PPF, y: 1 * PPF }, pxPerFt: PPF, roomId: 'r1',
+                       watts: 7, beam: 36, seq: 1 });
+  assert.notEqual(a.id, b.id, 'two lamps placed in one cell are two fittings');
+  assert.equal(a.spec, false);
 
-  const stale = [{ id: 'a', roomId: 'r1', xFt: 2, yFt: 2, watts: 99, beam: 6, spec: false }];
-  const next = reconcileCobSpecs({ list: stale, rooms, pxPerFt: PPF, basisFor });
-  assert.notEqual(next, stale);
-  assert.equal(next[0].watts, want.watts);
-  assert.equal(next[0].beam, want.beam);
-  ok('a stale derivation is brought back to the rule');
-
-  const decided = [{ ...stale[0], spec: true }];
-  assert.equal(reconcileCobSpecs({ list: decided, rooms, pxPerFt: PPF, basisFor }), decided);
-  ok('a lamp somebody set by hand is never touched, and the list is by reference');
-
-  const settled = [{ ...stale[0], watts: want.watts, beam: want.beam }];
-  assert.equal(reconcileCobSpecs({ list: settled, rooms, pxPerFt: PPF, basisFor }), settled);
-  ok('it converges in one pass — an unchanged list comes back by reference');
-
-  const nowhere = [{ id: 'a', roomId: 'r1', xFt: 19, yFt: 11, watts: 99, beam: 6, spec: false }];
-  assert.equal(reconcileCobSpecs({ list: nowhere, rooms, pxPerFt: PPF, basisFor }), nowhere);
-  ok('a lamp in no cell is left alone — there is nothing to derive from');
-
-  const orphan = [{ id: 'a', roomId: 'r9', xFt: 2, yFt: 2, watts: 99, spec: false }];
-  assert.equal(reconcileCobSpecs({ list: orphan, rooms, pxPerFt: PPF, basisFor }), orphan);
-  ok('...and so is one whose space is not on the plan');
-
-  const held = () => ({ ...BASIS, inForce: () => ({ watts: 12, beam: 24 }) });
-  const pulled = reconcileCobSpecs({ list: stale, rooms, pxPerFt: PPF, basisFor: held });
-  assert.equal(pulled[0].watts, 12);
-  assert.equal(pulled[0].beam, 24);
-  ok('a chunk somebody decided pulls its unspecified lamps to that figure');
+  /* SPECIFYING ONE IS A CHANGE TO ONE RECORD. There is no pass left that can
+     carry it to the other, and `recommendCob` no longer asks whether a
+     neighbour was decided. */
+  const set = { ...a, watts: 24, beam: 24, spec: true };
+  assert.equal(b.watts, 7, 'the other lamp is untouched by it');
+  assert.equal(b.beam, 36, '...in its beam as well as its wattage');
+  const after = recommendCob(r, { x: 3 * PPF, y: 1 * PPF }, BASIS);
+  assert.notEqual(after.watts, set.watts,
+    'and the next lamp placed beside it is still recommended off the ceiling');
+  ok('one lamp specified leaves every other lamp exactly as it was');
 }
 
 // --------------------------------------------------------------------------

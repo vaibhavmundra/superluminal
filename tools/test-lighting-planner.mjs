@@ -126,16 +126,25 @@ const lists = (over = {}) => ({
   assert.equal(by.get(gridRowKey(cells[0])).defaultWatts, 7, 'a small lamp is a 7 W line');
   assert.equal(by.get(gridRowKey(cells[2])).defaultWatts, 12, '...and a large one is 12 W');
 
-  /* ...UNLESS THE ROOM WAS ALREADY SET. A plan saved when this was one row holds
-     `fixtureWatts[roomId].cob`, and every lamp in it falls back to that figure —
-     a reopened plan whose lamps jumped to the catalogue would be this change
-     quietly rewriting somebody's specification. */
+  /* AND THE ROOM'S OLD FIGURE IS NOT CONSULTED, WHICH REVERSES WHAT THIS BLOCK
+     USED TO ASSERT. `fixtureWatts[roomId].cob` is the legacy key from when the
+     whole grid was one row, and it used to sit in front of the catalogue figure
+     as each row's default "so a reopened plan does not quietly jump". That
+     kindness was the last shared link in the wattage path: a lamp with no entry
+     of its own read that one number, so moving it moved every lamp in the room —
+     and ROW_WATTS_SET DELETES an entry equal to the default, so setting a lamp
+     TO the shared figure dropped it straight back into the shared pool. The
+     per-cell keys above were doing their job and this was undoing it.
+     THE COST IS REAL AND IS THE SMALLER ONE: a plan saved at room level now
+     opens at the catalogue figure instead of at the stored one. A figure changes
+     under somebody once, against every lamp in every room being chained together
+     for ever. Nothing deletes the stored value; it is simply no longer read. */
   const old9 = new Map(fixtureGroups(r, lists({ roomWatts: { cob: 9 } }))
     .map((q) => [q.key, q]));
-  for (const c of cells) {
-    assert.equal(old9.get(gridRowKey(c)).defaultWatts, 9,
-      'a plan saved at room level reopens at that figure');
-  }
+  assert.equal(old9.get(gridRowKey(cells[0])).defaultWatts, 7,
+    'a room-level figure no longer reaches a small lamp');
+  assert.equal(old9.get(gridRowKey(cells[2])).defaultWatts, 12,
+    '...nor a large one — each opens at its own catalogue line');
 
   /* AND A LAMP WITH NO CELL FALLS BACK TO THE SHARED ROW ALONGSIDE THEM. */
   const mixed = room({ lights: [{}, {}] });

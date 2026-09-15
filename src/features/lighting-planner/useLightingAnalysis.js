@@ -78,19 +78,18 @@ export default function useLightingAnalysis({
   const groupsFor = useCallback((r) => fixtureGroups(r, {
     accentZonesPx, taskSpotsPx, cobArrays, arrayCobsPx,
     magTracksPx, trackModulesPx, manualCobs, pxPerFt,
-    /* THE SAME MAP `analyseSpace` RESOLVES THE ROWS AGAINST, handed in one step
-       earlier for one reason: a grid downlight's row opens at whatever the ROOM
-       was set to before each lamp had a row of its own. That is a per-room
-       legacy figure rather than a per-row one, so the only place that can apply
-       it is the one deciding what the rows ARE. See the grid block. */
-    roomWatts: fixtureWatts[r.id] ?? {},
-    /* WHICH OF THEM ARE SWITCHED OFF. Same shape and same handle as the wattages
+    /* THE ROOM'S WATTAGE MAP IS NO LONGER HANDED IN AT ALL. It was here so a
+       grid downlight's row could open at whatever the ROOM was set to before
+       each lamp had a row of its own — and that per-room figure was the last
+       thing tying every lamp in a space together, so it is gone rather than
+       merely unused. See the grid block in lightingRules.
+       WHICH OF THEM ARE SWITCHED OFF. Same shape and same handle as the wattages
        above — a sparse map keyed by row — and handed in at the same step for the
        same reason: the only thing that can match a stored key to a fitting is
        the function deciding what the rows are. */
     roomOff: fixtureOff[r.id] ?? {},
   }), [accentZonesPx, taskSpotsPx, pxPerFt, manualCobs, cobArrays, arrayCobsPx,
-       magTracksPx, trackModulesPx, fixtureWatts, fixtureOff]);
+       magTracksPx, trackModulesPx, fixtureOff]);
 
   /**
    * IS THIS SPACE BRIGHT ENOUGH — the Analysis section of the space detail.

@@ -110,10 +110,6 @@ export const gridRowKey = (cellKey) => `cob@${cellKey}`;
 export function fixtureGroups(r, {
   accentZonesPx, taskSpotsPx, cobArrays, arrayCobsPx,
   magTracksPx, trackModulesPx, manualCobs, pxPerFt,
-  /* WHAT THIS ROOM HAS ALREADY CHOSEN, which this function needs for exactly one
-     reason: a grid light's row opens at the figure the ROOM was set to before
-     these rows existed. See `gridRowKey` and the block that builds them. */
-  roomWatts = {},
   /* ...AND WHICH OF THIS ROOM'S FITTINGS ARE SWITCHED OFF, by the same row key.
      Applied at the END of this function rather than inside `bump`, and that is
      the whole of why it is safe: several of these rows are MERGED from more than
@@ -231,13 +227,31 @@ export function fixtureGroups(r, {
     const row = g.get(key);
     row.label = 'Recessed COB';
     row.cellKey = l.cellKey;
-    /* THE CATALOGUE LINE'S FIGURE, WITH THE ROOM'S OLD CHOICE IN FRONT OF IT.
+    /* THE CATALOGUE LINE'S FIGURE, AND NOTHING ELSE.
        `defaultWatts` is what the row reads with nothing stored against its own
        key AND what "back to the default stores nothing" is measured against —
        see `wattsFor` and ROW_WATTS_SET. Both have to be this number or a lamp
        set back to what it already showed would write an override instead of
-       clearing one. */
-    row.defaultWatts = roomWatts.cob ?? FIXTURE_BY_ID[l.fixture]?.watts ?? null;
+       clearing one.
+
+       IT USED TO READ `roomWatts.cob ?? …` AND THAT WAS THE LAST SHARED LINK.
+       `fixtureWatts[roomId].cob` is the legacy key from when the whole grid was
+       one row, and putting it in front of the catalogue figure tied every lamp
+       in the room back together through the back door: a lamp with no entry of
+       its own read that one number, so changing it moved all of them — and
+       worse, ROW_WATTS_SET DELETES an entry equal to `defaultWatts`, so setting
+       a lamp to the shared figure silently dropped it back into the shared pool
+       it had just been lifted out of. The per-cell keys above were doing their
+       job and this line was undoing it.
+
+       THE COST OF REMOVING IT IS HONEST AND WORTH SAYING: a plan saved while the
+       grid really was one row holds `fixtureWatts[roomId].cob`, and its lamps now
+       open at the catalogue figure rather than at that stored one. That is a
+       figure changing under somebody once, against every lamp in every room
+       being silently chained together for ever. The stored value is not deleted
+       — nothing reads it any more, so a plan that needs it can be repaired by
+       setting the lamps that wanted it. */
+    row.defaultWatts = FIXTURE_BY_ID[l.fixture]?.watts ?? null;
   }
   if (unnamed) bump('cob', 'cob', unnamed, 0);
 

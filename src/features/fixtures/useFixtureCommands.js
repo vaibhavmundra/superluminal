@@ -16,7 +16,7 @@
 // command: opening one bar is also an act of closing six other machines, and
 // that list is App's. See `useFixtureGestures`.
 // ---------------------------------------------------------------------------
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import { clear, idOf } from '../../lib/selection.js';
 import { clampWatts, nearestBeam, arrayQuanta, quantiseCount } from '../../lib/cob.js';
 import { outlineFt as shapeOutlineFt, isOpen as shapeIsOpen,
@@ -25,8 +25,7 @@ import { MODULE_BY_ID, placeModule, planDiffusers } from '../../lib/magTrack.js'
 import { netPerUnit, FAMILY_BY_ID } from '../../lib/lumens.js';
 import { absorbAutoplaceSpots, autoplaceCobs, draftCount,
          gridSpotsOnTrack, gridSpotsOwnedByTrack,
-         lightKey, nextArrayDraft, roomForTrackPath,
-         reconcileCobSpecs } from './fixtureRules.js';
+         lightKey, nextArrayDraft, roomForTrackPath } from './fixtureRules.js';
 
 export default function useFixtureCommands({
   state, fixtures, docActions, rooms, pxPerFt, readOnly,
@@ -268,13 +267,24 @@ export default function useFixtureCommands({
     else docActions.dropAutoCobs(roomId);
   }, [docActions, autoplaceIn, rooms]);
 
-  /** EVERY LAMP NOBODY HAS OVERRULED FOLLOWS ITS CHUNK — see
-   *  `reconcileCobSpecs`, which carries the argument and the convergence proof. */
-  useEffect(() => {
-    if (readOnly || !(pxPerFt > 0) || !rooms.length) return;
-    docActions.replaceCobs(reconcileCobSpecs({
-      list: manualCobs, rooms, pxPerFt, basisFor: cobBasisFor }));
-  }, [rooms, pxPerFt, cobBasisFor, readOnly, manualCobs, docActions]);
+  /* --- THE CHUNK NO LONGER SPEAKS FOR THE LAMPS STANDING IN IT ------------
+     AN EFFECT STOOD HERE AND REWROTE THEM, and it is gone rather than narrowed.
+     It re-derived every `spec: false` lamp from its chunk on every render, so a
+     chunk's figure was a live thing the lamps merely reflected: overrule ONE
+     lamp and `chunkSpecInForce` made its wattage and beam the chunk's answer,
+     and this pass wrote that answer onto every other lamp standing there. Place
+     three lamps in a row, change the beam of one, and all three move — which is
+     exactly what it was built to do and exactly what a hand-placed fitting must
+     not do.
+     A LAMP IS A DECISION ABOUT A POINT. It is specified when it is placed and
+     keeps what it was given until somebody changes THAT lamp; nothing about the
+     ceiling around it may reach in and restate it. An array is the one place
+     where several lamps are one decision, and an array says so by being one.
+     WHAT IS LOST IS REAL AND IS THE SMALLER THING: a lamp whose grid is re-cut
+     under it keeps the figures it was placed with rather than following the new
+     cell. That is a stale recommendation on a fitting nobody has touched —
+     visible on the row, and corrected by setting it. The alternative was every
+     lamp in a chunk chained to whichever one was overruled last. */
 
   /** RE-SPECIFYING A LAMP SOMEBODY PLACED, from the analysis panel.
    *
