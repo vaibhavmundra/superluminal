@@ -49,20 +49,28 @@ import { moduleWatts, placeModule, placeableU, newModuleId }
    note on `mod` below. The run comes from the geometry feature already shaped
    as a host; `pointsOn` is "which modules are on this run". */
 import { pointsOn } from '../../lib/point.js';
+import { WALL_POINT_ID, CEILING_POINT_ID, pointHostFor, nearestWallU,
+         seatOnWalls, pointClampU, wallPoint, ceilingPoint, newPointIdIn }
+  from '../../lib/elecPoints.js';
+import { seatForClick } from '../electrical/boardRules.js';
 import { asPathHost } from '../../lib/path.js';
 import { usePointDrag } from '../../hooks/usePoint.js';
 import {
-  makeCeilingObject, resizeFromCorner, rotateTo, halfExtents, isUniform,
-  applyResize, withSweep, newCeilingObjectId, CEILING_BY_ID,
-  boxAdapters, boxOrtho, boxMoves,
+  makeCeilingObject, makeWallUnit, typeOnWall, resizeFromCorner, rotateTo,
+  halfExtents, isUniform, applyResize, withSweep, newCeilingObjectId,
+  CEILING_BY_ID, boxAdapters, boxOrtho, boxMoves,
 } from '../../lib/ceilingObjects.js';
+/* A SPLIT UNIT IS HELD BY ITS WALL — where it is, which way it faces, and where
+   its supply sits are all facts about the plaster. See lib/wallUnit.js. */
+import { isWallUnit, isSeated, seatWallUnit, nearestWallUnitSFt,
+         resolveWallUnitPx, AC_FEED } from '../../lib/wallUnit.js';
 import { clampContext, lightKey, moduleU, nextArrayDraft,
          rollbackCobs, arrayLanded, cobObstacleBlocked } from './fixtureRules.js';
 
 export default function useFixtureGestures({
   state, fixtures, cobTool,
   rooms, pxPerFt, zoom, opt, source, addTool, selAccId, overRoom,
-  manualCobs, cobArrays, trackFixtures, ceilingObjs,
+  manualCobs, cobArrays, trackFixtures, ceilingObjs, elecPoints = [],
   svgPoint, svgRef, pressState,
   roomAt, insideAnyRoom, snapTargets, snapTol,
   arrayOutline, shapeAtPointer, geomUnder, geomHover, setGeomHover,
@@ -80,12 +88,24 @@ export default function useFixtureGestures({
      lands and no socket is seated, which is the same drawing somebody gets by
      placing one before this build. */
   socketForLamp = null,
+  /* --- ...AND THE SECOND, WHICH IS THE AIR-CONDITIONER'S -------------------
+     SAME SHAPE AND SAME ARGUMENT AS THE LAMP'S ABOVE. A split unit cannot work
+     without a circuit, so placing one places its supply and sliding one brings
+     that supply with it — but WHICH supply, where it sits and what it is rated
+     at are the electrical domain's, and they stay there. See
+     features/fixtures/useAcFeed.js; what crosses is two commands.
+     OPTIONAL, for the lamp socket's reason: the unit still lands without them,
+     with no supply beside it, which is a drawing somebody can finish by hand. */
+  acFeed = null,
+  /* EVERY ROOM'S WALLS — `roomId` -> host. What a wall unit is seated on, both
+     when it is dropped and every frame it is dragged. @see buildWallHosts */
+  wallHosts = null,
   docActions, setSel, guides, setGuides, setOverRoom, setAddAt, setOptionPick,
 }) {
   const {
     lightDrag, setLightDrag,
     objDrag, setObjDrag, objMode, setObjMode, selObjIds, toggleSelObj, toggleSel,
-    selCobIds, selArrayIds,
+    selCobIds, selArrayIds, selPointIds,
     armed, setArmed, ghost, setGhost, fanSweepMm,
     cobStanding, cobLock, setCobLock,
     setCobAt, cobDraftArray, setCobDraftArray,
@@ -294,6 +314,17 @@ export default function useFixtureGestures({
     return { x: r.x / pxPerFt, y: r.y / pxPerFt };
   };
 
+  /* --- A WALL UNIT'S WALL, AND THE THREE THINGS THE DRAG ASKS OF IT ---------
+     ONE HOST PER ROOM, LOOKED UP RATHER THAN BUILT. `buildWallHosts` in the
+     scene already walked every outline for this; asking it per frame per unit
+     would re-walk them. */
+  const wallHostOf = (o) => (o?.roomId ? (wallHosts?.get?.(o.roomId) ?? null) : null);
+  /** Is this record one the plaster is holding? Both halves have to be true. */
+  const onWall = (o) => isWallUnit(o) && isSeated(o);
+  const seatedById = (id) => onWall(ceilingObjs.find((q) => q.id === id));
+  /** A unit's body width in plan pixels — what the seat has to fit on a run. */
+  const bodyPxOf = (o) => (o?.wFt || 0) * pxPerFt;
+
   /* --- A CEILING OBJECT'S WHOLE GESTURE -------------------------------------
 
      ONE PRESS, THREE MEANINGS, AND ONLY ONE OF THEM IS A TRANSLATION. `moves`
@@ -334,11 +365,50 @@ export default function useFixtureGestures({
        they stay where the catalogue is. See the note at the foot of
        lib/ceilingObjects.js on which half of the box moved and which did not. */
     ...boxAdapters(),
+    /* --- ...EXCEPT THAT A WALL UNIT IS NOT A FREE BOX ----------------------
+       IT IS A CONSTRAINED POINT THAT HAPPENS TO CARRY AN EXTENT, which is what
+       the header of lib/box.js says a plate sliding along a wall is. So the two
+       adapters are overridden rather than the gesture being forked: `at` hands
+       back where the wall actually put the body and `to` writes a DISTANCE
+       ROUND THE WALLS instead of a coordinate. Everything else about the drag —
+       the group, the slop, the copy, the snap-back — is untouched and has to
+       be, because a row of three units dragged together is the same gesture as
+       a row of three cassettes.
+       THE PERPENDICULAR COMPONENT IS SIMPLY DISCARDED, and that IS the
+       constraint: `nearestWallUnitSFt` projects whatever the pointer asked for
+       onto the nearest piece of plaster that can hold the body, so dragging
+       away from the wall slides the unit along it rather than lifting it off.
+       FEET IN AND FEET OUT. This drag's point space is the record's own unit —
+       see `boxAdapters` — and the wall projections work in plan pixels, so the
+       scale is applied at this boundary and nowhere inside. */
+    at: (o) => {
+      if (!onWall(o)) return { x: o?.x ?? 0, y: o?.y ?? 0 };
+      const r = resolveWallUnitPx(o, wallHostOf(o), pxPerFt);
+      return r ? { x: r.x / pxPerFt, y: r.y / pxPerFt } : { x: 0, y: 0 };
+    },
+    to: (o, p) => {
+      if (!onWall(o)) return { ...o, x: p.x, y: p.y };
+      const sFt = nearestWallUnitSFt(
+        { x: p.x * pxPerFt, y: p.y * pxPerFt }, wallHostOf(o), bodyPxOf(o));
+      /* A DRAG WITH NOWHERE TO LAND LEAVES IT WHERE IT WAS, which is the point
+         primitive's own refusal — see the third gate in hooks/usePoint.js. */
+      return sFt == null ? o : { ...o, sFt };
+    },
     setList: docActions.updateObjects,
     slopPx: 0,
     moves: boxMoves,
-    ortho: boxOrtho(),
-    snap: (q, axis, { ids }) => objSnapAt(q, axis, ids),
+    /* A THING ALREADY HELD TO A WALL TAKES NO SHIFT LOCK. A second constraint
+       would hold it to a row through the press as well, and the two together
+       resolve to wherever those happen to cross — which is the argument
+       `orthoFor` makes about a constrained point, said about a box. Asked per
+       FRAME because that is the shape `useDrag` takes, so the answer is looked
+       up off the drag's own primary. */
+    ortho: (d) => boxOrtho() && !seatedById(d?.id),
+    /* ...AND NO SNAP EITHER, AND FOR THE SAME REASON. A guide claiming an
+       alignment the wall projection is then going to overrule is a guide that
+       lies twice a second. */
+    snap: (q, axis, { ids, drag: d }) =>
+      (seatedById(d?.id) ? q : objSnapAt(q, axis, ids)),
     copy: true,
     mintId: () => newCeilingObjectId(),
     /* THE TWIN IS WHAT KEEPS MOVING, which is the convention everywhere this
@@ -380,6 +450,15 @@ export default function useFixtureGestures({
         return o;
       }));
     },
+    /* AND WHEN IT IS LET GO, ITS SUPPLY CATCHES UP. "Behind the unit" and "a
+       foot clear of the casing" were stated as RULES rather than as starting
+       positions, so a unit nudged six inches has to take its socket with it.
+       ON COMMIT AND NOT PER FRAME, deliberately: this is a document write per
+       call, and doing it on every move of the drag would be a socket re-seated
+       sixty times a second and an undo history made of nothing else. See
+       `slider writes once per gesture`, which is the same rule about a control.
+       THE WHOLE GROUP, because a multi-selection drag moves all of them. */
+    onCommit: (ids) => acFeed?.syncAll?.(ids ?? []),
     // The guides are a property of the GESTURE, not of the object.
     onRelease: () => setGuides([]),
   });
@@ -768,6 +847,99 @@ export default function useFixtureGestures({
   const modulePointerMove = (e) => { if (pxPerFt) mod.move(e); };
   const modulePointerUp = mod.up;
 
+  /* --- A POINT, ON THE PRIMITIVE, BOTH KINDS THROUGH ONE GESTURE -----------
+     THIS IS THE WHOLE OF WHAT EITHER ELEMENT HAS TO SAY ABOUT BEING DRAGGED,
+     and that is the claim lib/point.js makes for itself. A wall point is a
+     CONSTRAINED point — `on: 'walls'`, `u` a fraction of the room's perimeter,
+     the same host a switchboard plate stands on — and a ceiling point is a FREE
+     one. Nothing below tests which; the primitive reads the kind off the record
+     and the two gates fall out:
+
+       A WALL POINT TAKES NO SHIFT LOCK AND NO SNAP, because it is already held
+       to a wall and a second constraint would move it along the plaster to
+       wherever two lines happen to be nearest — see `orthoFor`.
+       A CEILING POINT HONOURS BOTH, which is what "shift to constrain" means
+       everywhere else on this canvas.
+
+     ...and move, OPTION-COPY, delete, the slop, the group move, the snap-back
+     and the refusal come with them. None of that is written here.
+
+     ONE HOST PER ROOM, BUILT ONCE PER RENDER. `wallRuns` walks the outline, so
+     asking per frame per point would re-walk it; a Map keyed on the room is the
+     same shape `magTrackById` gives the module drag. */
+  const pointHosts = new Map();
+  const hostOfRoom = (roomId) => {
+    if (!pointHosts.has(roomId)) {
+      const poly = rooms.find((r) => r.id === roomId)?.plan?.polygonPx ?? [];
+      pointHosts.set(roomId, pointHostFor(poly, pxPerFt));
+    }
+    return pointHosts.get(roomId) ?? null;
+  };
+  const pointHostFrom = (q) => hostOfRoom(q?.roomId);
+
+  const pt = usePointDrag({
+    point: svgPoint,
+    capture: (e) => svgRef.current?.setPointerCapture?.(e.pointerId),
+    zoom,
+    /* THE ROOM'S WALLS, WHICH IS ONLY EVER ASKED ABOUT A CONSTRAINED POINT —
+       `pointAdapters` does not resolve a free one against a host. */
+    hostFor: pointHostFrom,
+    /* THE DOMAIN'S VETO, AND IT IS THE SAME PROJECTION THE PLACEMENT USES.
+       `nearestWallU` is both, deliberately: a point may be dropped anywhere
+       there is plaster and dragged anywhere there is plaster, and two copies of
+       one projection is how those two answers stop agreeing. */
+    clamp: pointClampU(pointHostFrom),
+    /* FREE POINTS ONLY — the hook refuses to call this for a constrained one,
+       which is gate 2. The ceiling point snaps to the same things every other
+       free fitting on this canvas snaps to. */
+    snap: (q, axis, { ids }) => objSnapAt(q, axis, ids),
+    /* ONE WRITE PER FRAME, AND ONLY THE FIELDS THAT MOVED. The hook hands back
+       the whole updated list; a twin from an Option-copy is not in the store
+       yet, so it is ADDED, and everything else is PATCHED with whichever of the
+       two coordinates its kind actually keeps. */
+    setList: (fn) => {
+      const next = fn(elecPoints);
+      const known = new Map(elecPoints.map((q) => [q.id, q]));
+      const fresh = next.filter((q) => !known.has(q.id));
+      if (fresh.length) docActions.addElecPoints(fresh);
+      for (const q of next) {
+        const was = known.get(q.id);
+        if (!was) continue;
+        if (was.u !== q.u || was.x !== q.x || was.y !== q.y) {
+          docActions.patchElecPoint(q.id, { u: q.u, x: q.x, y: q.y });
+        }
+      }
+    },
+    copy: true,
+    mintId: (n) => newPointIdIn(elecPoints.length + n),
+    /* AND THE TWIN IS WHAT KEEPS MOVING, the convention everywhere this gesture
+       exists: drag, Option, release — and the one you just positioned is the one
+       still selected, ready to be dragged again. */
+    onCopy: ({ ids }) => setSel(selectMany('point', ids)),
+  });
+
+  const pointPointerDown = (e, id) => {
+    if (e.button != null && e.button !== 0) return;
+    if (!canGrab(pressState) || !pxPerFt) return;
+    const q = elecPoints.find((x) => x.id === id);
+    if (!q) return;
+    /* THE MEMBER IS NAMED, AND THE WHOLE SELECTION COMES WITH IT. The primitive
+       reads the record to know its kind and its host — a bare id tells it
+       neither — and it DECLINES a press it cannot anchor, which is gate 3. So
+       the event is only swallowed if the press was actually taken; a wall point
+       whose room has gone falls through rather than starting a drag that would
+       throw it at the origin. */
+    const ids = selPointIds.includes(id) ? selPointIds : [id];
+    const members = elecPoints.filter((x) => ids.includes(x.id));
+    if (!pt.down(e, { id, members })) return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (!selPointIds.includes(id)) setSel(select('point', id));
+  };
+
+  const pointPointerMove = (e) => { if (pxPerFt) pt.move(e); };
+  const pointPointerUp = pt.up;
+
   /* --- A MODULE CLIPS INTO A TRACK, AND ONLY INTO A TRACK --------------------
      AHEAD OF THE ROOM TEST, AND THAT IS THE POINT OF ITS POSITION. Every other
      tool asks "is there a ceiling here" first, because every other tool puts a
@@ -963,11 +1135,94 @@ export default function useFixtureGestures({
       return false;
     }
     const p = svgPoint(e);
+    /* --- A WALL POINT SEATS ON THE PLASTER, AND SO IT IS TAKEN FIRST --------
+       AHEAD OF THE INSIDE-A-ROOM TEST, AND THAT IS THE POINT OF ITS POSITION. A
+       wall point cannot be placed in the middle of a ceiling — it is a mark ON a
+       wall — so the pointer is AIMED at the plaster, and a press that lands a
+       hair outside the outline is the ordinary way to make one rather than a
+       miss. The guard below would cancel it.
+       `seatForClick` IS THE SOCKET TOOL'S OWN ANSWER and is asked here for
+       exactly that reason: "snap to the plaster like the socket does" is one
+       arbitration — which of several rooms did that click mean, and is it near
+       enough to any wall to have meant one at all (four feet, else it is a miss
+       and not a guess). What it hands back is a plate's seat, which is clamped
+       off the corners; only its ROOM is taken, and the fraction is this
+       element's own — see `nearestWallU`, which is both this point's placement
+       and its drag clamp, so the two cannot disagree. */
+    if (armed === WALL_POINT_ID) {
+      const hit = wallPointSeatAt(p);
+      if (hit) {
+        /* AND IT IS SELECTED, which is what the hand-placed sconce does and for
+           the reason it does it: the thing you just put down is the thing you
+           are about to say something about. Here that is its HEIGHT, and the bar
+           showing it is the bar for the point that just landed. */
+        const made = wallPoint(hit.roomId, hit.u, { id: newPointIdIn(elecPoints.length) });
+        docActions.addElecPoint(made);
+        setSel(select('point', made.id));
+      }
+      // A MISS DISARMS, like every other one-shot: the tool is not left armed
+      // over a drawing where the last press appeared to do nothing.
+      setArmed(null); setGuides([]); setGhost(null);
+      return true;
+    }
+    /* --- A WALL UNIT SEATS ON THE PLASTER, AND SO IT IS TAKEN HERE ---------
+       AHEAD OF THE INSIDE-A-ROOM TEST, for the wall point's reason exactly: the
+       pointer is AIMED at a wall, so a press that lands a hair outside the
+       outline is the ordinary way to place one rather than a miss, and the
+       guard below would cancel it.
+       ONE PRESS AND NO SECOND GESTURE, WHICH IS THE WHOLE FEATURE. The unit
+       lands on the nearest piece of plaster that can hold it and takes that
+       wall's angle; there is nothing to rotate afterwards because there is no
+       stored angle to rotate — see `makeWallUnit`.
+       ...AND ITS SUPPLY LANDS WITH IT, in the same tick, which is what makes
+       the pair one undo step. A socket by default, at the country's AC rating;
+       both are changed from the bar at the foot of the drawing. */
+    if (typeOnWall(armed)) {
+      const hit = wallUnitSeatAt(p, armed);
+      if (hit) {
+        const made = makeWallUnit(armed, {
+          roomId: hit.roomId, sFt: hit.sFt, feed: AC_FEED });
+        docActions.addObject(made);
+        acFeed?.place?.(made);
+        /* AND IT IS SELECTED, which is the sconce's and the point's behaviour
+           and is what puts the unit's own bar in front of somebody the moment
+           the unit exists: the supply it just got is the thing they are most
+           likely to want to say something about. */
+        setSel(select('object', made.id));
+      }
+      // A MISS DISARMS, like every other one-shot.
+      setArmed(null); setGuides([]); setGhost(null);
+      return true;
+    }
     // Outside every room: cancel, do not act. One branch, before anything
     // else, so there is no path by which a click out here places something.
     if (!insideAnyRoom(p)) {
       setArmed(null); setGhost(null); setGuides([]);
       setSel(clear());
+      return true;
+    }
+    /* --- A CEILING POINT IS NOT A CEILING OBJECT ---------------------------
+       IT RIDES THIS GESTURE AND NOT THIS CATALOGUE. Everything about the ACT is
+       identical — one press on empty ceiling, inside a room, snapped, then
+       disarm — so it arms through `armed` and comes through here like a fan.
+       What differs is what gets written: a fan is a rectangle the grid has to
+       keep off, and a point is lib/point.js's FREE point with a rating on it.
+       `makeCeilingObject` would answer `undefined` and `addObject` would put a
+       typeless object in the list every downstream reader iterates.
+       THE WALL POINT IS NOT HERE, because it never reaches this line: a wall is
+       not "empty ceiling", so it is taken at the top of this handler before the
+       inside-a-room test that would refuse a click aimed at the plaster.
+       THE STAMP IS THE MOMENT OF THE GESTURE. The id is minted in the reducer
+       off it and the list's own length — see LIST_ADDED_MINTED — so two points
+       dropped in the same second cannot collide. */
+    if (armed === CEILING_POINT_ID) {
+      const snapped = applySnap(p, null);
+      const made = ceilingPoint(roomAt(snapped)?.id ?? null,
+        snapped.x / pxPerFt, snapped.y / pxPerFt,
+        { id: newPointIdIn(elecPoints.length) });
+      docActions.addElecPoint(made);
+      setSel(select('point', made.id));
+      setArmed(null); setGuides([]); setGhost(null);
       return true;
     }
     if (armed) {
@@ -996,12 +1251,85 @@ export default function useFixtureGestures({
     return true;
   };
 
+  /**
+   * WHERE A WALL UNIT WOULD LAND, FROM A POINTER — the press and the preview
+   * both ask this and nothing else asks it twice, which is `sconceGhostAt`'s
+   * discipline and `wallPointSeatAt`'s below: a preview that APPROXIMATES the
+   * placement is a preview that can disagree with it, and on a thing a metre
+   * wide the disagreement is visible from across the room.
+   *
+   * `seatForClick` PICKS THE ROOM and applies the four-foot miss test — which
+   * of several rooms did that click mean, and was it near enough to any wall to
+   * have meant one at all. What it hands back is a PLATE's seat, clamped half a
+   * plate off each corner; only its ROOM is taken, and the distance is this
+   * element's own, because a metre of air-conditioner and 230mm of switch plate
+   * do not fit the same pieces of wall. @see nearestWallUnitSFt
+   */
+  const wallUnitSeatAt = (p, typeId) => {
+    const best = seatForClick(p, { rooms, pxPerFt });
+    if (!best) return null;
+    const host = wallHosts?.get?.(best.roomId) ?? null;
+    if (!host) return null;
+    const t = CEILING_BY_ID[typeId];
+    const bodyPx = (t?.wFt || 0) * pxPerFt;
+    const sFt = nearestWallUnitSFt(p, host, bodyPx);
+    if (sFt == null) return null;
+    const seat = seatWallUnit(sFt, host, bodyPx);
+    return seat ? { roomId: best.roomId, sFt, seat, host, bodyPx, type: t } : null;
+  };
+
+  /* WHERE A WALL POINT WOULD LAND, FROM A POINTER — the press and the preview
+     both ask this and nothing else asks it twice. That is the discipline
+     `sconceGhostAt` keeps in App.jsx and the reason it is worth a function: a
+     preview that is an APPROXIMATION of the placement is a preview that can
+     disagree with it, and on this element it disagreed by the whole width of the
+     room — the circle followed the cursor across the ceiling and the placed
+     point appeared on plaster somewhere else.
+     `seatForClick` PICKS THE ROOM and applies the four-foot miss test; the
+     fraction and the frame are this element's own. */
+  const wallPointSeatAt = (p) => {
+    const best = seatForClick(p, { rooms, pxPerFt });
+    if (!best) return null;
+    const host = pointHostFor(
+      rooms.find((r) => r.id === best.roomId)?.plan?.polygonPx ?? [], pxPerFt);
+    const u = host ? nearestWallU(p, host) : null;
+    if (u == null) return null;
+    const seat = seatOnWalls(u, host);
+    return seat ? { roomId: best.roomId, u, seat } : null;
+  };
+
   // ARMED AND HOVERING. The guides have to appear BEFORE the click, not
   // after: their job is to tell you where the thing will land while you can
   // still move the pointer.
   const armedMove = (e) => {
     if (!(armed && source && pxPerFt)) return false;
     const p = svgPoint(e);
+    /* A WALL POINT PREVIEWS ON THE PLASTER, AND SO IT IS TAKEN FIRST — ahead of
+       the inside-a-room test for the same reason the press is: the pointer is
+       AIMED at a wall, so it spends half its time a hair outside the outline,
+       and the guard below would put the preview away exactly when it is wanted.
+       THE GHOST CARRIES THE SEAT AND NOT A POSITION, so the canvas draws the
+       stem, the circle and the J where the press will actually put them. */
+    if (armed === WALL_POINT_ID) {
+      const hit = wallPointSeatAt(p);
+      setGhost(hit ? { typeId: armed, x: hit.seat.point.x, y: hit.seat.point.y,
+                       seat: hit.seat } : null);
+      if (guides.length) setGuides([]);
+      return true;
+    }
+    /* A WALL UNIT PREVIEWS ON THE PLASTER, ahead of the inside-a-room test for
+       the reason the press is: the pointer spends half its time a hair outside
+       the outline, and the guard below would put the preview away exactly when
+       it is wanted. THE GHOST CARRIES THE SEAT, so the canvas draws the body at
+       the position AND THE ANGLE the press will actually use — which is the
+       whole of what somebody is looking for before they commit. */
+    if (typeOnWall(armed)) {
+      const hit = wallUnitSeatAt(p, armed);
+      setGhost(hit ? { typeId: armed, seat: hit.seat, bodyPx: hit.bodyPx,
+                       x: hit.seat.point.x, y: hit.seat.point.y } : null);
+      if (guides.length) setGuides([]);
+      return true;
+    }
     const inside = insideAnyRoom(p);
     if (inside !== overRoom) setOverRoom(inside);
     if (!inside) {
@@ -1084,19 +1412,29 @@ export default function useFixtureGestures({
        in between, and only App knows the precedence. */
     drag: {
       light: lightDrag, object: objDrag, cob: cob.drag,
-      array: arrayDrag, module: moduleDrag,
+      array: arrayDrag, module: moduleDrag, point: pt.drag,
     },
     move: {
       light: lightPointerMove, object: objPointerMove, cob: cobPointerMove,
-      array: arrayPointerMove, module: modulePointerMove,
+      array: arrayPointerMove, module: modulePointerMove, point: pointPointerMove,
     },
     up: {
       light: lightPointerUp, object: objPointerUp, cob: cobPointerUp,
-      array: arrayPointerUp, module: modulePointerUp,
+      array: arrayPointerUp, module: modulePointerUp, point: pointPointerUp,
     },
     /* THE POINTER ROUTER'S FIXTURE BRANCHES, each returning `true` when it has
        taken the event. */
     tool: { moduleDown, arrayDown, cobDown, objectDown, moduleMove, cobMove, armedMove },
+    /* THE POINT'S OWN PAIR, handed out like every other element's. DELETE IS
+       NOT HERE and it was: it is `fixtureCommands.points.removeSelected` now,
+       beside every other kind's. The key that calls it is bound once in App's
+       keydown effect, and this object is rebuilt every render — so a delete
+       handed out from here could not be named in that effect's dependency
+       array without re-binding the window listener on every frame, and naming
+       it any other way is the stale closure that made Delete a no-op on a
+       point somebody had just placed. */
+    point: { down: pointPointerDown, move: pointPointerMove, up: pointPointerUp,
+             dragging: !!pt.drag },
     commands: { openArray },
     draft: { array: cobDraftArray, setArray: setCobDraftArray },
   };

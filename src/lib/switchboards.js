@@ -230,6 +230,42 @@ function point(country, p) {
    decision, not because of a fitting. The standing lamp's pair does have one
    (see the `lamp` branch in `pointsFromFlows`), so it can say so. Null rather
    than absent for the rest, which is what every other point on a plate carries. */
+/**
+ * HOW MANY SOCKETS A PLATE MUST CARRY BEFORE A STANDING LAMP PLUGS INTO ONE
+ * RATHER THAN BRINGING ITS OWN.
+ *
+ * TWO, WHICH IS "ONE TO SPARE". A plate with a single socket has none going
+ * begging: it is there for the charger and the vacuum cleaner, and a lamp taking
+ * it would leave the room short the socket the plate was given for that. A plate
+ * with two — a bedside, see `socketsFor` in electrical.js — has one for the
+ * phone and one for the lamp, which is what the second one is FOR.
+ *
+ * A COUNT AND NOT A ROLE, deliberately. `composeSwitchboard` never asks what
+ * kind of plate it is composing; it asks how many sockets are on it. So a plate
+ * somebody adds a second socket to by hand behaves like a bedside one without
+ * anybody teaching this file a third role.
+ */
+export const LAMP_CLAIMS_FROM = 2;
+
+/**
+ * ...AND THE RATING ABOVE IT, for a plate that is an APPLIANCE POINT.
+ *
+ * A shaver, a trimmer, a hair dryer, a geyser: none of those is a light, and a
+ * plate put on a wall for one of them is not switched at the light rating. The
+ * answer is the next rating a country actually sells above its light switch —
+ * India's 6/16/20/32 gives 16, the US's 15/20 gives 20 — so neither number is
+ * written down anywhere, exactly as `lightSwitchA` avoids writing down the
+ * other one.
+ *
+ * THE LIGHT RATING WHERE THERE IS NOTHING ABOVE IT, because a country selling
+ * one rating sells one rating, and an appliance on it is what gets built.
+ */
+export const applianceA = (country) => {
+  const rs = [...(country?.switchRatings ?? [])].sort((a, b) => a - b);
+  const light = lightSwitchA(country);
+  return rs.find((v) => v > light) ?? light;
+};
+
 export function socketWithSwitch(country, { amps = null, source = 'design',
                                             what = null, flowId = null } = {}) {
   const a = amps ?? lightSwitchA(country);
@@ -299,9 +335,19 @@ export function pointsFromFlows(country, flows = [], boardId = null) {
          switch, and the flow carries the rating precisely so this does not have
          to guess. Move the wire to another board and the switch moves with it,
          at the same rating, because both are derived from where the flow lands. */
-      if (f.kind === 'socket') {
+      /* A POINT IS THE SAME SHAPE AS AN OUTLET AND IT IS NOT AN OUTLET.
+         What it has in common is the only thing this branch is about: the
+         FITTING is over there on the wall and the SWITCH is here, so this plate
+         earns a switch and no socket. What is different is what is on the wall —
+         a circle-and-J, a cable brought out and left, see lib/elecPoints.js —
+         and the difference shows up in the label and nowhere else.
+         AT THE POINT'S OWN RATING, falling back to the country's light switch.
+         `amps: null` on a wall point means "whatever a light is switched at
+         here", which is 6 in India and 15 in the United States; a point somebody
+         rated carries its number and the switch is built at it. */
+      if (f.kind === 'socket' || f.kind === 'point') {
         out.push(point(country, { kind: 'switch', amps: f.amps ?? a, flowId: f.id,
-                                  what: f.label, forOutlet: true }));
+                                  what: f.label, forOutlet: f.kind === 'socket' }));
       } else if (f.kind === 'lamp') {
         /* A STANDING LAMP IS THE PAIR, AND IT IS THE ONLY FLOW THAT BRINGS ITS
            OWN SOCKET WITH IT.
@@ -311,12 +357,14 @@ export function pointsFromFlows(country, flows = [], boardId = null) {
            socket is on THIS plate — which is what distinguishes it from the
            outlet branch above, where the socket is over on the wall and only its
            switch lands here.
-           AND NOT THE BOARD'S SPARE, which is the mistake this exists to avoid.
-           `composeSwitchboard` adds one socket over and above what the drawing
-           asked for — see the note on the spare pair in the header — and it is
-           explicitly the one nobody has claimed: the charger, the vacuum
-           cleaner. A lamp quietly taking it would leave the room a socket short
-           while the schedule looked unchanged.
+           AND THE PLATE MAY ANSWER THAT THE SOCKET IS ALREADY THERE. This branch
+           states what a lamp NEEDS — somewhere to plug in, and a switch for it —
+           and it is `composeSwitchboard` that decides whether that has to be a
+           new pair or one of the plate's own: see LAMP_CLAIMS_FROM. A plate
+           carrying two sockets seats the lamp on one of them and this pair is
+           dropped; a plate carrying one or none keeps it. The decision is there
+           and not here because there is the only place that can see both the
+           flow and the plate.
            AT THE LIGHT RATING, because a 7 W lamp is a light: the flow's own
            reach test (`lampPlateInReach` in electrical.js) is about the lead, not
            the load. */
@@ -451,7 +499,17 @@ export function composeSwitchboard({
   // Points somebody added in the panel: `[{ kind, amps }]`, in the order they
   // added them. Stored against the board id by the caller — see App.jsx.
   extras = [],
-  spare = true,
+  /* HOW MANY SOCKETS THIS PLATE CARRIES BEFORE ANY FITTING ASKS FOR ONE.
+     A COUNT AND NOT A FLAG, and it used to be `spare: true|false`. Two plates
+     broke that: a bedside, which wants TWO — the phone on charge and the lamp —
+     and a standing lamp's own plate, which wants none because the lamp's flow
+     brings its socket with it. A boolean could say "one or none" and there was
+     nowhere to say "two".
+     THE FIGURE IS THE ROLE'S, NOT THIS FILE'S. See `socketsFor` in
+     electrical.js: what a plate is decides what is on it, the same way its
+     height does, and the caller reads it off the board. Default 1 so a caller
+     that says nothing gets exactly the spare pair it always got. */
+  spares = 1,
   /* THE RATING OF THE PLATE'S OWN SOCKET. Null means the country's low-power
      one, which is what almost every board wants and what this always used to be.
 
@@ -462,6 +520,12 @@ export function composeSwitchboard({
      point on the way through a conversion that was supposed to be about where
      the SWITCH lives. */
   spareAmps = null,
+  /* WHAT THE PLATE'S OWN SOCKET IS FOR, in words, where it is for something.
+     "A spare outlet" is the truth on almost every plate — it is the one nobody
+     drew — and it is a lie on the one plate that exists BECAUSE of its socket.
+     A basin plate is put on a wall for a shaver; a card reading "a spare outlet"
+     there describes the plate as an afterthought to itself. */
+  spareWhat = 'a spare outlet',
   /* WHERE SOMEBODY DRAGGED THE MODULES TO: an array of UNIT KEYS, left to right.
 
      UNITS AND NOT MODULES, WHICH IS THE WHOLE OF WHY THIS IS NOT A LIST OF
@@ -521,13 +585,54 @@ export function composeSwitchboard({
     });
   }
 
-  const spares = spare
-    ? [{ key: 'spare',
-         points: socketWithSwitch(country, { amps: spareAmps ?? a, source: 'spare',
-                                             what: 'a spare outlet' }) }]
-    : [];
+  /* THE PLATE'S OWN SOCKETS. See `spares` above for where the count comes from.
+     THE FIRST KEY IS STILL `spare`, and the second is `spare:1`. Ugly, and it is
+     the shape that keeps a stored `boardOrders` entry naming `spare` pointing at
+     the same unit it pointed at when a plate could only have one. Renumbering
+     from zero would have re-sorted every plate somebody had arranged. */
+  const own = Array.from({ length: Math.max(0, Math.trunc(spares) || 0) }, (_, i) => ({
+    key: i === 0 ? 'spare' : `spare:${i}`,
+    points: socketWithSwitch(country, { amps: spareAmps ?? a, source: 'spare',
+                                        what: spareWhat }),
+  }));
 
-  const units = orderUnits([...switches, ...fans, ...spares, ...added], order);
+  /* A STANDING LAMP PLUGS INTO A SOCKET THAT IS ALREADY THERE, WHERE THERE IS
+     ONE TO SPARE.
+     THE PLATE IS THE THING THAT DECIDES, NOT THE LAMP. `pointsFromFlows` gives
+     every lamp flow a socket and its switch, because a lamp plugged into nothing
+     is not wired — and on a plate that already carries two of them, emitting a
+     third is how a bedside plate came out with two sockets and three switches
+     for one sconce and one floor lamp. So the lamp CLAIMS one of the plate's own
+     instead: the socket stops being "a spare outlet" and becomes that lamp's,
+     the module count does not move, and the plate still has the other one free
+     for the phone.
+     TWO OR MORE, WHICH IS THE WHOLE OF THE THRESHOLD. A plate with ONE socket
+     has none to spare — claiming it would leave the room the socket it was put
+     there for — so the lamp brings its own and the plate ends up with two, which
+     is the right answer and the one asked for. A plate with none (a lamp's own,
+     see `socketsFor`) likewise: nothing to claim, so the lamp's pair IS the
+     plate. No role is named anywhere in this; the count decides.
+     IN THE ORDER THE FLOWS ARRIVE, one socket each. Three lamps on a two-socket
+     plate claim two and the third brings its own, because three plugs need three
+     sockets. */
+  const lampFlows = new Set(flows
+    .filter((f) => f?.kind === 'lamp' && f.boardId === boardId && f.id)
+    .map((f) => f.id));
+  const free = spares >= LAMP_CLAIMS_FROM ? own.slice() : [];
+  const wired = [];
+  for (const u of switches) {
+    const fid = u.points[0]?.flowId;
+    const seat = fid && lampFlows.has(fid) ? free.shift() : null;
+    if (!seat) { wired.push(u); continue; }
+    /* THE SOCKET BECOMES THE LAMP'S, AND KEEPS ITS PLACE ON THE PLATE. `source`
+       goes to `design` because the drawing now asks for this one, and `flowId`
+       is what joins the module to the wire — click the lamp's flow and this pair
+       lights up, exactly as it would have if the lamp had brought its own. */
+    seat.points = seat.points.map((q) => ({ ...q, source: 'design', flowId: fid,
+                                            what: u.points[0]?.what ?? q.what }));
+  }
+
+  const units = orderUnits([...wired, ...fans, ...own, ...added], order);
   /* THE UNIT'S KEY AND ITS PLACE, STAMPED ON EVERY MODULE IN IT. The card drags
      a module and has to know which pair it belongs to and where that pair
      currently sits; carrying it on the point is what saves every reader from

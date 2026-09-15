@@ -57,7 +57,7 @@
 
 import { edges, pointInPolygon, polygonArea, distanceToBoundary } from './geometry.js';
 import { sub, add, mul, dot, len, distToSegment, shortSide } from './geometry.js';
-import { projectOntoWall } from './accentPlace.js';
+import { projectOntoWall, PLACE_DEFAULTS } from './accentPlace.js';
 /* THE POINT PRIMITIVE, BECAUSE A SWITCHBOARD IS ONE — see the note over
    `wallHostFor`. lib/point.js names the switchboard plate as one of the six
    elements that are a point with a fitting drawn on it, and this is that
@@ -119,11 +119,38 @@ export const SB_MM = {
  * switch or is it a socket" is a question about height, and the balcony feed is
  * the first rule that will want to.
  */
+/** THE ROLE AN AIR-CONDITIONER'S SOCKET CARRIES, and how high the unit hangs.
+ *  ABOVE `SB_HEIGHT_MM` BECAUSE THAT TABLE READS BOTH — a `const` named in an
+ *  object literal below it is a temporal dead zone and a module that throws on
+ *  import. @see LAMP_BOARD_ROLE, which is named the same way for the same job. */
+export const AC_BOARD_ROLE = 'ac';
+export const AC_HEIGHT_MM = 2100;
+
 export const SB_HEIGHT_MM = {
   door: [1200],
   bay: [1200],
   bedside: [700],
-  facing: [700, 1200],
+  /* --- THE TELEVISION WALL, WHICH IS TWO ROLES AND NOT ONE LIST -------------
+     700 IS THE SOCKET AT THE UNIT — the height the equipment stands at — and
+     1200 IS THE SWITCH above it, for whatever is operated standing in front of
+     it. Those two numbers have not changed and neither has what they are for.
+     WHAT CHANGED IS THAT THEY ARE TWO BOARDS. They were one entry, `[700,
+     1200]`, because two plates stacked in ELEVATION are one rectangle in a view
+     from above — true of the wall as built, and false of the drawing as used: a
+     single mark is one thing to hover, one thing to drag and one thing to
+     delete, so the upper plate could not be moved on its own, read on its own,
+     or taken off a wall that only wanted the socket. See FACING_PAIR, which
+     places them side by side instead. */
+  facing: [700],
+  facingSwitch: [1200],
+  /* --- AND THE ONE AT A BASIN -----------------------------------------------
+     1050 IS MIRROR HEIGHT, which is where a shaver, a trimmer and a hair dryer
+     are actually plugged in: standing at the basin, arm bent, beside the glass.
+     It is neither switch height (1200, reached walking past) nor socket height
+     (300, behind the furniture) — it is the one plate in a house positioned by
+     what a person's HANDS are doing rather than by what they are walking past.
+     See rule 4 in planSwitchboards. */
+  basin: [1050],
   /* --- AND THE ONE PLATE THAT IS NOT OPERATED STANDING UP ------------------
      300 IS SOCKET HEIGHT, above the skirting, which is where a socket for a
      floor lamp goes — and the switch is on the same plate at the same height,
@@ -135,6 +162,20 @@ export const SB_HEIGHT_MM = {
      electrician chasing a socket to eye level. Same figure `asOutlet` uses for
      the same reason. */
   lamp: [300],
+  /* --- AND THE ONE BESIDE AN AIR-CONDITIONER ------------------------------
+     2100 IS WHERE THE INDOOR UNIT HANGS, so it is where its supply is. A split
+     unit is screwed up near the ceiling and fed from immediately beside it; a
+     socket for one at 300 would have a flex running the whole height of the
+     wall, which is neither what is built nor what anybody draws.
+     IT IS THE SAME FIGURE WHETHER THE SUPPLY IS A SOCKET OR A POINT, because
+     it is the UNIT's height and not the fitting's — see lib/wallUnit.js, where
+     the two feeds differ in where they sit ALONG the wall and in nothing else.
+     AND IT HAS TO BE SPENT AS AN OVERRIDE. A socket outlet takes 300 from
+     `asOutlet`, which is right for the general-purpose socket that conversion
+     is normally about and wrong for this one; `applyMode` applies a stored
+     height AFTER the conversion precisely so a stated figure survives it. See
+     `acFeedWrites`. */
+  [AC_BOARD_ROLE]: [AC_HEIGHT_MM],
 };
 
 /** THE ROLE A STANDING LAMP'S OWN PLATE CARRIES. A named constant because four
@@ -142,6 +183,7 @@ export const SB_HEIGHT_MM = {
  *  whether it is born a switchboard, and whether it gets a spare socket — and a
  *  string spelled out in four places is three chances to mistype one. */
 export const LAMP_BOARD_ROLE = 'lamp';
+
 
 /* Switch height, in mm — under this a plate is equipment rather than a switch
    somebody flicks. Nothing filters on it yet; it is here so that when something
@@ -169,6 +211,24 @@ export const SB_SWITCH_MIN_MM = 600;
 export const LAMP_SOCKET_MAX_MM = 750;
 
 /**
+ * HOW FAR ROUND THE WALLS FROM A BASIN SCONCE ITS PLATE MAY STAND, in feet.
+ *
+ * TWO, AND IT IS AN ARM'S REACH FROM THE BASIN. The plate is for something held
+ * in a hand at the mirror, so it has to be beside the mirror — and the sconces
+ * ARE the mirror's edges, one either side, which is what makes them the right
+ * thing to measure from rather than the room.
+ *
+ * ROUND THE WALLS AND NOT ACROSS THE FLOOR, which is the whole reason this is an
+ * arc length. A basin in the corner of a small WC has a sconce with six inches
+ * of wall beside it and a return; two feet measured as the crow flies would put
+ * the plate through the wall, and two feet measured round the walls turns the
+ * corner and lands on the plaster next to it — which is where the shaver socket
+ * in that bathroom is. `plateAtS` already treats the walls as one closed path,
+ * so the corner case costs nothing.
+ */
+export const BASIN_RUN_FT = 2;
+
+/**
  * HOW HIGH A PLATE IS SET, in mm — the override if there is one, the role's own
  * figure otherwise, and switch height for a role this file has not heard of.
  *
@@ -193,19 +253,92 @@ export function heightsFor(role) {
 }
 
 /**
- * HOW MANY PLATES THE TELEVISION WALL'S BOARD IS.
+ * HOW MANY SOCKETS A PLATE CARRIES BEFORE ANYTHING ASKS FOR ONE, by role.
  *
- * TWO, STACKED IN ELEVATION — the socket and the switch above it, on the same
- * piece of wall at the same point in plan. It is a count and not a geometry:
- * this drawing is a view from above, so both plates are the one rectangle the
- * canvas draws, and the number exists so that what gets ORDERED is two.
+ * A PROPERTY OF THE ROLE, EXACTLY LIKE THE HEIGHT, and here for the same reason:
+ * what a plate IS decides what is on it before any fitting is drawn. One is the
+ * ordinary answer — the spare, the socket nobody draws and everybody wants; see
+ * the note on the spare pair in switchboards.js.
  *
- * IT IS THE HEIGHT LIST'S LENGTH AND NOT A `2`, which is the whole reason the
- * table above comes first. The two facts are one fact — the board is two plates
- * BECAUSE it is a plate at 700 and a plate at 1200 — and while they were two
- * literals it was possible to add a third height and still order two plates.
+ * TWO AT A BEDSIDE. That plate is not a switch plate that happens to be low
+ * down: it is the one you reach lying down, and what is plugged in there is a
+ * phone on charge AND a lamp, every night, in every bedroom anybody builds. One
+ * socket at a bedside is a socket somebody has to unplug their phone from to
+ * read. This is the figure that decides whether a standing lamp brings its own
+ * socket or plugs into one that is already there — see `composeSwitchboard`.
+ *
+ * NONE ON A LAMP'S OWN PLATE. That plate exists BECAUSE somebody wanted a socket
+ * there, and the lamp's own flow brings the socket and its switch. A spare on
+ * top would double a three-module frame to six for a floor lamp, half of it
+ * unasked. See LAMP_BOARD_ROLE.
  */
-export const FACING_PLATES = SB_HEIGHT_MM.facing.length;
+export const SB_SOCKETS = {
+  bedside: 2,
+  [LAMP_BOARD_ROLE]: 0,
+};
+
+/** @see SB_SOCKETS — one is the ordinary answer, for every role not named there. */
+export const socketsFor = (role) => SB_SOCKETS[role] ?? 1;
+
+/**
+ * HOW MANY PLATES THE TELEVISION WALL GETS — across both of its boards.
+ *
+ * TWO: the socket at 700 and the switch at 1200. That has always been the
+ * number; what it counts has changed. It used to be the length of one role's
+ * height list, because the pair was one board carrying `plates: 2`. They are now
+ * two boards of one plate each — see FACING_PAIR — so the count is the sum, and
+ * saying it that way is what keeps "the television wall is two plates" a fact
+ * this file states once rather than a `2` somebody has to keep in step.
+ *
+ * IT IS STILL DERIVED AND STILL NOT A LITERAL, for the reason the table above
+ * comes first: the board is two plates BECAUSE it is a plate at 700 and a plate
+ * at 1200, and a third height must not be able to appear without the count
+ * following it.
+ */
+export const FACING_PLATES =
+  SB_HEIGHT_MM.facing.length + SB_HEIGHT_MM.facingSwitch.length;
+
+/**
+ * THE TWO PLATES ON THE TELEVISION WALL, AS TWO BOARDS.
+ *
+ * THEY WERE ONE BOARD CARRYING `plates: 2`, and the reasoning for that was about
+ * the WALL: the socket sits at 700 and the switch at 1200 on the same piece of
+ * plaster, so in a view from above they are one rectangle at one coordinate. Two
+ * board objects there would be two identical polygons painted on top of each
+ * other, only the last of which can be hovered, `markClashes` reporting a
+ * deliberate arrangement as a fight, and a Delete that removes the plate you can
+ * see and leaves an identical one behind it.
+ *
+ * ALL OF THAT IS TRUE AND IT WAS STILL THE WRONG TRADE, because it was reasoning
+ * about the wall rather than about the drawing. One mark is one thing to hover,
+ * one thing to drag and one thing to delete — so the switch could not be moved
+ * along to where the hand actually reaches it, could not be read on its own, and
+ * could not be taken off a wall that wanted only the socket. A plan is a thing
+ * people work ON, not only a picture of what is built.
+ *
+ * SO THEY ARE TWO BOARDS THAT START SIDE BY SIDE, one plate width apart centre
+ * to centre — two rectangles touching edge to edge, which is a 2-gang frame and
+ * is how the pair is built anyway. Neither hides the other, both drag, both
+ * delete, and `pair` keeps them out of the clash marker. The first is the
+ * position: the socket goes on the bed's centreline, because that is where the
+ * television is; the switch is the one that steps aside.
+ *
+ * THE ORDER IS THE ORDER THEY ARE SEATED IN, so the socket's id is unchanged
+ * from when this was one board. A plate somebody had already moved or deleted
+ * keeps its override.
+ */
+export const FACING_PAIR = [
+  { role: 'facing', tag: 'facing', servesShort: 'TV socket',
+    serves: 'the socket at the television unit',
+    short: 'on the bed\'s centreline',
+    why: 'on the wall facing the bed, where the bed\'s centreline meets it —'
+      + ' the socket the television stands at' },
+  { role: 'facingSwitch', tag: 'facing-switch', servesShort: 'TV switch',
+    serves: 'the switch on the television wall',
+    short: 'ganged beside the television socket',
+    why: 'on the wall facing the bed, ganged beside the television socket —'
+      + ' switch height, for whatever is operated standing in front of it' },
+];
 
 
 /** Blue, because the brief said blue and because nothing else on the plan is. */
@@ -1164,17 +1297,35 @@ export function placedBoards(seats = [], { polygonPx = [], pxPerFt = 0, opts = {
        facts is keyed off this role and nothing else. */
     const role = seat.role ?? 'placed';
     const forLamp = role === LAMP_BOARD_ROLE;
+    /* ...AND A THIRD, WHICH IS AN AIR-CONDITIONER'S. Same shape as the lamp's
+       and placed for the same kind of reason — a fitting that cannot work
+       without a supply brought one into existence — and it differs in the two
+       things that are actually different: it is at the UNIT's height rather
+       than at the floor, and it says what it is for. @see lib/wallUnit.js */
+    const forAc = role === AC_BOARD_ROLE;
     out.push({
       id: seat.id,
       roomId: seat.roomId,
       role,
+      /* WHICH AIR-CONDITIONER THIS ONE BELONGS TO, carried through because the
+         DRAWING needs it: the lead between a unit and its socket is a line
+         between two marks, and the canvas has to be able to pair them. It is
+         the seat's own back-reference — see useAcFeed for why the link points
+         this way — and it is `null` on every other plate, which is every plate
+         that is not one air-conditioner's. */
+      acId: seat.acId ?? null,
       placed: true,
-      serves: forLamp ? 'the standing lamp beside it' : 'whatever is wired to it',
-      servesShort: forLamp ? 'Lamp' : 'Board',
+      serves: forLamp ? 'the standing lamp beside it'
+        : forAc ? 'the air-conditioner beside it'
+          : 'whatever is wired to it',
+      servesShort: forLamp ? 'Lamp' : forAc ? 'AC' : 'Board',
       why: forLamp
         ? 'A standing lamp needs a socket within three feet, so one was put on'
           + ' the wall it is nearest.'
-        : 'Placed by hand on this wall.',
+        : forAc
+          ? 'An air-conditioner is fed from its own circuit, so a socket was put'
+            + ' on the wall a foot clear of the unit.'
+          : 'Placed by hand on this wall.',
       /* THROUGH `heightsFor` RATHER THAN OFF THE TABLE DIRECTLY, so a role with
          no entry falls back to switch height exactly as it did when this line
          read `SB_HEIGHT_MM.door`. `placed` has no entry and gets 1200; `lamp`
@@ -1698,6 +1849,45 @@ export function headSide(bed, polygon, opts = {}) {
 }
 
 /**
+ * THE WALL BEHIND THE HEAD OF THE BED — the run the headboard stands against.
+ *
+ * `nearestWall` WOULD NOT DO, and the case it gets wrong is the ordinary one. It
+ * takes the smallest distance from any of the box's four corners, and a bed in
+ * the corner of a room touches TWO walls at zero: whichever run the list happens
+ * to hold first then wins. A bedside plate on the wall along the SIDE of the bed
+ * is not a bedside plate — it is a plate level with somebody's knees.
+ *
+ * SO THE HEAD EDGE IS ASKED RATHER THAN THE BOX. `headSide` has already worked
+ * out which of the four edges it is (its `dir` points from the head toward the
+ * foot), and the run wanted is the one BOTH of that edge's corners lie against —
+ * a minimum over the MAXIMUM, which is what "the whole headboard is on this
+ * wall" means and what a single-corner test cannot say.
+ *
+ * `t0`/`t1` come back as the bed's own stretch along that run, because every
+ * caller wants them: a plate beside the bed is a step past one of the two.
+ */
+export function headWall(bed, head, runs, polygon, scale = 1) {
+  if (!bed || !head || !runs?.length) return null;
+  const cs = head.axis === 'x'
+    ? (head.dir > 0
+      ? [{ x: bed.x0, y: bed.y0 }, { x: bed.x0, y: bed.y1 }]
+      : [{ x: bed.x1, y: bed.y0 }, { x: bed.x1, y: bed.y1 }])
+    : (head.dir > 0
+      ? [{ x: bed.x0, y: bed.y0 }, { x: bed.x1, y: bed.y0 }]
+      : [{ x: bed.x0, y: bed.y1 }, { x: bed.x1, y: bed.y1 }]);
+  let best = null;
+  for (const run of runs) {
+    const d = Math.max(...cs.map((p) => distToSegment(p, run.a, run.b)));
+    if (!best || d < best.d) best = { run, d };
+  }
+  if (!best) return null;
+  const frame = runFrame(best.run, polygon, scale);
+  const ts = cornersOf(bed).map((p) => dot(sub(p, frame.origin), frame.u));
+  return { run: best.run, frame, dist: best.d,
+           t0: Math.min(...ts), t1: Math.max(...ts) };
+}
+
+/**
  * THE WALL IN FRONT OF THE BED — the first run a ray from the foot crosses.
  *
  * A RAY AND NOT "THE OPPOSITE EDGE OF THE BOX", because on anything but a plain
@@ -1734,8 +1924,10 @@ export function facingWall(bed, head, runs, polygon) {
  * Three rules, and every one of them reads something the drawing already knows:
  *
  *   1. the entry door        -> one board, 300mm past its latch jamb
- *   2. the bedside sconces   -> one board at each, on the sconce's own wall
- *   3. the wall facing the bed -> TWO boards, 300mm outboard of the bed's sides
+ *   2. the bed               -> one board at each bedside, a foot clear of it
+ *   3. the wall facing the bed -> a socket on its centreline and a switch beside
+ *   4. the basin             -> a shaver point at 1050, within two feet of it,
+ *                               and only where no plate stands there already
  *
  * RULE 3 REPLACED A TELEVISION HUNT, and the reason is worth keeping. It used to
  * take the strip along the TV unit, or — when the accent pass had not found a
@@ -1750,18 +1942,34 @@ export function facingWall(bed, head, runs, polygon) {
  * one click to remove, and a plate that was never placed because a console was
  * not on the drawing is a missing switch nobody notices until site.
  *
- * Rule 2 still takes the ALREADY-PLACED fitting rather than re-deriving one
- * from the furniture box: a sconce is where accentPlace put it, including any
- * hand slide, and recomputing it would put a board on a wall the fitting it
- * feeds is not on. Rule 3 works off the BED BOX, which is the upload-time
- * furniture detection and costs nothing.
+ * RULE 2 WORKS OFF THE BED BOX NOW TOO, and it used to take the already-placed
+ * sconces instead — a sconce is where accentPlace put it, hand slides and all,
+ * which was the better position and the wrong thing to DEPEND on. Deleting a
+ * sconce deleted its switchboard, silently. See rule 2 for the whole of it.
+ *
+ * SO NEITHER OF THE BEDROOM RULES READS A FITTING. Both work off the upload-time
+ * bed detection and cost nothing, and no pass has to have run for a bedroom to
+ * come out with its plates.
  */
 export function planSwitchboards({
   room,
   rooms = [],
   doors = [],
   roomTypes = {},
-  accentZones = [],
+  /* THE BASIN, AS ONE BOX IN PLAN PIXELS — the same shape `bedRect` arrives in
+     and for the same reason. See `projectBasinsPx` in lib/planProjection.js.
+     THE BOX AND NOT THE SCONCES, WHICH WAS THE FIRST DRAFT OF THIS RULE. The
+     sconces flank the mirror and were the obvious thing to measure two feet
+     from — and they are a FITTING. Somebody may not want them; deleting one is a
+     click; and a switch that disappears when a light is deleted is precisely the
+     defect rule 2 was rewritten to remove. The box is what the accent pass SAW
+     rather than what it proposed, it is what those sconces were derived from in
+     the first place, and there is no gesture on the canvas that removes it.
+     THE ANCHORS ARE STILL THE SCONCE POSITIONS, computed here from the box with
+     `basinOffsetFrac` — accentPlace's own figure, read rather than restated. So
+     the plate lands exactly where it landed when the sconces were the input, and
+     it lands there whether or not they are on the drawing. */
+  basinRect = null,
   /* THE BED, AS ONE BOX IN PLAN PIXELS. The upload-time furniture detection's
      answer for this room, picked by the caller — see `bedZoneIn` in bedGrid.js
      for how the largest of several is chosen. Rule 3 needs nothing else, and
@@ -1811,7 +2019,7 @@ export function planSwitchboards({
   // bought — see the header. The parameter stays because `bedside` genuinely has
   // a prerequisite, and because a caller that wants only the door rule (the
   // schedule's count, say) should be able to ask for only the door rule.
-  rules = ['door', 'bedside', 'facing'],
+  rules = ['door', 'bedside', 'facing', 'basin'],
   opts = {},
 } = {}) {
   // `pxPerFt` INTO THE OPTIONS AS WELL AS ITS OWN ARGUMENT. `headSide` measures
@@ -1948,42 +2156,111 @@ export function planSwitchboards({
   }
 
   // --- 2. the bedsides ------------------------------------------------------
-  const sconces = !wants.has('bedside') ? []
-    : accentZones.filter((z) => z.type === 'sconce' && z.group === 'bedside'
-      && !z.rejected && z.point && z.inward && z.along);
-  if (wants.has('bedside') && !sconces.length) {
-    notes.push('No bedside sconces have been placed, so there are no boards beside the bed.');
-  }
-  for (const z of sconces) {
-    const base = {
-      // THE SCONCE'S OWN ID IN THE BOARD'S, which is what makes a bedside
-      // dismissal stick to the bedside it was made about.
-      id: id(`bedside-${z.id}`), roomId: room.id, role: 'bedside', fromId: z.id,
-      serves: 'a bedside sconce', servesShort: 'Bedside',
-    };
-    if (!scaled) { boards.push({ ...base, rejected: NO_SCALE }); continue; }
-    const at = plateAt(z.point, { u: z.along, inward: z.inward, origin: z.point }, pxPerFt,
-      { wall: z.wall, t: z.t });
-    /* NO SLIDE HERE, AND THAT IS THE DIFFERENCE BETWEEN THIS RULE AND THE
-       DOOR'S. The door's board is "300mm from a thing", so a foot further along
-       the same wall is the same board doing the same job. This one IS the
-       sconce's position — a bedside switch is the switch you reach from the
-       pillow — and a plate slid clear of a wardrobe is no longer beside the
-       bed, it is a plate on a wall with a story attached. The honest answer is
-       that this bedside cannot have one, said in a sentence somebody can act
-       on. */
-    if (blocked(at, keeps)) {
-      boards.push({ ...base,
-        rejected: 'The wall beside this bed is joinery where the switch would go,'
-          + ' so there is no bedside board here.' });
-      continue;
+  //
+  // TWO PLATES, ONE EITHER SIDE OF THE BED, IN EVERY BEDROOM — off the BED BOX,
+  // and off nothing else.
+  //
+  // IT USED TO READ THE SCONCES, and the POSITION it took from them was right: a
+  // bedside switch is the switch you reach from the pillow, and the sconce hangs
+  // over the pillow. What was wrong was the DEPENDENCY.
+  //
+  // A SCONCE IS A FITTING SOMEBODY MAY NOT WANT; A SWITCH BESIDE THE BED IS NOT.
+  // Deleting the sconces deleted their switchboards — silently, because the
+  // dismissal is stored against the ACCENT's id (see `accentDismissed`) and
+  // nothing on the drawing joins the two acts — so a bedroom came out with no
+  // plate at either pillow and no sentence anywhere saying why. That plate is
+  // wanted whether or not a light hangs over it: it is where the lamp, the
+  // phone and the room's own ceiling are switched from, and it is the one
+  // switch in the room somebody uses lying down.
+  //
+  // SO IT IS TAKEN AS A GIVEN, exactly as rule 3 is, and the trade is the one
+  // stated there: a plate nobody wanted is one click to remove, and a plate that
+  // was never placed is a missing switch nobody notices until site.
+  //
+  // ONE FOOT CLEAR OF THE MATTRESS, ON THE HEADBOARD WALL — the same figure and
+  // the same wall accentPlace.js puts the sconces on, READ FROM ITS OWN
+  // `bedsideOffsetFt` rather than restated here, so the plate cannot drift away
+  // from the light the day one of them is retuned. Where both exist they land on
+  // top of each other, which is what they are: the switch directly below the
+  // light.
+  //
+  // WHAT IS ON THE PLATE IS DECIDED IN flows.js AND NOT HERE. A bedside sconce
+  // takes the nearer of the two, and so does a pendant hung beside the bed. This
+  // rule places plaster and says nothing about what is switched from it — which
+  // is what makes it survivable: no fitting has to exist for it to run.
+  const bedsideBase = (side) => ({
+    // KEYED ON THE SIDE AND NOT ON A FITTING. The old id carried the sconce's,
+    // so a re-run of the accent pass could rename a plate somebody had already
+    // moved or deleted. A bed has a left and a right for as long as it is in the
+    // room, which is the bar every other id in this file clears.
+    id: id(`bedside-${side < 0 ? 'l' : 'r'}`), roomId: room.id, role: 'bedside',
+    side, serves: 'the bedside', servesShort: 'Bedside',
+  });
+  if (!wants.has('bedside')) {
+    // Not asked for, and nothing to say about it.
+  } else if (!bedRect) {
+    notes.push('No bed was found in this space, so there are no plates beside one.');
+  } else if (!scaled) {
+    for (const side of [-1, 1]) boards.push({ ...bedsideBase(side), rejected: NO_SCALE });
+  } else {
+    const head = headSide(bedRect, polygon, o);
+    const wall = head && headWall(bedRect, head, runs, polygon, scale);
+    if (!head) {
+      notes.push('The bed is not against a wall on this plan, so there is no'
+        + ' headboard wall to put a bedside plate on.');
+    } else if (!wall) {
+      notes.push('No wall runs behind the head of this bed, so there are no'
+        + ' plates beside it.');
+    } else {
+      const step = PLACE_DEFAULTS.bedsideOffsetFt * pxPerFt;
+      const keep = px(SB_MM.along, pxPerFt) / 2 + px(SB_MM.clearEnd, pxPerFt);
+      const L = wall.frame.wallLength;
+      for (const side of [-1, 1]) {
+        const base = bedsideBase(side);
+        const want = side < 0 ? wall.t0 - step : wall.t1 + step;
+        if (L < keep * 2) {
+          boards.push({ ...base,
+            rejected: 'The wall behind this bed is too short to take a board.' });
+          continue;
+        }
+        /* CLAMPED, LIKE RULE 3 AND FOR RULE 3'S REASON. A bed pushed into a
+           corner has a foot of plaster beside one pillow and a return beside the
+           other, and the answer to that is the plate as close to the bedside as
+           the wall allows, SAYING that it moved — not a bedroom with a switch at
+           one pillow and nothing at the other. A plate hanging off the end of a
+           run is the one thing that does not get built. */
+        const t = clamp(want, keep, L - keep);
+        const moved = Math.abs(t - want) > 1e-6;
+        const at = plateAt(add(wall.frame.origin, mul(wall.frame.u, t)),
+          wall.frame, pxPerFt,
+          { wall: { a: wall.run.a, b: wall.run.b, index: wall.run.index },
+            t, clamped: moved });
+        /* NO SLIDE PAST JOINERY, AND THAT IS THE DIFFERENCE BETWEEN THIS RULE
+           AND THE DOOR'S. The door's board is "300mm from a thing", so a foot
+           further along the same wall is the same board doing the same job. This
+           one is a POSITION — beside the pillow — and a plate slid clear of a
+           wardrobe is no longer beside the bed, it is a plate on a wall with a
+           story attached. The honest answer is that this bedside cannot have
+           one, said in a sentence somebody can act on. */
+        if (blocked(at, keeps)) {
+          boards.push({ ...base,
+            rejected: 'The wall beside this bed is joinery where the switch would'
+              + ' go, so there is no bedside board here.' });
+          continue;
+        }
+        const hand = side < 0 ? 'left' : 'right';
+        boards.push({
+          ...base, ...at,
+          shortWhy: `a foot clear of the bed, ${hand} side`,
+          why: `beside the bed — a foot clear of the mattress on the headboard`
+            + ` wall, at the ${hand}-hand pillow`
+            + (moved ? ', moved along to stay on the wall' : ''),
+          ...(moved
+            ? { poor: 'the wall ran out beside this pillow, so the plate moved along' }
+            : {}),
+        });
+      }
     }
-    boards.push({
-      ...base,
-      ...at,
-      shortWhy: `at the sconce ${z.what ?? 'beside the bed'}`,
-      why: `at the sconce ${z.what ?? 'beside the bed'}`,
-    });
   }
 
   // --- 3. the wall facing the bed -------------------------------------------
@@ -2019,18 +2296,19 @@ export function planSwitchboards({
   } else if (!bedRect) {
     notes.push('No bed was found in this space, so there is no wall facing one.');
   } else {
-    const base = {
-      id: id('facing'), roomId: room.id, role: 'facing',
-      // `plates` IS NOT SET HERE ANY MORE. It is stamped from the role's height
-      // list on the way out — see `spec` at the end of this function — because
-      // the count and the heights are one fact and were two literals.
-      serves: 'the television wall',
-      servesShort: 'Facing the bed',
-    };
+    /* `plates` IS NOT SET HERE. It is stamped from the role's height list on the
+       way out — see `spec` at the end of this function — because the count and
+       the heights are one fact and were two literals.
+       `pair` IS WHAT MAKES THESE TWO ONE ARRANGEMENT rather than two rules that
+       happen to agree. Only `markClashes` reads it, and only to stay quiet. */
+    const facingBase = (f) => ({
+      id: id(f.tag), roomId: room.id, role: f.role, pair: id('facing'),
+      serves: f.serves, servesShort: f.servesShort,
+    });
     const head = scaled && headSide(bedRect, polygon, o);
     const front = head && facingWall(bedRect, head, runs, polygon);
     if (!scaled) {
-      boards.push({ ...base, rejected: NO_SCALE });
+      for (const f of FACING_PAIR) boards.push({ ...facingBase(f), rejected: NO_SCALE });
     } else if (!head) {
       notes.push('The bed is not against a wall on this plan, so there is no'
         + ' headboard wall to work from and no wall facing it.');
@@ -2059,35 +2337,190 @@ export function planSwitchboards({
       // A wall shorter than one plate and its clearances cannot take a board at
       // all, and clamping into one would draw a plate hanging off both ends.
       if (run.length < keep * 2) {
-        boards.push({ ...base,
-          rejected: 'The wall facing the bed is too short to take a board.' });
-      } else {
-        const t = clamp(tHit, keep, run.length - keep);
-        const moved = Math.abs(t - tHit) > 1e-6;
-        const at = plateAt(add(frame.origin, mul(frame.u, t)), frame, pxPerFt, {
-          wall: { a: run.a, b: run.b, index: run.index }, t, clamped: moved,
-        });
-        /* AND THIS RULE CANNOT STEP ASIDE EITHER, for the reason stated two
-           paragraphs up about corners: the position is not "near" anything, it
-           IS the bed's centreline, and there is one of those. A television wall
-           whose centreline is a wardrobe is a real plan — a wall of fitted
-           units with the bed facing it — and the answer to it is to say so,
-           not to put the socket for the television a metre to one side of the
-           television. */
-        if (blocked(at, keeps)) {
-          boards.push({ ...base,
-            rejected: 'The wall facing the bed is joinery where the centreline'
-              + ' meets it, so there is no board on it.' });
-        } else {
-        boards.push({
-          ...base,
-          ...at,
-          shortWhy: 'on the bed\'s centreline',
-          why: 'on the wall facing the bed, where the bed\'s centreline meets it'
-            + (moved ? ' — moved along to clear the corner' : ''),
-          ...(moved ? { poor: 'the centreline lands in a corner, so it was moved along' } : {}),
-        });
+        for (const f of FACING_PAIR) {
+          boards.push({ ...facingBase(f),
+            rejected: 'The wall facing the bed is too short to take a board.' });
         }
+      } else {
+        /* THE SOCKET HOLDS THE CENTRELINE AND THE SWITCH STEPS ASIDE — see
+           FACING_PAIR. Which way it steps is whichever end of the wall has more
+           room, the same idiom planChunkBoards uses when its plate lands on a
+           dedicated one, so the pair does not walk itself into the corner the
+           clamp below then has to undo. */
+        const along = px(SB_MM.along, pxPerFt);
+        const away = (run.length - keep - tHit) >= (tHit - keep) ? 1 : -1;
+        const seats = [{ f: FACING_PAIR[0], want: tHit },
+                       { f: FACING_PAIR[1], want: tHit + away * along }];
+        for (const seat of seats) {
+          const base = facingBase(seat.f);
+          const t = clamp(seat.want, keep, run.length - keep);
+          const moved = Math.abs(t - seat.want) > 1e-6;
+          const at = plateAt(add(frame.origin, mul(frame.u, t)), frame, pxPerFt, {
+            wall: { a: run.a, b: run.b, index: run.index }, t, clamped: moved,
+          });
+          /* AND THIS RULE CANNOT STEP ASIDE EITHER, for the reason stated two
+             paragraphs up about corners: the position is not "near" anything, it
+             IS the bed's centreline, and there is one of those. A television wall
+             whose centreline is a wardrobe is a real plan — a wall of fitted
+             units with the bed facing it — and the answer to it is to say so,
+             not to put the socket for the television a metre to one side of the
+             television. */
+          if (blocked(at, keeps)) {
+            boards.push({ ...base,
+              rejected: 'The wall facing the bed is joinery where the centreline'
+                + ' meets it, so there is no board on it.' });
+            continue;
+          }
+          boards.push({
+            ...base,
+            ...at,
+            shortWhy: seat.f.short,
+            why: seat.f.why
+              + (moved ? ' — moved along to clear the corner' : ''),
+            ...(moved ? { poor: 'the centreline lands in a corner, so it was moved along' } : {}),
+          });
+        }
+      }
+    }
+  }
+
+  /* --- 4. the basin, in a bathroom -----------------------------------------
+     A SHAVER POINT AT THE MIRROR, and only where the room does not already have
+     a plate there. Every bathroom anybody builds has one: a trimmer, a shaver, a
+     hair dryer, plugged in standing at the basin. It is not drawn, it is not
+     asked for, and it is the single most reliably missing thing on a bathroom
+     sheet — which is exactly the bar rule 3 sets for taking something as a given.
+
+     MEASURED FROM THE BASIN, ROUND THE WALLS. The anchors are the two points a
+     sconce would hang at — a fraction of the basin's own width past each end of
+     it, see rule 3 of PLACEMENT_RULES in accentPlace.js — because those are the
+     mirror's edges and "beside the mirror" is what this rule means. They are
+     computed FROM THE BOX rather than read off the fittings, so the plate is
+     there whether or not anybody wanted the sconces; see `basinRect`.
+     ARC LENGTH RATHER THAN DISTANCE, so a basin in a corner reaches round the
+     return onto the plaster next to it instead of two feet through a wall —
+     `plateAtS` already treats the walls of a room as one closed path.
+
+     AND THE ROOM'S OWN PLATE COUNTS. If the board beside the door already stands
+     inside that run — which is the ordinary small bathroom, basin beside the
+     door — then the socket goes on THAT plate and there is nothing to add here.
+     A second frame 200mm from the first is not a design, it is an oversight with
+     two plates. Only `servesBay` boards count: a plate that cannot carry the
+     room's own lights is not "the bathroom's switchboard".
+
+     OUTBOARD OF A SCONCE FIRST, AND THE NEAREST CLEAR POSITION WINS. Inboard is
+     the mirror. The scan steps out in half-plate increments and stops at the
+     first piece of wall that can take a plate, is clear of joinery, and is not
+     on top of a board already there — so the plate lands as close to the basin
+     as the wall allows, which is where somebody reaches for it.
+
+     NOTHING WITHIN THE RUN, AND IT SAYS SO. A basin whose two feet of wall are
+     all door frame and cistern gets no plate and a sentence, rather than a plate
+     somewhere it could not be built. */
+  const basinBase = () => ({
+    id: id('basin'), roomId: room.id, role: 'basin',
+    serves: 'the basin — a shaver, a trimmer, a hair dryer',
+    servesShort: 'Basin',
+    // WHAT ITS SOCKET IS FOR, which is what the plate is for. See `spareWhat`
+    // in switchboards.js: "a spare outlet" is the truth on every other plate.
+    socketWhat: 'a shaver or trimmer',
+  });
+  if (!wants.has('basin')) {
+    // Not asked for, and nothing to say about it.
+  } else if (!basinRect) {
+    notes.push('No basin has been found in this space, so there is no shaver point beside one.');
+  } else if (!scaled) {
+    boards.push({ ...basinBase(), rejected: NO_SCALE });
+  } else {
+    const { segs, total } = wallPath(runs);
+    /** How far round the walls a point is — unclamped, so a sconce in a corner
+        keeps its own position rather than the nearest one a plate could use. */
+    const sAt = (p) => {
+      let best = null;
+      for (const seg of segs) {
+        const f = runFrame(seg.run, polygon, scale);
+        const t = clamp(dot(sub(p, f.origin), f.u), 0, seg.length);
+        const d = len(sub(p, add(f.origin, mul(f.u, t))));
+        if (!best || d < best.d) best = { d, s: seg.s0 + t };
+      }
+      return best?.s ?? null;
+    };
+    /** The signed short way round from one arc length to another. */
+    const wrap = (x) => (total > 0
+      ? ((((x + total / 2) % total) + total) % total) - total / 2 : x);
+    /* THE WALL THE BASIN'S LONG SIDE FACES, and `nearestWall` will not do: a
+       basin in the corner of a WC touches two runs at zero and a minimum over
+       four corners then picks whichever the list held first — the wall along the
+       END of the counter, where a plate would be behind the person using it. The
+       minimum over the MAXIMUM picks the wall the long side is against, which is
+       the one the mirror is on. Same trick as `headWall`, same reason. */
+    let host = null;
+    for (const run of runs) {
+      const d = Math.max(...cornersOf(basinRect)
+        .map((p) => distToSegment(p, run.a, run.b)));
+      if (!host || d < host.d) host = { run, d };
+    }
+    const hostSeg = host && segs.find((g) => g.run === host.run);
+    /* AND THE TWO SCONCE POSITIONS, DERIVED. `placeZone` puts a flanking sconce
+       a fraction of the object's own width past each end of it; reading that
+       fraction rather than restating it is what keeps the plate under the light
+       on every plan where both exist. */
+    let anchors = [];
+    if (hostSeg) {
+      const f = runFrame(host.run, polygon, scale);
+      const ts = cornersOf(basinRect).map((p) => dot(sub(p, f.origin), f.u));
+      const t0 = Math.min(...ts), t1 = Math.max(...ts);
+      const off = (t1 - t0) * PLACE_DEFAULTS.basinOffsetFrac;
+      anchors = [hostSeg.s0 + t0 - off, hostSeg.s0 + t1 + off];
+    }
+    const reach = BASIN_RUN_FT * pxPerFt;
+    const within = (v) => v != null && anchors.some((a) => Math.abs(wrap(v - a)) <= reach + 1e-6);
+    const along = px(SB_MM.along, pxPerFt);
+
+    const already = boards.find((b) => !b.rejected && b.point && servesBay(b)
+      && within(sAt(b.point)));
+    if (!total || !anchors.length) {
+      notes.push('This space has no wall run to measure a basin plate along.');
+    } else if (already) {
+      notes.push(`The ${already.servesShort || 'board'} plate already stands within`
+        + ` ${BASIN_RUN_FT} feet of the basin, so the shaver socket goes on that`
+        + ' rather than on a second plate beside it.');
+    } else {
+      /* OUTBOARD FIRST. With two sconces, "outboard" is away from the other one;
+         with one, either way and the wall decides. */
+      const lanes = [];
+      for (const a of anchors) {
+        const other = anchors.find((x) => x !== a);
+        const away = other == null ? 1 : (wrap(other - a) >= 0 ? -1 : 1);
+        lanes.push({ rank: 0, a, dir: away }, { rank: 1, a, dir: -away });
+      }
+      lanes.sort((p, q) => p.rank - q.rank);
+      let made = null;
+      for (const lane of lanes) {
+        for (let d = along; d <= reach + 1e-6; d += along / 2) {
+          const at = plateAtS(lane.a + lane.dir * d, runs, polygon, pxPerFt, scale, {});
+          // `plateAtS` clamps into its run and skips a run too short for a
+          // plate, so what comes back can be outside the two feet asked for.
+          if (!at || !within(sAt(at.point))) continue;
+          if (blocked(at, keeps)) continue;
+          if (boards.some((b) => !b.rejected && b.point
+            && len(sub(b.point, at.point)) < along)) continue;
+          made = { at, d };
+          break;
+        }
+        if (made) break;
+      }
+      if (!made) {
+        notes.push(`There is no clear piece of wall within ${BASIN_RUN_FT} feet of the`
+          + ' basin for a plate, so this bathroom has no shaver point.');
+      } else {
+        const ft = Math.round((made.d / pxPerFt) * 10) / 10;
+        boards.push({
+          ...basinBase(), ...made.at,
+          shortWhy: `${ft} ft along the wall from the basin`,
+          why: `beside the basin — ${ft} ft round the wall from the edge of the`
+            + ' mirror, at the height a shaver is plugged in',
+        });
       }
     }
   }
@@ -2149,6 +2582,15 @@ export function markClashes(boards, pxPerFt) {
     for (let j = i + 1; j < live.length; j++) {
       const a = live[i], b = live[j];
       if (a.wall?.index !== b.wall?.index) continue;
+      /* A DELIBERATE PAIR IS NOT A CLASH. The television wall's socket and the
+         switch above it are placed side by side by ONE rule and ganged into one
+         frame on site — see FACING_PAIR — so two of them within a plate of each
+         other is the arrangement working rather than two rules fighting over the
+         same piece of plaster. Marking it would put a `poor` on every bedroom on
+         the sheet and teach the reader to ignore the mark. Everything else
+         within a plate is still marked, including two of these dragged onto a
+         third board. */
+      if (a.pair && a.pair === b.pair) continue;
       if (len(sub(a.point, b.point)) >= gap) continue;
       hit.set(a.id, (hit.get(a.id) ?? []).concat(b.id));
       hit.set(b.id, (hit.get(b.id) ?? []).concat(a.id));
@@ -2218,7 +2660,28 @@ export const CHUNK_BOARD = {
    plate whose only module is a lamp's. It is not in the rules' fallback list
    today either — that list is the door and bay boards — so this changes no
    answer now and states the intent for the day something adds it. */
-export const DEDICATED_ROLES = new Set(['bedside', 'facing', 'socket', 'lamp']);
+export const DEDICATED_ROLES =
+  new Set(['bedside', 'facing', 'facingSwitch', 'socket', 'lamp', 'basin']);
+
+/**
+ * ROLES WHOSE PLATE IS AN APPLIANCE POINT RATHER THAN A LIGHT SWITCH.
+ *
+ * WHAT IT DECIDES IS THE RATING, and nothing else. A basin plate carries a
+ * shaver, a trimmer, a hair dryer — none of which is a light — so it is built at
+ * the rating above the light switch rather than at it. See `applianceA` in
+ * switchboards.js for the number and why it is derived, and `boardModeOf` in
+ * features/electrical/boardRules.js for where this is read.
+ *
+ * A SET AND NOT A TEST ON THE ROLE AT THE CALL SITE, for the reason
+ * DEDICATED_ROLES is one: the rule and the vocabulary have to move together.
+ */
+/* AND AN AIR-CONDITIONER'S IS THE SECOND. It is the plainest case the set has:
+   a split unit is a dedicated circuit and never a light, so a plate of its own
+   that somehow arrived with no stated rating must not fall back to the 6A the
+   ceiling is switched at. It is belt and braces rather than the mechanism —
+   `useAcFeed` writes the rating explicitly on every one it makes — and it is
+   what the plate answers if that entry is ever cleared. @see AC_BOARD_ROLE */
+export const APPLIANCE_ROLES = new Set(['basin', AC_BOARD_ROLE]);
 export const servesBay = (b) => !DEDICATED_ROLES.has(b?.role);
 
 /** Rect corners, and its centre. Local because a bay is a rect and nothing more. */

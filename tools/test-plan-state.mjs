@@ -295,6 +295,7 @@ const EMPTY_DOC = {
   surfaceResults: {}, surfaceDismissed: [], manualSurfaces: [], artDismissed: [],
   wallResults: {}, runTrims: {}, runsOff: [],
   manualCoves: [], manualTracks: [], manualCobs: [], manualSpots: [], autoSpots: [],
+  elecPoints: [],
   cobArrays: [], trackFixtures: [], renderRefs: {},
   boardsOff: [], boardMoves: {}, boardPoints: {}, flowBoards: {}, flowBends: {},
   flowLinks: {},
@@ -414,6 +415,23 @@ function randomAction(r) {
                                     xFt: 5, yFt: 6, aim: r() * 6.28 } };
   if (pick === 24) return { type: 'LIST_REMOVED', field: 'manualSpots',
                             id: `sp${1 + Math.floor(r() * 3)}` };
+  /* AND THE POINTS, BOTH KINDS — a wall one held on the perimeter and a ceiling
+     one free, which is the shape lib/point.js gives them. Generic list actions
+     and no case of their own, so what this covers is the round trip. */
+  if (pick === 4) return oneOf([
+    { type: 'LIST_ADDED_MINTED', field: 'elecPoints', idPrefix: 'ep', stamp: 'zz',
+      item: { roomId: room, on: 'walls', u: r(), x: null, y: null,
+              heightMm: oneOf([1200, 1800, 2100]), amps: oneOf([null, 6, 16, 20]) } },
+    { type: 'LIST_ADDED_MINTED', field: 'elecPoints', idPrefix: 'ep', stamp: 'zz',
+      item: { roomId: room, on: null, u: null, x: 2, y: 5,
+              heightMm: null, amps: oneOf([null, 6, 16]) } },
+    { type: 'LIST_PATCHED', field: 'elecPoints', id: 'ep-zz-0',
+      patch: { heightMm: oneOf([300, 1050, 2200]) } },
+    { type: 'LIST_PATCHED', field: 'elecPoints', id: 'ep-zz-0',
+      patch: { u: r() } },
+    { type: 'LIST_REMOVED', field: 'elecPoints', id: 'ep-zz-0' },
+    { type: 'LIST_REMOVED_MANY', field: 'elecPoints', ids: ['ep-zz-0', 'ep-zz-1'] },
+  ]);
   if (pick === 9) return { type: 'COB_SPEC_SET', id: `cb${1 + Math.floor(r() * 3)}`,
                            watts: oneOf([7, 12, 18]), beam: oneOf([24, 36, 60]) };
   if (pick === 10) return { type: 'AUTO_COBS_DROPPED', roomId: room };
@@ -1492,7 +1510,7 @@ section('the reducer owns what it claims to own');
       doors: [], doorsOk: false, zones: [],
       boardsOff: [], boardMoves: {}, boardPoints: {}, flowBoards: {}, flowBends: {},
       flowLinks: {},
-      manualBoards: [], boardKinds: {}, boardHeights: {}, boardOrders: {},
+      manualBoards: [], elecPoints: [], boardKinds: {}, boardHeights: {}, boardOrders: {},
       unitId: null, pdfPage: null,
       scaleMode: 'door', refId: 'door900', customFt: 3,
       measure: { a: null, b: null }, doorPick: null, stated: null, ceilingFt: 10,
@@ -1513,8 +1531,8 @@ section('the reducer owns what it claims to own');
       zoom: 1, view: 'spaces',
     }),
     JSON.stringify(initialDoc()));
-  ok('...and it is sixty-five fields, which is the whole document',
-    fields.length === 65, `${fields.length} fields`);
+  ok('...and it is sixty-six fields, which is the whole document',
+    fields.length === 66, `${fields.length} fields`);
   /* AND THE DOCUMENT IS NOW EXACTLY WHAT THE FIXTURE DESCRIBES. While the
      migration was in progress the two could differ — a field App still held in
      `useState` was in EMPTY_DOC and not in DOC_FIELDS — and that slack is gone.

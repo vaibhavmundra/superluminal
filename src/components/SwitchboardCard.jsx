@@ -452,9 +452,17 @@ export function BoardFrame({ board, ink = PANEL_INK, ground = PANEL_GROUND,
  * through typing 1200, and writing 0 on the way past would put a plate on the
  * floor for one keystroke.
  *
- * SHARED BY THE PANEL AND THE SHEET, which is the reason it is exported rather
- * than written inline twice — two number boxes for one number is two places for
- * the step, the units and the empty-string rule to drift.
+ * SHARED BY THE PANEL, THE SHEET AND THE POINT BAR, which is the reason it is
+ * exported rather than written inline three times — two number boxes for one
+ * number is two places for the step, the units and the empty-string rule to
+ * drift.
+ *
+ * `ink` IS NOT AN OPTIONAL FLOURISH AND ITS DEFAULT IS A TRAP TO KNOW ABOUT.
+ * `currentColor` inherits, and the page's own `--text` is WHITE — right on the
+ * near-black panel and the sheet, and INVISIBLE on StageBar's white pill, which
+ * is exactly how this field shipped into the point bar as a blank gap where a
+ * number and its unit should have been. Any caller standing on a light ground
+ * must pass one. @see PointSpec
  */
 export function HeightField({ mm, onChange, ink = 'currentColor' }) {
   return (

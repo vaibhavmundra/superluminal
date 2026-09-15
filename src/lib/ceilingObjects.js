@@ -250,8 +250,18 @@ export const CEILING_TYPES = [
      ELECTRICAL drawing: a split AC and a geyser are each a dedicated circuit at
      a rating a lighting board does not carry, and putting them on the plan is
      how the person specifying the switchboards knows they are there. */
+  /* AND THIS ONE IS SEATED ON THE PLASTER RATHER THAN DROPPED ON THE PLAN.
+     `onWall` IS NOT A SECOND `offCeiling`. That one says the GRID owes it
+     nothing; this says the WALL decides where it is and which way it faces —
+     see lib/wallUnit.js, which holds the whole of it. They happen to be true of
+     the same entry today and they are not the same statement: a geyser is off
+     the ceiling and is still dropped wherever somebody points.
+     A CASSETTE IS NEITHER, and that is the line between the two air
+     conditioners. It is a grille IN the ceiling, it is the one of the pair the
+     downlight grid has to keep clear of, and seating it on a wall would take it
+     out of the ceiling it is in. */
   { id: 'split_ac',   kind: 'split_ac',   label: 'Split AC',   colour: '#404040',
-    wFt: 1000 * MM, hFt: 250 * MM, offCeiling: true },
+    wFt: 1000 * MM, hFt: 250 * MM, offCeiling: true, onWall: true },
   { id: 'geyser',     kind: 'geyser',     label: 'Geyser',     colour: '#404040',
     diaFt: 450 * MM, offCeiling: true },
   { id: 'trapdoor',   kind: 'trapdoor',   label: 'Trap door',  colour: '#404040',
@@ -319,6 +329,62 @@ export function makeCeilingObject(typeId, atFt) {
   };
 }
 
+/** Does the catalogue say this type is held by a wall? @see lib/wallUnit.js */
+export const typeOnWall = (typeId) => !!CEILING_BY_ID[typeId]?.onWall;
+
+/**
+ * IS THIS RECORD SEATED ON A WALL? — a fact about the RECORD's shape, which is
+ * why it lives beside the function that mints one rather than in wallUnit.js.
+ *
+ * `sFt` AND NOT A FLAG. A seated record has a distance round its room's walls
+ * and NULL for `x`, `y` and `rot`; an unseated one has a coordinate and no
+ * distance. The two are mutually exclusive by construction, so the presence of
+ * the seat IS the answer and a boolean beside it would be a second answer
+ * waiting to disagree — the same argument `isConstrained` makes about a point's
+ * host. It is also what makes a plan saved before any of this existed keep
+ * working: those units have coordinates, so they are not seated, so nothing
+ * treats them as if they were.
+ *
+ * RE-EXPORTED BY lib/wallUnit.js under the same name, so a caller reasoning
+ * about wall units asks that file for all of its verbs.
+ */
+export const isSeatedOnWall = (o) => Number.isFinite(o?.sFt);
+
+/**
+ * ...AND ONE THAT HANGS ON A WALL, WHICH IS A DIFFERENT RECORD AND NOT A FLAG.
+ *
+ * `x`, `y` AND `rot` ARE WRITTEN NULL, AND THAT IS THE WHOLE DISCIPLINE. What
+ * this record has is `sFt` — how far round its room's walls it sits — and the
+ * three derived fields are resolved from that every frame. A stale coordinate
+ * beside a live seat is a lie that survives a save, and the first reader to
+ * trust the wrong one draws a metre of air-conditioner where nobody put one.
+ * It is the rule `pointOn` states for a constrained point, said about a box.
+ *
+ * `rot: null` IS LOAD-BEARING TOO, and it is the half that answers the
+ * complaint this was built for. There is no stored angle to rotate, so there is
+ * no rotation grip and nothing to correct after a placement: the unit faces
+ * into the room because the wall behind it does. @see seatWallUnit
+ *
+ * THE FEED COMES IN RATHER THAN DEFAULTING HERE. Which of the two supplies an
+ * air-conditioner gets is wallUnit.js's decision (see AC_FEED), and this file
+ * is the catalogue — it would have to import the electrical domain to know the
+ * answer, which is a dependency the layout should not carry to place a box.
+ */
+export function makeWallUnit(typeId, { roomId, sFt, feed }) {
+  const t = CEILING_BY_ID[typeId] || CEILING_TYPES[0];
+  return {
+    id: newCeilingObjectId(),
+    typeId: t.id,
+    kind: t.kind,
+    roomId, sFt,                   // FEET, round this room's walls
+    x: null, y: null, rot: null,   // DERIVED — see the note above
+    diaFt: t.diaFt ?? null,
+    wFt: t.wFt ?? null,
+    hFt: t.hFt ?? null,
+    feed,
+  };
+}
+
 /**
  * The clearance radius, in feet. See the header for why a rectangle gets the
  * circle round it rather than a rectangle of its own.
@@ -337,15 +403,30 @@ export function radiusFt(o) {
  * rough extent, and because a fixture with no shape must keep behaving as the
  * circle it always was.
  */
-export function toObstaclePx(o, pxPerFt) {
+/* `at` IS THE RESOLVED POSITION, FOR THE KINDS THAT DO NOT STORE ONE.
+   A WALL UNIT HAS NO `x`, NO `y` AND NO `rot` IN THE STORE — it has a distance
+   round its room's walls, and where that is depends on the walls, which are not
+   this file's to know. So the caller resolves it (see `resolveWallUnitPx`) and
+   hands the answer in; everything else about turning an object into an obstacle
+   is the same for a unit on a wall as for a fan on a ceiling.
+   PASSED IN RATHER THAN IMPORTED, deliberately. This file is the catalogue and
+   it is imported by the planner; reaching from here into the electrical domain
+   for a room's wall runs would drag that whole module into the layout's
+   dependency graph to answer a question the layout never asks. */
+export function toObstaclePx(o, pxPerFt, at = null) {
   const s = pxPerFt || 1;
   return {
     ...o,
-    x: o.x * s, y: o.y * s,
+    x: at ? at.x : o.x * s, y: at ? at.y : o.y * s,
     r: radiusFt(o) * s,
     w: (o.wFt || 0) * s,
     h: (o.hFt || 0) * s,
-    rot: o.rot || 0,
+    rot: at ? at.rot : (o.rot || 0),
+    /* WHETHER IT IS HELD BY A WALL, carried through so a reader holding only
+       the pixel-space obstacle can tell — it is what decides whether the canvas
+       draws a rotation grip, and whether a drag slides or floats. */
+    onWall: !!at?.seat,
+    seat: at?.seat ?? null,
     shape: isRect(o) ? 'rect' : 'circle',
     // CARRIED THROUGH, so a consumer holding only the pixel-space obstacle can
     // still tell whether the grid owes it anything. See the note by the two
@@ -406,6 +487,14 @@ export const isUniform = (o) => !isRect(o);
 
 /** Apply a resize result back onto an object, respecting what it can be. */
 export function applyResize(o, next) {
-  if (isRect(o)) return { ...o, x: next.x, y: next.y, wFt: next.wFt, hFt: next.hFt };
-  return { ...o, x: next.x, y: next.y, diaFt: clampFt(Math.max(next.wFt, next.hFt)) };
+  /* A SEATED BOX KEEPS ITS SEAT AND TAKES ONLY THE SIZE. `next` carries a
+     centre the corner drag worked out in free space, and writing it would leave
+     a wall unit holding a coordinate beside its `sFt` — two positions and no
+     rule for which wins, which is the exact lie `makeWallUnit` writes three
+     nulls to prevent. Resizing one is still a real thing to do: a 1400mm indoor
+     unit is a 1400mm indoor unit, and where it sits is the wall's business
+     either way. @see isSeatedOnWall */
+    const at = isSeatedOnWall(o) ? {} : { x: next.x, y: next.y };
+  if (isRect(o)) return { ...o, ...at, wFt: next.wFt, hFt: next.hFt };
+  return { ...o, ...at, diaFt: clampFt(Math.max(next.wFt, next.hFt)) };
 }

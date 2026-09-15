@@ -31,9 +31,14 @@ export default function useFixtureCommands({
   state, fixtures, docActions, rooms, pxPerFt, readOnly,
   manualCobs, cobArrays, trackFixtures,
   arrayOutline, spaceAnalysis, setSel, setOptionPick,
+  /* AN AIR-CONDITIONER'S SUPPLY, SO THAT DELETING THE UNIT TAKES IT WITH IT.
+     One of the five paths that hook exists to hold together — see useAcFeed.
+     Optional, so a caller that wires no electrical feature still deletes an
+     object cleanly; what it loses is the socket, which it never had. */
+  acFeed = null,
 }) {
   const {
-    cobDraftArray, setCobDraftArray, selObjIds, selCobIds, selArrayIds,
+    cobDraftArray, setCobDraftArray, selObjIds, selCobIds, selArrayIds, selPointIds,
     setArrayDrag, setModuleDrag, setFanSweepMm,
     /* WHICH OF THE COB'S TWO GESTURES IS ARMED — read by `takeArrayGeometry`
        alone, which has to decline a guide drawn for any other reason. */
@@ -327,6 +332,23 @@ export default function useFixtureCommands({
     setSel(clear());
   }, [docActions, selCobIds, setSel]);
 
+  /** THE SELECTED POINTS, WALL AND CEILING, AND THE WHOLE SELECTION WITH THEM.
+   *  Delete is one of the ten verbs lib/point.js says an element on the
+   *  primitive inherits, and this is the store side of it — `deleteCobs`'
+   *  shape exactly, because the question is the same one: a ⌘-click can gather
+   *  three and a Delete taking one would leave two behind.
+   *  IT IS A COMMAND AND NOT A GESTURE, which is the reason it moved here. The
+   *  key that calls it is bound once in App's keydown effect, and every name
+   *  that effect closes over has to be STABLE or the listener reads last
+   *  render's selection — see the note by its dependency array. The gesture
+   *  hook rebuilds its return object every frame, so the delete handed out
+   *  from there could never be named there safely. */
+  const deletePoints = useCallback(() => {
+    if (!selPointIds.length) return;
+    docActions.removeElecPoints(selPointIds);
+    setSel(clear());
+  }, [docActions, selPointIds, setSel]);
+
   /** ...and the same for arrays. */
   const deleteArrays = useCallback(() => {
     if (!selArrayIds.length) return;
@@ -339,9 +361,15 @@ export default function useFixtureCommands({
    *  objects and silently leaving the other three is the reading nobody expects,
    *  and it is the one a single-id delete gives. */
   const deleteObjects = useCallback(() => {
+    /* THE SUPPLY GOES FIRST AND IN THE SAME TICK. A socket left on a wall
+       feeding an air-conditioner that was deleted last week is the failure
+       `useAcFeed`'s header names; doing it before the objects go is what lets
+       it still find them, and doing it in this tick is what makes the pair one
+       undo step. Every other kind of object answers `undefined` here. */
+    acFeed?.remove?.(selObjIds);
     docActions.removeObjects(selObjIds);
     setSel(clear());
-  }, [docActions, selObjIds, setSel]);
+  }, [acFeed, docActions, selObjIds, setSel]);
 
   /* `dropRun` WAS HERE — the cross on the bar, which removed every lamp placed
      since the tool was armed. It went with that button: the run was never
@@ -514,6 +542,10 @@ export default function useFixtureCommands({
        selection. Both, because the panel's own cross is about the fitting it is
        showing and the Delete key is about what is picked. */
     cob: { setSpec: setCobSpec, remove: deleteCob, removeSelected: deleteCobs },
+    /* NO `remove` BESIDE IT, because a point has no panel with a cross on it —
+       the bar at the foot of the drawing carries its height and its rating and
+       says outright that the way to remove one is Delete. See PointSpec. */
+    points: { removeSelected: deletePoints },
     objects: { remove: deleteObjects, setSweep },
     lights: { reset: resetLightMove },
   };

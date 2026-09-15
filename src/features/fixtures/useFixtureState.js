@@ -73,6 +73,11 @@ export default function useFixtureState({ sel, setSel }) {
      the dependency arrays downstream do not churn — see `idsOf`. */
   const selCobIds = idsOf(sel, 'cob');
   const selArrayIds = idsOf(sel, 'array');
+  /* ...AND THE POINTS, wall and ceiling, which are one selection kind for the
+     reason they are one store: on every question a selection asks — what is
+     held, what moves together, what Delete removes — they are the same element
+     standing on the same primitive. See lib/elecPoints.js. */
+  const selPointIds = idsOf(sel, 'point');
 
   /* ONE TOGGLE FOR EVERY KIND, AND THE RULE IS IN lib/selection.js.
      It was written out here for objects alone — a functional setState that
@@ -349,7 +354,7 @@ export default function useFixtureState({ sel, setSel }) {
     selObjIds, selObjId, toggleSelObj, toggleSel,
     objDrag, setObjDrag, objMode, setObjMode,
     armed, setArmed, ghost, setGhost,
-    selCobId, selCobIds,
+    selCobId, selCobIds, selPointIds,
     cobOpen, setCobOpen, cobMode, setCobMode,
     cobStanding, setCobStanding,
     cobLock, setCobLock, cobAt, setCobAt,

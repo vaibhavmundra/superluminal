@@ -24,7 +24,8 @@ export function projectAllBoardsPx(rooms, boardsFor, bayBoardsFor, placedBoardsF
 /** Project the room's fittings into switched circuit paths. */
 export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
   obstaclesPx, accentZonesPx, taskSpotsPx, outdoorFeeds, pxPerFt, baysOf,
-  allBoardsPx, placedBoardsFor, flowBoards, flowBends, lampsPx = [], flowLinks = {}) {
+  allBoardsPx, placedBoardsFor, flowBoards, flowBends, lampsPx = [], flowLinks = {},
+  elecPointsPx = []) {
     const out = [];
     if (!(pxPerFt > 0)) return out;
     for (const r of rooms) {
@@ -120,6 +121,11 @@ export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
         outlets: [...boardsFor(r), ...bayBoardsFor(r), ...placedBoardsFor(r)]
           .filter((b) => b.socketOnly)
           .map((b) => ({ id: b.id, x: b.point.x, y: b.point.y, amps: b.amps })),
+        /* THE POINTS SOMEBODY DROPPED IN THIS SPACE, wall and ceiling, already
+           RESOLVED — see `projectElecPointsPx`. Filtered by `roomId` like the
+           spots and the lamps: every point carries the space it was dropped in,
+           and one with no room matches nothing, which is right for it. */
+        elecPoints: elecPointsPx.filter((p) => p.roomId === r.id),
         /* AND THE POOL A DRAGGED WIRE MAY NAME, which is every plate on the
            drawing. `boards` above stays this room's own — the rules' fallback
            is "the nearest plate" and must not reach across a party wall — while

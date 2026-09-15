@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
-import { projectObstaclesPx, projectCeilingObstaclesPx, projectWardrobesPx } from '../../lib/planProjection.js';
+import { projectObstaclesPx, projectCeilingObstaclesPx, projectWardrobesPx,
+         projectBasinsPx } from '../../lib/planProjection.js';
 import { layoutRooms } from '../../lib/layout.js';
 import { buildPlanAreaSqft, buildChunkOpt, buildDrawnZones, buildFocus, buildOpenRoom } from './roomGeometry.js';
 import { buildBedsPerRoom, buildDetectedZones } from './bedZones.js';
-import { buildReverseCoves, buildShelfStrips, buildWardrobeZones, buildReverseCoveZones, buildZoneList } from './wallGeometry.js';
+import { buildReverseCoves, buildShelfStrips, buildWardrobeZones, buildReverseCoveZones, buildZoneList, buildWallHosts } from './wallGeometry.js';
 
 // Derived values only. Keep the individual memo boundaries: a focus change or
 // an unrelated option must not recreate layout geometry or invalidate picks.
@@ -32,7 +33,17 @@ export default function usePlanScene({
   // preference for holding an obstacle clear, `cellIsAwkward`. Those never cared
   // where an obstacle came from — planner.js calls them "fans" because that was
   // the first kind it met.
-  const obstaclesPx = useMemo(() => projectObstaclesPx(ceilingObjs, pxPerFt), [ceilingObjs, pxPerFt]);
+  /* THE WALLS OF EVERY ROOM, FOR THE THINGS THAT ARE HELD BY ONE. Built here
+     rather than off `rooms` because the obstacle projection below feeds the
+     layout that produces `rooms` — see `buildWallHosts` for the whole of it. */
+  const wallHosts = useMemo(
+    () => buildWallHosts({ source, pxPerFt, litOutlines, useBoundingRect }),
+    [source, pxPerFt, litOutlines, useBoundingRect]);
+  /* `hostFor` RESOLVES A SPLIT UNIT'S SEAT — and answers `undefined` for every
+     other kind, which never asks. @see projectObstaclesPx */
+  const obstaclesPx = useMemo(
+    () => projectObstaclesPx(ceilingObjs, pxPerFt, (o) => wallHosts.get(o.roomId) ?? null),
+    [ceilingObjs, pxPerFt, wallHosts]);
 
   const ceilingObstaclesPx = useMemo(() => projectCeilingObstaclesPx(obstaclesPx), [obstaclesPx]);
 
@@ -51,6 +62,8 @@ export default function usePlanScene({
       manualCoves, runsOff]);
 
   const wardrobesPx = useMemo(() => projectWardrobesPx(litOutlines, accentResults), [litOutlines, accentResults]);
+  /** @see projectBasinsPx — what rule 4 measures the bathroom's shaver plate from. */
+  const basinsPx = useMemo(() => projectBasinsPx(litOutlines, accentResults), [litOutlines, accentResults]);
 
   const wardrobeZones = useMemo(() => buildWardrobeZones({ wardrobesPx }), [wardrobesPx]);
 
@@ -124,8 +137,12 @@ export default function usePlanScene({
 
   return {
     rooms: { items: rooms, focus, openRoom, litOutlines, planAreaSqft },
-    architecture: { obstaclesPx, ceilingObstaclesPx },
-    furnishings: { bedsPerRoom, detectedZones, wardrobesPx, shelfStrips },
+    /* `wallHosts` GOES OUT WITH THE ARCHITECTURE because that is what it is —
+       the room's walls, not a lighting result. The placement gesture and the
+       feed that follows a split unit both ask it, and both would otherwise
+       re-walk every outline to get an answer this already holds. */
+    architecture: { obstaclesPx, ceilingObstaclesPx, wallHosts },
+    furnishings: { bedsPerRoom, detectedZones, wardrobesPx, basinsPx, shelfStrips },
     lightingGeometry: { reverseCoves, wardrobeZones, reverseCoveZones, zoneList, drawnZones, chunkOpt },
   };
 }

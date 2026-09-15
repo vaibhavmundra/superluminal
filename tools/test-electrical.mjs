@@ -16,7 +16,7 @@ import {
   headSide, facingWall, FACING_PLATES,
   slideBoardTo, plateAtS, wallPath, asDrawn, boardUnder, nearestSeat, placedBoards,
   asOutlet, servesBay, lampPlateInReach, nearestLampPlate,
-  LAMP_SOCKET_FT, LAMP_SOCKET_MAX_MM,
+  LAMP_SOCKET_FT, LAMP_SOCKET_MAX_MM, BASIN_RUN_FT,
   wallHostFor, boardAsPoint, boardAdapters, boardU, boardSFt, LAMP_BOARD_ROLE,
 } from '../src/lib/electrical.js';
 import { makeDrag } from '../src/hooks/useDrag.js';
@@ -159,8 +159,8 @@ console.log('\n-- a bedroom is never left doorless by a tie --');
   ok(b.shared?.length === 2, 'the board records that the door was a tie');
   ok(!notes.some((n) => /door/.test(n)),
     'and the space is never told no door opens into it, which was not true');
-  ok(notes.length === 2, `no lecture in the panel either — ${notes.length} notes, both about`
-    + ' fittings this space does not have');
+  ok(notes.length === 3, `no lecture in the panel either — ${notes.length} notes, each about`
+    + ' a fitting this space does not have');
 }
 
 console.log('\n-- a door the gates refuse still gets its board --');
@@ -319,33 +319,49 @@ console.log('\n-- when the wall runs out, turn the corner --');
     `300mm down from the corner (expected ${GAP + HALF}, got ${b.point.y})`);
 }
 
-console.log('\n-- the bedside boards ARE the sconces --');
+console.log('\n-- the bedside boards come off the BED, not off the sconces --');
 {
+  // A 5.9ft bed (x 210..390) with its head against the top wall. One foot is
+  // 30.48px, so the plates land at x=179.52 and x=420.48 on that same wall.
+  //
+  // THEY USED TO BE THE SCONCES, and the position was right while the
+  // DEPENDENCY was wrong: deleting a bedside light deleted the switch under it,
+  // silently, because a dismissal is stored against the accent's id. See rule 2.
   const room = { id: 'o3', polygonPx: ROOM };
-  const sconce = (x, what) => ({
-    id: `acc-o3-${what}`, type: 'sconce', group: 'bedside', what,
-    point: { x, y: 0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
-    wall: { a: ROOM[0], b: ROOM[1], index: 0 }, t: x,
-  });
+  const bed = { x0: 210, y0: 0, x1: 390, y1: 200, cls: 'bed' };
   const { boards } = planSwitchboards({
-    room, rooms: [room], doors: [], pxPerFt: PPF,
-    accentZones: [sconce(166.8, 'left of the bed'), sconce(433.2, 'right of the bed')],
+    room, rooms: [room], doors: [], pxPerFt: PPF, bedRect: bed,
   });
   const beds = boards.filter((b) => b.role === 'bedside');
-  ok(beds.length === 2, 'two sconces, two boards');
-  ok(near(beds[0].point.x, 166.8) && near(beds[1].point.x, 433.2),
-    'each one exactly where its sconce is, not near it');
+  ok(beds.length === 2, 'a bed, two boards — no fitting had to exist');
   ok(beds.every((b) => !b.rejected), 'and neither is refused');
+  ok(beds.every((b) => near(b.point.y, 0)), 'both on the headboard wall');
+  const xs = beds.map((b) => b.point.x).sort((a, b) => a - b);
+  ok(near(xs[0], 210 - PPF) && near(xs[1], 390 + PPF),
+    `one foot clear of the mattress either side (got ${xs.map((v) => v.toFixed(2))})`);
+  ok(beds.every((b) => b.heightsMm?.[0] === 700),
+    'at bedside height — reachable from the pillow, sitting up');
+  ok(beds.every((b) => b.plates === 1), 'one plate each');
+  ok(beds.some((b) => b.side === -1) && beds.some((b) => b.side === 1),
+    'and each says which side of the bed it is');
 
-  const one = planSwitchboards({
-    room, rooms: [room], doors: [], pxPerFt: PPF,
-    accentZones: [sconce(166.8, 'left'), { ...sconce(433.2, 'right'), rejected: 'no wall' }],
+  // A BEDROOM WITH NO BED HAS NO BEDSIDE, which is the one refusal left.
+  const none = planSwitchboards({ room, rooms: [room], doors: [], pxPerFt: PPF,
+                                  rules: ['bedside'] });
+  ok(!none.boards.some((b) => b.role === 'bedside'), 'no bed, no bedside plate');
+  ok(none.notes.some((n) => /no bed was found/i.test(n)), 'and it says why');
+
+  // STABLE IDS. A deletion and a drag are both stored against one, and the id
+  // is keyed on the SIDE — which a bed has for as long as it is in the room.
+  const again = planSwitchboards({
+    room, rooms: [room], doors: [door(180)], pxPerFt: PPF, bedRect: bed,
   });
-  ok(one.boards.filter((b) => b.role === 'bedside').length === 1,
-    'a refused sconce is not a fitting, so it gets no board');
+  ok(again.boards.filter((b) => b.role === 'bedside')
+    .every((b) => beds.some((x) => x.id === b.id)),
+    'the ids survive another rule firing beside them');
 }
 
-console.log('\n-- the television wall: one mark, two plates, on the centreline --');
+console.log('\n-- the television wall: two plates, side by side on the centreline --');
 {
   // THE TELEVISION HUNT IS GONE. This rule used to read the strip along a
   // `tv_unit` the accent pass had found, and fall back to a vision call asking
@@ -360,37 +376,46 @@ console.log('\n-- the television wall: one mark, two plates, on the centreline -
   const { boards, notes } = planSwitchboards({
     room, rooms: [room], doors: [], pxPerFt: PPF, bedRect: bed,
   });
-  const face = boards.filter((b) => b.role === 'facing');
-  ok(face.length === 1,
-    `ONE board object, because in plan the two plates are one rectangle (got ${face.length})`);
-  const f = face[0];
-  ok(!f.rejected, 'and it is not refused on a wall this long');
-  ok(f.plates === FACING_PLATES && f.plates === 2,
-    `carrying two plates, stacked in elevation (got ${f.plates})`);
-  ok(near(f.point.y, 360), 'on the wall the bed looks at, not the one behind it');
+  const face = boards.filter((b) => b.role === 'facing' || b.role === 'facingSwitch');
+  ok(face.length === 2,
+    `TWO boards — the socket and the switch, each draggable (got ${face.length})`);
+  ok(face.reduce((n, x) => n + x.plates, 0) === FACING_PLATES,
+    `two plates on this wall between them (got ${face.reduce((n, x) => n + x.plates, 0)})`);
+  const f = boards.find((b) => b.role === 'facing');
+  const sw = boards.find((b) => b.role === 'facingSwitch');
+  ok(!f.rejected && !sw.rejected, 'and neither is refused on a wall this long');
+  ok(f.heightsMm[0] === 700 && sw.heightsMm[0] === 1200,
+    'the socket at the unit, the switch at switch height');
+  ok(near(f.point.y, 360) && near(sw.point.y, 360),
+    'both on the wall the bed looks at, not the one behind it');
   ok(near(f.point.x, 300),
-    `exactly where the bed's centreline meets it (got x=${f.point.x})`);
-  ok(!f.clamped, 'nothing was moved to make it fit');
+    `the SOCKET holds the bed's centreline (got x=${f.point.x})`);
+  ok(near(Math.abs(sw.point.x - f.point.x), px(SB_MM.along, PPF)),
+    `and the switch is one plate width along — edge to edge, a 2-gang frame`
+    + ` (got ${Math.abs(sw.point.x - f.point.x).toFixed(2)})`);
+  ok(!f.clamped && !sw.clamped, 'nothing was moved to make either fit');
   ok(/centreline/.test(f.why), `and says so: "${f.why}"`);
+  ok(f.id !== sw.id && f.pair === sw.pair,
+    'two ids, one pair — which is what keeps them apart and out of the clash marker');
   ok(!notes.some((n) => /television|TV/i.test(n)),
     'and nothing is said about a television, because nothing looked for one');
   ok(!boards.some((b) => b.role === 'tv'), 'no board has the retired tv role');
 
-  // NOT A CLASH. Two board objects at one point would have `markClashes`
-  // reporting a deliberate arrangement as a fault; one object carrying a count
-  // cannot.
-  ok(!f.clash, 'and the pair is not reported as two boards fighting over a wall');
+  // NOT A CLASH. They are one plate apart by construction and a deliberate pair
+  // besides, so `markClashes` stays quiet — see `pair` there. Marking it would
+  // put a `poor` on every bedroom on the sheet.
+  ok(!f.clash && !sw.clash,
+    'and the pair is not reported as two boards fighting over a wall');
 
-  // STABLE IDS, because a deletion is stored against one. Adding a bedside
-  // sconce must not renumber this plate.
-  const withSconce = planSwitchboards({
-    room, rooms: [room], doors: [], pxPerFt: PPF, bedRect: bed,
-    accentZones: [{ id: 'acc-o4-0', type: 'sconce', group: 'bedside', what: 'left',
-      point: { x: 166.8, y: 0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
-      wall: { a: ROOM[0], b: ROOM[1], index: 0 }, t: 166.8 }],
+  // STABLE IDS, because a deletion and a drag are both stored against one. The
+  // socket keeps the id this board had when it was a single two-plate object.
+  const withBedsides = planSwitchboards({
+    room, rooms: [room], doors: [door(180)], pxPerFt: PPF, bedRect: bed,
   });
-  ok(withSconce.boards.find((b) => b.role === 'facing')?.id === f.id,
+  ok(withBedsides.boards.find((b) => b.role === 'facing')?.id === f.id,
     `it keeps its id when another rule fires (${f.id})`);
+  ok(withBedsides.boards.find((b) => b.role === 'facingSwitch')?.id === sw.id,
+    'and so does the switch');
 }
 
 console.log('\n-- ...and when it cannot find the wall, it says so --');
@@ -430,9 +455,12 @@ console.log('\n-- the headboard wall is read off the box, whichever side it is -
     bedRect: { x0: 0, y0: 90, x1: 200, y1: 270, cls: 'bed' },
   });
   const f = boards.find((b) => b.role === 'facing');
-  ok(f && !f.rejected && f.plates === 2, 'still one board of two plates');
+  const sw = boards.find((b) => b.role === 'facingSwitch');
+  ok(f && !f.rejected && sw && !sw.rejected, 'still the pair');
   ok(near(f.point.x, 600) && near(f.point.y, 180),
-    `on the right-hand wall, on the bed's centreline (got ${f.point.x}, ${f.point.y})`);
+    `the socket on the right-hand wall, on the bed's centreline (got ${f.point.x}, ${f.point.y})`);
+  ok(near(sw.point.x, 600) && near(Math.abs(sw.point.y - 180), px(SB_MM.along, PPF)),
+    'and the switch one plate along that same wall');
 }
 
 console.log('\n-- a centreline in a corner is moved, not refused --');
@@ -580,36 +608,126 @@ console.log('\n-- the drag itself: a pointer becomes a distance round the walls 
 console.log('\n-- two plates in the same place are marked, not tidied away --');
 {
   const room = { id: 'o7', polygonPx: ROOM };
-  // A door whose latch is at 150, so its board lands at 191.5 — and a bedside
-  // sconce at 170, a foot clear of a bed whose head is right beside the door.
-  const sconce = (x) => ({
-    id: `acc-o7-${x}`, type: 'sconce', group: 'bedside', what: 'left of the bed',
-    point: { x, y: 0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
-    wall: { a: ROOM[0], b: ROOM[1], index: 0 }, t: x,
-  });
+  // A door whose latch is at 150, so its board lands at 191.5 — and a bed whose
+  // head is right beside it, putting the left bedside plate at 170.
+  const bedAt = (x0) => ({ x0, y0: 0, x1: x0 + 180, y1: 200, cls: 'bed' });
   const tight = { id: 'n', conf: 0.99, rect: { x0: 60, y0: -18, x1: 150, y1: 90 } };
   const { boards } = planSwitchboards({
-    room, rooms: [room], doors: [tight], pxPerFt: PPF, accentZones: [sconce(170)],
+    room, rooms: [room], doors: [tight], pxPerFt: PPF, bedRect: bedAt(170 + PPF),
   });
   const [d, s1] = [boards.find((b) => b.role === 'door'), boards.find((b) => b.role === 'bedside')];
   ok(d.clash?.includes(s1.id) && s1.clash?.includes(d.id), 'both ends of a clash know about it');
   ok(near(d.t, 150 + GAP + HALF) && near(s1.point.x, 170),
-    'and NEITHER has moved — the 300mm and the sconce are both what was asked for');
+    'and NEITHER has moved — the 300mm and the foot clear of the bed are both'
+    + ' what was asked for');
   ok(/same piece of wall/.test(d.poor), `it says what is wrong: "${d.poor}"`);
 
   // Far enough apart, and it is not a clash.
   const clear = planSwitchboards({
-    room, rooms: [room], doors: [tight], pxPerFt: PPF, accentZones: [sconce(400)],
+    room, rooms: [room], doors: [tight], pxPerFt: PPF, bedRect: bedAt(300),
   });
   ok(clear.boards.every((b) => !b.clash), 'boards a plate-width apart are left alone');
 
-  // Same distance, different wall: not a clash either.
+  // Same distance along, different wall: not a clash either. The same bed, its
+  // head against the BOTTOM wall instead, so its left plate is at x=170 down
+  // there while the door's is at 191.5 up on the top wall.
   const other = planSwitchboards({
     room, rooms: [room], doors: [tight], pxPerFt: PPF,
-    accentZones: [{ ...sconce(170), wall: { a: ROOM[2], b: ROOM[3], index: 2 },
-      point: { x: 170, y: 360 }, inward: { x: 0, y: -1 } }],
+    bedRect: { x0: 170 + PPF, y0: 160, x1: 380, y1: 360, cls: 'bed' },
   });
+  ok(other.boards.some((b) => b.role === 'bedside' && near(b.point.x, 170)
+    && near(b.point.y, 360)), 'the bedside plate is on the bottom wall');
   ok(other.boards.every((b) => !b.clash), 'and two boards on different walls never clash');
+}
+
+console.log('\n-- the basin: a shaver point at the mirror, where there is not one --');
+{
+  /* ROOM is 600 x 360. The basin is a counter on the top wall from x=200 to
+     x=260; the sconces hang a tenth of its width past each end, so the anchors
+     are x=194 and x=266 and the two-foot run reaches x=133 one way and x=327 the
+     other, turning a corner if it has to.
+     THE BOX AND NOT THE SCONCES. The plate has to be there whether or not
+     anybody wanted the lights at the mirror — nothing below hands this rule a
+     fitting. */
+  const room = { id: 'b1', polygonPx: ROOM };
+  const BASIN = { x0: 200, y0: 0, x1: 260, y1: 22 };
+  const ends = [200 - 6, 260 + 6];
+  const plan = (opts) => planSwitchboards({
+    room, rooms: [room], pxPerFt: PPF, basinRect: BASIN,
+    rules: ['door', 'basin'], ...opts });
+
+  // THE DOOR IS ON THE FAR WALL, so nothing stands beside the basin and a plate
+  // is added. The door rect below is on the BOTTOM wall, 360.
+  const away = plan({ doors: [{ id: 'd1', conf: 0.99,
+    rect: { x0: 420, y0: 270, x1: 510, y1: 378 } }] });
+  const b = away.boards.find((x) => x.role === 'basin');
+  ok(b && !b.rejected, 'a bathroom with a basin and no plate beside it gets one');
+  ok(b.heightsMm?.[0] === 1050,
+    `at 1050 — mirror height, where a shaver is plugged in (got ${b.heightsMm?.[0]})`);
+  ok(near(b.point.y, 0), 'on the basin\'s own wall');
+  const reach = BASIN_RUN_FT * PPF;
+  ok(ends.some((e) => Math.abs(b.point.x - e) <= reach + 1e-6),
+    `within ${BASIN_RUN_FT} ft of the mirror's edge (got x=${b.point.x.toFixed(1)})`);
+  ok(b.point.x < 200 || b.point.x > 260,
+    `outboard of the basin, not across the mirror (got x=${b.point.x})`);
+  ok(!servesBay(b),
+    'and it cannot be a bay\'s switch — a shaver point is not the room\'s light switch');
+  ok(!b.clash, 'nothing else wants that piece of wall');
+
+  // THE DOOR IS BESIDE THE BASIN, so its plate IS the one, and none is added.
+  // This door's latch lands at 150, putting its board at 191.5 — 8.5px from the
+  // first sconce.
+  const beside = plan({ doors: [{ id: 'n', conf: 0.99,
+    rect: { x0: 60, y0: -18, x1: 150, y1: 90 } }] });
+  ok(!beside.boards.some((x) => x.role === 'basin'),
+    'a door plate already in the run means no second plate');
+  ok(beside.notes.some((n) => /within 2 feet of the basin/.test(n)),
+    'and it says the shaver socket goes on that one');
+
+  // A BASIN IN A CORNER REACHES ROUND IT. This 6 x 8ft WC has its basin hard
+  // against the left end of the top wall, so the left sconce has four inches of
+  // plaster beside it and the run turns onto the wall that follows.
+  const wc = [{ x: 0, y: 0 }, { x: 6 * PPF, y: 0 },
+              { x: 6 * PPF, y: 8 * PPF }, { x: 0, y: 8 * PPF }];
+  const tight = planSwitchboards({
+    room: { id: 'b2', polygonPx: wc }, rooms: [], doors: [], pxPerFt: PPF,
+    rules: ['basin'],
+    basinRect: { x0: 0.5 * PPF, y0: 0, x1: 2.3 * PPF, y1: 0.7 * PPF },
+  });
+  const cb = tight.boards.find((x) => x.role === 'basin');
+  ok(cb && !cb.rejected, 'a basin in a corner still gets its plate');
+  ok(cb.wall?.index !== 0,
+    `by turning the corner onto the next wall (landed on wall ${cb.wall?.index})`);
+  ok(near(cb.point.x, 0), 'which is the left-hand one, at x=0');
+
+  // NO BASIN, NOTHING TO SAY IT ABOUT.
+  const dry = planSwitchboards({ room, rooms: [room], doors: [], pxPerFt: PPF,
+                                 rules: ['basin'] });
+  ok(!dry.boards.some((x) => x.role === 'basin'), 'no basin, no plate');
+  ok(dry.notes.some((n) => /no basin has been found/i.test(n)), 'and it says why');
+
+  /* THE SCONCES ARE NOT AN INPUT, WHICH IS THE POINT OF THE BOX. Handing this
+     rule every fitting on the drawing changes nothing, and handing it none
+     changes nothing either: delete the lights at the mirror and the plate the
+     bathroom is actually built with is still there. */
+  const sconced = plan({ doors: [], accentZones: [
+    { id: 'acc-0', type: 'sconce', group: 'basin', roomId: 'b1',
+      point: { x: 194, y: 0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
+      wall: { index: 0 }, t: 194 }] });
+  const withB = sconced.boards.find((x) => x.role === 'basin');
+  ok(withB && near(withB.point.x, b.point.x) && near(withB.point.y, b.point.y),
+    'the plate stands in the same place with the sconces there and without them');
+
+  // THE RULE NOT ASKED FOR SAYS NOTHING, the contract every other rule keeps.
+  const doorOnly = planSwitchboards({ room, rooms: [room], doors: [door(180)],
+                                      pxPerFt: PPF, rules: ['door'] });
+  ok(!doorOnly.notes.some((n) => /basin/i.test(n)),
+    'a rule that was not run has nothing to say about its input');
+
+  // JOINERY ACROSS THE WHOLE RUN IS A SENTENCE, not a plate somewhere else.
+  const blocked = plan({ doors: [], keepOff: [{ x0: 100, y0: -20, x1: 360, y1: 40 }] });
+  ok(!blocked.boards.some((x) => x.role === 'basin'), 'a run that is all joinery gets no plate');
+  ok(blocked.notes.some((n) => /no clear piece of wall/i.test(n)), 'and says so');
 }
 
 console.log('\n-- no scale, no millimetres --');
@@ -628,7 +746,7 @@ console.log('\n-- silence is never the answer --');
   const room = { id: 'o6', polygonPx: ROOM };
   const { boards, notes } = planSwitchboards({ room, rooms: [room], doors: [], pxPerFt: PPF });
   ok(boards.length === 0, 'nothing to go on, so no boards');
-  ok(notes.length === 3, `three notes, one per rule that found nothing (got ${notes.length})`);
+  ok(notes.length === 4, `four notes, one per rule that found nothing (got ${notes.length})`);
   ok(notes.every((n) => /\.$/.test(n)), 'and each one is a sentence');
   for (const junk of [undefined, {}, { room: { id: 'x', polygonPx: [] } }]) {
     let threw = false;

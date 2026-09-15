@@ -71,6 +71,23 @@ export const CEILING_GROUPS = [
      grows the switch. */
   { key: 'board',      ids: ['board'],     icon: '/icons/new_icons/switchboard.png',
     label: 'Socket', arms: 'board' },
+  /* THE TWO POINTS, BESIDE THE SOCKET. All three are the electrical drawing's
+     own subjects rather than things it has to accommodate, so they sit together
+     and ahead of the plant. Both arm the ordinary one-shot — one press, one
+     point, disarm — because that is the gesture.
+     TWO CELLS AND NOT ONE WITH A CHOOSER, unlike the cassette and the trap door
+     that used to share. Those two are the same act on the same surface; these
+     are not: one snaps to the plaster and carries a height, the other goes on
+     the ceiling and cannot have one. A shared cell would make the commonest
+     thing here take two presses to say which surface you meant.
+     LABELLED HERE BECAUSE THERE IS NO CATALOGUE ENTRY TO ASK. Neither is a
+     ceiling object — no diameter, no clearance, and the grid owes them nothing —
+     so they carry their own names the way the socket does. See
+     lib/elecPoints.js. */
+  { key: 'wallpoint',  ids: ['wallpoint'], icon: '/icons/new_icons/wall_point.png',
+    label: 'Wall point' },
+  { key: 'ceilingpoint', ids: ['ceilingpoint'],
+    icon: '/icons/new_icons/ceiling_point.png', label: 'Ceiling point' },
   { key: 'ac',         ids: ['ac'],        icon: '/icons/new_icons/casette.png' },
   { key: 'split_ac',   ids: ['split_ac'],  icon: '/icons/new_icons/split.png' },
   // The crossed square, which is the mark everyone already knows for a hatch.
@@ -97,8 +114,8 @@ export default function CeilingPalette({ armed, onArm, disabled = false }) {
         const on = g.ids.includes(armed);
         const armId = (on && armed) || g.ids[0];
         // THE CATALOGUE NAMES ITSELF wherever there is a catalogue entry to ask.
-        // The switchboard has none — it is not a ceiling object — so it is the
-        // one row that carries its own label.
+        // The switchboard and the wall point have none — neither is a ceiling
+        // object — so they are the two rows that carry their own label.
         const label = g.label ?? CEILING_BY_ID[g.ids[0]]?.label ?? g.key;
         return (
           /* THE CELL IS SHARED — see PaletteButton. What is left here is the

@@ -15,7 +15,7 @@
 import { COUNTRIES, DEFAULT_COUNTRY, LIGHT_MAX_A, countryFor, lightSwitchA,
          modulesFor, labelFor, socketWithSwitch, pointsFromFlows, packBoards,
          frameFor, composeSwitchboard, composeOutlet, addablePoints, tally,
-         orderUnits }
+         orderUnits, applianceA }
   from '../src/lib/switchboards.js';
 
 let fail = 0;
@@ -60,6 +60,35 @@ console.log('\n-- the light switch is derived, not stored --');
   ok(lightSwitchA(made) === 10, 'the LARGEST rating under the line wins');
   const heavy = { ...IN, switchRatings: [20, 32] };
   ok(lightSwitchA(heavy) === 20, 'and with nothing under it, the smallest on sale');
+}
+
+console.log('\n-- the appliance rating is the one above the light switch --');
+{
+  // A shaver, a trimmer, a hair dryer: none of them is a light, and the plate a
+  // bathroom gets for one is not built at the light rating. Neither 16 nor 20 is
+  // written down — it is the next rating each country actually sells.
+  ok(applianceA(IN) === 16, `India: 6 for a light, 16 above it (got ${applianceA(IN)})`);
+  ok(applianceA(US) === 20, `the US: 15 for a light, 20 above it (got ${applianceA(US)})`);
+  ok(applianceA(IN) > lightSwitchA(IN) && applianceA(US) > lightSwitchA(US),
+    'and it is above the light switch in both, by construction');
+  ok(applianceA({ switchRatings: [10] }) === 10,
+    'a country selling one rating sells one rating — that is what gets built');
+}
+
+console.log('\n-- the plate can say what its own socket is for --');
+{
+  /* "A spare outlet" is the truth on almost every plate — it is the one nobody
+     drew — and a lie on the one plate that exists BECAUSE of its socket. A basin
+     plate is put on a wall for a shaver. */
+  const [plain] = composeSwitchboard({ country: 'IN', flows: [], boardId: B }).boards;
+  ok(plain.points.some((p) => p.what === 'a spare outlet'),
+    'an ordinary plate calls its own socket a spare outlet');
+  const [basin] = composeSwitchboard({ country: 'IN', flows: [], boardId: B,
+    spareAmps: applianceA(IN), spareWhat: 'a shaver or trimmer' }).boards;
+  ok(basin.points.every((p) => p.kind === 'blank' || p.what === 'a shaver or trimmer'),
+    'and a basin plate calls it what it is');
+  ok(howMany(basin, '16A socket') === 1 && howMany(basin, '16A switch') === 1,
+    'at the appliance rating, socket and switch both');
 }
 
 console.log('\n-- module widths --');
@@ -113,7 +142,7 @@ console.log('\n-- a flow is a switch, and a fan is a switch AND a regulator --')
      operating a fan means working out which of two identical knobs belongs to
      the switch you just pressed. */
   const two = composeSwitchboard({
-    country: 'IN', spare: false, boardId: B,
+    country: 'IN', spares: 0, boardId: B,
     flows: [...lights(1), fan('fl-fan-a'), fan('fl-fan-b')],
   });
   const TL = labels(two.boards[0]);
@@ -323,11 +352,70 @@ console.log('\n-- the composition, the US --');
 
 console.log('\n-- no spare, when the caller says so --');
 {
-  const parts = composeSwitchboard({ country: 'IN', flows: lights(2), boardId: B, spare: false });
+  const parts = composeSwitchboard({ country: 'IN', flows: lights(2), boardId: B, spares: 0 });
   const b = parts.boards[0];
   ok(b.used === 2 && b.size === 2, 'two switches, a two-module frame, nothing else');
   ok(howMany(b, '6A socket') === 0, 'and no socket appeared on it');
   ok(howMany(b, 'Blank plate') === 0, 'nor a blank, because the frame is full');
+}
+
+console.log('\n-- a standing lamp: bring a socket, or plug into one that is there --');
+{
+  /* THE PLATE DECIDES, NOT THE LAMP — see LAMP_CLAIMS_FROM. A plate carrying two
+     sockets seats the lamp on one of them; a plate carrying one or none keeps
+     the lamp's own pair, because the one it has is the socket it was given for
+     the charger. No role is named in any of this: the count decides. */
+  const sconce = { id: 'fl-bed', kind: 'bedside', label: 'Bedside', boardId: B };
+  const lamp = { id: 'fl-lamp', kind: 'lamp', label: 'Floor lamp', boardId: B };
+  const lamp2 = { id: 'fl-lamp2', kind: 'lamp', label: 'Reading lamp', boardId: B };
+  const compose = (flows, opts = {}) =>
+    composeSwitchboard({ country: 'IN', flows, boardId: B, ...opts }).boards[0];
+  const sockets = (b) => b.points.filter((p) => p.kind === 'socket');
+  const forFlow = (b, id) => b.points.filter((p) => p.flowId === id && p.kind === 'socket');
+
+  // ONE SOCKET ON THE PLATE: the lamp brings its own, and the plate ends with two.
+  const one = compose([sconce, lamp]);
+  ok(sockets(one).length === 2,
+    `a plate with one socket gains the lamp's own (got ${sockets(one).length})`);
+  ok(forFlow(one, 'fl-lamp').length === 1, 'and that socket is the lamp\'s');
+  ok(one.points.some((p) => p.source === 'spare'),
+    'the spare stays — it is what the charger plugs into');
+
+  // TWO SOCKETS ON THE PLATE: the lamp takes one, and nothing is added.
+  const two = compose([sconce, lamp], { spares: 2 });
+  ok(sockets(two).length === 2,
+    `a bedside plate stays at two sockets with a lamp on it (got ${sockets(two).length})`);
+  ok(forFlow(two, 'fl-lamp').length === 1, 'one of them is now the lamp\'s');
+  ok(two.points.filter((p) => p.source === 'spare' && p.kind === 'socket').length === 1,
+    'and the other is still free for the phone');
+  ok(two.used === compose([sconce], { spares: 2 }).used,
+    'the lamp costs the plate no modules at all');
+
+  // TWO LAMPS TAKE BOTH; A THIRD BRINGS ITS OWN, because three plugs need three.
+  const both = compose([lamp, lamp2], { spares: 2 });
+  ok(sockets(both).length === 2, 'two lamps take the two that are there');
+  const three = compose([lamp, lamp2, { ...lamp, id: 'fl-lamp3', label: 'Third' }],
+                        { spares: 2 });
+  ok(sockets(three).length === 3, 'a third lamp brings a third socket');
+
+  // A LAMP'S OWN PLATE CARRIES NONE, so its pair is the whole plate.
+  const own = compose([lamp], { spares: 0 });
+  ok(sockets(own).length === 1 && own.used === 3,
+    `a plate the lamp spawned is its socket and switch, nothing else (got ${own.used})`);
+
+  // A LAMP ON ANOTHER BOARD DOES NOT TOUCH THIS ONE.
+  const other = compose([sconce, { ...lamp, boardId: 'sb-r1-elsewhere' }], { spares: 2 });
+  ok(sockets(other).length === 2
+    && other.points.filter((p) => p.source === 'spare' && p.kind === 'socket').length === 2,
+    'a lamp on a different plate claims nothing here');
+
+  /* A RATED PLATE KEEPS ITS OWN SOCKET. A 16A outlet ticked back into a
+     switchboard carries the socket that is physically on that wall, at the
+     rating it was built at — an appliance point, not one to lend a floor lamp.
+     It carries ONE, so nothing is claimed and the lamp brings its own 6A. */
+  const rated = compose([lamp], { spareAmps: 16 });
+  ok(howMany(rated, '16A socket') === 1, 'the 16A socket survives a lamp landing on it');
+  ok(howMany(rated, '6A socket') === 1, 'and the lamp still gets its own');
 }
 
 console.log('\n-- added by hand --');
@@ -351,7 +439,7 @@ console.log('\n-- splitting, and it is balanced --');
 {
   // Nineteen modules of switches: past India's eighteen.
   const parts = composeSwitchboard({
-    country: 'IN', flows: lights(16), boardId: B, spare: false,
+    country: 'IN', flows: lights(16), boardId: B, spares: 0,
     extras: [{ id: 'e1', kind: 'socket', amps: 6 }],
   });
   ok(parts.total === 19, `nineteen modules in all (got ${parts.total})`);

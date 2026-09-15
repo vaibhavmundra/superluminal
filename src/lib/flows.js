@@ -73,8 +73,8 @@
 // PURE. No React, no canvas, no fetch.
 // ---------------------------------------------------------------------------
 
-import { pointInPolygon } from './geometry.js';
-import { footGeometry, BED_GRID_DEFAULTS } from './bedGrid.js';
+import { pointInPolygon, edges, distToSegment } from './geometry.js';
+import { footGeometry, BED_GRID_DEFAULTS, bedZoneIn } from './bedGrid.js';
 import { servesBay, nearestLampPlate } from './electrical.js';
 import { CEILING_BY_ID } from './ceilingObjects.js';
 
@@ -89,6 +89,18 @@ export const FLOW_DEFAULTS = {
   // ...and a ceiling on it in feet, so the long leg from a board on the far
   // wall does not sweep across the room on its way in.
   maxBulgeFt: 0.9,
+  /* HOW FAR FROM THE BED A LIGHT IS STILL A BEDSIDE LIGHT, in feet, measured to
+     the MATTRESS BOX and not to its centre — so the figure means the same thing
+     on a single as on a king. Three is a nightstand's width and the reach of an
+     arm from a pillow, which is what the rule is really about.
+     IT IS ONE FIGURE FOR SCONCES AND PENDANTS BOTH, because on this question
+     they are the same fitting: a reading light over a nightstand is a reading
+     light whether it is bracketed off the plaster or hung off the slab, and the
+     switch for either is the one you reach lying down.
+     AND IT IS HALF THE TEST. See `atBedside`: a distance alone would catch the
+     ceiling pendant hanging near the FOOT of the bed, which is the room's own
+     light on the room's own switch. The other half is the headboard wall. */
+  bedsideReachFt: 3,
   // The leg from the board is drawn flatter than the legs between fittings. It
   // is the longest one on the drawing and the least interesting — it says
   // "this loop is switched from here" and nothing else.
@@ -355,6 +367,19 @@ export function planFlows({
      switchboard allowed to have no switch on it; section 0 below turns each one
      into a flow, which is what gives it its switch — on somebody else's plate. */
   outlets = [],
+  /* THE POINTS IN THIS SPACE — `[{ id, x, y, heightMm, amps }]`, in plan pixels,
+     RESOLVED. The circle-and-J somebody dropped on a wall or on the ceiling; see
+     lib/elecPoints.js, and take `projectElecPointsPx`'s answer rather than the
+     store, which holds a fraction for one kind and feet for the other.
+     ONE LIST FOR BOTH KINDS, because on this question they are the same fitting:
+     a cable ends there and it is switched. Where it ends — plaster or slab — is
+     the difference the SYMBOL draws, and it changes nothing about the circuit.
+     A FITTING AND NOT A PLATE, which is the whole of section 0b. It is switched
+     from the board its BAY runs off — not from the nearest plate, and not from a
+     plate of its own — so it arrives here as a thing to be wired, exactly as a
+     socket outlet does, and `pointsFromFlows` grows the switch on whichever
+     board the flow lands on. Drag the wire's end and the switch moves with it. */
+  elecPoints = [],
   /* EVERY PLATE ON THE SHEET, and not only this room's — the pool a HAND
      ASSIGNMENT is allowed to name. It defaults to `boards`, so a caller that
      does not pass one behaves exactly as before.
@@ -423,6 +448,59 @@ export function planFlows({
   // and the fan's second point — so it is settled once here rather than
   // filtered twice with two chances to disagree about what a bedside board is.
   const bedsideBoards = live.filter((b) => b.role === 'bedside');
+  /** The nearest of a set of plates to a point, and nothing beyond `cap`. */
+  const nearestOf = (list, p, cap = Infinity) => {
+    let best = null;
+    for (const b of list) {
+      if (!b?.point) continue;
+      const d = dist(b.point, p);
+      if (d > cap || (best && d >= best.d)) continue;
+      best = { b, d };
+    }
+    return best?.b ?? null;
+  };
+
+  /* IS THIS FITTING AT A BEDSIDE? — which decides whether a light is switched
+     from the plate at 700mm or from the room's own board at 1200.
+     THE CASE IT EXISTS FOR IS A PLATE DIRECTLY ABOVE ANOTHER. A bedroom's main
+     board and one of its bedside boards can land on the same piece of wall —
+     the door is often right beside the head of the bed — and then they are one
+     point in plan and 500mm apart in elevation. Every rule that picks "the
+     nearest plate" picks whichever of the two the list held first, which is a
+     coin toss deciding whether a reading light is on the switch by the door or
+     the switch by the pillow. It has to be decided by what the fitting IS.
+     TWO CONDITIONS, AND NEITHER IS ENOUGH ALONE.
+       WITHIN `bedsideReachFt` OF THE MATTRESS, measured to the box.
+       AND ON THE HEADBOARD WALL. Distance alone catches the pendant hanging
+       near the FOOT of the bed, which is the room's own light; the wall is what
+       says "this is at the pillow end".
+     THE WALL IS NOT RE-DERIVED HERE, and that is the point of asking it this
+     way round. A bedside plate STANDS on the headboard wall, so the wall nearest
+     that plate IS the headboard wall — one geometry, one convention, and no wall
+     INDEX compared across two modules that number their walls differently
+     (accentPlace walks polygon edges; electrical.js merges them into runs).
+     NO BED, OR NO BEDSIDE PLATE, AND THE ANSWER IS NO. There is then nothing to
+     be beside and nothing to connect to, and the ordinary rules apply. */
+  const bedBox = bedZoneIn(zones);
+  const wallEdges = edges(polygon);
+  const nearestEdge = (p) => {
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < wallEdges.length; i++) {
+      const d = distToSegment(p, wallEdges[i][0], wallEdges[i][1]);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  };
+  const headEdges = new Set(bedsideBoards.map((b) => nearestEdge(b.point)));
+  const bedReach = o.bedsideReachFt * (pxPerFt || 0);
+  /** Point to axis-aligned box, and zero for a point inside it. */
+  const boxGap = (p, r) => Math.hypot(
+    Math.max(r.x0 - p.x, 0, p.x - r.x1),
+    Math.max(r.y0 - p.y, 0, p.y - r.y1));
+  const atBedside = (p) => !!bedBox && headEdges.size > 0 && bedReach > 0
+    && Number.isFinite(p?.x) && Number.isFinite(p?.y)
+    && boxGap(p, bedBox) <= bedReach
+    && headEdges.has(nearestEdge(p));
   // AND THE PLATES THAT CAN SWITCH A PIECE OF CEILING, which is not all of them.
   // See servesBay in electrical.js: a bedside plate switches its own sconce and
   // a TV plate its own television. A row of downlights falling back to "the
@@ -638,6 +716,39 @@ export function planFlows({
     });
   }
 
+  /* --- 0b. the points, wall and ceiling -------------------------------------
+     ONE POINT, ONE SWITCH, ON THE PLATE ITS BAY RUNS OFF. That last clause is
+     the whole of what makes this different from the outlet above: an outlet
+     falls back to "the nearest plate that can switch something", which is right
+     for a socket on a wall somebody will plug a vacuum cleaner into. A point is
+     a POINT IN A ROOM — a geyser, an exhaust, a chimney, a mirror light — and
+     the switch for it belongs with that room's other switches, which is what
+     `bayKey` resolves to. See `boardFor`: the bay's owner wins outright and no
+     distance is consulted.
+     BOTH KINDS, ONE RULE. A ceiling point is wired exactly as a wall point is;
+     the surface it ends at is a fact about the symbol and about the height, not
+     about the circuit.
+     ITS RATING TRAVELS WITH IT, for the reason the outlet's does: a 16A point is
+     not controlled by a 6A switch, and `null` means the country's light rating
+     rather than a hardcoded six.
+     AND ITS HEIGHT DOES NOT, because nothing about the wire depends on it. It is
+     carried for the card and the schedule and read by neither of them here. */
+  for (const wp of elecPoints) {
+    if (!Number.isFinite(wp?.x) || !Number.isFinite(wp?.y)) continue;
+    const wall = wp.on != null;
+    const name = wall ? 'wall point' : 'ceiling point';
+    add({
+      kind: 'point', tag: `point-${wp.id}`,
+      label: wp.amps ? `${wp.amps}A ${name}` : (wall ? 'Wall point' : 'Ceiling point'),
+      what: (wall ? `a point on the wall at ${wp.heightMm ?? 1200} mm` : 'a point on the ceiling')
+        + ', switched from the board in this bay',
+      nodes: [{ id: wp.id, x: wp.x, y: wp.y, what: `a ${name}` }],
+      bayKey: bayAt(wp)?.key ?? null, order: 'fixed',
+      extra: { pointId: wp.id, onWall: wall, amps: wp.amps ?? null,
+               heightMm: wp.heightMm ?? null },
+    });
+  }
+
   // --- 1. the tracks --------------------------------------------------------
   //
   // FIRST, BECAUSE A TRACK OWNS ITS FITTINGS. Every fitting the profile absorbed
@@ -796,22 +907,48 @@ export function planFlows({
   // to a plate on the far wall. Each side gets its own, which is the entire
   // reason the boards were placed in pairs.
   //
-  // THE JOIN IS AN ID, NOT A DISTANCE. `fromId` on the board is the sconce it
-  // was placed for, so the flow names its plate outright and cannot be caught
-  // out by a room where the two sconces are closer to each other than to their
-  // own boards.
+  // THE JOIN IS A DISTANCE NOW, AND IT USED TO BE AN ID. The board carried
+  // `fromId` — the sconce it was placed for — which named the plate outright and
+  // could not be caught out by a room where the two sconces are closer to each
+  // other than to their own boards. That join is gone because the PLATE no
+  // longer comes from the sconce: rule 2 in electrical.js places two plates off
+  // the bed whether any sconce exists or not, precisely so that deleting a light
+  // stops deleting a switch.
+  //
+  // SO IT IS THE NEARER OF THE TWO, which on this geometry is not a close call:
+  // the plates are a foot off either end of the mattress and the sconces are at
+  // the same two points, so each sconce is beside its own plate and five or six
+  // feet from the other. The failure the id guarded against needs the two
+  // pillows nearer each other than a pillow is to its own plate, which is a bed
+  // narrower than a foot.
   const sconces = accents.filter((a) => a.type === 'sconce' && !a.rejected);
   const pointOf = (sc) => ({ id: sc.id, x: sc.point?.x ?? sc.x, y: sc.point?.y ?? sc.y,
                              what: sc.what || sc.label || 'a wall light' });
 
-  for (const sc of sconces.filter((a) => a.group === 'bedside')) {
+  /* WHICH SCONCES ARE BEDSIDE SCONCES — the rules' own, and any other standing
+     at a bedside.
+     `group` ALONE WAS NOT ENOUGH, and the gap it left is the ordinary way to get
+     one: a sconce placed BY HAND beside the bed carries no group at all, so it
+     fell through to the wall-light grouping below and was switched from whatever
+     board the bay runs off. On a plan where the door's plate sits directly above
+     a bedside plate that is a reading light wired to the switch by the door —
+     the right fitting, the wrong switch, and nothing on the drawing to say so.
+     SO THE GEOMETRY IS ASKED AS WELL. `atBedside` is where the test lives; a
+     rule-placed bedside sconce keeps its group as the authority, because that
+     group is WHY it is where it is and no distance should be able to overrule
+     it — see accentPlace. */
+  const atBed = new Set(sconces
+    .filter((sc) => sc.group === 'bedside' || atBedside(pointOf(sc)))
+    .map((sc) => sc.id));
+
+  for (const sc of sconces.filter((a) => atBed.has(a.id))) {
     const p = pointOf(sc);
     if (!Number.isFinite(p.x)) continue;
     add({
       kind: 'bedside', label: 'Bedside', tag: `bedside-${sc.id}`,
       what: `the sconce ${sc.what || 'beside the bed'}, off the plate below it`,
       nodes: [p], order: 'fixed',
-      board: bedsideBoards.find((b) => b.fromId === sc.id) ?? null,
+      board: nearestOf(bedsideBoards, p),
       bayKey: bayAt(p)?.key ?? null,
       extra: { accentId: sc.id },
     });
@@ -824,7 +961,7 @@ export function planFlows({
   // under any one of them.
   const groups = new Map();
   for (const sc of sconces) {
-    if (sc.group === 'bedside') continue;
+    if (atBed.has(sc.id)) continue;
     const k = sc.group || 'wall';
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(sc);
@@ -882,6 +1019,26 @@ export function planFlows({
     if (!powered) continue;
     const label = CEILING_BY_ID[ob.typeId]?.label ?? powered;
     const bayKey = bayAt(ob)?.key ?? null;
+    /* A PENDANT HUNG AT A BEDSIDE IS SWITCHED FROM THAT BEDSIDE, and not from
+       the plate by the door with the ceiling.
+       IT IS THE SAME FITTING AS A SCONCE AS FAR AS THE ROOM IS CONCERNED. A
+       reading light over a nightstand is a reading light whether it is bracketed
+       off the wall or hung off the slab, and the switch for it is the one you
+       can reach lying down — which is the whole reason rule 2 puts a plate
+       there. Left to the ordinary rule it took the bay's owner, so a pendant a
+       foot from its own switch was wired to the door.
+       GEOMETRY AND NOT A KIND, because `chandelier` is the kind a pendant shares
+       with the thing hanging over the middle of the room — see ceilingObjects.js,
+       one kind and two catalogue entries — and that one is the room's light and
+       belongs on the room's switch. `atBedside` is what separates them, and it is
+       the same test the sconces take: within reach of the mattress AND at the
+       headboard end. One question, one answer, whatever the fitting is.
+       THE NEARER OF THE TWO PLATES, which is the side of the bed it is on.
+       Nothing here says a pendant may not be alone: one at each bedside is two
+       flows onto two plates, and one on its own takes its own side's. */
+    const bedsidePlate = ob.kind === 'chandelier' && atBedside(ob)
+      ? nearestOf(bedsideBoards, ob)
+      : null;
     const main = boardFor(bayKey, ob);
     const twoWay = ob.kind === 'fan' && main && bedsideBoards.length
       ? bedsideBoards.reduce((a, b) =>
@@ -889,10 +1046,18 @@ export function planFlows({
       : null;
     add({
       kind: 'object', label, tag: `object-${ob.id}`,
-      what: `${label.toLowerCase()} — switched on its own`
+      what: `${label.toLowerCase()} — `
+        + (bedsidePlate ? 'switched from the plate at that bedside'
+          : 'switched on its own')
         + (twoWay ? ', and from the far bedside as well' : ''),
       nodes: [{ id: ob.id, x: ob.x, y: ob.y, what: label }],
       bayKey, order: 'fixed',
+      /* NAMED OUTRIGHT, THE WAY A BEDSIDE SCONCE'S PLATE IS, and `fallback` is
+         left alone: a pendant out of reach of both plates falls through to the
+         bay's board exactly as every other ceiling fitting does. This replaces
+         the automatic answer and not the manual one — drag the wire's end and
+         the assignment still beats it. */
+      board: bedsidePlate,
       also: twoWay,
       extra: { objectId: ob.id },
     });

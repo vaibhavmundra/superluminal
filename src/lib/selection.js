@@ -36,7 +36,7 @@
 
 /** Everything the canvas can have picked. */
 export const SELECTION_KINDS = ['object', 'cob', 'array', 'module', 'light',
-  'shape', 'board', 'flow', 'spot', 'acc', 'door'];
+  'shape', 'board', 'flow', 'spot', 'acc', 'door', 'point'];
 
 /**
  * WHICH KINDS CAN BE SEVERAL, AND WHY IT IS NOT ALL OF THEM.
@@ -46,10 +46,22 @@ export const SELECTION_KINDS = ['object', 'cob', 'array', 'module', 'light',
  * multi-selection: whether the things can be DRAGGED as a group, because a
  * selection you can gather and then not move is a gesture that half works.
  *
- * The three here are the ones whose drag is already list-shaped: it takes
+ * The four here are the ones whose drag is already list-shaped: it takes
  * `members`, applies the same delta to each, and writes the lot back through
- * one list action (`updateCobs`, `updateArrays`, and the ceiling objects' own).
- * Adding a member to those is a change to the SELECTION and to nothing else.
+ * one list action (`updateCobs`, `updateArrays`, the ceiling objects' own, and
+ * the points' `setList`). Adding a member to those is a change to the SELECTION
+ * and to nothing else.
+ *
+ * `point` IS IN AND `module` IS NOT, THOUGH BOTH RIDE THE POINT PRIMITIVE, and
+ * the difference is the constraint rather than the gesture. Two modules on one
+ * run cannot pass through each other — `placeableU` refuses a fraction another
+ * body already occupies — so sliding a group of them is a different gesture
+ * from sliding one. Two points on one wall have no such rule: they may sit on
+ * top of each other if somebody wants that, so a group is simply a bigger
+ * version of the same drag and `movePoints` applies one delta under each
+ * member's own constraint. A wall point and a ceiling point in one selection
+ * therefore move together, each under its own — which is exactly what
+ * lib/point.js means by THE GROUP MOVE.
  *
  * DELIBERATELY OUT, and each for its own reason rather than for want of effort:
  *
@@ -65,7 +77,7 @@ export const SELECTION_KINDS = ['object', 'cob', 'array', 'module', 'light',
  *
  * Both stay single, and a press on one clears any group rather than joining it.
  */
-export const MULTI_KINDS = ['object', 'cob', 'array'];
+export const MULTI_KINDS = ['object', 'cob', 'array', 'point'];
 
 /** Can this kind be held as several? */
 export const isMultiKind = (kind) => MULTI_KINDS.includes(kind);

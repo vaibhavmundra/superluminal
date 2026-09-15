@@ -11,10 +11,11 @@
 import { planSwitchboards, planChunkBoards, asDrawn, asOutlet, heightsFor,
          innerSpaceFor, nearestBoardTo, nearestSeat, placedBoards,
          lampPlateInReach, lampPlateToShare,
-         LAMP_BOARD_ROLE, plateHeightMm, boardSFt } from '../../lib/electrical.js';
+         LAMP_BOARD_ROLE, APPLIANCE_ROLES, plateHeightMm,
+         boardSFt } from '../../lib/electrical.js';
 import { bedZoneIn } from '../../lib/bedGrid.js';
-import { lightSwitchA } from '../../lib/switchboards.js';
-import { isOutdoor } from '../../lib/roomTypes.js';
+import { lightSwitchA, applianceA } from '../../lib/switchboards.js';
+import { isOutdoor, expectsBasin } from '../../lib/roomTypes.js';
 import { bbox, pointInPolygon } from '../../lib/geometry.js';
 
 /**
@@ -26,9 +27,10 @@ import { bbox, pointInPolygon } from '../../lib/geometry.js';
  *
  *   the door      the door boxes, detected on arrival to set the scale, and
  *                 the room's own outline. Nothing else.
- *   the bedsides  the sconces the ACCENT pass placed — and that pass is part
- *                 of runPipeline, so by the time a space is lit they are
- *                 already in `accentZonesPx`.
+ *   the bedsides  the BED BOX, from the upload-time furniture detection. It
+ *                 used to be the sconces the ACCENT pass placed, which made a
+ *                 switch depend on a light somebody might delete — see rule 2
+ *                 in electrical.js.
  *   the TV        a `tv_unit` strip if the accent pass found one, and a fresh
  *                 vision call if it did not. THIS is the expensive one.
  *
@@ -36,8 +38,8 @@ import { bbox, pointInPolygon } from '../../lib/geometry.js';
  * on the room row for its sake. Now the first two run here, for every space,
  * on every layout: the door plate 300mm past the LATCH jamb on the side the
  * door opens to — which `swingSides` settles by cutting the room on the line
- * through the door and measuring the floor either side of it — and one plate
- * at each bedside sconce, on the sconce's own wall.
+ * through the door and measuring the floor either side of it — and one plate at
+ * each bedside, a foot clear of the mattress on the headboard wall.
  *
  * "AT" THE SCONCE IS "BELOW" IT, and the two words describe one place. A plan
  * is a view from above: a switch at 1200mm and the sconce at 1600mm on the
@@ -57,12 +59,12 @@ import { bbox, pointInPolygon } from '../../lib/geometry.js';
  * rules, on every space, always.
  *
  * ALL THREE RULES ASKED FOR BY NAME. Every one of them reads something the app
- * has before there is a layout — the door boxes from the upload, the sconces
- * the accent pass placed, the bed box from the furniture detection — so there
- * is nothing here that costs a call and no reason to run a subset.
+ * has before there is a layout — the door boxes from the upload and the bed box
+ * from the furniture detection — so there is nothing here that costs a call and
+ * no reason to run a subset.
  */
 export function planBoardResults({ rooms = [], doors = [], roomTypes = {}, projectId = null,
-                                   accentZonesPx = [], wardrobesPx = [], boardMoves = {},
+                                   wardrobesPx = [], basinsPx = [], boardMoves = {},
                                    pxPerFt = 0, warn = null } = {}) {
   const out = {};
   if (!(pxPerFt > 0) || !rooms.length) return out;
@@ -93,7 +95,16 @@ export function planBoardResults({ rooms = [], doors = [], roomTypes = {}, proje
       out[r.id] = planSwitchboards({
         room: { id: r.id, polygonPx: r.plan.polygonPx },
         rooms: all, doors, roomTypes, pxPerFt,
-        accentZones: accentZonesPx.filter((a) => a.roomId === r.id),
+        /* THE BASIN, AS ONE BOX, exactly the way `bedRect` arrives — see
+           `projectBasinsPx`. It is what the accent pass SAW and not what it
+           proposed, so the shaver plate survives somebody deleting the sconces
+           at the mirror. The largest where a room somehow has two: the same
+           choice `bedZoneIn` makes for beds. */
+        basinRect: basinsPx
+          .filter((z) => z.roomId === r.id)
+          .map((z) => z.rect)
+          .reduce((a, b) => (!a || (b.x1 - b.x0) * (b.y1 - b.y0)
+            > (a.x1 - a.x0) * (a.y1 - a.y0) ? b : a), null),
         /* THE BED, OUT OF THIS ROOM'S OWN ZONE LIST. `plan.zonesPx` is what
            the planner was handed — every no-light zone standing in this space,
            the detected beds among them — so the bed is already attributed to
@@ -127,9 +138,19 @@ export function planBoardResults({ rooms = [], doors = [], roomTypes = {}, proje
            no bedside sconces and no bed — both true, neither news, and printed
            under every space on the sheet. A rule that was never run has
            nothing to say, which is what `rules` is for. */
-        rules: projectId === 'residential' && roomTypes[r.id]?.type === 'bedroom'
-          ? ['door', 'bedside', 'facing']
-          : ['door'],
+        /* AND A BATHROOM IN A HOME GETS THE DOOR AND THE BASIN. WHICH ROOM has
+           a basin is asked of the vocabulary — see the `basin` flag on WET in
+           lib/roomTypes.js — rather than written here as a `=== 'toilet'`, so
+           the rule and the room list cannot drift apart. WHICH PROJECT is
+           checked here, beside the bedroom rules and for the same reason: an
+           office WC and a hotel bathroom both have a basin, and only one of the
+           three is a place somebody keeps a trimmer. A hotel bathroom has the
+           same socket and is deliberately not asked yet; that is one word here
+           when it is wanted. */
+        rules: projectId !== 'residential' ? ['door']
+          : roomTypes[r.id]?.type === 'bedroom' ? ['door', 'bedside', 'facing']
+            : expectsBasin(projectId, roomTypes[r.id]?.type) ? ['door', 'basin']
+              : ['door'],
       });
     } catch (err) {
       warn?.(r.id, err);
@@ -324,7 +345,13 @@ export function boardModeOf(b, { boardKinds = {}, country } = {}) {
        wire, and says so by having none. That is the honest consequence of the
        tick rather than a state to prevent. */
     outlet: o.outlet ?? (!!b?.placed && b?.role !== LAMP_BOARD_ROLE),
-    amps: o.amps ?? lightSwitchA(country),
+    /* THE RATING IS THE ROLE'S UNTIL SOMEBODY TYPES ONE. Almost every plate on
+       this drawing switches lights and is built at the light rating; a basin
+       plate carries a shaver, a trimmer, a hair dryer, and is built at the one
+       above it. See APPLIANCE_ROLES in lib/electrical.js and `applianceA` in
+       lib/switchboards.js — neither 6 nor 16 is written down anywhere. */
+    amps: o.amps ?? (APPLIANCE_ROLES.has(b?.role) ? applianceA(country)
+      : lightSwitchA(country)),
   };
 }
 

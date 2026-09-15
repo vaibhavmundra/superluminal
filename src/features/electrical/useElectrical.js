@@ -40,7 +40,8 @@ import { useBoardGestures } from './useBoardGestures.js';
 
 export function useElectrical({
   // --- the scene ---------------------------------------------------------
-  rooms, pxPerFt, obstaclesPx, wardrobesPx, accentZonesPx, taskSpotsPx, lampsPx,
+  rooms, pxPerFt, obstaclesPx, wardrobesPx, basinsPx, accentZonesPx, taskSpotsPx, lampsPx,
+  elecPointsPx,
   // --- room intelligence and the drawing's own facts ----------------------
   roomTypes, doors, projectId, country, layers, doorEdit,
   // --- the shared selection service ---------------------------------------
@@ -59,7 +60,7 @@ export function useElectrical({
   const selFlowId = idOf(sel, 'flow');
 
   const rules = useBoardRules({
-    rooms, doors, roomTypes, projectId, accentZonesPx, wardrobesPx, pxPerFt, country,
+    rooms, doors, roomTypes, projectId, wardrobesPx, basinsPx, pxPerFt, country,
     boardMoves, boardsOff, boardKinds, boardHeights, manualBoards,
   });
   const { sbCountry, boardsFor, bayResults, bayBoardsFor,
@@ -68,7 +69,8 @@ export function useElectrical({
   const { projections: { allBoardsPx, flowsPx, switchboardsPx, boardNames } } =
     useSceneElectricalProjections({
       rooms, boardsFor, bayBoardsFor, placedBoardsFor, bayResults, obstaclesPx, accentZonesPx,
-      taskSpotsPx, lampsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends, flowLinks,
+      taskSpotsPx, lampsPx, elecPointsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends,
+      flowLinks,
       layers, doorEdit
     });
 

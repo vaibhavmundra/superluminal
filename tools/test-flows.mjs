@@ -245,9 +245,15 @@ console.log('\n-- everything that is not a row is its own flow --');
 
 console.log('\n-- the bedsides, and the plate under each of them --');
 {
-  // A 14x18 bedroom: bed against the top wall, a sconce on each side wall, and
-  // the door in the LEFT wall down at the far end — so one bedside plate is
-  // near the main board and one is a long way from it.
+  // A 14x18 bedroom: bed against the top wall, a sconce at each pillow, and the
+  // door in the LEFT wall down at the far end — so one bedside plate is near the
+  // main board and one is a long way from it.
+  //
+  // THE PLATES COME OFF THE BED AND NOT OFF THE SCONCES, which is what rule 2
+  // does now: a foot clear of the mattress either side, on the headboard wall.
+  // The bed runs x 6..12, so they land at x=5 and x=13 on the top wall — which
+  // is exactly where accentPlace puts the sconces, so the sconces are put there
+  // too and the pair coincides the way it does on a real plan.
   const W = 18, H = 18;
   const bed = { id: 'bed', cls: 'bed', x0: 6, y0: 0, x1: 12, y1: 7 };
   const polyFt = [{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: H }, { x: 0, y: H }];
@@ -255,33 +261,49 @@ console.log('\n-- the bedsides, and the plate under each of them --');
   const leaf = px(900, PPF);
   const doors = [{ id: 'd1', cls: 'door', conf: 0.99,
                    rect: { x0: -18, y0: 14 * PPF, x1: leaf, y1: 14 * PPF + leaf } }];
-  const sconce = (id, xFt, what, wall, inward) => ({
+  const sconce = (id, xFt, what) => ({
     id, type: 'sconce', group: 'bedside', roomId: 'r1', what,
-    point: toPx({ x: xFt, y: 3 }), along: { x: 0, y: 1 },
-    inward, wall: { index: wall }, t: 3 * PPF,
+    point: toPx({ x: xFt, y: 0 }), along: { x: 1, y: 0 },
+    inward: { x: 0, y: 1 }, wall: { index: 0 }, t: xFt * PPF,
   });
   const sconces = [
-    sconce('sc-L', 0, 'left of the bed', 3, { x: 1, y: 0 }),
-    sconce('sc-R', W, 'right of the bed', 1, { x: -1, y: 0 }),
+    sconce('sc-L', 5, 'left of the bed'),
+    sconce('sc-R', 13, 'right of the bed'),
   ];
 
-  // BOTH FREE RULES, no vision call: the door plate and one plate per sconce.
+  // BOTH FREE RULES, no vision call: the door plate and one plate at each
+  // bedside. NOTHING IS HANDED THE SCONCES — that is the point of the rewrite:
+  // the plates are there because there is a bed.
   const sb = planSwitchboards({ room, rooms: [room], doors, roomTypes: {},
-                                accentZones: sconces, pxPerFt: PPF,
+                                bedRect: rp(bed), pxPerFt: PPF,
                                 rules: ['door', 'bedside'] });
   const live = sb.boards.filter((b) => !b.rejected && b.point);
   const beds = live.filter((b) => b.role === 'bedside');
-  ok(beds.length === 2, `two bedside plates, one per sconce (got ${beds.length})`);
-  ok(beds.every((b) => sconces.some((c) => c.id === b.fromId)),
-    'each names the sconce it was placed for');
+  ok(beds.length === 2, `two bedside plates, one per pillow (got ${beds.length})`);
+  ok(beds.every((b) => near(b.point.y, 0, 1e-6)),
+    'both on the headboard wall, not on the wall along the side of the bed');
+  const xs = beds.map((b) => b.point.x).sort((a, b) => a - b);
+  ok(near(xs[0], 5 * PPF, 1e-6) && near(xs[1], 13 * PPF, 1e-6),
+    `a foot clear of the mattress either side (got ${xs.map((v) => (v / PPF).toFixed(2))})`);
+  ok(beds.every((b) => !b.fromId), 'and neither is keyed to a fitting any more');
+
+  // NO SCONCE, STILL TWO PLATES. This is the whole of what changed: deleting a
+  // bedside light used to delete the switch under it, silently, because the
+  // board was derived from the accent.
+  const bare = planSwitchboards({ room, rooms: [room], doors, roomTypes: {},
+                                 bedRect: rp(bed), pxPerFt: PPF,
+                                 rules: ['door', 'bedside'] });
+  ok(bare.boards.filter((b) => b.role === 'bedside' && !b.rejected).length === 2,
+    'a bedroom with no sconces at all still has a plate at each bedside');
+
   // "BELOW THE SCONCE" IS THE SCONCE'S OWN PLAN POINT. A plan is a view from
-  // above: a switch at 1200mm and a sconce at 1600mm on one wall are the same
-  // point here and stacked in the room. An offset would move it ALONG the wall,
-  // which is not below anything.
-  ok(beds.every((b) => {
-    const c = sconces.find((z) => z.id === b.fromId);
-    return near(b.point.x, c.point.x, 1e-6) && near(b.point.y, c.point.y, 1e-6);
-  }), 'and stands at that sconce\'s own point — below it on the wall');
+  // above: a switch at 700mm and a sconce at 1600mm on one wall are the same
+  // point here and stacked in the room. The two rules put them at the same
+  // figure off the same box, so they still coincide — they are simply no longer
+  // derived from each other.
+  ok(sconces.every((c) => beds.some((b) => near(b.point.x, c.point.x, 1e-6)
+    && near(b.point.y, c.point.y, 1e-6))),
+    'and each stands at its sconce\'s own point — below it on the wall')
 
   const main = live.find((b) => b.role === 'door');
   ok(!!main, 'the door plate is there too');
@@ -314,10 +336,14 @@ console.log('\n-- the bedsides, and the plate under each of them --');
   const bs = flows.filter((f) => f.kind === 'bedside');
   ok(bs.length === 2 && bs.every((f) => f.count === 1),
     `one flow per bedside sconce (got ${bs.length})`);
+  // THE NEARER PLATE, WHICH IS THE ONE ON ITS OWN SIDE OF THE BED. The join
+  // used to be `fromId`; the plate no longer comes from the sconce, so it is a
+  // distance — and on this geometry it is not a close call: each sconce is ON
+  // its own plate and 8ft from the other.
   ok(bs.every((f) => {
     const b = beds.find((x) => x.id === f.boardId);
-    return b && b.fromId === f.nodes[0].id;
-  }), 'and each runs off the plate placed for that very sconce');
+    return b && near(b.point.x, f.nodes[0].x, 1e-6);
+  }), 'and each runs off the plate at its own side of the bed');
 
   // A SCONCE AND ITS OWN PLATE ARE ONE POINT IN PLAN, so the loop between them
   // has no length and paints nothing. The flow is still the switch it is.
@@ -378,6 +404,83 @@ console.log('\n-- the bedsides, and the plate under each of them --');
   ok(!!pd, 'a pendant is on the lighting circuit, because the gate is the kind');
   ok(pd?.label === 'Pendant', `and it is called a pendant, not a chandelier (got ${pd?.label})`);
   ok(/^pendant —/.test(pd?.what ?? ''), 'the sentence under it follows the label');
+  // ...AND ONE IN THE MIDDLE OF THE ROOM IS THE ROOM'S LIGHT. This one hangs at
+  // (9,13), thirteen feet from the nearer bedside plate, so it takes the bay's
+  // board like any other ceiling fitting. The bedside rule below is a REACH and
+  // not a kind, which is what keeps these two apart.
+  ok(pd?.boardId === main.id, 'a pendant out in the room is switched from the main board');
+
+  /* --- A PENDANT HUNG AT A BEDSIDE TAKES THAT BEDSIDE'S PLATE --------------
+     Two feet off the left-hand plate, which is where a reading pendant over a
+     nightstand actually hangs. It is the same fitting as a sconce as far as the
+     room is concerned, and the switch for it is the one you reach lying down. */
+  const near2 = { id: 'pd2', kind: 'chandelier', typeId: 'pendant', ...toPx({ x: 5, y: 2 }) };
+  const { flows: f4 } = planFlows({
+    room, bays,
+    chunks: res.chunks.map((ch) => ({ ...rp(ch),
+      xLines: ch.xLines.map((v) => v * PPF), yLines: ch.yLines.map((v) => v * PPF) })),
+    cells: res.cells.map(rp), lights: res.lights.map((l) => ({ ...l, ...toPx(l) })),
+    zones: [rp(bed)], accents: sconces, objects: [near2],
+    boards: live, owner: cb.owner, pxPerFt: PPF,
+  });
+  const bp = f4.find((f) => f.kind === 'object');
+  const leftPlate = beds.reduce((a, b) => (b.point.x < a.point.x ? b : a));
+  ok(bp?.boardId === leftPlate.id,
+    'a pendant beside the bed runs off the plate at THAT bedside, not the door');
+  ok(/at that bedside/.test(bp?.what ?? ''), `and the card says so: "${bp?.what}"`);
+  ok(!bp?.assigned, 'and it is the rule doing it, not a stored hand assignment');
+
+  /* --- AT A BEDSIDE IS A DISTANCE *AND* A WALL ----------------------------
+     The reach alone would catch the pendant hanging two and a half feet past
+     the FOOT of the bed, which is the room's own light on the room's own
+     switch. `atBedside` asks the headboard wall as well — the wall the bedside
+     plates themselves stand on, so nothing is re-derived and no wall index is
+     compared across modules. */
+  const withObjects = (objects, accents = sconces) => planFlows({
+    room, bays,
+    chunks: res.chunks.map((ch) => ({ ...rp(ch),
+      xLines: ch.xLines.map((v) => v * PPF), yLines: ch.yLines.map((v) => v * PPF) })),
+    cells: res.cells.map(rp), lights: res.lights.map((l) => ({ ...l, ...toPx(l) })),
+    zones: [rp(bed)], accents, objects,
+    boards: live, owner: cb.owner, pxPerFt: PPF,
+  }).flows;
+
+  // The bed runs y 0..7, so this hangs 2.5ft past its foot — inside the 3ft
+  // reach, and nearer the bottom wall than the headboard.
+  const footPend = withObjects([{ id: 'pd3', kind: 'chandelier', typeId: 'pendant',
+                                  ...toPx({ x: 9, y: 9.5 }) }]);
+  const fp = footPend.find((f) => f.kind === 'object');
+  ok(fp?.boardId === main.id,
+    'a pendant past the foot of the bed is the room\'s light, on the room\'s board');
+
+  /* --- AND A SCONCE SOMEBODY PLACED BY HAND IS READ THE SAME WAY -----------
+     THE CASE THIS EXISTS FOR. A hand-placed sconce carries no `group`, so it
+     used to fall through to the wall-light grouping below and take whatever
+     board the BAY runs off. On a plan where the main plate sits directly above a
+     bedside one — the door beside the head of the bed, 1200 over 700 — that is a
+     reading light wired to the switch by the door, with nothing on the drawing
+     to say which of the two plates it landed on. */
+  const handSconce = {
+    id: 'sc-hand', type: 'sconce', roomId: 'r1', what: 'beside the bed',
+    point: toPx({ x: 13, y: 0 }), along: { x: 1, y: 0 }, inward: { x: 0, y: 1 },
+    wall: { index: 0 }, t: 13 * PPF,
+  };
+  const hand = withObjects([], [handSconce]);
+  const hf = hand.find((f) => f.kind === 'bedside');
+  const rightPlate = beds.reduce((a, b) => (b.point.x > a.point.x ? b : a));
+  ok(!!hf && hf.nodes[0].id === 'sc-hand',
+    'a hand-placed sconce at the bedside is a bedside flow, not a wall light');
+  ok(hf?.boardId === rightPlate.id, 'and it runs off the plate at its own bedside');
+  ok(!hand.some((f) => f.kind === 'wall'),
+    'nothing is left over in the wall-light grouping');
+
+  // ...and one on another wall is still an ordinary wall light on the bay board.
+  const away = withObjects([], [{ ...handSconce, id: 'sc-far',
+    point: toPx({ x: 0, y: 14 }), along: { x: 0, y: 1 }, inward: { x: 1, y: 0 },
+    wall: { index: 3 }, t: 14 * PPF }]);
+  const wl = away.find((f) => f.kind === 'wall');
+  ok(!!wl && wl.boardId === main.id,
+    'a sconce away from the bed is a wall light on the room\'s own board');
 }
 
 console.log('\n-- an array of spots is one switch, whatever it is spaced at --');
@@ -853,7 +956,7 @@ console.log('\n-- the door decides, with no pass and no vision call --');
   // two sentences about fittings nobody has asked for yet.
   const asked = planSwitchboards({ room, rooms: [room], doors: inTopWall(2),
                                    roomTypes: {}, pxPerFt: PPF });
-  ok(asked.notes.length === 2, `all three rules report (got ${asked.notes.length} notes)`);
+  ok(asked.notes.length === 3, `every rule asked for reports (got ${asked.notes.length} notes)`);
 
   // The door 2ft in from the left: most of this room's floor is to its RIGHT,
   // so the hinge goes left, the latch right, and the plate steps right.

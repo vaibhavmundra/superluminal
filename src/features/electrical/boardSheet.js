@@ -7,7 +7,7 @@
 // cannot come to disagree about what SB7 is.
 // ---------------------------------------------------------------------------
 import { composeSwitchboard, composeOutlet } from '../../lib/switchboards.js';
-import { LAMP_BOARD_ROLE } from '../../lib/electrical.js';
+import { socketsFor } from '../../lib/electrical.js';
 import { heightOf } from './boardRules.js';
 
 /**
@@ -23,12 +23,13 @@ import { heightOf } from './boardRules.js';
  * know about an outlet, and it is the thing that changes when they drag its
  * wire somewhere else.
  *
- * `spareAmps` IS WHAT SURVIVES A CONVERSION. Every board carries one socket
- * of its own and the switch for it — the "spare pair" — and on a plate that
- * was an outlet a moment ago, that socket IS the one that was on the wall,
- * at the rating it was on the wall at. Composing it at the default would
- * silently re-rate somebody's air-conditioner point on the way through a
- * change that was about where the switch lives.
+ * `spareAmps` IS WHAT SURVIVES A CONVERSION. Most boards carry one socket of
+ * their own and the switch for it — the "spare pair", and see `spares` below
+ * for the two roles that carry a different number — and on a plate that was an
+ * outlet a moment ago, that socket IS the one that was on the wall, at the
+ * rating it was on the wall at. Composing it at the default would silently
+ * re-rate somebody's air-conditioner point on the way through a change that
+ * was about where the switch lives.
  */
 export function composeBoard(b, { country, flowsPx = [], extras = [], order = [],
                                   withFlowId = false } = {}) {
@@ -46,18 +47,19 @@ export function composeBoard(b, { country, flowsPx = [], extras = [], order = []
   return composeSwitchboard({
     country, flows: flowsPx, boardId: b.id,
     extras, spareAmps: b.amps ?? null, order,
-    /* --- NO SPARE ON A PLATE THAT IS ALREADY A SOCKET --------------------
-       EVERY BOARD GETS ONE SOCKET MORE THAN THE DRAWING ASKED FOR — the
-       charger, the vacuum cleaner — and the argument for it is that nobody
-       thinks to draw that one and everybody wants it. See the note on the
-       spare pair in switchboards.js.
-       A STANDING LAMP'S PLATE IS THE ONE CASE WHERE THE ARGUMENT DOES NOT
-       HOLD, because the plate exists precisely BECAUSE somebody wanted a
-       socket there. Its whole content is the lamp's own socket and switch, and
-       a spare on top would double a three-module frame to six for a floor
-       lamp — a plate twice the size of the thing it is for, half of it
-       unasked. See LAMP_BOARD_ROLE in lib/electrical.js. */
-    spare: b.role !== LAMP_BOARD_ROLE,
+    /* WHAT THE PLATE'S OWN SOCKET IS FOR, where the plate knows. Only a basin
+       plate sets it — see rule 4 in lib/electrical.js — and `composeSwitchboard`
+       defaults to "a spare outlet" for every other plate, which is what they
+       are. */
+    ...(b.socketWhat ? { spareWhat: b.socketWhat } : {}),
+    /* --- HOW MANY SOCKETS THIS PLATE CARRIES BEFORE ANYTHING ASKS ---------
+       OFF THE ROLE, because that is what the figure is about: a bedside plate
+       carries two (the phone on charge and the lamp), a standing lamp's own
+       plate carries none because the lamp's flow brings its socket with it, and
+       everything else carries the one spare nobody draws and everybody wants.
+       See `socketsFor` in lib/electrical.js for each of those in full, and the
+       note on the spare pair in switchboards.js for why there is one at all. */
+    spares: socketsFor(b.role),
   });
 }
 

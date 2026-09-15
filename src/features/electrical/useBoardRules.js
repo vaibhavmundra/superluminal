@@ -16,14 +16,14 @@ import { planBoardResults, planBayResults, planOutdoorFeeds, baysOfRoom,
 const warnRules = (roomId, err) => console.warn('[electrical] the rules failed for', roomId, err);
 
 export function useBoardRules({
-  rooms, doors, roomTypes, projectId, accentZonesPx, wardrobesPx, pxPerFt, country,
+  rooms, doors, roomTypes, projectId, wardrobesPx, basinsPx, pxPerFt, country,
   boardMoves, boardsOff, boardKinds, boardHeights, manualBoards,
 }) {
   /** @see planBoardResults — the three free rules, on every space, always. */
   const boardResults = useMemo(() => planBoardResults({
-    rooms, doors, roomTypes, projectId, accentZonesPx, wardrobesPx, boardMoves, pxPerFt,
+    rooms, doors, roomTypes, projectId, wardrobesPx, basinsPx, boardMoves, pxPerFt,
     warn: warnRules,
-  }), [rooms, doors, roomTypes, projectId, accentZonesPx, wardrobesPx, boardMoves, pxPerFt]);
+  }), [rooms, doors, roomTypes, projectId, wardrobesPx, basinsPx, boardMoves, pxPerFt]);
 
   /**
    * WHERE THE BUILDING IS, as the registry's own record for it.

@@ -40,12 +40,18 @@ const threw = (fn) => { try { fn(); return false; } catch { return true; } };
 
 say('THE KINDS');
 {
-  ok(SELECTION_KINDS.length === 11, 'eleven kinds, which is what moved into the register');
+  ok(SELECTION_KINDS.length === 12, 'twelve kinds, which is what the register holds');
   ok(SELECTION_KINDS.filter((k, i) => SELECTION_KINDS.indexOf(k) !== i).length === 0,
     'no kind is listed twice');
   ok(['object', 'cob', 'array', 'module', 'light', 'shape', 'board', 'flow',
       'spot', 'acc', 'door'].every((k) => SELECTION_KINDS.includes(k)),
-    'the eleven are the eleven App.jsx used to hold separately');
+    'the eleven App.jsx used to hold separately are all still here');
+  /* AND THE TWELFTH, WHICH IS THE ONE THIS FILE'S HEADER PREDICTED: "the
+     twelfth selectable thing would have been ninety-six more" sites to clear by
+     hand. It cost one entry here and one in MULTI_KINDS. Both kinds of point —
+     the one on a wall and the one on a ceiling — share it, because on every
+     question a selection asks they are the same element on the same primitive. */
+  ok(SELECTION_KINDS.includes('point'), 'plus the electrical point');
   ok(!SELECTION_KINDS.includes('outline') && !SELECTION_KINDS.includes('trackPt'),
     "the tracer's outline and a track's point are NOT in here — different screen, "
     + 'and a sub-selection of something already picked');
@@ -92,8 +98,9 @@ say('THE TRUTH TABLE — ONE KIND AT A TIME');
       if (idOf(s, to) === 'b' && idOf(s, from) === null) replaced++;
     }
   }
-  ok(pairs === 110 && replaced === pairs,
-    'all 110 ordered pairs of kinds: selecting the second drops the first');
+  const want = SELECTION_KINDS.length * (SELECTION_KINDS.length - 1);
+  ok(pairs === want && replaced === pairs,
+    `all ${want} ordered pairs of kinds: selecting the second drops the first`);
 
   ok(idOf(select('cob', 'c1'), 'cob') === 'c1' && isSelected(select('cob', 'c1'), 'cob', 'c1'),
     'isSelected agrees with idOf for a single kind');

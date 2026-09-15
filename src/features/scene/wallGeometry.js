@@ -1,7 +1,44 @@
 import { regionFromOutline } from '../../lib/outline.js';
+import { wallHostFor } from '../../lib/electrical.js';
 import { gridFor } from '../../lib/wallGrid.js';
 import { reverseCovesFor, mergeReverseCoves, trimWallRun } from '../../lib/reverseCove.js';
 import { shelfStripsFor } from '../../lib/shelfStrip.js';
+
+/**
+ * EVERY ROOM'S WALLS, AS A HOST — `roomId` -> what `wallHostFor` gives.
+ *
+ * WHAT ASKS FOR IT. Anything seated on the plaster rather than dropped on the
+ * ceiling: a split AC's indoor unit stores how far round the walls it sits and
+ * resolves its position and its ANGLE from them every frame — see
+ * lib/wallUnit.js — and so does the point or socket that feeds it.
+ *
+ * FROM THE OUTLINES AND NOT FROM `rooms`, WHICH IS THE SAME CYCLE `buildReverseCoves`
+ * BELOW AVOIDS AND FOR THE SAME REASON. The obstacle projection is what the
+ * LAYOUT consumes, and `rooms` is what the layout produces; a host index built
+ * over `rooms` could not be handed to the projection that feeds it. It does not
+ * need one — a room's wall path comes from its OUTLINE and the scale, both of
+ * which exist long before anything is lit.
+ *
+ * AND IT IS THE SAME POLYGON THE LAYOUT WILL USE, down to the bounding-rect
+ * switch: `regionFromOutline` is the call layout.js makes and `useBoundingRect`
+ * is the same flag it reads. That is what lets a unit's seat and the wall point
+ * behind it resolve against one path rather than two that nearly agree.
+ *
+ * A MAP AND NOT A LIST, because every reader has a `roomId` in hand and wants
+ * the walls for it. `null` for a room whose outline will not close, which is
+ * the answer `resolveWallUnitPx` turns into "this one is not drawn".
+ */
+export function buildWallHosts({ source, pxPerFt, litOutlines = [], useBoundingRect }) {
+  const hosts = new Map();
+  if (!source || !pxPerFt) return hosts;
+  for (const o of litOutlines) {
+    const region = regionFromOutline(o, pxPerFt);
+    if (!region?.ok) continue;
+    const polygonPx = useBoundingRect ? region.boundingRect : region.polygon;
+    hosts.set(o.id, wallHostFor(polygonPx, pxPerFt));
+  }
+  return hosts;
+}
 
 /**
  * THE REVERSE COVES, from the render pass's panelling and wallpaper.

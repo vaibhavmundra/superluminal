@@ -130,7 +130,7 @@ import { placeZone, nearestWall, alongWallAt } from './lib/accentPlace.js';
    the panel's own chrome, and the list of what may be added to one, which is a
    row of buttons. See that feature's README. */
 import { SB_COLOUR } from './lib/electrical.js';
-import { addablePoints } from './lib/switchboards.js';
+import { addablePoints, countryFor } from './lib/switchboards.js';
 import useBoardStep from './features/electrical/useBoardStep.js';
 import useElectrical from './features/electrical/useElectrical.js';
 /* THE COVES, THE GUIDES, THE TRACK RUNS AND THE DRAWN TRACKS — one tool, one
@@ -168,7 +168,12 @@ import SwitchboardSheet from './components/SwitchboardSheet.jsx';
    a corner, rotating it and setting a fan's sweep are all features/fixtures/;
    what is read here is the label a palette prints, the sweep chips and the
    sweep the selected fan is at. */
-import { CEILING_BY_ID, sweepMm, wattsOf } from './lib/ceilingObjects.js';
+import { CEILING_BY_ID, sweepMm, wattsOf, typeOnWall } from './lib/ceilingObjects.js';
+import { projectElecPointsPx, pointHostFor, POINT_IDS, WALL_POINT_ID,
+         WALL_POINT_HEIGHT_MM, POINT_AMPS, heightOfPoint, isConstrained }
+  from './lib/elecPoints.js';
+import { isWallUnit, isSeated, feedOf, AC_FEED, acRatings, acAmpsFor }
+  from './lib/wallUnit.js';
 import { collectTargets, SNAP_DEFAULTS } from './lib/snapGuides.js';
 /* PICKING A THING UP, MOVING IT, AND LEAVING A COPY BEHIND — the four rules
    every draggable object on this canvas needs and each of which has been got
@@ -184,6 +189,9 @@ import ToolRail from './components/ToolRail.jsx';
 import Popover, { PopoverButton } from './components/Popover.jsx';
 import StageBar, { SceneSwitch } from './components/StageBar.jsx';
 import FanSpec from './components/FanSpec.jsx';
+import PointSpec from './components/PointSpec.jsx';
+import AcSpec from './components/AcSpec.jsx';
+import useAcFeed from './features/fixtures/useAcFeed.js';
 /* --- WHERE THE LIGHT LANDS, AND IT IS ONE IMPORT ------------------------
    FOUR NAMES OFF ONE FEATURE INDEX: the hook that computes the field, the
    overlay that draws it inside the drawing's own <svg>, the key, and the
@@ -655,7 +663,7 @@ export default function App({
   const {
     selObjIds, selObjId, objDrag, objMode, setObjMode,
     armed, setArmed, ghost, setGhost,
-    selCobId, selCobIds, selArrayId, selArrayIds, selModuleId, selLightId,
+    selCobId, selCobIds, selPointIds, selArrayId, selArrayIds, selModuleId, selLightId,
     cobOpen, setCobOpen, cobMode, setCobMode,
     cobStanding, setCobStanding, cobLock,
     /* THE ADJUSTABLE SPOT BETWEEN ITS TWO CLICKS — see `spotAim`. Read here
@@ -1117,12 +1125,14 @@ export default function App({
      the person drawing knows which. So this is an override like every other
      hand decision in this file, holding only the plates somebody set.
 
-     THE PRIMARY HEIGHT ONLY, which matters for exactly one board. The wall
-     facing a bed is TWO plates at two heights — that is what makes it two, see
-     FACING_PLATES — so an override replaces the first of its list and leaves the
-     second alone. Writing a single number over the whole list would silently
-     turn a two-plate board into a one-plate board, which is a change to what
-     gets ORDERED made by editing a dimension. */
+     THE PRIMARY HEIGHT ONLY, which is a rule about the LIST and not about any
+     board in particular today. The wall facing a bed used to be the case that
+     needed it — one board of two plates at two heights — and it is now two
+     boards of one plate each, so each override is simply that plate's height.
+     The rule stands because the count is derived from the list (see
+     FACING_PLATES): writing a single number over a multi-height list would
+     silently turn a two-plate board into a one-plate board, which is a change to
+     what gets ORDERED made by editing a dimension. */
 
   /* --- AND THE ORDER THE MODULES SIT IN: `{ [boardId]: [unitKey, ...] }` -----
      THE RULES DECIDE WHAT IS ON A PLATE AND A PERSON DECIDES WHERE. Which
@@ -1643,8 +1653,8 @@ export default function App({
   });
   const {
     rooms: { items: rooms, focus, openRoom, planAreaSqft },
-    architecture: { obstaclesPx },
-    furnishings: { bedsPerRoom, detectedZones, wardrobesPx, shelfStrips },
+    architecture: { obstaclesPx, wallHosts },
+    furnishings: { bedsPerRoom, detectedZones, wardrobesPx, basinsPx, shelfStrips },
     lightingGeometry: { reverseCoves, drawnZones },
   } = usePlanScene({
     source, pxPerFt, outlines, outlinesPx, litOutlines, enclosedZones, focusId, ceilingObjs,
@@ -2059,10 +2069,28 @@ export default function App({
      figures at the top of the Analysis, and a tool that changed a room's verdict
      silently would be the one act on this drawing worth watching, performed off
      screen. The pill is App's. */
+  /* --- AN AIR-CONDITIONER'S SUPPLY, AND THE ONE PLACE THAT KEEPS IT IN STEP --
+     ABOVE THE COMMANDS AND THE GESTURES BECAUSE BOTH SPEND IT. Placing a split
+     unit places its socket or its point, sliding one brings that with it, and
+     DELETING one takes it off the drawing — five paths through two stores, held
+     together in one hook so the fifth is not the one somebody forgets. See
+     features/fixtures/useAcFeed.js. */
+  /* `countryFor` DIRECTLY AND NOT `sbCountry`, WHICH IS A TEMPORAL DEAD ZONE
+     HERE. That name is destructured off the electrical feature eight hundred
+     lines below this, and naming it now would be the exact "cannot access
+     before initialization" the note at the head of useBoardRules describes. The
+     resolver is pure and the lookup is a table read, so the second call costs
+     nothing and both answers are the same object. */
+  const acCountry = useMemo(() => countryFor(country), [country]);
+  const acFeed = useAcFeed({
+    ceilingObjs, elecPoints: doc.elecPoints, manualBoards: doc.manualBoards,
+    boardKinds: doc.boardKinds, wallHosts, pxPerFt, country: acCountry, docActions,
+  });
+
   const fixtureCommands = useFixtureCommands({
     state: fixtureState, fixtures, docActions, rooms, pxPerFt, readOnly,
     manualCobs, cobArrays, trackFixtures,
-    arrayOutline, spaceAnalysis, setSel, setOptionPick,
+    arrayOutline, spaceAnalysis, setSel, setOptionPick, acFeed,
   });
   /* THE NAMES THIS FILE ALREADY USED — the panel's chips, the array bar's five
      controls, the ToolRail, the fan's sweep row and the keydown handler's nine
@@ -2081,6 +2109,9 @@ export default function App({
   /* `remove` IS NOT TAKEN OFF HERE — the by-id delete is the panel's own cross,
      and this file only ever deleted what was PICKED. See `removeSelected`. */
   const { setSpec: setCobSpec, removeSelected: deleteCobs } = fixtureCommands.cob;
+  /* AND THE POINTS' ONE, for the same reason the object's two are aliased here:
+     the keydown effect names it in its dependency array. */
+  const { removeSelected: deletePoints } = fixtureCommands.points;
   /* THE TWO OBJECT COMMANDS ARE ALIASED RATHER THAN REACHED THROUGH THE GROUP,
      because the keydown effect names one of them in its dependency array: the
      group is a fresh object every render and naming IT there would re-bind the
@@ -2816,6 +2847,35 @@ export default function App({
   const lampsPx = useMemo(() => [...manualCobsPx, ...arrayCobsPx],
     [manualCobsPx, arrayCobsPx]);
 
+  /* --- THE WALL POINTS, IN PLAN PIXELS ------------------------------------
+     THE STORE HOLDS FEET and every consumer of a POSITION takes this list — see
+     the note on `manualCobs`, which is the same store shape and the same trap:
+     a reader handed the raw list reads `undefined` for `x`, computes NaN and
+     draws nothing at all, with no throw and no warning. */
+  /* --- THE POINTS, RESOLVED -----------------------------------------------
+     THE ONE WAY TO GET A POSITION OUT OF EITHER KIND. A wall point's record is a
+     FRACTION of its room's perimeter and a ceiling point's is feet — see
+     lib/elecPoints.js — so a reader handed the store gets `undefined` for one of
+     them and a silent NaN downstream. Everything that draws, wires or hit-tests
+     a point takes this list.
+     THE HOSTS ARE BUILT HERE BECAUSE THE ROOMS ARE HERE. `wallRuns` walks an
+     outline, so it is done once per room per render rather than once per point,
+     and `elecPoints.js` is handed the index rather than being taught what a room
+     is. A wall point whose room has gone resolves to null and drops out, which
+     is what lib/point.js's third gate needs: a point that cannot be placed
+     cannot be pressed. */
+  const elecPointsPx = useMemo(() => {
+    const hosts = new Map();
+    const hostOf = (q) => {
+      if (!hosts.has(q.roomId)) {
+        hosts.set(q.roomId, pointHostFor(
+          rooms.find((r) => r.id === q.roomId)?.plan?.polygonPx ?? [], pxPerFt));
+      }
+      return hosts.get(q.roomId);
+    };
+    return projectElecPointsPx(doc.elecPoints, hostOf, pxPerFt);
+  }, [doc.elecPoints, pxPerFt, rooms]);
+
   /* --- WHERE THE LIGHT ACTUALLY LANDS -------------------------------------
      THE ESTIMATED ILLUMINANCE HEATMAP. Everything about it is
      features/heatmap/ — the distribution profile per fixture family, the grid,
@@ -2849,7 +2909,8 @@ export default function App({
   });
 
   const electrical = useElectrical({
-    rooms, pxPerFt, obstaclesPx, wardrobesPx, accentZonesPx, taskSpotsPx, lampsPx,
+    rooms, pxPerFt, obstaclesPx, wardrobesPx, basinsPx, accentZonesPx, taskSpotsPx, lampsPx,
+    elecPointsPx,
     roomTypes, doors, projectId, country, layers, doorEdit,
     sel, setSel, svgPoint, svgRef, pressState, boardStep, doc, docActions,
   });
@@ -3400,12 +3461,12 @@ export default function App({
   const fixtureGestures = useFixtureGestures({
     state: fixtureState, fixtures, cobTool,
     rooms, pxPerFt, zoom, opt, source, addTool, selAccId, overRoom,
-    manualCobs, cobArrays, trackFixtures, ceilingObjs,
+    manualCobs, cobArrays, trackFixtures, ceilingObjs, elecPoints: doc.elecPoints,
     svgPoint, svgRef, pressState,
     roomAt, insideAnyRoom, snapTargets, snapTol,
     arrayOutline, shapeAtPointer, geomUnder, geomHover, setGeomHover,
     clearShapeEdit, standDown,
-    socketForLamp,
+    socketForLamp, acFeed, wallHosts,
     docActions, setSel, guides, setGuides, setOverRoom, setAddAt, setOptionPick,
   });
   /* THE NAMES THIS FILE ALREADY USED. The canvas props, the pointer router's
@@ -3640,6 +3701,19 @@ export default function App({
          deleting the carrier because somebody removed a fitting from it would be
          one press with two consequences. The run's own Delete is the shape's —
          see `deleteShape`, which takes every module with it. */
+      /* A SELECTED POINT, AND THE WHOLE SELECTION WITH IT. Delete is one of the
+         ten verbs lib/point.js says an element on the primitive inherits, and
+         `removeElecPoints` is the store side of it — the ids straight, so a
+         ⌘-click gathering three and a Delete taking one cannot happen.
+         AHEAD OF THE CEILING OBJECT, on the most-specific-first ordering the
+         note by the room branch describes: a point is a smaller and more
+         specific thing than the object it may be standing beside. */
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selPointIds.length
+          && !fixtureDrag.point) {
+        e.preventDefault();
+        deletePoints();
+        return;
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selModuleId && !moduleDrag) {
         e.preventDefault();
         deleteModule(selModuleId);
@@ -3773,6 +3847,20 @@ export default function App({
       doorEdit, selDoorId, doorDrag, deleteDoor,
       // one branch per kind of thing Delete can be about, in the order they read
       selLightId, lightDrag, resetLightMove,
+      /* THE POINTS, AND THEY WERE THE NAMES THIS ARRAY FORGOT. See the note
+         below it: a dependency missing here is a stale closure, and this was
+         exactly the key that quietly did last render's thing. `selPointIds` is
+         the one shared empty array while nothing is held — see `idsOf` — so
+         nothing else in this list changes when a point is selected, the
+         listener was never re-bound, and Delete read an empty selection and
+         fell through to the SPACE branch at the foot.
+         ALL THREE NAMES ARE STABLE ONES, deliberately. The branch used to read
+         `fixtureGestures.point`, and that object is rebuilt every render — so
+         naming it here would re-bind the window listener on every frame and NOT
+         naming it is the stale closure above. The drag is read off
+         `fixtureDrag`, the way the COB's already was, and the delete is a
+         memoised command beside every other kind's. See `deletePoints`. */
+      selPointIds, fixtureDrag.point, deletePoints,
       selModuleId, moduleDrag, deleteModule,
       selArrayId, arrayDrag, deleteArrays,
       selShapeId, geometry.shapes.dragging, deleteShape,
@@ -4787,6 +4875,10 @@ export default function App({
     // A MODULE SLIDING ALONG ITS RUN — same rule: a gesture already in flight
     // owns the pointer until it is released.
     if (moduleDrag) { fixtureGestures.move.module(e); return; }
+    /* A POINT BEING CARRIED — same rule. A wall one is being slid along its
+       plaster and a ceiling one across the slab, and the primitive knows which
+       without this branch being told. */
+    if (fixtureDrag.point) { fixtureGestures.move.point(e); return; }
     if (accDrag) { accPointerMove(e); return; }
     /* A DIRECTIONAL SPOT BEING CARRIED — same rule, and it is the branch that
        makes the spot STEP survive the gesture: the tool stays armed after a
@@ -4927,6 +5019,7 @@ export default function App({
     if (fixtureDrag.cob) { fixtureGestures.up.cob(); return; }
     if (arrayDrag) { fixtureGestures.up.array(); return; }
     if (moduleDrag) { fixtureGestures.up.module(); return; }
+    if (fixtureDrag.point) { fixtureGestures.up.point(); return; }
     if (accDrag) { accPointerUp(); return; }
     if (spotDrag) { spotPointerUp(); return; }
     if (boardDrag) { boardPointerUp(); return; }
@@ -5489,6 +5582,63 @@ export default function App({
   const fanBarOn = !readOnly && !geometry.bar.mode && !moduleBarOn
     && addTool !== 'cob' && !selArrayBar && (armed === 'fan' || !!selFan);
   const fanBarSweep = selFan ? sweepMm(selFan) : fanSweepMm;
+
+  /* --- THE POINT BAR, ON THE SAME TERMS AS THE FAN'S ------------------------
+     TWO TENSES, ONE CONTROL. Armed, the chips say what the NEXT point will be;
+     with points selected they say what THOSE are and change them — which is why
+     `pointArmed` and the selection are one condition rather than two bars.
+     THE STANDING CHOICE IS THE DOCUMENT'S NEAREST ANSWER and not a piece of
+     state: a point carries its own height and rating, so with one selected the
+     bar reads it, and with none it reads the defaults the next one will be born
+     with. A second store for "what the tool is set to" would be a third place
+     for those numbers to live and disagree.
+     AND IT YIELDS TO THE THREE THAT WERE HERE FIRST, exactly as the fan's does
+     and for the same reason: one bar at a time at the foot of the stage. */
+  /* --- THE SPLIT UNIT'S BAR, ON THE SAME TERMS AS THE FAN'S -----------------
+     TWO TENSES, ONE CONTROL, exactly as the fan's and the point's: armed, it
+     says what the next unit will be fed by; with one selected it says what THAT
+     unit is fed by and changes it.
+     AND THE STANDING CHOICE IS NOT A PIECE OF STATE. A unit carries its own
+     feed and its supply carries its own rating, so with one selected the bar
+     reads them, and with none it reads the defaults the next one will be born
+     with — the socket, and this country's AC rating. A second store for "what
+     the tool is set to" would be a third place for those to live and disagree.
+     ONLY A SEATED ONE GETS THE BAR. A split unit from a plan saved before any
+     of this is a free box with no wall and no supply; offering to re-feed it
+     would be offering a decision the app cannot then carry out. */
+  const selAc = ceilingObjs.find(
+    (o) => o.id === selObjId && isWallUnit(o) && isSeated(o)) ?? null;
+  const acArmed = typeOnWall(armed);
+  const acBarOn = !readOnly && !geometry.bar.mode && !moduleBarOn && !fanBarOn
+    && addTool !== 'cob' && !selArrayBar && (acArmed || !!selAc);
+  const acBar = selAc
+    ? { feed: feedOf(selAc), amps: acFeed.ampsOf(selAc) }
+    : { feed: AC_FEED, amps: acAmpsFor(acCountry) };
+
+  const selPoints = doc.elecPoints.filter((q) => selPointIds.includes(q.id));
+  const pointArmed = POINT_IDS.includes(armed);
+  const pointBarOn = !readOnly && !geometry.bar.mode && !moduleBarOn && !fanBarOn
+    && !acBarOn && addTool !== 'cob' && !selArrayBar
+    && (pointArmed || selPoints.length > 0);
+  const pointBar = (() => {
+    const first = selPoints[0] ?? null;
+    if (first) {
+      return { onWall: isConstrained(first), heightMm: heightOfPoint(first),
+               amps: Number.isFinite(first.amps) ? first.amps : null };
+    }
+    return { onWall: armed === WALL_POINT_ID, heightMm: WALL_POINT_HEIGHT_MM,
+             amps: POINT_AMPS };
+  })();
+  /* THE WRITE GOES TO EVERY SELECTED POINT, which is what makes the two tenses
+     one control: with none selected there is nothing to write and the bar is
+     showing what the next one will be born with — the defaults, which are not
+     stored and so cannot be edited into disagreement with themselves. */
+  const setPointHeight = (mm) => {
+    for (const q of selPoints) if (isConstrained(q)) docActions.patchElecPoint(q.id, { heightMm: mm });
+  };
+  const setPointAmps = (a) => {
+    for (const q of selPoints) docActions.patchElecPoint(q.id, { amps: a });
+  };
 
   /* One write path serves both the ordinary analysis window and the compact
      selected-fixture card in vertical mode. The UI is duplicated in position,
@@ -6618,6 +6768,21 @@ export default function App({
             closeBoardPlace(); closeShapeTool();
             setCobOpen(false); setCobMode(null);
             if (addTool === 'cob') disarmAdd();
+            /* THE LAYERS THE MARK AND ITS WIRE ARE ON COME ON WITH THE TOOL,
+               which is what `openBoardPlace` does for the plate and for the same
+               reason: a point dropped onto a sheet with these switched off lands
+               invisibly and the gesture appears to have done nothing at all.
+               BOTH OF THEM, AND THE SECOND ONE IS THE ONE THAT WAS MISSING. The
+               symbol is on `switchboards`; the WIRE back to the plate its bay
+               runs off is on `electrical`, which is OFF by default — so the
+               point appeared and its connection did not, which reads as a
+               fitting that failed to connect rather than one whose wire is
+               hidden. Only for these two cells: every other one here drops a
+               ceiling object, which is on a layer nobody turns off to place. */
+            if (POINT_IDS.includes(id)) {
+              docActions.setLayer('switchboards', true);
+              docActions.setLayer('electrical', true);
+            }
             setArmed(id);
             if (id) { setObjType(id); setObjMode(true); setZoneMode(false); }
             setGuides([]); setGhost(null);
@@ -7225,6 +7390,8 @@ export default function App({
               onZoneMove={readOnly ? null : onZoneMove}
               onZoneUp={readOnly ? null : onZoneUp}
               accents={accentZonesPx} switchboards={switchboardsPx}
+              elecPoints={elecPointsPx} selPointIds={selPointIds}
+              onPointPointerDown={readOnly ? null : fixtureGestures.point.down}
               /* --- NO HOVER CARD IN THE READING COLUMN, AT THE SOURCE --------
                  WITHHELD HERE AS WELL AS AT THE RENDER, and the pair is
                  deliberate rather than belt-and-braces: with the handler gone
@@ -7654,10 +7821,51 @@ export default function App({
               <FanSpec stage={barBox} lead={autoLead} placement={barPlace}
                 sweepMm={fanBarSweep} onSweep={setFanSweep} />
             )}
+            {/* --- THE POINT'S TWO PROPERTIES, WHILE IT IS IN HAND ----------
+                THE SAME BAR AND THE SAME TWO TENSES FanSpec HAS: armed, it says
+                what the next point will be; with points selected it says what
+                THEY are and changes them. The height row is drawn only for a
+                wall point — a ceiling point is at ceiling level and there is
+                nothing else it could be at. See PointSpec. */}
+            {/* --- HOW THE SPLIT UNIT IS FED, WHILE IT IS IN HAND -----------
+                THE BAR THAT WOULD HAVE HELD A ROTATION. A wall unit takes its
+                angle from the plaster it lands on, so there is nothing to turn
+                and nothing to correct after a placement — what is left to decide
+                is the supply, and that is what stands here. Two tenses, like the
+                fan's and the point's: armed it says what the next unit will get,
+                selected it says what this one has. See AcSpec. */}
+            {!readOnly && acBarOn && autoLead && (
+              <AcSpec stage={barBox} lead={autoLead} placement={barPlace}
+                label={CEILING_BY_ID[selAc?.typeId ?? armed]?.label ?? 'Split AC'}
+                feed={acBar.feed} amps={acBar.amps} ratings={acRatings(acCountry)}
+                /* BOTH WRITE THROUGH THE UNIT AND NOT THROUGH THE FITTING ON
+                   THE WALL. Swapping the feed has to move the mark and carry
+                   the rating across, which is two stores and four writes; the
+                   bar states the decision and `useAcFeed` spends it.
+                   AND NEITHER DOES ANYTHING WITH THE TOOL MERELY ARMED. There
+                   is no unit to write to yet, and the bar is showing the
+                   defaults the next one will be born with — which are not
+                   stored, and so cannot be edited into disagreeing with
+                   themselves. Same rule the point bar's two writes follow. */
+                onFeed={(f) => selAc && acFeed.setFeed(selAc, f)}
+                onAmps={(a) => selAc && acFeed.setAmps(selAc, a)} />
+            )}
+            {!readOnly && pointBarOn && autoLead && (
+              <PointSpec stage={barBox} lead={autoLead} placement={barPlace}
+                onWall={pointBar.onWall} heightMm={pointBar.heightMm}
+                /* THE RESOLVED COUNTRY AND NOT App's OWN `country` PROP,
+                   which is an ISO code or a name — a STRING, with no
+                   `switchRatings` on it, so this read `undefined` and the bar
+                   offered nothing but Auto. `sbCountry` is the table entry the
+                   electrical feature already resolved, and it is what every
+                   other rating control on this screen reads. */
+                amps={pointBar.amps} ratings={sbCountry.switchRatings}
+                onHeight={setPointHeight} onAmps={setPointAmps} />
+            )}
             {/* `!fanBarOn` joins the other ownership gates so a tool and the
                 plain layout controls never stack in the same position. */}
             {!(!readOnly && (addTool === 'cob' || selArrayBar || geometry.bar.mode))
-              && !moduleBarOn && !fanBarOn && autoLead && (
+              && !moduleBarOn && !fanBarOn && !acBarOn && !pointBarOn && autoLead && (
               <StageBar stage={barBox} lead={autoLead} placement={barPlace}
                 label="Drawing" />
             )}

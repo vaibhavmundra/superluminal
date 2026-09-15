@@ -542,6 +542,10 @@ export function serialiseEditor(doc, { pxPerFt } = {}) {
        `manualCoves` and `manualAccents` are, and losing it loses the boards
        rather than losing an adjustment to them. */
     manualBoards: s.manualBoards ?? [],
+    /* ...AND THE POINTS, wall and ceiling, on exactly the same terms. Nothing
+       derives one, so the list IS the fact and losing it loses the points rather
+       than an adjustment to them. See `elecPoints` in usePlanDoc.js. */
+    elecPoints: s.elecPoints ?? [],
     /* ...AND WHICH OF THE TWO THINGS EACH PLATE IS: board id ->
        `{ outlet, amps }`.
 
@@ -763,6 +767,7 @@ export function applyEditor(p, set) {
   set.setFlowBends?.(p.flowBends ?? {});
   set.setFlowLinks?.(p.flowLinks ?? {});
   set.setManualBoards?.(p.manualBoards ?? []);
+  set.setElecPoints?.(p.elecPoints ?? []);
   set.setBoardKinds?.(p.boardKinds ?? {});
   set.setBoardHeights?.(p.boardHeights ?? {});
   set.setBoardOrders?.(p.boardOrders ?? {});

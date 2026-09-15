@@ -69,7 +69,15 @@ const NONE = { accent: false, spots: false };
 // A toilet gets its basin sconces and nothing aimed: there is no task surface
 // in a WC that a directional spot would help with, and one over a basin is
 // glare in a mirror.
-const WET = { accent: true, spots: false };
+//
+// `basin` IS A FACT ABOUT SERVICES AND NOT ABOUT LIGHT, which is why it rides
+// here rather than being a `type === 'toilet'` written into the electricals. A
+// room with a basin in it is a room where somebody stands with a shaver, a
+// trimmer or a hair dryer, and that is a socket at 1050 — see rule 4 in
+// lib/electrical.js. Held as a flag for the reason this file's header gives:
+// the vocabulary and the rules that read it have to move together, or the rule
+// silently stops applying the day the type is renamed.
+const WET = { accent: true, spots: false, basin: true };
 /* OUTSIDE THE BUILDING LINE, which is a fact about SERVICES rather than about
    light. A balcony is lit like any other small space; what makes it different
    is that its switch does not belong on it — nobody stands out in the rain to
@@ -232,6 +240,9 @@ export const isOutdoor = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?
  * pixels — and the fallback re-asks on a crop of just that room.
  */
 export const expectsBed = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.bed;
+
+/** @see WET — a room somebody stands at a basin in, with something plugged in. */
+export const expectsBasin = (projectId, typeId) => !!roomTypeIn(projectId, typeId)?.basin;
 
 /**
  * WHAT ONE CELL SHOULD COVER, where it is not the usual 50 sqft.

@@ -106,13 +106,15 @@ const DOORS = [door(180, 0)];
   // A rule that throws is reported and does not take the rest of the plan with
   // it. `plan.polygonPx` of the wrong shape is the cheapest way to make one.
   const seen = [];
-  // A stand-in for the accent list that blows up for one space and not the
+  // A stand-in for the wardrobe list that blows up for one space and not the
   // other — `filter` is the first thing the rules call with the room in hand.
+  // It used to be the ACCENT list; the rules read no fittings at all now, so
+  // the joinery is what is left that arrives per room.
   const boom = { filter: (fn) => { if (fn({ roomId: 'r1' })) throw new Error('boom'); return []; } };
   const hall = space('r2', 'Hall', poly(0, 400, 600, 760));
   const out = planBoardResults({
     rooms: [BEDROOM, hall], doors: [door(180, 0), door(180, 400, 'd3')],
-    pxPerFt: PPF, accentZonesPx: boom,
+    pxPerFt: PPF, wardrobesPx: boom,
     warn: (roomId, err) => seen.push([roomId, err.message]),
   });
   assert.deepEqual(seen, [['r1', 'boom']], 'the failure names its room');
@@ -250,15 +252,26 @@ const IN = countryFor('IN');
   assert.equal(raised.heightsMm[0], 900, 'the typed height beats the outlet default');
   assert.equal(raised.heightSet, true);
 
-  // THE PRIMARY HEIGHT ONLY. The wall facing a bed is two plates at two
-  // heights; an override replaces the first and leaves the rest alone.
+  /* THE TELEVISION WALL IS TWO BOARDS OF ONE PLATE EACH, and it used to be one
+     board of two — see FACING_PAIR. So an override on either is the whole of
+     that board's height, and the "primary height only" case it was written for
+     no longer arises. The rule it encodes is unchanged and still tested: the
+     override replaces the FIRST height and leaves any others alone, which is
+     what keeps a multi-plate role from silently becoming a single-plate one. */
   const facing = { id: 'p3', role: 'facing', point: { x: 1, y: 2 } };
   const base = heightsFor('facing');
-  assert.equal(base.length, FACING_PLATES);
-  const [twoPlate] = applyMode([facing], { boardMode, boardHeights: { p3: 1500 } });
-  assert.equal(twoPlate.heightsMm.length, FACING_PLATES,
-    'a two-plate board does not silently become a one-plate board');
-  assert.deepEqual(twoPlate.heightsMm, [1500, ...base.slice(1)]);
+  assert.equal(base.length + heightsFor('facingSwitch').length, FACING_PLATES,
+    'two plates on that wall, across the pair');
+  const [socket] = applyMode([facing], { boardMode, boardHeights: { p3: 1500 } });
+  assert.deepEqual(socket.heightsMm, [1500], 'the socket plate takes the typed height');
+  const sw = { id: 'p4', role: 'facingSwitch', point: { x: 1, y: 2 } };
+  const [onlySw] = applyMode([sw], { boardMode, boardHeights: { p4: 1100 } });
+  assert.deepEqual(onlySw.heightsMm, [1100],
+    'and the switch plate takes its own, independently');
+  const multi = { id: 'p5', role: 'facing', heightsMm: [700, 1200], point: { x: 1, y: 2 } };
+  const [kept] = applyMode([multi], { boardMode, boardHeights: { p5: 1500 } });
+  assert.deepEqual(kept.heightsMm, [1500, 1200],
+    'a board that does carry several keeps the rest of them');
 
   // A height that is not a number is no override at all.
   const [ignored] = applyMode([facing], { boardMode, boardHeights: { p3: null } });

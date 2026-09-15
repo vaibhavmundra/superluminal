@@ -307,6 +307,29 @@ export const DOC_FIELDS = {
      a full switchboard lives in `boardKinds`, because that is a question every
      plate on the drawing can be asked and not only these. */
   manualBoards: () => ([]),
+  /* --- THE ELECTRICAL POINTS: WALL AND CEILING, IN ONE LIST -----------------
+     THE CIRCLE-AND-J a sheet puts wherever a cable ends, switched — a geyser
+     point, an exhaust, a chimney, a mirror light. Two elements, and ONE store,
+     because they are one primitive: see lib/elecPoints.js.
+
+     THE RECORD IS lib/point.js's AND THE KIND IS READ OFF IT. A wall point is
+     `{ on: 'walls', u, x: null, y: null, heightMm }` — constrained to the room's
+     perimeter, the same host and the same fraction a switchboard plate stands
+     on. A ceiling point is `{ on: null, x, y, heightMm: null }` — free, in feet.
+     THERE IS NO `kind` FIELD, deliberately: `pointKind` answers off `on`, and a
+     flag beside it would be a second answer waiting to disagree. A constrained
+     point's coordinate is NULL and kept null for that file's stated reason — a
+     stale `x` beside a live `u` survives a save and puts a fitting where nobody
+     put it.
+
+     A LIST AND NOT A MAP OF OVERRIDES, because there is no rule underneath to
+     override. Nothing derives a point; somebody put it there, so deleting one
+     removes it — the same shape `manualBoards` and `manualCobs` have.
+
+     `amps: null` IS "THE COUNTRY'S LIGHT RATING" and not 6, because 6 is India's
+     answer and 15 is the United States'. The flow carries the null through and
+     `pointsFromFlows` resolves it. */
+  elecPoints: () => ([]),
   /* OUTLET OR SWITCHBOARD, AND THE SOCKET'S RATING: board id ->
      `{ outlet, amps }`.
      A SOCKET OUTLET IS ONE SOCKET AND NO SWITCH and a switchboard is everything
@@ -1693,6 +1716,30 @@ export function usePlanDoc(seed) {
     clearManualBoards: () => dispatch({ type: 'LIST_CLEARED', field: 'manualBoards' }),
     addManualBoard: (board) =>
       dispatch({ type: 'LIST_ADDED', field: 'manualBoards', item: board }),
+
+    /* THE POINTS, ON THE GENERIC LIST CASES. Nothing about either kind needs a
+       case of its own: one is added whole, patched by id when its height or its
+       rating is typed, and removed when somebody deletes it. The DRAG writes
+       through `setElecPoints`, because the point primitive hands its caller a
+       whole updated list — see `usePointDrag`. @see elecPoints */
+    clearElecPoints: () => dispatch({ type: 'LIST_CLEARED', field: 'elecPoints' }),
+    /* MINTED BY THE CALLER, which is the hand-placed SCONCE's pattern and not
+       the track's. The difference is what happens next: placing a point SELECTS
+       it, exactly as placing a sconce does, so the bar is immediately showing
+       the thing that just landed and its height can be typed without hunting for
+       it. A reducer-minted id is not known to the caller, so it could not be
+       selected — and a standing "what the next one will be" choice beside the
+       record's own height would be a second place for that number to live. */
+    addElecPoint: (point) =>
+      dispatch({ type: 'LIST_ADDED', field: 'elecPoints', item: point }),
+    addElecPoints: (items) =>
+      dispatch({ type: 'LIST_ADDED_MANY', field: 'elecPoints', items }),
+    patchElecPoint: (id, patch) =>
+      dispatch({ type: 'LIST_PATCHED', field: 'elecPoints', id, patch }),
+    removeElecPoint: (id) =>
+      dispatch({ type: 'LIST_REMOVED', field: 'elecPoints', id }),
+    removeElecPoints: (ids) =>
+      dispatch({ type: 'LIST_REMOVED_MANY', field: 'elecPoints', ids }),
 
     clearBoardKinds: () => dispatch({ type: 'MAP_CLEARED', field: 'boardKinds' }),
     /* `born` IS WHAT THE PLATE WAS BORN AS and it comes off the derived plate —

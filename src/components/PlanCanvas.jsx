@@ -7,6 +7,9 @@ import { STRIP_STYLE, THROW_STYLE, GLINT_STYLE, PILL_STYLE,
 import { TRACK_DIMS_IN } from '../lib/track.js';
 import { readFixturePaint } from '../lib/fixturePaint.js';
 import { SB_COLOUR, SB_MM } from '../lib/electrical.js';
+import { POINT_IDS, WALL_POINT_ID, pointRadiusPx, glyphJ, POINT_FT, isConstrained }
+  from '../lib/elecPoints.js';
+import { acLead } from '../lib/wallUnit.js';
 import { WIRE_CHAIN, WIRE_PICKED, loopPath } from '../lib/flows.js';
 import { doorWidthAt } from '../lib/doors.js';
 /* THE SCONCE'S OWN FOUR FIGURES, WHICH THE DXF NOW DRAWS TOO. They were written
@@ -263,6 +266,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
     isolateId = null,
     objDragMode = null, guides = [], ghost = null, clearanceFt = 2,
     selAccId = null, onAccPointerDown, surfaces = [], taskSpots = [], switchboards = [],
+    /* THE POINTS, RESOLVED — `[{ id, roomId, on, x, y, r, foot, inward, ... }]`.
+       A PROJECTION AND NEVER THE STORE. See `projectElecPointsPx`: a wall point's
+       record is a FRACTION of its room's perimeter and a ceiling point's is feet,
+       so a canvas handed the raw list would draw one kind at NaN — which paints
+       nothing and reads as the tool being broken.
+       `foot` IS THE ONLY THING THAT TELLS THE TWO APART HERE, and it is a fact
+       about the drawing rather than a kind flag: a wall point has a piece of
+       plaster to stand off and a ceiling point does not. */
+    elecPoints = [], onPointPointerDown, selPointIds = [],
     /* THE SUGGESTED GRID, RESOLVED. Free points in plan pixels, each carrying
        the radius of the symbol it stands for and — on an aimed one — the angle
        it looks along. NOT derived here from `plans[].gridLightsPx`, and that is
@@ -3060,6 +3072,43 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                whose object it is. */
             opacity={(objMode && !sel && f.source === 'placed' ? 0.8 : 1)
               * (sel || emits ? 1 : 0.82)}>
+            {/* --- THE LEAD FROM A WALL UNIT TO ITS SOCKET ------------------
+                AN AIR-CONDITIONER IS PLUGGED IN, and this is the flex that does
+                it. Without it the unit and the socket a foot away are two marks
+                that happen to be near each other; the line is what says the
+                second one is THERE BECAUSE OF the first, which is the whole
+                reason the socket was put where it was put.
+                ONLY FOR THE SOCKET, because there is nothing to draw for the
+                other kind: a point is centred BEHIND the body, so the lead
+                would be a line from the unit to itself. That is not an omission
+                — a point is a cable coming out of the plaster the unit covers,
+                and the absence of any visible connection is the honest picture
+                of it.
+                THE SAME IDIOM AS EVERY OTHER WIRE ON THIS SHEET: a white halo
+                one weight heavier with a blue dotted line over it, in the
+                switchboard's own blue — see the flows block, which carries the
+                argument for the halo. What is NOT borrowed is the BOW. A loop
+                is an arc because a straight line between two downlights is
+                indistinguishable from a setting-out line; over the twelve
+                inches between a unit and its socket an arc would be a curve
+                nobody can see, drawn for a reason that does not apply.
+                FROM THE BODY'S NEAR EDGE AND NOT ITS CENTRE, so the flex leaves
+                the casing rather than appearing out of the middle of it. */
+                }
+            {f.onWall && layers.switchboards && (() => {
+              const plate = switchboards.find((b) => b.acId && b.acId === f.id);
+              const leg = acLead(f, plate);
+              if (!leg) return null;
+              const d = `M ${leg.from.x} ${leg.from.y} L ${leg.to.x} ${leg.to.y}`;
+              return (
+                <g pointerEvents="none">
+                  <path d={d} stroke="#fff" strokeWidth={lw * 3.4} fill="none"
+                    strokeLinecap="round" opacity={layers.invert ? 0.55 : 0.9} />
+                  <path d={d} stroke={SB_COLOUR} strokeWidth={lw * 1.5} fill="none"
+                    strokeLinecap="round" strokeDasharray={`${lw * 1.5} ${lw * 3.2}`} />
+                </g>
+              );
+            })()}
             {/* --- THE POOL OF LIGHT, BREATHING -----------------------------
                 THE SAME MARK EVERY OTHER FITTING ON THIS SHEET CARRIES and for
                 the same reason: it is the aperture reading as LIT, which is what
@@ -3370,7 +3419,20 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       unfilled line has no interior to hit; without this only
                       the knob at the end would answer, which is most of the
                       target thrown away. */}
-                  {rect && only && (<>
+                  {/* --- AND NOT ON A THING THE WALL IS HOLDING ------------
+                      NO STEM ON A WALL UNIT, which is the whole of the feature
+                      this was built for. A split unit faces into the room
+                      because the plaster behind it does — there is no stored
+                      angle for a grip to change, and `makeWallUnit` writes
+                      `rot: null` precisely so there is nothing to change it to.
+                      A grip drawn here would turn under the hand and snap
+                      straight back on the next frame, which is worse than the
+                      rotation it was meant to offer.
+                      THE FOUR CORNER GRIPS STAY. Size is still a real decision
+                      — a 1400mm indoor unit is a different product — and
+                      `applyResize` keeps the seat while taking the new extent.
+                      See lib/wallUnit.js. */}
+                  {rect && only && !f.onWall && (<>
                     <line x1={f.x} y1={f.y - hh} x2={f.x} y2={f.y + stem}
                       stroke={C.grip} strokeWidth={FW} strokeLinecap="round"
                       style={{ pointerEvents: 'stroke' }} {...grab('rotate')} />
@@ -3982,6 +4044,116 @@ const PlanCanvas = forwardRef(function PlanCanvas(
           already in hand — the placement pass returns the wall's own axes with
           the point — and a transform would mean re-deriving a rotation, and its
           sign, from vectors that already say it. */}
+      {/* --- THE POINTS: THE SCONCE'S MARK, WITH A J IN IT -------------------
+          THE TRADE'S OWN SYMBOL for "a cable ends here, switched". A WALL point
+          is drawn exactly as a wall sconce is — a stem off the plaster to a
+          circle standing in the room — because it is the same kind of thing on
+          the same kind of wall; what is inside the circle is a J and not the
+          sconce's cross, and that is the whole of the difference on the sheet.
+          A CEILING point is the circle and the J alone: there is no plaster to
+          stand off, so there is no stem, and a leader drawn to the nearest wall
+          would be claiming something about the plan that is not true.
+
+          THE PROPORTIONS ARE `SCONCE_FT`'s, READ AND NOT RESTATED — see
+          POINT_FT. Two symbols meant to be the same size and written down twice
+          are two symbols that stop being the same size the first time one is
+          tuned, and the DXF draws the sconce from the same three numbers.
+
+          THE PLATE'S BLUE, FILLED, WITH A WHITE EDGE AND A WHITE J — which is
+          the switchboard's own treatment said about a circle. It was drawn as
+          white line work, on the argument that a point is not a plate; the
+          argument was about the wrong thing. What the colour has to say here is
+          which FIGURE this mark belongs to, and the answer is the wiring: the
+          point, the plate its switch lands on and the wire between them are one
+          object on one layer, and the blue is what the wire and the plate
+          already use to say so. Amber on this canvas means "this emits light"
+          and a point does not emit anything — it is a cable brought out and
+          left — so drawing it in the fittings' white put it with the lights,
+          which is the one group it is not in.
+          SOLID RATHER THAN OUTLINED, for the plate's reason: a filled mark is a
+          thing that IS there, where a ring is a thing being indicated. The J
+          goes white because it is now a glyph ON the solid.
+
+          IT STILL DOES NOT RECOLOUR WHEN IT IS PICKED, and that part of the old
+          argument stands. NOTHING ON THIS CANVAS DOES: a symbol is what the
+          thing IS, and a fitting that changes colour on a click is saying it has
+          become a different kind of fitting. What says "this one is held" is the
+          GRIP, exactly as it is on a sconce — and the grip is the ACCENT blue,
+          which is a different blue from the plate's and is told apart by
+          behaviour, not hue. See the note by `C.grip`.
+
+          THE GRIP IS THE SCONCE'S, DOWN TO THE SQUARE. White, grip-bordered,
+          constant on screen rather than in plan, and it IS the drag handle
+          rather than an ornament beside one — see the accent block above, which
+          this copies rather than reinterprets.
+
+          AND THE HIT TARGET IS A TRANSPARENT DISC, which is the bug this block
+          was rewritten for. `.hit` was on the drawn circle, and that circle was
+          then `fill="none"` — so the only thing that could receive a press was
+          its hairline STROKE, a ring one pixel wide at any zoom. It read as a
+          fitting that could not be selected, moved or deleted at all. Same
+          answer as the sconce's: a transparent disc at 1.7 times the radius,
+          floored so it survives zooming out, class and handler on IT.
+          THE DISC IS STILL THE TARGET NOW THAT THE SYMBOL IS FILLED. The drawn
+          group carries `pointerEvents="none"` so nothing in it competes, and the
+          press wants a margin around a small mark whatever the mark is made of
+          — a 1.7r ring of slop is the difference between picking a point and
+          missing it. See the note on hit targets being sized in SCREEN pixels. */}
+      {layers.switchboards && elecPoints.map((w) => {
+        if (!Number.isFinite(w.x) || !Number.isFinite(w.y) || !(w.r > 0)) return null;
+        const picked = selPointIds?.includes?.(w.id);
+        const PH = (Math.max(width, height) / 155) / (zoom || 1);
+        const grab = Math.max(w.r * 1.7, PH * 1.1);
+        return (
+          <g key={w.id}>
+            <g strokeLinecap="round" strokeLinejoin="round" pointerEvents="none">
+              {/* THE STEM STOPS AT THE CIRCLE and starts at the plaster — a line
+                  through the symbol would cross the J and turn the mark to mush
+                  at any zoom where the two are close. A ceiling point has no
+                  `foot`, so it has no stem: there is no plaster to stand off.
+                  IT STAYS WHITE WHILE THE DISC TURNS BLUE, and that is not an
+                  oversight. A hairline is not a solid: the disc is filled and
+                  carries its own white edge against the drawing, and a one-pixel
+                  blue line has nothing to carry — it would simply be harder to
+                  see against the plan than the white one it replaced. What the
+                  stem has to do is join the plaster to the mark, and white
+                  running into the disc's white edge is exactly that join. */}
+              {w.foot && Number.isFinite(w.foot.x) && (() => {
+                const dx = w.x - w.foot.x, dy = w.y - w.foot.y;
+                const d = Math.hypot(dx, dy) || 1;
+                return (
+                  <line x1={w.foot.x} y1={w.foot.y}
+                    x2={w.x - (dx / d) * w.r} y2={w.y - (dy / d) * w.r}
+                    fill="none" stroke={C.object} strokeWidth={hair(1.2)} />
+                );
+              })()}
+              {/* THE DISC, AND THE EDGE IS THE PLATE'S `hair(1.4)` rather than
+                  the line work's 1.2 — it is doing the plate's job, which is to
+                  hold a solid off somebody else's drawing, not to be drawing. */}
+              <circle cx={w.x} cy={w.y} r={w.r}
+                fill={SB_COLOUR} stroke="#fff" strokeWidth={hair(1.4)} />
+              {/* AND THE J ON TOP OF IT. `fill="none"` is load-bearing on this
+                  one: the glyph is an open two-quadratic path — see `glyphJ` —
+                  and a path with a fill would have its two ends joined and
+                  flooded, which turns the J into a white blob. */}
+              <path d={glyphJ(w.x, w.y, w.r)}
+                fill="none" stroke="#fff" strokeWidth={hair(1.2)} />
+            </g>
+            {onPointPointerDown && (
+              <circle cx={w.x} cy={w.y} r={grab} fill="transparent"
+                className="hit" style={{ cursor: 'move' }}
+                onPointerDown={(e) => onPointPointerDown(e, w.id)} />
+            )}
+            {picked && onPointPointerDown && (
+              <rect x={w.x - PH / 2} y={w.y - PH / 2} width={PH} height={PH}
+                rx={PH * 0.18} fill="#fff" stroke={C.grip} strokeWidth={hair(1.6)}
+                className="hit" style={{ cursor: 'move' }}
+                onPointerDown={(e) => onPointPointerDown(e, w.id)} />
+            )}
+          </g>
+        );
+      })}
+
       {layers.switchboards && switchboards.map((b) => {
         const half = b.alongPx / 2, deep = b.deepPx;
         const { along: u, inward: n, point: q } = b;
@@ -4044,11 +4216,16 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                    : null]
             .filter(Boolean).join(' ') || null,
           rows: [
-            /* HOW MANY PLATES, WHERE IT IS NOT ONE. The television wall's board
-               is two plates stacked in elevation at one point in plan — see
-               FACING_PLATES — so the rectangle under the cursor is one mark and
-               two things to order. Saying "230 x 80 mm" and nothing else about
-               it would be a plan that quietly under-counts the job. */
+            /* HOW MANY PLATES, WHERE IT IS NOT ONE — which is no role today.
+               The television wall used to be the one that was: one board object
+               carrying two plates stacked in elevation, so the rectangle under
+               the cursor was one mark and two things to order. It is two boards
+               side by side now — see FACING_PAIR — and each is one plate, so
+               this branch says "Plate" for every plate on the drawing.
+               IT STAYS BECAUSE THE COUNT IS STILL DERIVED. `plates` comes off
+               the role's height list, so a role given two heights tomorrow is a
+               two-plate board again, and a card that then said "230 x 80 mm" and
+               nothing else would quietly under-count the job. */
             (b.plates ?? 1) > 1
               ? ['Plates', `${b.plates} × ${SB_MM.along} x ${SB_MM.deep} mm, stacked`]
               : ['Plate', `${SB_MM.along} x ${SB_MM.deep} mm`],
@@ -4658,7 +4835,48 @@ const PlanCanvas = forwardRef(function PlanCanvas(
 
       {/* Where an armed object would land. Shown before the click, because that
           is when it is still useful to know. */}
-      {ghost && pxPerFt && (() => {
+      {/* THE POINTS' OWN PREVIEW, AHEAD OF THE CATALOGUE'S. Both ride the
+          ceiling-object one-shot and neither IS a ceiling object — see
+          POINT_IDS — so `CEILING_BY_ID` answers `undefined` and the block below
+          returns null. Arming the tool would then follow the cursor with nothing
+          at all, which reads exactly like the tool having failed to arm.
+          AND IT IS THE PLACED MARK AT LOW OPACITY, not a sketch of it: the same
+          blue disc, the same white edge, the same white J. A preview drawn in a
+          different idiom from the thing it previews is a preview that has to be
+          learned separately. See the block above for why the disc is blue. */}
+      {POINT_IDS.includes(ghost?.typeId) && pxPerFt && (() => {
+        const r = pointRadiusPx(pxPerFt, lw);
+        /* A WALL POINT PREVIEWS ON THE WALL, and that is the whole of this
+           branch. `ghost.seat` is the projection the PRESS will make, run on
+           every move — the same discipline `sconceGhostAt` keeps, and for the
+           same reason: a preview that follows the cursor across the room and
+           then lands on plaster three feet away is the tool disagreeing with the
+           hand, twice, on every placement.
+           A CEILING POINT IS FREE and previews where the pointer is, because
+           that is where it will land. */
+        const c = ghost.seat
+          ? { x: ghost.seat.point.x + ghost.seat.inward.x * r * POINT_FT.stand,
+              y: ghost.seat.point.y + ghost.seat.inward.y * r * POINT_FT.stand }
+          : { x: ghost.x, y: ghost.y };
+        const stem = ghost.seat ? (() => {
+          const dx = c.x - ghost.seat.point.x, dy = c.y - ghost.seat.point.y;
+          const d = Math.hypot(dx, dy) || 1;
+          return { x1: ghost.seat.point.x, y1: ghost.seat.point.y,
+                   x2: c.x - (dx / d) * r, y2: c.y - (dy / d) * r };
+        })() : null;
+        return (
+          <g opacity="0.55" pointerEvents="none"
+            strokeLinecap="round" strokeLinejoin="round">
+            {stem && <line x1={stem.x1} y1={stem.y1} x2={stem.x2} y2={stem.y2}
+              fill="none" stroke={C.object} strokeWidth={hair(1.2)} />}
+            <circle cx={c.x} cy={c.y} r={r}
+              fill={SB_COLOUR} stroke="#fff" strokeWidth={hair(1.4)} />
+            <path d={glyphJ(c.x, c.y, r)}
+              fill="none" stroke="#fff" strokeWidth={hair(1.2)} />
+          </g>
+        );
+      })()}
+      {ghost && !POINT_IDS.includes(ghost.typeId) && pxPerFt && (() => {
         const t = CEILING_BY_ID[ghost.typeId];
         if (!t) return null;
         // THE GHOST TAKES THE PLACED OBJECT'S INK, NOT THE TYPE'S OWN `colour`.
@@ -4704,31 +4922,49 @@ const PlanCanvas = forwardRef(function PlanCanvas(
            and the first one anybody places routinely. The other two were rare
            enough that nobody had watched the ring appear and then vanish. */
         const reserves = !t.offCeiling;
+        /* --- A WALL UNIT PREVIEWS ON THE PLASTER, AT THE WALL'S OWN ANGLE ---
+           `ghost.seat` IS THE PROJECTION THE PRESS WILL MAKE, run on every
+           move — the same discipline `wallPointSeatAt` keeps and for the same
+           reason, said about a body a metre wide: a preview that follows the
+           cursor across the room and then lands flat against a wall three feet
+           away is the tool disagreeing with the hand on every placement.
+           THE CENTRE IS OFF THE WALL LINE BY HALF THE DEPTH, which is the one
+           piece of arithmetic `resolveWallUnitPx` does for the placed object;
+           `ghost.x`/`ghost.y` is the point ON the plaster, so the body has to
+           be stood off it here exactly as it will be when it lands.
+           AND THE SPIN IS THE SEAT'S. Everything below is drawn square and this
+           turns the lot, which is what the placed object's own `rect` branch
+           does — one transform rather than four rotated coordinates. */
+        const seat = ghost.seat ?? null;
+        const deep = ((t.hFt || 0) * pxPerFt) / 2;
+        const gx = seat ? ghost.x + seat.inward.x * deep : ghost.x;
+        const gy = seat ? ghost.y + seat.inward.y * deep : ghost.y;
         return (
-          <g opacity="0.55">
+          <g opacity="0.55"
+            transform={seat ? `rotate(${(seat.rot * 180) / Math.PI} ${gx} ${gy})` : undefined}>
             {!reserves ? null : isRect(t) ? (
-              <rect x={ghost.x - (t.wFt * pxPerFt) / 2 - clearanceFt * pxPerFt}
-                y={ghost.y - (t.hFt * pxPerFt) / 2 - clearanceFt * pxPerFt}
+              <rect x={gx - (t.wFt * pxPerFt) / 2 - clearanceFt * pxPerFt}
+                y={gy - (t.hFt * pxPerFt) / 2 - clearanceFt * pxPerFt}
                 width={t.wFt * pxPerFt + clearanceFt * pxPerFt * 2}
                 height={t.hFt * pxPerFt + clearanceFt * pxPerFt * 2}
                 rx={clearanceFt * pxPerFt} ry={clearanceFt * pxPerFt}
                 fill="none" stroke={PAINT.clearance} strokeWidth={hair(1.2)}
                 strokeDasharray={`${lw * 4} ${lw * 4}`} />
             ) : (
-              <circle cx={ghost.x} cy={ghost.y} r={r + clearanceFt * pxPerFt} fill="none"
+              <circle cx={gx} cy={gy} r={r + clearanceFt * pxPerFt} fill="none"
                 stroke={PAINT.clearance} strokeWidth={hair(1.2)} strokeDasharray={`${lw * 4} ${lw * 4}`} />
             )}
             {isRect(t) ? (
-              <rect x={ghost.x - (t.wFt * pxPerFt) / 2} y={ghost.y - (t.hFt * pxPerFt) / 2}
+              <rect x={gx - (t.wFt * pxPerFt) / 2} y={gy - (t.hFt * pxPerFt) / 2}
                 width={t.wFt * pxPerFt} height={t.hFt * pxPerFt}
                 fill={col} fillOpacity="0.1" stroke={col} strokeWidth={hair(1.4)} />
             ) : (
-              <circle cx={ghost.x} cy={ghost.y} r={r * 0.6} fill={col} fillOpacity="0.1"
+              <circle cx={gx} cy={gy} r={r * 0.6} fill={col} fillOpacity="0.1"
                 stroke={col} strokeWidth={hair(1.4)} />
             )}
-            <line x1={ghost.x - r * 0.3} y1={ghost.y} x2={ghost.x + r * 0.3} y2={ghost.y}
+            <line x1={gx - r * 0.3} y1={gy} x2={gx + r * 0.3} y2={gy}
               stroke={col} strokeWidth={hair()} />
-            <line x1={ghost.x} y1={ghost.y - r * 0.3} x2={ghost.x} y2={ghost.y + r * 0.3}
+            <line x1={gx} y1={gy - r * 0.3} x2={gx} y2={gy + r * 0.3}
               stroke={col} strokeWidth={hair()} />
           </g>
         );

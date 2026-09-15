@@ -1,4 +1,5 @@
 import { toObstaclePx } from './ceilingObjects.js';
+import { isWallUnit, isSeated, resolveWallUnitPx } from './wallUnit.js';
 import { pointInPolygon } from './geometry.js';
 import { gridFor, cellsToPlanPx, cellsToRect } from './wallGrid.js';
 import { WALL_BY_ID } from './wallPrompt.js';
@@ -34,10 +35,38 @@ export function projectOutlinesPx(source, outlines) {
  *
  * The planner is handed { x, y, r } and is not told what kind of thing it is
  * looking at — see the note in planner.js about why it calls them all fans.
+ *
+ * --- AND ONE KIND HAS NO POSITION UNTIL A WALL IS CONSULTED ----------------
+ * A SPLIT UNIT IS SEATED ON THE PLASTER and stores `sFt` rather than a
+ * coordinate, so where it is and which way it faces are facts about its room's
+ * walls — see lib/wallUnit.js. This is the ONE place that resolves them, which
+ * is the same rule `projectElecPointsPx` follows and for the same reason: a
+ * reader handed the raw store reads `undefined` for `x`, computes a NaN and
+ * draws nothing at all, with no throw and no warning.
+ *
+ * `hostFor` IS THE CALLER'S INDEX, because the rooms are the scene's and not
+ * this file's. It answers "which walls does this unit's room have"; handing it
+ * in is what keeps this function from having to learn what a room is.
+ *
+ * A UNIT WHOSE ROOM HAS GONE DROPS OUT rather than coming through at NaN. It is
+ * the third gate in lib/point.js said about a box: a thing that cannot be
+ * placed cannot be drawn, hovered or pressed.
+ *
+ * AND A UNIT PLACED BEFORE ANY OF THIS still carries its own `x`/`y` and comes
+ * through the ordinary path untouched, which is why there is no migration.
  */
-export function projectObstaclesPx(ceilingObjs, pxPerFt) {
+export function projectObstaclesPx(ceilingObjs, pxPerFt, hostFor = null) {
   if (!pxPerFt) return [];
-  return ceilingObjs.map((o) => toObstaclePx(o, pxPerFt));
+  const out = [];
+  for (const o of ceilingObjs) {
+    if (isWallUnit(o) && isSeated(o)) {
+      const at = resolveWallUnitPx(o, hostFor?.(o), pxPerFt);
+      if (at) out.push(toObstaclePx(o, pxPerFt, at));
+      continue;
+    }
+    out.push(toObstaclePx(o, pxPerFt));
+  }
+  return out;
 }
 
 /**
@@ -82,6 +111,32 @@ export function projectWardrobesPx(litOutlines, accentResults) {
     for (const f of accentResults[o.id]?.furniture ?? []) {
       if (f.type !== 'wardrobe' || !f.rect) continue;
       out.push({ id: `wd-${f.id}`, roomId: o.id, rect: f.rect });
+    }
+  }
+  return out;
+}
+
+/**
+ * THE BASINS, ON THE SAME TERMS — `[{ id, roomId, rect }]` in plan pixels.
+ *
+ * FURNITURE AND NOT FITTINGS, which is the whole point of this one existing.
+ * The bathroom's shaver plate is measured from where the basin IS — see rule 4
+ * in lib/electrical.js — and it used to be measured from the sconces the accent
+ * pass hangs either side of the mirror. Those are a FITTING: somebody may not
+ * want them, deleting one is a click, and a switch that disappears with a light
+ * is the defect rule 2 was rewritten to get rid of.
+ *
+ * THE BOX IS IN THE SAME RESULT AND CANNOT BE DELETED FROM THE CANVAS. It is
+ * what the accent pass SAW rather than what it proposed, so it survives every
+ * dismissal, and it is the box the sconces were derived from in the first
+ * place — so the plate lands where it always did.
+ */
+export function projectBasinsPx(litOutlines, accentResults) {
+  const out = [];
+  for (const o of litOutlines) {
+    for (const f of accentResults[o.id]?.furniture ?? []) {
+      if (f.type !== 'basin' || !f.rect) continue;
+      out.push({ id: `bs-${f.id}`, roomId: o.id, rect: f.rect });
     }
   }
   return out;
