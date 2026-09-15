@@ -5634,12 +5634,53 @@ export default function App({
      pipeline is still making one; and a viewer gets the sheet as it was left
      rather than switches over it. Sharing the list is what keeps the bar from
      arriving with one of its three switches missing. */
+  /* --- ...AND THE OPERATOR GETS A THIRD, WHICH NOBODY ELSE SEES -----------
+     ROLE 1 ONLY, like the audit overlays and Vertical Mode. The plates are
+     scaffolding to everybody except the person checking where the wiring pass
+     put them, and a client looking at their ceiling has no use for a switch
+     that turns blue rectangles on over it.
+
+     IT READS THE EFFECTIVE STATE, NOT `layers.switchboards`, AND THAT IS THE
+     WHOLE OF THE CARE IN IT. Those two are not the same thing: the plates
+     belong to the wiring and are derived OFF whenever `electrical` is off (see
+     `wiring` in the layer memo above), while `switchboards` itself DEFAULTS ON.
+     So on a plan nobody has touched, the stored flag says true and the drawing
+     shows nothing — and a switch bound to the flag would stand here latched, on
+     a sheet with no plates on it, doing nothing when pressed. That is the one
+     failure a switch on this bar must not have.
+
+     SO TURNING IT ON TURNS THE WIRING ON WITH IT, because that is what showing
+     a plate actually requires, and a control that cannot deliver what its label
+     says is worse than no control. Turning it OFF takes only the plates: the
+     wiring is a bigger thing than this switch owns, and silently withdrawing it
+     would be this switch deciding something it was not asked about.
+
+     THE VIEW MENU'S OWN TICK IS UNTOUCHED and still means what it always meant —
+     the raw layer. Both write the same key, so the two cannot drift; they simply
+     answer different questions, which is the same split `suggestGrid` makes
+     against `lights`. */
+  /* `|| boardPlace` MIRRORS THE DERIVATION EXACTLY — see `wiring` above, where
+     the placement step is the standing exception that shows plates with the
+     wiring off, because a step whose whole output is invisible looks broken.
+     Reading the effective state means reading ALL of it: without this term the
+     switch would sit unlatched while the plates it names were on the screen in
+     front of it, during the one gesture that is entirely about them. */
+  const platesDrawn = !!((layers.electrical || boardPlace) && layers.switchboards);
   const autoLead = verticalMode || !source || showTrace || prep || readOnly || sheetOpen ? null : (
     <>
       <SceneSwitch label="Suggested Grid" on={layers.suggestGrid}
         title="Draw the planner's answer as dotted suggestions instead of fittings"
         onClick={toggle('suggestGrid')} />
       <HeatmapSwitch on={layers.heatmap} onClick={toggle('heatmap')} />
+      {isAdmin && (
+        <SceneSwitch label="Switchboards" on={platesDrawn}
+          title="The plates on the walls. They are part of the wiring, so switching them on brings that with them."
+          onClick={() => {
+            if (platesDrawn) { docActions.setLayer('switchboards', false); return; }
+            docActions.setLayer('switchboards', true);
+            docActions.setLayer('electrical', true);
+          }} />
+      )}
     </>
   );
 
