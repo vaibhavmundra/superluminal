@@ -152,11 +152,18 @@ await run({ body: { action: 'users', q: 'a),role.eq.1,(b' } });
 const searchQ = asked.find((u) => u.includes('admin_user_stats')) || '';
 const group = decodeURIComponent((searchQ.match(/or=\(([^&]*)\)/) || [])[1] || '');
 ok(!!group, 'the search reaches the query as a single `or` group');
-ok(group.split(',').length === 2,
-   'the group still has exactly its two members — the term cannot add a third');
+// THREE MEMBERS SINCE 0011, AND THE COUNT IS STILL THE ASSERTION. The phone
+// column joined the search because it is often the only thing a new account HAS
+// — phone login means an address and a name both arrive later, at the first
+// export, so a box that looked at the other two could not find such a user at
+// all. What is being guarded has not changed one bit: the term must not be able
+// to add a member of its own, whatever the legitimate count happens to be.
+ok(group.split(',').length === 3,
+   'the group still has exactly its three members — the term cannot add a fourth');
 ok(!/[()]/.test(group), 'no parenthesis survives, so the group cannot be closed early');
-ok(group.startsWith('email.ilike.') && group.includes('full_name.ilike.'),
-   'and both members are still the two columns the search is meant to cover');
+ok(group.startsWith('email.ilike.') && group.includes('full_name.ilike.')
+   && group.includes('phone.ilike.'),
+   'and all three members are still the columns the search is meant to cover');
 
 // PAGINATION IS CLAMPED. perPage is a Range header; an unbounded one is a way to
 // pull every user in the database in one request.

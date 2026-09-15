@@ -136,7 +136,7 @@ const uuid = (v) =>
 async function grantFor(user, project) {
   if (user.id && user.id === project.owner) return 'owner';
 
-  const addr = String(user.email || '').trim().toLowerCase();
+  const addr = await addressOf(user);
   const clauses = [`invited_user.eq.${enc(user.id)}`];
   if (addr) clauses.push(`email.eq.${enc(addr)}`);
 
@@ -157,6 +157,38 @@ async function grantFor(user, project) {
   // makes two rows impossible; this is here so a second grant path added later
   // cannot quietly downgrade somebody.
   return rows.some((r) => r.role === 'edit') ? 'edit' : 'view';
+}
+
+/**
+ * THE CALLER'S ADDRESS, WHEREVER IT NOW LIVES — the server-side twin of
+ * `public.my_email()` (migration 0011), and it has to agree with that function
+ * exactly. Both answer the same question, and a grant this one can see but the
+ * POLICY cannot is the worst possible disagreement: the endpoint offers somebody
+ * a screen the database then refuses to fill, and the user gets an empty editor
+ * with no error in it.
+ *
+ * THE JWT CLAIM FIRST, THE PROFILE ROW SECOND, in that order and for the reason
+ * my_email() gives: an account that predates phone login proved its address by
+ * receiving a code at it, and preferring the proved one keeps every existing
+ * grant working unchanged. A phone account has no claim at all, and the row —
+ * filled at the first export — is its only answer.
+ *
+ * AN EMPTY STRING IS A FINE ANSWER and means "no standing grant by address",
+ * which for somebody holding a link is the view-only path and is correct.
+ */
+async function addressOf(user) {
+  const claim = String(user?.email || '').trim().toLowerCase();
+  if (claim) return claim;
+  if (!user?.id) return '';
+  try {
+    const rows = await rest(`profiles?select=email&id=eq.${enc(user.id)}&limit=1`);
+    return String(rows[0]?.email || '').trim().toLowerCase();
+  } catch (err) {
+    // SAME DEGRADATION AS grantFor'S OWN CATCH, and for the same reason: a link
+    // must still work when this query does not.
+    console.warn('[share] could not read the profile address', err.message);
+    return '';
+  }
 }
 
 /**

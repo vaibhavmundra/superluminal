@@ -165,11 +165,18 @@ async function listUsers(b) {
   let filter = '';
   const q = typeof b.q === 'string' ? b.q.trim() : '';
   if (q) {
-    // `or=(email.ilike.*x*,full_name.ilike.*x*)`. Commas and parens would break
-    // out of the filter grouping, so they are stripped rather than escaped —
-    // this is a search box, not an expression language.
+    // `or=(email.ilike.*x*,full_name.ilike.*x*,phone.ilike.*x*)`. Commas and
+    // parens would break out of the filter grouping, so they are stripped rather
+    // than escaped — this is a search box, not an expression language.
+    //
+    // THE NUMBER IS SEARCHABLE TOO, and since 0011 it is often the ONLY thing
+    // there is to search by: an account that has not exported anything yet has a
+    // phone and no address and no name, so a box that looked only at the other
+    // two could not find it at all. The `+` survives the strip on purpose —
+    // somebody pasting `+919876543210` should match the column, which stores it
+    // exactly that way.
     const safe = encodeURIComponent(q.replace(/[(),*]/g, ''));
-    filter = `&or=(email.ilike.*${safe}*,full_name.ilike.*${safe}*)`;
+    filter = `&or=(email.ilike.*${safe}*,full_name.ilike.*${safe}*,phone.ilike.*${safe}*)`;
   }
 
   const { rows, total } = await rest(
@@ -189,7 +196,7 @@ async function listUserProjects(b) {
     rest(`projects?select=id,name,project_type,created_at,updated_at,plans(count)`
        + `&owner=eq.${owner}&order=updated_at.desc`,
       { count: true, range: `${from}-${to}` }),
-    rest(`profiles?select=id,email,full_name,role&id=eq.${owner}&limit=1`),
+    rest(`profiles?select=id,email,full_name,phone,role&id=eq.${owner}&limit=1`),
   ]);
 
   return {
@@ -246,7 +253,7 @@ async function getPlanFull(b) {
   if (!plan) { const e = new Error('No such plan'); e.status = 404; throw e; }
 
   const [owner, project] = await Promise.all([
-    rest(`profiles?select=id,email,full_name&id=eq.${encodeURIComponent(plan.owner)}&limit=1`),
+    rest(`profiles?select=id,email,full_name,phone&id=eq.${encodeURIComponent(plan.owner)}&limit=1`),
     plan.project_id
       ? rest(`projects?select=id,name&id=eq.${encodeURIComponent(plan.project_id)}&limit=1`)
       : Promise.resolve({ rows: [] }),
@@ -292,7 +299,7 @@ export default async function handler(req, res) {
     // WHO LOOKED AT WHAT. Reading another person's drawings is a privileged act
     // and privileged acts leave a trace, even in an MVP where the trace is only
     // a function log.
-    console.log(`[admin] ${admin.email} ${body.action}`
+    console.log(`[admin] ${admin.email || admin.id} ${body.action}`
       + (body.userId ? ` user=${body.userId}` : '')
       + (body.planId ? ` plan=${body.planId}` : '')
       + ` ${Date.now() - t0}ms`);

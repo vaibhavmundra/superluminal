@@ -1,12 +1,23 @@
 // ---------------------------------------------------------------------------
 // AUTH — a session, a listener, and one gate.
 //
-// EMAIL OTP AND NOTHING ELSE. No password to store, reset, or leak; no OAuth
+// PHONE OTP AND NOTHING ELSE. No password to store, reset, or leak; no OAuth
 // consent screen to explain to somebody who just wants to see their ceiling
 // lit. Supabase calls it `signInWithOtp` and the six-digit code is verified in
-// the same tab, which matters more than it sounds: a magic LINK opens a second
-// tab, and the drawing the user just dropped is in the first one's memory. A
-// code typed into the tab that already holds the file keeps the upload alive.
+// the same tab, which matters more than it sounds: an emailed magic LINK opens a
+// second tab, and the drawing the user just dropped is in the first one's
+// memory. A code typed into the tab that already holds the file keeps the
+// upload alive — and an SMS cannot carry a link that would break that, which is
+// a property of the channel rather than a decision we have to keep making.
+//
+// THE SMS IS SUPABASE'S TO SEND, NOT OURS. The project is configured with Twilio
+// under Authentication -> Sign In / Providers -> Phone, and that is deliberate:
+// rolling our own send-and-verify would mean hand-rolling the code store, the
+// replay window, the rate limit and — the part with no good answer — a bridge
+// that mints a GoTrue session for a user the admin API has no session call for.
+// Native phone auth is the same battle-tested path the email code took, with the
+// channel swapped. See tools/twilio-verify-setup.mjs for the one-time setup and
+// .env.example for what has to be pasted where.
 //
 // THE GATE IS A ROUTE WRAPPER, NOT A REDIRECT INSIDE EVERY PAGE. `RequireAuth`
 // renders nothing but its children once there is a session, sends an anonymous
@@ -55,8 +66,8 @@ const withLimit = (promise, what, ms = LIMIT_MS) => {
     new Promise((_, reject) => {
       t = setTimeout(() => reject(new Error(
         `${what} got no answer in ${ms / 1000}s. The request is probably still `
-        + 'pending — most often the email provider. Check Logs → Auth in the '
-        + 'Supabase dashboard, and run `node tools/check-supabase.mjs <email>`.'
+        + 'pending — most often the SMS provider. Check Logs → Auth in the '
+        + 'Supabase dashboard, and run `node tools/check-twilio.mjs <phone>`.'
       )), ms);
     }),
   ]);
@@ -70,25 +81,42 @@ const withLimit = (promise, what, ms = LIMIT_MS) => {
 function explain(error) {
   const msg = String(error?.message || error);
   const code = error?.status;
-  // THE MAILER FAILED, AND THE APP IS NOT INVOLVED. Supabase returns this as a
-  // 500 with a generic string for every SMTP failure there is — unverified
-  // sender, wrong port, bad credentials, a broken Go template — so the message
-  // alone is a dead end and the useful thing to say is WHERE the real error is
-  // written down.
-  if (/error sending .*(email|confirmation)/i.test(msg)) {
-    return 'Supabase took the request but could not send the email. That is SMTP or '
-      + 'template configuration on the project, not the app — the real error is in '
-      + 'Logs → Auth in the dashboard. Usually: a sender address the SMTP provider '
-      + 'has not verified, the wrong port or credentials, or a syntax error in the '
-      + 'email template.';
+  // THE PROVIDER IS OFF, AND THIS IS THE ONE EVERY FRESH DEPLOYMENT HITS. Phone
+  // sign-in is a per-project switch that is DISABLED by default, so a correct
+  // app talking to an unconfigured project gets a flat refusal with nothing in
+  // it about which switch. Naming the screen is the whole value of the line.
+  if (/phone.*(provider|sign.?ups?|logins?).*(disabled|not enabled)|unsupported phone provider/i.test(msg)) {
+    return 'Phone sign-in is switched off on this Supabase project. Enable it under '
+      + 'Authentication → Sign In / Providers → Phone, and set the Twilio '
+      + 'credentials there — `node tools/twilio-verify-setup.mjs` prints what to paste.';
+  }
+  // THE SMS DID NOT GO, AND THE APP IS NOT INVOLVED. Supabase wraps every Twilio
+  // rejection in one 500, so the message alone is a dead end and the useful
+  // thing to say is WHERE the real error is written down. The trial-account case
+  // is called out by name because it is the one that looks like a code bug: the
+  // number is valid, the config is right, and Twilio refuses anyway.
+  if (/error sending (sms|confirmation)|failed to send sms|twilio/i.test(msg)) {
+    return 'Supabase took the request but Twilio would not send the SMS. That is '
+      + 'provider configuration, not the app — the real error is in Logs → Auth in '
+      + 'the dashboard. On a TRIAL Twilio account the usual cause is that the '
+      + 'destination number has not been verified in the Twilio console, which '
+      + 'refuses every number you have not added by hand.';
   }
   if (code === 429 || /rate limit|too many/i.test(msg)) {
-    return 'Too many codes requested. Supabase\'s built-in mailer allows only a few '
-      + 'emails an hour — wait a few minutes, or configure custom SMTP.';
+    return 'Too many codes requested. Supabase allows only a few SMS an hour per '
+      + 'project — wait a few minutes before asking for another.';
   }
   if (/signups not allowed|signup is disabled/i.test(msg)) {
-    return 'This project has new sign-ups disabled, so a first-time email cannot be '
-      + 'used. Enable them under Authentication → Sign In, or invite the user first.';
+    return 'This project has new sign-ups disabled, so a first-time number cannot be '
+      + 'used. Enable them under Authentication → Sign In, or add the number to an '
+      + 'existing account with `node tools/link-phone.mjs`.';
+  }
+  // A NUMBER GOTRUE WILL NOT TAKE. It wants bare E.164 digits and says so
+  // tersely; the form builds exactly that, so this nearly always means a country
+  // code and a national number that do not belong together.
+  if (/invalid phone|phone.*(format|invalid)/i.test(msg)) {
+    return 'That number was refused as malformed. Check the country on the left is '
+      + 'the number\'s own country — the preview line shows exactly what will be sent.';
   }
   if (/invalid api key|jwt/i.test(msg)) {
     return 'The anon key was rejected. It may belong to a different project than '
@@ -217,29 +245,45 @@ export function AuthProvider({ children }) {
     return () => { alive = false; };
   }, [session?.user?.id]);
 
-  const sendCode = useCallback(async (email) => {
+  /**
+   * THE NUMBER IS ALREADY E.164 BY THE TIME IT GETS HERE, and this function
+   * deliberately does not re-derive it. The login screen builds it with `toE164`
+   * from a country the user picked and digits they typed (see src/lib/profile.js
+   * and the preview line in Login.jsx), which is the one place that knows the
+   * trunk-zero rule. A second, slightly different opinion about what a phone
+   * number is would be the classic way for the number a code is SENT to and the
+   * number it is VERIFIED against to disagree — and those two disagreeing is an
+   * account nobody can ever sign in to.
+   */
+  const sendCode = useCallback(async (phone) => {
     if (!supabase) throw new Error('Supabase is not configured — see .env.example');
     const t0 = Date.now();
     const { error } = await withLimit(supabase.auth.signInWithOtp({
-      email: email.trim().toLowerCase(),
-      // shouldCreateUser: a first-time email is a sign-UP, and asking somebody
+      phone: String(phone).trim(),
+      // shouldCreateUser: a first-time number is a sign-UP, and asking somebody
       // to register before they can see the plan they just uploaded is the
       // friction this flow exists to avoid.
       options: { shouldCreateUser: true },
     }), 'Sending the code');
     // TIMED, AND LOGGED EVEN ON SUCCESS. A send that takes eleven seconds is
     // working and about to become a support question; knowing that it is the
-    // mailer and not the app is the difference between a fix and a rewrite.
-    console.log(`[auth] otp requested in ${Date.now() - t0}ms`, error ? { error } : '');
+    // carrier and not the app is the difference between a fix and a rewrite.
+    console.log(`[auth] sms otp requested in ${Date.now() - t0}ms`, error ? { error } : '');
     if (error) { console.error('[auth] signInWithOtp failed', error); throw new Error(explain(error)); }
   }, []);
 
-  const verifyCode = useCallback(async (email, token) => {
+  /**
+   * `type: 'sms'` AND NOT 'phone_change' OR 'signup'. GoTrue keys the stored code
+   * on the channel it was sent through, so the wrong type here is a code that is
+   * genuinely correct and rejected anyway — with an "invalid token" message that
+   * sends you looking at the number instead of at this line.
+   */
+  const verifyCode = useCallback(async (phone, token) => {
     if (!supabase) throw new Error('Supabase is not configured — see .env.example');
     const { data, error } = await withLimit(supabase.auth.verifyOtp({
-      email: email.trim().toLowerCase(),
+      phone: String(phone).trim(),
       token: token.trim(),
-      type: 'email',
+      type: 'sms',
     }), 'Checking the code');
     if (error) { console.error('[auth] verifyOtp failed', error); throw new Error(explain(error)); }
     return data.session;
@@ -268,9 +312,15 @@ export function AuthProvider({ children }) {
   }, [session?.user?.id]);
 
   /**
-   * THE WHATSAPP NUMBER AND THE OCCUPATION, asked at the first export rather
-   * than at sign-up — see the header of src/lib/profile.js for why that moment
-   * and not the other one.
+   * THE EMAIL ADDRESS AND THE OCCUPATION, asked at the first export rather than
+   * at sign-up — see the header of src/lib/profile.js for why that moment and
+   * not the other one.
+   *
+   * IT IS THE EMAIL NOW AND IT USED TO BE THE PHONE, because the two identifiers
+   * traded places when the login did. The number arrives verified on the session
+   * and migration 0011 mirrors it onto this row by itself; the address is the one
+   * nobody has, and two things need it — a Razorpay receipt and a share invite,
+   * neither of which can be sent to a phone number.
    *
    * IT THROWS WHERE saveName SWALLOWS, and the difference is what the caller
    * does next. A rename is optimistic and cosmetic: it is already on screen, and
@@ -285,13 +335,15 @@ export function AuthProvider({ children }) {
    *
    * NOTHING VALIDATES HERE. The shapes are decided in profile.js and the caller
    * has already run them through it — a second, slightly different opinion about
-   * what a phone number is would be the classic way for the stored value and the
-   * checked value to disagree.
+   * what an address is would be the classic way for the stored value and the
+   * checked value to disagree, and here that disagreement has teeth: an address
+   * this saved with a capital letter is a share invite that silently never
+   * matches (see normaliseEmail).
    */
-  const saveContact = useCallback(async ({ phone, occupation }) => {
+  const saveContact = useCallback(async ({ email, occupation }) => {
     if (!supabase || !session?.user) throw new Error('Not signed in');
     const { data, error } = await supabase.from('profiles')
-      .update({ phone, occupation })
+      .update({ email, occupation })
       .eq('id', session.user.id)
       .select().maybeSingle();
     if (error) throw error;
@@ -302,6 +354,13 @@ export function AuthProvider({ children }) {
   const value = useMemo(() => {
     const user = session?.user ?? null;
     const name = profile?.full_name || user?.user_metadata?.full_name || '';
+    // WHAT TO CALL SOMEBODY WHO HAS ONLY EVER GIVEN US A PHONE NUMBER, which is
+    // now every brand-new account: the session carries a number and nothing
+    // else until the first export asks for an address. The order is the order
+    // of how much a person chose it — a name they typed, then the address they
+    // gave at the gate, then the number they signed in with, which is always
+    // there and is why there is no fourth case.
+    const handle = profile?.email || user?.email || user?.phone || '';
     return {
       ready, session, user, profile, stalled, revalidate,
       configured: supabaseReady,
@@ -318,10 +377,19 @@ export function AuthProvider({ children }) {
       // must actually be restricted belongs in a policy, not here.
       role: profile?.role ?? null,
       isAdmin: (profile?.role ?? null) === 1,
-      displayName: name || user?.email || '',
-      // The bubble's letter. Falls back through name → email → a dash, because
+      displayName: name || handle || '',
+      // THE SECOND LINE IN THE ACCOUNT MENU, and the reason it is computed here
+      // rather than read off `user` at the call site: a phone account has no
+      // `user.email` at all, so every screen that reached for one was about to
+      // render an empty span. See ProfileRail.jsx.
+      handle,
+      // The bubble's letter. Falls back through name → handle → a dash, because
       // an empty circle looks like a loading state that never finishes.
-      initial: (name || user?.email || '—').trim().charAt(0).toUpperCase(),
+      //
+      // A LEADING `+` IS NOT A LETTER. Every phone account would otherwise wear
+      // an identical `+` bubble, which is the one thing the letter exists not to
+      // be — so the digits are what it draws from when the handle is a number.
+      initial: (name || handle.replace(/^\+/, '') || '—').trim().charAt(0).toUpperCase(),
       sendCode, verifyCode, signOut, saveName, saveContact,
     };
   }, [ready, session, profile, stalled, revalidate, sendCode, verifyCode, signOut,

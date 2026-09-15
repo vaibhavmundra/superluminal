@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 const { OCCUPATIONS, OCCUPATION_BY_ID, occupationLabel, occupationOf,
-        normalisePhone, toE164, profileComplete } = await import('../src/lib/profile.js');
+        emailOf, normalisePhone, toE164, profileComplete } = await import('../src/lib/profile.js');
 const { DIAL_CODES, DEFAULT_ISO, splitDial, countryForDial, countryForIso, flagOf }
   = await import('../src/lib/dialCodes.js');
 
@@ -50,6 +50,60 @@ section('the occupations');
   ok(occupationOf('architect') === null, 'nor does half of one');
   ok(occupationOf(undefined) === null, 'nor does nothing');
   ok(OCCUPATION_BY_ID.other.label === 'Other', 'the lookup is built from the list');
+}
+
+// --- the address -----------------------------------------------------------
+
+section('a typed address to the one the column holds');
+{
+  ok(emailOf('alice@studio.com') === 'alice@studio.com', 'a clean address is unchanged');
+
+  // LOWERCASED, AND THIS IS THE LOAD-BEARING ASSERTION IN THE SECTION.
+  // share_role() compares this column with lower() on both sides, so a stored
+  // capital is a grant that silently never matches — the owner sees the invite
+  // listed and the invitee sees nothing.
+  ok(emailOf('Alice@Studio.com') === 'alice@studio.com', 'case is flattened');
+  ok(emailOf('  alice@studio.com  ') === 'alice@studio.com', 'padding goes');
+  ok(emailOf('ALICE@STUDIO.COM') === 'alice@studio.com', 'and shouting is flattened too');
+
+  // THE SHAPE TEST IS A GATE, NOT A VALIDATION. Nothing here can know whether an
+  // address receives mail; what it can catch is the typo made by somebody who is
+  // still looking at the screen.
+  ok(emailOf('alice') === null, 'no domain is not an address');
+  ok(emailOf('alice@') === null, 'nor is a missing one');
+  ok(emailOf('@studio.com') === null, 'nor is a missing mailbox');
+  ok(emailOf('alice@studio') === null, 'nor is a domain with no dot');
+  ok(emailOf('alice @studio.com') === null, 'a space in the middle is a typo');
+  ok(emailOf('alice@studio.c') === null, 'a one-letter TLD is a typo');
+  ok(emailOf('') === null, 'empty is nothing');
+  ok(emailOf(null) === null, 'and so is null');
+  ok(emailOf(undefined) === null, 'and so is nothing at all');
+
+  // THE CAP MATCHES THE COLUMN'S CONSUMERS — api/billing.js slices to 200 before
+  // Razorpay sees it, so refusing here keeps the stored and the sent value one
+  // string rather than two.
+  ok(emailOf('a'.repeat(190) + '@studio.com') === null, 'past 200 characters is refused');
+  ok(typeof emailOf('a'.repeat(180) + '@studio.com') === 'string', 'and just under is not');
+
+  // IT AGREES WITH looksLikeEmail IN sharing.js, CHARACTER FOR CHARACTER. That
+  // one guards the invite box and this one guards the export gate; an address one
+  // accepts and the other refuses is a share nobody can be invited to, with the
+  // two refusals appearing on different screens a week apart.
+  //
+  // COMPARED AS SOURCE TEXT RATHER THAN BY IMPORTING IT, which is not cleverness
+  // for its own sake: sharing.js imports supabase.js, which reads
+  // `import.meta.env` and throws the moment plain node loads it. Reading the two
+  // literals out of the files proves the same thing — that they have not drifted
+  // — without dragging a browser module into a test runner.
+  const fs = await import('node:fs');
+  const grab = (file) => {
+    const src = fs.readFileSync(new URL(file, import.meta.url), 'utf8');
+    return src.match(/\/\^\[\^\\s@\].*?\/(?=\.test|;|\))/)?.[0] ?? null;
+  };
+  const mine = grab('../src/lib/profile.js');
+  const theirs = grab('../src/lib/sharing.js');
+  ok(!!mine && !!theirs, 'both gates still carry a literal address regex');
+  ok(mine === theirs, `the two gates are the same expression — ${mine}`);
 }
 
 // --- the number ------------------------------------------------------------
@@ -195,19 +249,31 @@ section('assembling a number from the two controls');
 
 section('whether to ask');
 {
-  const full = { phone: '+919876543210', occupation: 'engineer' };
+  // THE PAIR IS THE ADDRESS AND THE OCCUPATION NOW, where it was the phone and
+  // the occupation. The number is no longer worth asking for: it is the account,
+  // it arrives verified on the session, and migration 0011 mirrors it onto the
+  // row — so a gate that still demanded it would put a dialog in front of every
+  // user forever, asking for the one thing we already have.
+  const full = { email: 'alice@studio.com', occupation: 'engineer' };
   ok(profileComplete(full) === true, 'both answered is complete');
 
-  ok(profileComplete({ ...full, phone: null }) === false, 'no number is incomplete');
+  ok(profileComplete({ ...full, email: null }) === false, 'no address is incomplete');
   ok(profileComplete({ ...full, occupation: null }) === false, 'no occupation is incomplete');
   ok(profileComplete({}) === false, 'an empty row is incomplete');
 
-  // A ROW CARRYING RUBBISH IS NOT ANSWERED. Somebody who got a national number
-  // into the column before this validation existed should be asked again, not
-  // treated as done — the number cannot be messaged.
-  ok(profileComplete({ phone: '9876543210', occupation: 'engineer' }) === false,
-    'an unreachable number does not count as answered');
-  ok(profileComplete({ phone: '+919876543210', occupation: 'Architect' }) === false,
+  // A PHONE ON THE ROW IS NOT AN ANSWER TO THIS QUESTION, and this assertion is
+  // the one that would catch a half-done revert. Every account has a number the
+  // moment it exists, so a gate that counted it would never fire and the address
+  // would never be collected — receipts and invites would both fail silently.
+  ok(profileComplete({ phone: '+919876543210', occupation: 'engineer' }) === false,
+    'a number is not an address, however well formed');
+
+  // A ROW CARRYING RUBBISH IS NOT ANSWERED. Somebody who got a malformed address
+  // into the column should be asked again rather than treated as done — the
+  // receipt cannot be sent to it.
+  ok(profileComplete({ email: 'alice', occupation: 'engineer' }) === false,
+    'an unusable address does not count as answered');
+  ok(profileComplete({ email: 'alice@studio.com', occupation: 'Architect' }) === false,
     'and neither does an occupation that is not one of ours');
 
   // THE THIRD VALUE, AND THE REASON THIS FUNCTION IS NOT A BOOLEAN. The profile

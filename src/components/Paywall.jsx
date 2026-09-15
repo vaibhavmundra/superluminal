@@ -8,7 +8,7 @@ import { TIER } from '../lib/plans.js';
 
 export default function Paywall({ onClose }) {
   const { checkout, state } = useBilling();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const nav = useNavigate();
   const [picked, setPicked] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -29,7 +29,11 @@ export default function Paywall({ onClose }) {
   if (picked) {
     return (
       <CheckoutDialog tier={TIER[picked]} pricing={state.pricing}
-        defaults={{ email: user?.email || '', signedIn: !!user }}
+        /* THE PROFILE ROW FIRST. A phone account has no `user.email`, so this
+           prefill was about to be blank for everybody new — and the address the
+           export gate collected is the one the receipt will go to anyway, which
+           makes it the right default rather than merely an available one. */
+        defaults={{ email: profile?.email || user?.email || '', signedIn: !!user }}
         busy={busy} error={err}
         onCancel={() => { if (!busy) { setPicked(null); setErr(''); } }}
         onPay={pay} />

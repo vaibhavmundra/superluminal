@@ -181,7 +181,25 @@ async function sendPaymentConfirmation({ owner, subscriptionId, payment, periodE
 
   const profiles = await rest(`profiles?select=email,full_name&id=eq.${enc(owner)}&limit=1`);
   const email = String(profiles[0]?.email || '').trim().toLowerCase();
-  if (!email) throw new Error('The subscriber has no email address');
+  // NO ADDRESS IS NOW A REAL STATE, AND IT MUST NOT FAIL THE WEBHOOK.
+  //
+  // This used to throw, which was correct when it was unreachable: an account
+  // could not exist without an address, so getting here meant something was
+  // badly wrong and a 500 asking Razorpay to retry was the right answer. Since
+  // 0011 the login is a phone number and the address is collected at the first
+  // export — so somebody can perfectly well subscribe before they have ever
+  // given us one, and that is a customer in good standing rather than an error.
+  //
+  // THE THROW WOULD HAVE BEEN WORSE THAN A MISSING RECEIPT. The subscription row
+  // is already written by the time this runs, so a 500 here does not undo
+  // anything — it just makes Razorpay retry a payment that SUCCEEDED, and every
+  // retry fails on the same missing column while the operator watches a healthy
+  // payment look broken. The money is recorded either way; only the email is
+  // lost, and it is recoverable the moment they export something.
+  if (!email) {
+    console.warn('[webhook] no address on the subscriber — receipt not sent', { owner });
+    return;
+  }
 
   const currency = String(payment.currency || CURRENCY).toUpperCase();
   const amount = Number(payment.amount) / 100;

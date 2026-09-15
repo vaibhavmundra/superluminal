@@ -28,7 +28,7 @@ const FAQS = [
 export default function Pricing() {
   const nav = useNavigate();
   const loc = useLocation();
-  const { user, ready: authReady } = useAuth();
+  const { user, profile, ready: authReady } = useAuth();
   const { state, checkout, cancel, refresh } = useBilling();
   const [picked, setPicked] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -146,7 +146,10 @@ export default function Pricing() {
 
       {picked && (
         <CheckoutDialog tier={TIER[picked]} pricing={state.pricing}
-          defaults={{ email: user?.email || '', signedIn: !!user }} busy={busy} error={err}
+          /* THE PROFILE ROW FIRST, as in Paywall.jsx — a phone account has no
+             `user.email`, and the address the export gate collected is the one
+             the receipt goes to anyway. */
+          defaults={{ email: profile?.email || user?.email || '', signedIn: !!user }} busy={busy} error={err}
           onCancel={() => { if (!busy) { setPicked(null); setErr(''); } }} onPay={pay} />
       )}
     </div>

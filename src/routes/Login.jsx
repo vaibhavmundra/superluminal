@@ -3,12 +3,25 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
 import { peekUpload, takeUpload } from '../lib/pendingUpload.js';
 import { startPlanUpload } from '../lib/uploads.js';
+import { toE164, normalisePhone } from '../lib/profile.js';
+import { DIAL_CODES, DEFAULT_ISO, splitDial, countryForDial, countryForIso, flagOf }
+  from '../lib/dialCodes.js';
 import Wordmark from '../components/Wordmark.jsx';
 
 // ---------------------------------------------------------------------------
-// EMAIL, THEN SIX DIGITS. Two states in one component, because they are two
+// A NUMBER, THEN SIX DIGITS. Two states in one component, because they are two
 // halves of one sentence and a second route for the code would be a URL a user
 // could land on with nothing to verify against.
+//
+// THE COUNTRY IS A SELECT AND THE NUMBER IS A BOX, which is the same pair the
+// export dialog used to wear and is here for a reason that got STRONGER on the
+// way up the funnel. A single text box pre-filled with `+91 ` reads as part of
+// YOUR NUMBER rather than as a choice, so somebody in London types after it and
+// sends a code to `+912079460958` — the wrong country, a plausible length, and
+// nothing anywhere that can tell. That used to cost an unreachable lead. It now
+// costs an ACCOUNT: the code goes to a number that is not theirs, so there is
+// nothing to type back, and the failure looks exactly like a broken app. See
+// src/lib/dialCodes.js.
 //
 // NO ACCENT ON THIS SCREEN, AND BOTH PRIMARIES ARE WHITE. The ramp is what the
 // rest of the app spends on a DESIGN act — light the spaces, add a plan, close
@@ -30,13 +43,16 @@ export default function Login() {
   const loc = useLocation();
   const { user, ready, sendCode, verifyCode, configured } = useAuth();
 
-  // PREFILLED WHERE THE CALLER ALREADY KNOWS THE ADDRESS. Nothing sends one today;
-  // it costs one line, and it means a link that does — an invite, a "sign in as"
-  // from somewhere else — will not make somebody retype what was already on
-  // screen.
-  const [email, setEmail] = useState(() => String(loc.state?.email || ''));
+  // PREFILLED WHERE THE CALLER ALREADY KNOWS THE NUMBER. Nothing sends one today;
+  // it costs a few lines, and it means a link that does — an invite, a "sign in
+  // as" from somewhere else — will not make somebody retype what was already on
+  // screen. A passed number is E.164, so it splits cleanly into the two controls.
+  const passed = normalisePhone(loc.state?.phone || '');
+  const [iso, setIso] = useState(() =>
+    countryForDial(splitDial(passed ?? '')?.dial)?.iso ?? DEFAULT_ISO);
+  const [local, setLocal] = useState(() => splitDial(passed ?? '')?.national ?? '');
   const [code, setCode] = useState('');
-  const [stage, setStage] = useState('email');   // email | code
+  const [stage, setStage] = useState('phone');   // phone | code
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [resendIn, setResendIn] = useState(0);
@@ -46,6 +62,13 @@ export default function Login() {
   const from = loc.state?.from || '/dashboard';
   const waitingFile = peekUpload();
   const uploadName = loc.state?.upload || waitingFile?.name || null;
+
+  const country = countryForIso(iso) ?? countryForIso(DEFAULT_ISO);
+  // THE ONE STRING EVERYTHING DOWNSTREAM USES. The code is SENT to this and
+  // VERIFIED against this, from the same expression — those two drifting apart
+  // is an account nobody can ever sign in to, and deriving them separately is
+  // the only way that happens.
+  const phone = toE164(country.dial, local);
 
   // A session appearing — from this form or from another tab — is the trigger
   // for everything that happens next. `handled` guards against the double
@@ -86,12 +109,36 @@ export default function Login() {
     return () => clearTimeout(t);
   }, [resendIn]);
 
-  const submitEmail = async (e) => {
+  /**
+   * WHAT HAPPENS WHEN SOMEBODY PASTES A WHOLE INTERNATIONAL NUMBER into the
+   * national box — which is the commonest way a wrong country code would be
+   * dialled, because a pasted `+44 20 7946 0958` behind a select that still says
+   * India produces `+914420…`.
+   *
+   * THE `+` OR `00` IS THE ONLY SIGNAL, and it has to be, because a bare
+   * national number is genuinely ambiguous: `9876543210` splits perfectly well
+   * as Iran's +98 followed by eight digits. Guessing a country from digits that
+   * do not claim to carry one is exactly the class of silent error this whole
+   * control exists to stop, so the split runs only when the text says it is
+   * international.
+   */
+  const onLocal = (raw) => {
+    setErr('');
+    const intl = raw.trim().startsWith('+') || /^\s*00\d/.test(raw);
+    if (intl) {
+      const parts = splitDial(raw.replace(/\D/g, '').replace(/^00/, ''));
+      const found = parts && countryForDial(parts.dial);
+      if (found) { setIso(found.iso); setLocal(parts.national); return; }
+    }
+    setLocal(raw);
+  };
+
+  const submitPhone = async (e) => {
     e.preventDefault();
-    if (!email.trim()) return;
+    if (!phone) return;
     setBusy(true); setErr('');
     try {
-      await sendCode(email);
+      await sendCode(phone);
       setStage('code');
       setResendIn(45);
       setTimeout(() => codeRef.current?.focus(), 60);
@@ -103,7 +150,7 @@ export default function Login() {
     e.preventDefault();
     if (code.trim().length < 6) return;
     setBusy(true); setErr('');
-    try { await verifyCode(email, code); }        // the effect above takes it from here
+    try { await verifyCode(phone, code); }        // the effect above takes it from here
     catch (ex) { setErr(String(ex.message || ex)); setBusy(false); }
   };
 
@@ -129,22 +176,58 @@ export default function Login() {
               <code> .env.local</code> and restart the dev server.
             </p>
           </>
-        ) : stage === 'email' ? (
+        ) : stage === 'phone' ? (
           <>
             <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em] text-white">Sign in to start designing</h1>
             <p className="m-0 mb-[22px] text-muted text-[12.5px] leading-[1.6]">
               {uploadName
-                ? <>We will email you a six-digit code, then open <b>{uploadName}</b>.</>
-                : <>We will email you a six-digit code. No password to remember.</>}
+                ? <>We will text you a six-digit code, then open <b>{uploadName}</b>.</>
+                : <>We will text you a six-digit code. No password to remember.</>}
             </p>
-            <form onSubmit={submitEmail} className="flex flex-col gap-2">
-              <label className="text-[10px] tracking-[0.11em] uppercase text-subtle" htmlFor="email">Email</label>
-              <input id="email" type="email" autoComplete="email" autoFocus required
-                placeholder="you@studio.com" value={email}
-                className="h-field-h px-3.5 py-0 text-[14px]"
-                onChange={(e) => setEmail(e.target.value)} />
+            <form onSubmit={submitPhone} className="flex flex-col gap-2">
+              <label className="text-[10px] tracking-[0.11em] uppercase text-subtle" htmlFor="login-phone">Mobile number</label>
+              <div className="flex gap-2 items-start">
+                <select value={iso} aria-label="Country"
+                  /* WIDE ENOUGH FOR "United Kingdom +44" AND NOT FOR EVERY NAME,
+                     which is the honest compromise: a native select shows its
+                     chosen option truncated to the control's width, and sizing
+                     for "Bosnia & Herzegovina" would give a third of the card to
+                     a control that is correct by default. The preview line
+                     underneath always names the country in full, so nothing is
+                     ever only half-said. */
+                  className="flex-none w-[10.5rem] max-[420px]:w-[8.5rem] h-field-h text-[12.5px]"
+                  onChange={(e) => { setIso(e.target.value); setErr(''); }}>
+                  {DIAL_CODES.map((c) => (
+                    /* THE FLAG, THE NAME AND THE CODE, in that order, and all
+                       three are needed. The flag is the fast scan, the name is
+                       what somebody searches for by typing into a native select,
+                       and the code is the thing being chosen — a list of flags
+                       alone is unreadable on a platform that renders them as
+                       letter pairs. */
+                    <option key={c.iso} value={c.iso}>
+                      {flagOf(c.iso)} {c.name} +{c.dial}
+                    </option>
+                  ))}
+                </select>
+                <input id="login-phone" type="tel" autoFocus value={local}
+                  className="flex-1 min-w-0 h-field-h px-3.5 py-0 text-[14px]"
+                  placeholder="98765 43210" autoComplete="tel-national"
+                  onChange={(e) => onLocal(e.target.value)} />
+              </div>
+              <p className="text-[11.5px] text-muted leading-[1.5] mt-0.5">
+                {/* THE PREVIEW IS THE POINT OF THE WHOLE ARRANGEMENT. It shows
+                    the exact number the code will be sent to, so a wrong country
+                    is visible BEFORE the SMS goes rather than when it never
+                    arrives — and it is where the trunk-zero rule announces
+                    itself, since somebody who types `020 7946 0958` sees
+                    `+442079460958` come back and can tell at a glance that the
+                    zero was understood rather than swallowed. */}
+                {phone
+                  ? <>Code goes to <b className="text-text">{phone}</b> · {country.name}</>
+                  : <>Your number without the country code — pick the country on the left.</>}
+              </p>
               <button className="text-[14px] px-[22px] h-field-h rounded-[8px] border border-white bg-white text-black inline-flex items-center justify-center cursor-pointer transition-colors duration-[120ms] hover:bg-text hover:border-text disabled:opacity-100 disabled:cursor-not-allowed mt-2 w-full"
-                type="submit" disabled={busy || !email.trim()}>
+                type="submit" disabled={busy || !phone}>
                 {busy ? 'Sending…' : 'Send the code'}
               </button>
             </form>
@@ -152,7 +235,7 @@ export default function Login() {
         ) : (
           <>
             <h1 className="m-0 mb-2 text-[22px] tracking-[-0.03em] text-white">Enter the code</h1>
-            <p className="m-0 mb-[22px] text-muted text-[12.5px] leading-[1.6]">Sent to <b>{email}</b>. It is good for an hour.</p>
+            <p className="m-0 mb-[22px] text-muted text-[12.5px] leading-[1.6]">Sent to <b>{phone}</b>. It is good for an hour.</p>
             <form onSubmit={submitCode} className="flex flex-col gap-2">
               <label className="text-[10px] tracking-[0.11em] uppercase text-subtle" htmlFor="code">Six-digit code</label>
               {/* `type="text"` is not decoration: the stylesheet reaches fields by
@@ -172,13 +255,13 @@ export default function Login() {
                 <button type="button"
                   className="border-0 bg-transparent p-0 text-[11.5px] text-text cursor-pointer no-underline transition-colors duration-[120ms] hover:text-white hover:underline disabled:text-subtle disabled:cursor-default disabled:no-underline disabled:hover:text-subtle"
                   disabled={!!resendIn}
-                  onClick={submitEmail}>
+                  onClick={submitPhone}>
                   {resendIn ? `Resend in ${resendIn}s` : 'Resend the code'}
                 </button>
                 <button type="button"
                   className="border-0 bg-transparent p-0 text-[11.5px] text-text cursor-pointer no-underline transition-colors duration-[120ms] hover:text-white hover:underline disabled:text-subtle disabled:cursor-default disabled:no-underline disabled:hover:text-subtle"
-                  onClick={() => { setStage('email'); setCode(''); setErr(''); }}>
-                  Use a different email
+                  onClick={() => { setStage('phone'); setCode(''); setErr(''); }}>
+                  Use a different number
                 </button>
               </div>
             </form>

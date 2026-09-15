@@ -28,7 +28,11 @@ import { Link } from 'react-router-dom';
  * inside a padded page and the boxed version is right.
  */
 export default function ViewingAs({ user, userId, plan = null, project = null, flush = false }) {
-  const name = user?.full_name || user?.email || 'this user';
+  // NAME, THEN ADDRESS, THEN NUMBER — the same ladder `handle` climbs in
+  // auth.jsx, because an account created since the phone login has nothing but
+  // the number until its owner exports something.
+  const ident = user?.email || user?.phone || '';
+  const name = user?.full_name || ident || 'this user';
   const linkish = 'border-0 bg-transparent p-0 cursor-pointer text-[11.5px] text-[#C026D3] no-underline hover:underline';
   return (
     <div
@@ -43,7 +47,7 @@ export default function ViewingAs({ user, userId, plan = null, project = null, f
       <div className="flex flex-col gap-px min-w-0 flex-1">
         <b className="text-[12.5px] text-ink">Viewing {name}’s account</b>
         <span className="text-[11.5px] text-muted">
-          {user?.email && user.email !== name ? <>{user.email} · </> : null}
+          {ident && ident !== name ? <>{ident} · </> : null}
           Read only — nothing on this screen can change their work.
         </span>
       </div>

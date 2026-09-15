@@ -1,18 +1,25 @@
 import React, { useCallback, useState } from 'react';
 import { useEscapeClaim } from '../hooks/useEscapeHatch.js';
 import { useAuth } from '../lib/auth.jsx';
-import { OCCUPATIONS, normalisePhone, occupationOf, profileComplete, toE164 } from '../lib/profile.js';
-import { DIAL_CODES, DEFAULT_ISO, splitDial, countryForDial, countryForIso, flagOf }
-  from '../lib/dialCodes.js';
+import { OCCUPATIONS, emailOf, occupationOf, profileComplete } from '../lib/profile.js';
 
 // ---------------------------------------------------------------------------
 // TWO QUESTIONS, ASKED ONCE, IN FRONT OF THE FIRST EXPORT.
 //
 // WHY HERE AND NOT AT SIGN-UP is argued at length in src/lib/profile.js and is
-// the whole design: the login is one email and a six-digit code, and every field
+// the whole design: the login is one number and a six-digit code, and every field
 // added to it is a reason not to finish it. By the first export the plan is lit,
 // the schedule is counted and the file is one click away — the value has already
 // been delivered, so asking is an exchange rather than a toll booth.
+//
+// IT ASKS FOR THE EMAIL NOW, AND IT USED TO ASK FOR THE PHONE. The two swapped
+// when the login did: the number is the account and arrives verified on the
+// session, so asking for it here would be a form that was not paying attention.
+// The ADDRESS is the one nobody has — and two things need one, both of which
+// this app would otherwise quietly fail at. A Razorpay receipt goes to an email
+// (api/razorpay-webhook.js refuses to send without one), and a share invite is
+// KEYED on one (migration 0006) — so a user with no address on their row cannot
+// be invited to a project at all, and would not be told why.
 //
 // IT BLOCKS THE EXPORT, AND IT IS DISMISSIBLE. Those two together are the whole
 // of the pressure this applies. Escape, the backdrop and Cancel all close it and
@@ -38,62 +45,36 @@ const BTN_QUIET = 'text-xs px-3 py-[7px] rounded border border-border/10 bg-surf
   + 'disabled:opacity-100 disabled:cursor-not-allowed';
 
 export function ContactDialog({ onSaved, onCancel }) {
-  const { profile, saveContact } = useAuth();
+  const { user, profile, saveContact } = useAuth();
 
   // PRE-FILLED FROM WHATEVER IS ALREADY THERE, because "incomplete" can mean one
-  // of the two is answered — somebody who gave a number months ago should be
-  // asked for the occupation and not for both again. A stored number is E.164,
-  // so it splits cleanly back into the two controls.
-  const [iso, setIso] = useState(() => {
-    const parts = splitDial(normalisePhone(profile?.phone) ?? '');
-    return countryForDial(parts?.dial)?.iso ?? DEFAULT_ISO;
-  });
-  const [local, setLocal] = useState(() => {
-    const parts = splitDial(normalisePhone(profile?.phone) ?? '');
-    return parts?.national ?? '';
-  });
+  // of the two is answered — somebody who gave an address months ago should be
+  // asked for the occupation and not for both again.
+  //
+  // AND FROM THE SESSION, WHERE THERE IS ONE. Every account that predates the
+  // phone login signed up WITH an address, so `user.email` is already the right
+  // answer for all 34 of them; offering it beats making somebody retype what we
+  // are already holding. New phone accounts have no `user.email` at all and this
+  // is simply empty for them.
+  const [email, setEmail] = useState(() => profile?.email || user?.email || '');
   const [job, setJob] = useState(() => occupationOf(profile?.occupation));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  const country = countryForIso(iso) ?? countryForIso(DEFAULT_ISO);
-  const tidy = toE164(country.dial, local);
+  const tidy = emailOf(email);
   const ready = !!tidy && !!job && !busy;
-
-  /**
-   * WHAT HAPPENS WHEN SOMEBODY PASTES A WHOLE INTERNATIONAL NUMBER into the
-   * national box — which is the commonest way a wrong country code would get
-   * stored, because a pasted `+44 20 7946 0958` behind a select that still says
-   * India produces `+914420…`.
-   *
-   * THE `+` OR `00` IS THE ONLY SIGNAL, and it has to be, because a bare
-   * national number is genuinely ambiguous: `9876543210` splits perfectly well
-   * as Iran's +98 followed by eight digits. Guessing a country from digits that
-   * do not claim to carry one is exactly the class of silent error this whole
-   * control exists to stop, so the split runs only when the text says it is
-   * international.
-   */
-  const onLocal = (raw) => {
-    setErr('');
-    const intl = raw.trim().startsWith('+') || /^\s*00\d/.test(raw);
-    if (intl) {
-      const parts = splitDial(raw.replace(/\D/g, '').replace(/^00/, ''));
-      const found = parts && countryForDial(parts.dial);
-      if (found) { setIso(found.iso); setLocal(parts.national); return; }
-    }
-    setLocal(raw);
-  };
 
   const submit = async (e) => {
     e?.preventDefault();
     if (!ready) return;
     setBusy(true); setErr('');
     try {
-      // NORMALISED ON THE WAY IN, NEVER ON THE WAY OUT. `+91 98765 43210` and
-      // `0091 98765-43210` are the same number and the column holds one of them
-      // — see normalisePhone. Cleaning at the single point of entry is a great
-      // deal easier than cleaning ten thousand rows later.
-      await saveContact({ phone: tidy, occupation: job });
+      // NORMALISED ON THE WAY IN, NEVER ON THE WAY OUT. `Foo@Bar.com` and
+      // `foo@bar.com` are the same address and the column holds one of them —
+      // see emailOf, where the lowercasing is load-bearing rather than
+      // tidy: `share_role()` compares this column with `lower()` on both sides,
+      // so a stored capital is a share invite that silently never matches.
+      await saveContact({ email: tidy, occupation: job });
       onSaved?.();
     } catch (ex) {
       // THE EXPORT IS STILL WAITING, so a failure has to be shown here rather
@@ -124,57 +105,25 @@ export function ContactDialog({ onSaved, onCancel }) {
               with no explanation reads as a paywall; this one is answered in
               about four seconds and never appears again, and both of those facts
               are worth stating rather than leaving somebody to discover. */}
-          Two things, once. We use them to reach you about the drawing and to work
-          out what to build next — you will not be asked again.
+          Two things, once. We use them to send your receipts, to reach you about
+          the drawing and to work out what to build next — you will not be asked
+          again.
         </p>
 
-        <label className={LABEL} htmlFor="contact-phone">WhatsApp number</label>
-        {/* TWO CONTROLS AND NOT ONE TEXT BOX, and the reason is a trap the one
-            box set. It was pre-filled with `+91 `, which reads as part of YOUR
-            NUMBER rather than as a choice — so somebody in London types after it
-            and stores `+912079460958`: wrong country, plausible length, and
-            nothing anywhere can tell. A select is visibly a control, so it is
-            visibly changeable, and it costs the majority who are in India
-            exactly nothing. See src/lib/dialCodes.js. */}
-        <div className="flex gap-2 items-start">
-          <select value={iso} aria-label="Country"
-            /* WIDE ENOUGH FOR "United Kingdom +44" AND NOT FOR EVERY NAME, which
-               is the honest compromise: a native select shows its chosen option
-               truncated to the control's width, and sizing for "Bosnia &
-               Herzegovina" would give a third of the dialog to a control that is
-               correct by default. The preview line underneath always names the
-               country in full, so nothing is ever only half-said. */
-            className="flex-none w-[11rem] max-[420px]:w-[8.5rem] text-[12.5px]"
-            onChange={(e) => { setIso(e.target.value); setErr(''); }}>
-            {DIAL_CODES.map((c) => (
-              /* THE FLAG, THE NAME AND THE CODE, in that order, and all three
-                 are needed. The flag is the fast scan, the name is what somebody
-                 searches for by typing into a native select, and the code is the
-                 thing being chosen — a list of flags alone is unreadable on a
-                 platform that renders them as letter pairs. The closed control
-                 is narrow, so it shows the flag and the code; the open list has
-                 room for the name. */
-              <option key={c.iso} value={c.iso}>
-                {flagOf(c.iso)} {c.name} +{c.dial}
-              </option>
-            ))}
-          </select>
-          <input id="contact-phone" type="tel" autoFocus value={local}
-            className="flex-1 min-w-0"
-            placeholder="98765 43210" autoComplete="tel-national"
-            onChange={(e) => onLocal(e.target.value)} />
-        </div>
+        <label className={LABEL} htmlFor="contact-email">Email address</label>
+        <input id="contact-email" type="email" autoFocus value={email}
+          className="w-full" placeholder="you@studio.com" autoComplete="email"
+          onChange={(e) => { setEmail(e.target.value); setErr(''); }} />
         <p className={`${NOTE} mt-1.5 mb-0`}>
-          {/* THE PREVIEW IS THE POINT OF THE WHOLE ARRANGEMENT. It shows the
-              exact string that will be stored, so a wrong country is visible
-              BEFORE it is saved rather than when a message bounces — and it is
-              where the trunk-zero rule announces itself, since somebody who
-              types `020 7946 0958` sees `+442079460958` come back and can tell
-              at a glance that the zero was understood rather than swallowed. */}
+          {/* THE PREVIEW SURVIVED THE SWAP, and it is doing less work than it did
+              for the phone — there is no country to get wrong here. It stays
+              because the LOWERCASING is invisible otherwise: somebody who types
+              `Foo@Studio.com` sees `foo@studio.com` come back and can tell the
+              address was understood rather than mangled, which is the same
+              reassurance the E.164 preview gave. */}
           {tidy
-            ? <>Saved as <b className="text-text">{tidy}</b> · {country.name}</>
-            : <>Your number without the country code — pick the country on the left.
-                Pasting a full <code className="font-sans">+…</code> number works too.</>}
+            ? <>Saved as <b className="text-text">{tidy}</b></>
+            : <>Where your receipts and any shared projects will go.</>}
         </p>
 
         <div className="h-[18px]" />
@@ -280,9 +229,17 @@ export function useContactGate() {
 /** The one failure worth naming; everything else is passed through verbatim. */
 function friendly(e) {
   const msg = String(e?.message || e);
-  if (/column .*(phone|occupation).* does not exist/i.test(msg)) {
-    return 'This deployment is missing the phone and occupation columns on '
-      + 'profiles — see supabase/migrations/0008_profile_contact.sql.';
+  // ONE ADDRESS, ONE ACCOUNT — the unique index from migration 0011. Postgres
+  // phrases this as a constraint violation naming an index nobody outside the
+  // migration has heard of, and the export is WAITING on this dialog, so the
+  // sentence has to say what to do rather than what went wrong.
+  if (/duplicate key|profiles_email_unique|unique constraint/i.test(msg)) {
+    return 'That address is already signed in to another account. Use a different '
+      + 'one, or sign in with the number that account is registered to.';
+  }
+  if (/column .*(email|occupation).* does not exist/i.test(msg)) {
+    return 'This deployment is missing the occupation column on profiles — see '
+      + 'supabase/migrations/0008_profile_contact.sql.';
   }
   if (/violates row-level security|permission denied/i.test(msg)) {
     return 'Your session has expired — sign in again and the download will work.';

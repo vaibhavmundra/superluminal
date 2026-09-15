@@ -29,7 +29,7 @@ import { fmtRemaining } from '../lib/plans.js';
 // gets left open behind a dialog.
 // ---------------------------------------------------------------------------
 export default function ProfileRail() {
-  const { initial, displayName, user, signOut, isAdmin } = useAuth();
+  const { initial, displayName, handle, signOut, isAdmin } = useAuth();
   const { state, tier } = useBilling();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
@@ -159,8 +159,13 @@ export default function ProfileRail() {
         <div className="absolute bottom-3.5 left-14 z-[70] flex w-[210px] flex-col gap-0.5 rounded-lg border border-border/10 bg-black/[0.58] backdrop-blur-[5px] backdrop-saturate-[1.8] p-1.5 shadow-pop" role="menu">
           <div className="flex flex-col gap-0.5 border-b border-border/10 pt-2 px-[9px] pb-2.5 mb-1">
             <b className="text-[12.5px] text-white">{displayName || 'Signed in'}</b>
-            {user?.email && displayName !== user.email && (
-              <span className="text-[11px] text-subtle overflow-hidden text-ellipsis">{user.email}</span>
+            {/* THE IDENTIFIER UNDER THE NAME, and it is no longer always an
+                address — a phone account has only its number until the first
+                export asks for one. `handle` is auth.jsx's single answer to
+                "what identifies this person"; reading `user.email` here drew an
+                empty span for every account created since the login changed. */}
+            {handle && displayName !== handle && (
+              <span className="text-[11px] text-subtle overflow-hidden text-ellipsis">{handle}</span>
             )}
             {/* THE BALANCE, WHERE THE ACCOUNT ALREADY IS. It belongs in this
                 menu rather than in the editor's chrome: a number that ticks

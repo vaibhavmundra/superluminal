@@ -305,9 +305,18 @@ async function resolveUser(req) {
   if (!user?.id) return null;
 
   let role = null;
+  // THE ADDRESS COMES OFF THE PROFILE NOW, AND THE SAME READ FETCHES IT. A phone
+  // account (migration 0011) has no `user.email` at all — the JWT carries a
+  // number — so every downstream use of `.email` in this file was about to go
+  // blank at once: the Razorpay prefill, the receipt the webhook sends, the
+  // share-grant check in verifyAction, and the ownership fallback for a purchase
+  // made before signing in. Resolving it HERE means those four keep reading one
+  // field and none of them had to learn where an address lives.
+  let profileEmail = '';
   try {
-    const rows = await rest(`profiles?select=role&id=eq.${enc(user.id)}&limit=1`);
+    const rows = await rest(`profiles?select=role,email&id=eq.${enc(user.id)}&limit=1`);
     role = rows[0]?.role ?? null;
+    profileEmail = normaliseEmail(rows[0]?.email);
   } catch (err) {
     // A PROFILE READ THAT FAILS MUST NOT PROMOTE ANYBODY, and it must not lock a
     // paying customer out either. Falling through with role null means "a normal
@@ -315,9 +324,16 @@ async function resolveUser(req) {
     console.warn('[billing] could not read the role', err.message);
   }
 
+  // THE CLAIM WINS WHERE THERE IS ONE, matching public.my_email() and
+  // addressOf() in api/share.js — see the note on either. Three places now
+  // answer "what is this caller's address" and they must answer it identically.
   // ROLE 1 AND NOTHING ELSE. Not >= 1, not truthy — a role column that grows a
   // third value later must not silently hand that value an unmetered account.
-  return { id: user.id, email: user.email || '', isAdmin: role === 1 };
+  return {
+    id: user.id,
+    email: normaliseEmail(user.email) || profileEmail || '',
+    isAdmin: role === 1,
+  };
 }
 
 function requireUser(user) {

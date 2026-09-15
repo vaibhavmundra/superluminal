@@ -24,7 +24,7 @@ import './styles.css';
 // THE FIVE SCREENS.
 //
 //   /                 the promise, and the upload that starts everything
-//   /login            an email and a six-digit code
+//   /login            a phone number and a six-digit SMS code
 //   /pricing          the three tiers, and instant checkout
 //   /dashboard        every project — yours, and the ones shared with you
 //   /projects/:id     every plan in one project

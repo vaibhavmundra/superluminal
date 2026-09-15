@@ -1,9 +1,21 @@
 // ---------------------------------------------------------------------------
-// WHO THE PERSON IS, beyond an email address.
+// WHO THE PERSON IS, beyond a phone number.
+//
+// THE TWO IDENTIFIERS TRADED PLACES, and everything in this file follows from
+// that. Signing in is a phone number and a six-digit SMS code, so the NUMBER is
+// now the account and arrives with the session; the EMAIL is the thing nobody
+// has yet, and it is the one this file exists to collect.
+//
+// WHY AN EMAIL IS STILL ASKED FOR AT ALL, when the account no longer needs one:
+// two things in this app can only be done with an address, and both of them
+// matter more than the login did. A Razorpay receipt goes to an email (see
+// api/razorpay-webhook.js), and a project shared with somebody is keyed on one
+// (see migration 0006) — an invite is written against an address before the
+// invitee has an account, which is the only reason invites work at all.
 //
 // TWO FIELDS, AND THEY ARE ASKED AT A DELIBERATE MOMENT — not at sign-up.
 //
-// The sign-in flow is one email and a six-digit code, and every extra field on
+// The sign-in flow is one number and a six-digit code, and every extra field on
 // it is a reason not to finish it. Somebody who has dropped a drawing and wants
 // to see it lit will not fill in an occupation dropdown first; they will close
 // the tab. So the questions are asked at the FIRST EXPORT instead, which is the
@@ -17,12 +29,12 @@
 // neither does the second device, because the answer is on the row rather than
 // in localStorage.
 //
-// THE PHONE IS A WHATSAPP NUMBER and is stored in E.164 — a leading `+`, a
-// country code, and digits. Not because anything here dials it, but because a
-// column holding "98765 43210", "+91 98765-43210" and "0091 9876543210" for
-// three people in the same country is a column nobody can send a message from
-// without cleaning it first, and the cleaning is much easier at the one point of
-// entry than across ten thousand rows later.
+// THE PHONE HELPERS STAYED, AND THEY MOVED UP THE FUNNEL. They were written for
+// the export dialog and are now what the LOGIN screen builds its E.164 number
+// with — which makes them load-bearing in a way they were not before: a number
+// this file mangles is now an account nobody can sign in to, rather than a lead
+// nobody can message. They are unchanged, and the tests on them are the reason
+// that is safe.
 // ---------------------------------------------------------------------------
 
 /**
@@ -56,6 +68,50 @@ export const occupationLabel = (id) => OCCUPATION_BY_ID[String(id ?? '')]?.label
 export const occupationOf = (id) => (OCCUPATION_BY_ID[String(id ?? '')] ? String(id) : null);
 
 /**
+ * AN ADDRESS FROM OUTSIDE, OR NULL — the same contract as `occupationOf` above,
+ * and named to match it: the only way a typed value becomes a column.
+ *
+ * NOT TO BE CONFUSED WITH `normaliseEmail` IN plans.js, which is a different
+ * function with a deliberately different job, and the two are worth keeping
+ * apart. That one only fixes the SPELLING — trim and lowercase, never rejects —
+ * because it runs on the payment path, where refusing an address Razorpay has
+ * already taken money against would be worse than storing an odd one. This one
+ * is a GATE: it runs on a form, where the whole point is to catch the typo
+ * while the person who made it is still looking at the screen.
+ *
+ * LOWERCASED, AND THAT IS THE LOAD-BEARING HALF. The local part of an address is
+ * technically case-sensitive and in practice never is, but the SHARING tables do
+ * not care what is technically true — `share_role()` compares
+ * `lower(s.email)` against this column, and migration 0006's trigger lowercases
+ * the invite on the way in. An address stored with a capital letter would be a
+ * grant that silently never matches, which is the worst shape a permissions bug
+ * can take: the owner sees the invite listed and the invitee sees nothing.
+ *
+ * THE SHAPE TEST IS THE SAME REGEX AS `looksLikeEmail` IN sharing.js,
+ * deliberately and character for character. That one guards the invite box and
+ * this one guards the export gate, and an address that one accepts and the other
+ * refuses would be a share nobody can be invited to — with the two refusals
+ * appearing on different screens a week apart, which is how a two-line
+ * disagreement costs an afternoon.
+ *
+ * IT IS A SHAPE CHECK AND NOT A VALIDATION, and it cannot be anything more.
+ * Nothing here can know whether an address receives mail; a confirmation round
+ * trip is the only thing that could, and putting one in front of a download
+ * would be a second login on the screen this app spent its whole design avoiding
+ * one on.
+ *
+ * THE LENGTH CAP MATCHES THE COLUMN'S CONSUMERS. api/billing.js slices an
+ * address to 200 characters before it reaches Razorpay; refusing it here rather
+ * than truncating it there means the stored value and the sent value are the
+ * same string.
+ */
+export function emailOf(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (!s || s.length > 200) return null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s) ? s : null;
+}
+
+/**
  * A TYPED NUMBER TO E.164, or null if it cannot be one.
  *
  * WHAT IS ACCEPTED IS DELIBERATELY WIDER THAN WHAT IS STORED. People type
@@ -63,7 +119,7 @@ export const occupationOf = (id) => (OCCUPATION_BY_ID[String(id ?? '')] ? String
  * none of it is information, so it is stripped rather than rejected. What
  * cannot be guessed is the COUNTRY, so a number with no country code is refused
  * — quietly assuming one is how a lead ends up unreachable in a column that
- * looks perfectly well formed.
+ * looks perfectly well formed, and is now how somebody ends up unable to sign in.
  *
  * `00` IS THE SAME THING AS `+`. It is how most of the world dials
  * internationally from a landline and how a good number of people write it
@@ -89,8 +145,8 @@ export function normalisePhone(raw) {
 /**
  * A COUNTRY CODE AND A NATIONAL NUMBER TO E.164, or null.
  *
- * This is what the dialog's two controls produce — a dial code chosen from a
- * list and digits typed into a box — and keeping it separate from
+ * This is what the login screen's two controls produce — a dial code chosen from
+ * a list and digits typed into a box — and keeping it separate from
  * `normalisePhone` is deliberate: that one parses a WHOLE number somebody wrote
  * out, this one assembles a number from parts that are each already known.
  *
@@ -99,7 +155,8 @@ export function normalisePhone(raw) {
  * home — `020 7946 0958` in the UK, `098765 43210` in India — and that leading
  * zero is a NATIONAL prefix that does not exist in the international form. Left
  * in, it produces `+4402079460958`: fifteen digits, passes every length check,
- * and unreachable.
+ * and unreachable. Twilio will refuse to text it, which is at least a visible
+ * failure now that this number is the login.
  *
  * EXCEPT IN ITALY, WHERE THE ZERO IS PART OF THE NUMBER. +39 06 is Rome and
  * always has been — Italy kept its trunk digit when it went to fixed-format
@@ -127,6 +184,12 @@ export const displayPhone = (p) => String(p ?? '');
  * IS THERE ENOUGH ON THIS ROW TO STOP ASKING — and `null` means "we cannot yet
  * tell", which is NOT the same as "no".
  *
+ * THE PAIR IS NOW EMAIL AND OCCUPATION, where it used to be phone and
+ * occupation. The number is no longer worth asking for: it is the account, it
+ * arrives verified on the session, and migration 0011 mirrors it onto this row
+ * at sign-up — asking somebody to type the number they just typed a code from
+ * would read as a form that was not paying attention.
+ *
  * The profile is fetched a tick after the session (see AuthProvider), so there
  * is a window on every page load where it is null. Reading that as incomplete
  * would put the dialog in front of somebody who answered it months ago, every
@@ -135,5 +198,5 @@ export const displayPhone = (p) => String(p ?? '');
  */
 export function profileComplete(profile) {
   if (!profile) return null;
-  return !!(normalisePhone(profile.phone) && occupationOf(profile.occupation));
+  return !!(emailOf(profile.email) && occupationOf(profile.occupation));
 }
