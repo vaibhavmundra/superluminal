@@ -19,12 +19,15 @@ import { newManualBoardId } from './boardSheet.js';
 
 export function useBoardGestures({
   rooms, pxPerFt, svgPoint, svgRef, pressState, setSel, docActions,
-  flowsPx, allBoardsPx, setBoardOutlet, obstaclesPx = [],
+  flowsPx, allBoardsPx, setBoardOutlet, obstaclesPx = [], flowLinks = {},
 }) {
   const [boardDrag, setBoardDrag] = useState(null);   // {id, roomId, origin, live}
   /* THE GESTURE IN FLIGHT: `{ id, kind, key, origin, live, at, overId }`.
-     `kind` is 'board' or 'bend'; `at` is where the pointer is now, and `overId`
-     the plate a board drag would land on. Both are here rather than in
+     `kind` is 'board', 'bend' or 'node'; `at` is where the pointer is now, and
+     `overId` the plate a board drag would land on — or, for a node drag, the
+     FITTING it would be looped off. A node drag is the board drag's twin: both
+     carry ONE input to somewhere else, and the only difference is what kind of
+     thing that input is allowed to land on. Both are here rather than in
      `flowBoards` because a re-assignment written per pointermove would re-order
      the loop, re-compose two switchboards and repaint the panel on every frame
      of the drag — see the note on `boardPointerMove`, which writes per move for
@@ -243,6 +246,35 @@ export function useBoardGestures({
      ITS THRESHOLD IS THE PLATE'S, and for the plate's reason: a click that
      wobbles writes a hand value onto something that was exactly where the rule
      put it, and the wire is then marked as moved for the life of the plan. */
+  /* WHICH FITTING IS UNDER THE POINTER — the twin of `boardUnder`, for the
+     other kind of thing an input can terminate at.
+     THE POPULATION IS THE WIRED FITTINGS AND NOT EVERY FITTING ON THE CEILING,
+     and that is the honest set rather than a shortcut: a fitting no flow reaches
+     has no input to feed anything from, so offering it as a drop target would be
+     offering a connection that cannot exist. `flowsPx` nodes are exactly the
+     fittings that are on a wire.
+     THE SLOP IS A FOOT AND A HALF, with a four-pixel floor for the same reason
+     `boardUnder` has one: a radius stated in plan units collapses to nothing
+     when somebody zooms out, and a drop that only lands at one zoom is a
+     gesture people stop trusting. A fitting is a small mark and its own symbol
+     is often smaller than the wire running through it, so the target is
+     deliberately wider than the glyph.
+     NEAREST WINS, so two fittings a few inches apart resolve to the one the
+     pointer is actually closer to rather than to whichever was drawn first. */
+  const nodeUnder = useCallback((p, exclude = null) => {
+    if (!p) return null;
+    const slop = Math.max(4, 1.5 * (pxPerFt || 12));
+    let best = null, bestD = Infinity;
+    for (const f of flowsPx) {
+      for (const n of f.nodes ?? []) {
+        if (!n || n.id == null || n.id === exclude) continue;
+        const d = Math.hypot(n.x - p.x, n.y - p.y);
+        if (d <= slop && d < bestD) { best = n; bestD = d; }
+      }
+    }
+    return best;
+  }, [flowsPx, pxPerFt]);
+
   const flow = useDrag({
     state: [flowDrag, setFlowDrag],
     point: svgPoint,
@@ -254,6 +286,15 @@ export function useBoardGestures({
       if (!f) return;
       if (d.kind === 'board') {
         const over = boardUnder(p, allBoardsPx, { pxPerFt });
+        flow.set((cur) => (cur ? { ...cur, at: p, overId: over?.id ?? null } : cur));
+        return;
+      }
+      /* A FITTING'S OWN INPUT, BEING CARRIED. Same shape as the board drag above
+         — a rubber band in transient state and one write on the drop — because
+         it is the same act: an input is being taken off whatever fed it and put
+         on something else. The only difference is what it may land on. */
+      if (d.kind === 'node') {
+        const over = nodeUnder(p, d.key);
         flow.set((cur) => (cur ? { ...cur, at: p, overId: over?.id ?? null } : cur));
         return;
       }
@@ -274,6 +315,33 @@ export function useBoardGestures({
        under the rules instead of pinning it to the answer the rules currently
        give. */
     onCommit: (ids, d) => {
+      /* THE GRIP IS AN OUTPUT, AND THE DROP LANDS ON AN INPUT. That sentence is
+         the whole direction of this gesture and it is worth being exact about,
+         because the obvious reading is the wrong way round.
+         WHAT IS IN YOUR HAND is a wire leaving `d.key` — that fitting's output,
+         of which it may have any number. WHERE IT LANDS is `d.overId`'s single
+         input socket. So the write is `overId's input := key`, and NOT `key's
+         input := overId`: dragging from a light to a fan does not re-feed the
+         light, it feeds the FAN off the light. Written the other way it looks
+         almost right on a two-fitting chain and is exactly backwards on every
+         longer one, which is the sort of error that survives a demo.
+         ONE INPUT IS WHY THIS IS AN ASSIGNMENT AND NOT AN APPEND. Whatever fed
+         the target before is simply replaced — there is no list to add to, and
+         no second wire to disconnect first.
+         DROPPED ON SOMETHING THIS FITTING ALREADY FEEDS, THE LINK GOES. Same
+         way back the plate drag has: dragging a wire home puts the target back
+         under the rules rather than pinning it to the answer they currently
+         give. The unlink badge is the discoverable half of the same action.
+         A RELEASE OVER NOTHING CHANGES NOTHING, exactly as for a plate. "Let go
+         over empty ceiling" is what somebody does when they change their mind,
+         and reading it as "disconnect this" would throw away a chain they drew
+         deliberately. */
+      if (d.kind === 'node') {
+        if (!d.overId || !d.key) return;
+        if (flowLinks?.[d.overId] === d.key) docActions.clearFlowLink(d.overId);
+        else docActions.setFlowLink(d.overId, d.key);
+        return;
+      }
       if (d.kind !== 'board' || !d.overId) return;
       const f = flowsPx.find((q) => q.id === d.id);
       const home = !f?.assigned && f?.boardId === d.overId;

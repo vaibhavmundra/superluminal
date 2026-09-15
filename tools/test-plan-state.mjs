@@ -297,6 +297,7 @@ const EMPTY_DOC = {
   manualCoves: [], manualTracks: [], manualCobs: [], manualSpots: [], autoSpots: [],
   cobArrays: [], trackFixtures: [], renderRefs: {},
   boardsOff: [], boardMoves: {}, boardPoints: {}, flowBoards: {}, flowBends: {},
+  flowLinks: {},
   manualBoards: [], boardKinds: {}, boardHeights: {}, boardOrders: {},
   ceilingMm: {}, materials: {}, fixtureWatts: {}, fixtureOff: {},
   /* THE REAL DEFAULTS AND NOT A PLAUSIBLE SUBSET. This was a hand-written
@@ -584,6 +585,13 @@ function randomAction(r) {
     { type: 'MAP_ENTRY_PATCHED', field: 'flowBends', key: flowId,
       patch: { [`leg${Math.floor(r() * 3)}`]: oneOf([0, 0.5, -0.75, 1.25]) } },
     { type: 'MAP_CLEARED', field: 'flowBends' },
+    /* ...and a fitting's INPUT re-plugged into another fitting, which is the
+       membership override. Keyed on FITTING ids, never on the flow id above —
+       a flow id is derived from the grid and would not survive a re-chunk. */
+    { type: 'MAP_ENTRY_SET', field: 'flowLinks',
+      key: `lt-${Math.floor(r() * 4)}`, value: `lt-${Math.floor(r() * 4) + 4}` },
+    { type: 'MAP_ENTRY_REMOVED', field: 'flowLinks', key: `lt-${Math.floor(r() * 4)}` },
+    { type: 'MAP_CLEARED', field: 'flowLinks' },
     // ...and Delete on the wire, which takes both overrides in one act.
     { type: 'FLOW_OVERRIDES_DROPPED', flowId },
   ]);
@@ -1483,6 +1491,7 @@ section('the reducer owns what it claims to own');
          disagree, and writing this out by hand is what keeps them independent. */
       doors: [], doorsOk: false, zones: [],
       boardsOff: [], boardMoves: {}, boardPoints: {}, flowBoards: {}, flowBends: {},
+      flowLinks: {},
       manualBoards: [], boardKinds: {}, boardHeights: {}, boardOrders: {},
       unitId: null, pdfPage: null,
       scaleMode: 'door', refId: 'door900', customFt: 3,
@@ -1504,8 +1513,8 @@ section('the reducer owns what it claims to own');
       zoom: 1, view: 'spaces',
     }),
     JSON.stringify(initialDoc()));
-  ok('...and it is sixty-four fields, which is the whole document',
-    fields.length === 64, `${fields.length} fields`);
+  ok('...and it is sixty-five fields, which is the whole document',
+    fields.length === 65, `${fields.length} fields`);
   /* AND THE DOCUMENT IS NOW EXACTLY WHAT THE FIXTURE DESCRIBES. While the
      migration was in progress the two could differ — a field App still held in
      `useState` was in EMPTY_DOC and not in DOC_FIELDS — and that slack is gone.

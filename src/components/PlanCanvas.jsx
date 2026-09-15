@@ -7,7 +7,7 @@ import { STRIP_STYLE, THROW_STYLE, GLINT_STYLE, PILL_STYLE,
 import { TRACK_DIMS_IN } from '../lib/track.js';
 import { readFixturePaint } from '../lib/fixturePaint.js';
 import { SB_COLOUR, SB_MM } from '../lib/electrical.js';
-import { WIRE_CHAIN, WIRE_PICKED } from '../lib/flows.js';
+import { WIRE_CHAIN, WIRE_PICKED, loopPath } from '../lib/flows.js';
 import { doorWidthAt } from '../lib/doors.js';
 /* THE SCONCE'S OWN FOUR FIGURES, WHICH THE DXF NOW DRAWS TOO. They were written
    out here and nowhere else, so the file exported a ring on the wall line while
@@ -372,6 +372,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        in the caller — see `flowDrag` in App.jsx — and two would be two places to
        forget to capture the pointer. */
     selFlowId = null, onFlowPointerDown = null, onFlowGripDown = null,
+    onFlowUnlink = null,
     /* WHERE THE BOARD END IS RIGHT NOW, mid-drag, in plan pixels — and the
        plate it would land on if the finger came up here.
 
@@ -5966,23 +5967,203 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   onFlowGripDown(e, f.id, 'board', null);
                 }} />
             )}
+            {/* --- AND ONE GRIP PER FITTING, WHICH IS ITS INPUT ---------------
+                THE SAME THING THE PLATE GRIP IS, one step along the wire. That
+                one carries the flow's input from plate to plate; this carries a
+                single fitting's input onto another FITTING, which is what puts
+                the two in series. One input each — so one grip each — and any
+                number of fittings may end up fed from the same one.
+
+                SMALLER THAN THE PLATE GRIP AND THE SAME COLOUR. Same family,
+                because it is the same act; smaller, because there are as many
+                of these as there are fittings on the loop and the plate's end
+                is still the one somebody reaches for most.
+
+                DRAWN BEFORE THE PLATE GRIP so that on a short feed leg — where
+                the first fitting and the plate are a few pixels apart — the
+                plate still wins the overlap, exactly as it wins over the bend
+                grips for the same reason. */}
+            {onFlowGripDown && (f.nodes ?? []).map((n) => {
+              /* OFF THE FITTING, NOT ON IT — the same reason a plate's grip sits
+                 on the plate's corner rather than in the middle of its face. A
+                 handle centred on a downlight IS the downlight as far as the eye
+                 is concerned: it hides the symbol it belongs to, and a press on
+                 the fitting and a press on its output become the same press.
+                 Sitting proud of the glyph says the handle is a fixture ON the
+                 fitting rather than the fitting itself.
+                 SCALED TO THE FITTING AND FLOORED IN STROKE WIDTHS, so it clears
+                 a COB's 4-inch face at a working zoom and is still grabbable
+                 when the whole floor is on screen. */
+              const off = Math.max(lw * 4.2, s * 0.22);
+              const g = { x: n.x + off, y: n.y - off };
+              return (
+              <g key={`n${n.id}`}>
+                <circle className="hit" cx={g.x} cy={g.y} r={lw * 3.4}
+                  fill={WIRE_PICKED} stroke="#fff" strokeWidth={hair(1.2)}
+                  style={{ cursor: 'grab' }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation(); e.preventDefault();
+                    onFlowGripDown(e, f.id, 'node', n.id);
+                  }} />
+                {/* THE WAY OUT, AND ONLY WHERE THERE IS SOMETHING TO GET OUT OF.
+                    A fitting the rules wired has nothing to unlink — its input
+                    is wherever the rules put it — so the badge appears only on
+                    one somebody has re-plugged by hand. Dropping the grip back
+                    on whatever feeds it does the same thing; this is the half of
+                    that which can be found without knowing the gesture.
+                    OFFSET OFF THE FITTING rather than centred on it, because the
+                    grip is already there and two targets on one point is a
+                    press that does whichever the DOM happened to order last. */}
+              </g>
+              );
+            })}
+            {/* --- CUTTING A LINK, ON THE LINK ------------------------------
+                IT USED TO SIT ON THE FITTING AND THAT WAS THE WRONG NOUN. A
+                fitting's corner already carries its output grip, so the badge
+                beside it was a second green circle of nearly the same size, one
+                of them a drag target and the other a click target, acting on
+                opposite ends of the wiring — and nothing about either said
+                which. The thing being cut is a WIRE, so it belongs on the wire.
+                BESIDE THE BEND GRIP, which is the one place on a leg a hand
+                already goes. Pushed a little further along the leg's normal so
+                the two do not overlap: the bend grip stays ON the wire where it
+                has to be, and this sits just outside the bow.
+                ON EVERY CHAIN LEG, AND IT USED TO BE ONLY ON HAND-MADE ONES.
+                That restriction came from the implementation rather than from
+                the drawing: unlinking was a DELETE from the override map, so on
+                a rules-wired leg there was nothing to delete and the button
+                would have been dead. Detaching is a positive statement — `null`
+                in the map, meaning "this one is switched on its own" — so every
+                leg between two fittings is now something you can cut, which is
+                what anybody looking at a chain of six downlights expects.
+                THE FEED LEG STILL CARRIES NONE, and that is not an exception to
+                explain away: its upstream end is the PLATE, so there is no
+                fitting to cut away from and the thing it would detach to is
+                where it already is. `l.a.id` is absent there, which says it. */}
+            {onFlowUnlink && all.map((l) => {
+              if (!l.a?.id || !l.b?.id) return null;
+              /* --- SIZED IN SCREEN PIXELS, WHICH IS THE WHOLE OF THE FIX -----
+                 THIS BADGE IS A CONTROL, NOT A MARK ON THE DRAWING. Everything
+                 else in this file is sized in plan units because it describes
+                 the ceiling — a fitting is four inches wide at every zoom. A
+                 twelve-glyph icon describes nothing; it is a button that
+                 happens to be rendered in the drawing's coordinate space, and a
+                 button that shrinks with the drawing stops being pressable
+                 exactly when the plan gets big enough to need it.
+                 SO ITS GEOMETRY IS DIVIDED BY THE ZOOM and it holds one size on
+                 screen, the way the hatch line two hundred lines up does. */
+              const sp = (n) => n / (zoom || 1);        // screen px -> plan units
+              const k = sp(13) / 24;                    // the icon's 24-unit box
+              /* --- CLEAR OF THE BEND GRIP, AT EVERY ZOOM --------------------
+                 THE TWO ARE SIZED IN DIFFERENT SPACES, which is why this is a
+                 sum and not a number. The bend grip is `lw * 3.2` in PLAN units
+                 and therefore grows on screen as you zoom in; this badge is
+                 screen-sized and does not. A single fixed offset is only ever
+                 right at one magnification — generous zoomed out, and closing
+                 up until the two touch as you go in.
+                 SO THE GAP IS BUILT FROM WHAT HAS TO CLEAR: the grip's own
+                 radius in plan units, plus this badge's radius and a margin,
+                 both converted from screen pixels. The two never overlap and
+                 never drift apart.
+                 ALONG THE LEG'S NORMAL, which is the direction the bow already
+                 travels — so the badge sits outside the curve, off the wire
+                 rather than across it. */
+              const gap = lw * 3.2 + sp(9.5) + sp(11);
+              const c = { x: l.grip.x + l.normal.x * gap,
+                          y: l.grip.y + l.normal.y * gap };
+              return (
+                <g key={`u${l.key}`} style={{ cursor: 'pointer' }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation(); e.preventDefault();
+                    /* THE FITTING THE WIRE IS GOING TO — its INPUT is what this
+                       leg is. Cutting it returns that fitting to the rules and
+                       to its own switch; everything IT feeds keeps feeding from
+                       it, because those are separate entries that name it and
+                       nothing here touches them. */
+                    onFlowUnlink(l.b.id);
+                  }}>
+                  {/* THE DISC STAYS, AND IT IS EARNING ITS PLACE TWICE. It is
+                      the HIT TARGET — an outline icon over a lighting layout is
+                      mostly holes, and a press between two strokes of it would
+                      fall through to the drawing underneath. And it is the
+                      GROUND the glyph is read against: twelve thin red strokes
+                      laid directly over somebody's line work interleave with it
+                      and stop being a shape at all. It is tight to the icon
+                      rather than generous, so it reads as the button's edge and
+                      not as a hole punched in the drawing. */}
+                  {/* `.hit` GOES ON THE DISC AND NOT ON THE GROUP ROUND IT,
+                      which is the difference between a button and a picture of
+                      one. styles.css makes everything inside `.plan` inert —
+                      `.plan circle{pointer-events:none}` — and re-enables only
+                      elements carrying `.hit`. A `<g>` has no geometry of its
+                      own, so it is only ever hit THROUGH a child; marking the
+                      group and leaving the circle matching the inert rule gave
+                      a control that drew perfectly and could not be pressed.
+                      The press still lands on the group's handler, because the
+                      circle is the target and the event bubbles to it. */}
+                  <circle className="hit" cx={c.x} cy={c.y} r={sp(9.5)}
+                    fill="#fff" stroke={C.nogo} strokeWidth={hair(1)} />
+                  {/* HEROICONS' `link-slash`, OUTLINE, DRAWN RATHER THAN LOADED
+                      — the same way the house, the share and the two u-turns in
+                      App.jsx are: one path is cheaper than a dependency.
+                      RED, BECAUSE CUTTING A LINK IS THE ONE DESTRUCTIVE ACT ON
+                      THIS CANVAS. `C.nogo` and not the app's error scarlet, for
+                      the reason stated where it is defined — a brick red is
+                      clearly a warning and still dark enough not to shout over
+                      somebody's line work, and it is a hue this canvas already
+                      owns rather than an eleventh one.
+                      AND THE STROKE IS AUTHORED AS A SCREEN WIDTH, which is the
+                      bug this replaces. styles.css gives every path in `.plan`
+                      `vector-effect: non-scaling-stroke`, so a stroke width here
+                      is in the VIEWPORT's space and the `scale()` above never
+                      touches it. Dividing it by that scale to compensate — which
+                      is what this did — inflated a one-pixel line into three,
+                      and then held it at three while the glyph itself shrank
+                      away underneath, which is why it turned to mush on the way
+                      out. `hair` is the same cap every other line on the sheet
+                      goes through. */}
+                  <g transform={`translate(${c.x} ${c.y}) scale(${k}) translate(-12 -12)`}
+                    fill="none" stroke={C.nogo} strokeWidth={hair(1)}
+                    strokeLinecap="round" strokeLinejoin="round" pointerEvents="none">
+                    <path d="M13.1813 8.68025C13.6303 8.89477 14.0511 9.188 14.423 9.55994C15.9219 11.0591 16.1423 13.3528 15.084 15.0855M5.31614 12.3032L3.5592 14.0604C1.80188 15.8179 1.80188 18.6674 3.5592 20.4249C5.31653 22.1825 8.16572 22.1825 9.92304 20.4249L13.0517 17.296M18.6659 11.6811L20.4228 9.92393C22.1802 8.1664 22.1802 5.31689 20.4228 3.55936C18.6655 1.80183 15.8163 1.80183 14.059 3.55936L9.55909 8.05979C9.30075 8.31816 9.08038 8.60014 8.898 8.89877M10.8008 15.3041C10.3518 15.0895 9.93099 14.7963 9.55909 14.4244C9.0674 13.9326 8.71328 13.3554 8.49674 12.7405M15.084 15.0855L20.9908 20.993M15.084 15.0855L8.898 8.89877M2.9912 2.99128L8.898 8.89877" />
+                  </g>
+                </g>
+              );
+            })}
             {/* WHERE THAT END IS RIGHT NOW, while it is being carried: a dashed
                 band from the first fitting to the pointer, and a dot under it.
                 The ring round the plate it would land on is drawn by the plate
                 itself — see `flowGrab` there. This is the whole of the feedback,
                 because the assignment is not committed until the drop. */}
-            {flowGrab?.id === f.id && f.nodes[0] && (
+            {flowGrab?.id === f.id && f.nodes[0] && (() => {
+              /* THE BAND STARTS AT WHAT IS ACTUALLY BEING CARRIED. For the
+                 plate's end that is the first fitting, which is where the feed
+                 arrives; for a fitting's own input it is that fitting. Anchoring
+                 both at `nodes[0]` drew a rubber band from the wrong end of the
+                 loop the moment the second kind of grip existed. */
+              const anchor = flowGrab.kind === 'node'
+                ? (f.nodes.find((n) => n.id === flowGrab.key) ?? f.nodes[0])
+                : f.nodes[0];
+              return (
               <g pointerEvents="none">
-                {/* THE BAND IS THIS WIRE BEING CARRIED, so it is this wire's
-                    colour — the drag only ever happens on the picked one. */}
-                <line x1={f.nodes[0].x} y1={f.nodes[0].y}
-                  x2={flowGrab.at.x} y2={flowGrab.at.y}
+                {/* IT BOWS THE WAY A REAL LEG BOWS, and it is drawn by the same
+                    function that draws them — `loopPath`, with this drawing's
+                    own scale. A straight rubber band was a promise the drop did
+                    not keep: you aimed a straight line at a fitting and the
+                    wire that appeared was a curve somewhere else. Same bow, same
+                    side of travel, so what you are dragging IS what you get.
+                    DASHED WHILE IT IS IN THE AIR, which is the one difference
+                    left — it is a proposal until the drop, and a solid arc would
+                    read as a connection that already exists. */}
+                <path d={loopPath([anchor, flowGrab.at], { pxPerFt })}
+                  fill="none"
                   stroke={WIRE_PICKED} strokeWidth={hair(1.5)}
                   strokeDasharray={`${lw * 2} ${lw * 2}`} strokeLinecap="round" />
                 <circle cx={flowGrab.at.x} cy={flowGrab.at.y} r={lw * 3}
                   fill={WIRE_PICKED} stroke="#fff" strokeWidth={hair(1.2)} />
               </g>
-            )}
+              );
+            })()}
           </g>
         );
       })()}

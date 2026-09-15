@@ -1427,6 +1427,169 @@ console.log('\n-- and the lamps are counted as modules on the plate --');
     + ` of ${lamps.length})`);
 }
 
+console.log('\n-- a hand re-plugs an input --');
+{
+  /* ONE INPUT, MANY OUTPUTS. `links` is fitting id -> the fitting its input now
+     comes from, so re-plugging is a map write and a second wire into one
+     fitting is not expressible. See `relink` in flows.js. */
+  const g = lay([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }]);
+  const board = { id: 'b1', point: { x: 0, y: 6 * PPF }, serves: 'room', servesShort: 'Door' };
+  const plain = wire(g, { boards: [board] });
+  const rows = plain.flows.filter((f) => f.nodes.length > 1);
+  ok(rows.length >= 2, `${rows.length} multi-fitting flows to work with`);
+
+  const [A, B] = rows;
+  const parent = A.nodes[0].id, child = B.nodes[0].id;
+  const before = { a: A.count, b: B.count };
+
+  const one = wire(g, { boards: [board], links: { [child]: parent } });
+  const a2 = one.flows.find((f) => f.nodes.some((n) => n.id === parent));
+  const b2 = one.flows.find((f) => f.id === B.id);
+  ok(a2.count === before.a + 1, `the parent's flow gained one (${before.a} -> ${a2.count})`);
+  ok(b2.count === before.b - 1, `the child's old flow lost one (${before.b} -> ${b2.count})`);
+  ok(!b2.nodes.some((n) => n.id === child), 'and no longer carries it');
+
+  /* THE CHILD SITS IMMEDIATELY AFTER ITS PARENT, because the drawn chain is the
+     wire: the loop reaches the parent, then the fitting looped off it. */
+  const idx = a2.nodes.findIndex((n) => n.id === parent);
+  ok(a2.nodes[idx + 1]?.id === child, 'and it is seated directly after its parent');
+  ok(a2.path && a2.legs.length === a2.nodes.length,
+    're-seating re-paths the flow rather than leaving the old arcs');
+
+  /* A SUBTREE TRAVELS WITH ITS PARENT — a wire does not come apart in the
+     middle because its far end was re-plugged. */
+  const third = B.nodes[1].id;
+  const chain = wire(g, { boards: [board], links: { [child]: parent, [third]: child } });
+  const a3 = chain.flows.find((f) => f.nodes.some((n) => n.id === parent));
+  const i3 = a3.nodes.findIndex((n) => n.id === parent);
+  ok(a3.nodes[i3 + 1]?.id === child && a3.nodes[i3 + 2]?.id === third,
+    'a chain of two arrives in order, parent then child then grandchild');
+
+  /* A FLOW EVERY FITTING LEFT IS NO FLOW — keeping it would put a module on a
+     plate for a switch that controls nothing, and flowSummary bills for it. */
+  const all = Object.fromEntries(B.nodes.map((n) => [n.id, parent]));
+  const drained = wire(g, { boards: [board], links: all });
+  ok(!drained.flows.some((f) => f.id === B.id), 'a flow nothing is left on disappears');
+  ok(drained.flows.length === plain.flows.length - 1, '...and the count drops by exactly one');
+
+  /* CYCLES ARE DROPPED QUIETLY. Two ordinary drags can make one, and a modal in
+     the middle of a gesture is not the answer. */
+  const loop = wire(g, { boards: [board], links: { [child]: parent, [parent]: child } });
+  ok(loop.flows.length === plain.flows.length, 'a cycle leaves the flows exactly as they were');
+
+  /* AND THE WAY BACK COSTS NOTHING, which is the point of overriding the RESULT
+     rather than disabling the rules: no entry, no effect. */
+  const undone = wire(g, { boards: [board], links: {} });
+  ok(undone.flows.length === plain.flows.length
+     && undone.flows.every((f, i) => f.count === plain.flows[i].count),
+    'unlinking restores the rules exactly, with no state to unwind');
+
+  ok(wire(g, { boards: [board], links: { [child]: 'no-such-fitting' } })
+       .flows.length === plain.flows.length,
+    'a link to a fitting that is not on this ceiling is ignored');
+
+  /* CUTTING ONE LINK RETURNS ITS FITTING AND KEEPS WHAT HANGS OFF IT — the
+     guarantee the unlink badge on a leg makes. The badge cuts the input of the
+     fitting the wire runs TO; that fitting goes back to its own switch, and
+     everything IT feeds keeps feeding from it, because those are separate
+     entries that name it and cutting this one does not touch them. */
+  {
+    const both = wire(g, { boards: [board], links: { [child]: parent, [third]: child } });
+    const joined = both.flows.find((f) => f.nodes.some((n) => n.id === parent));
+    ok(joined.nodes.some((n) => n.id === third),
+      'with both links, the grandchild rides along into the parent\'s flow');
+
+    // …now the badge on the parent->child leg is pressed. Only that entry goes.
+    const cut = wire(g, { boards: [board], links: { [third]: child } });
+    const homeOf = (id) => cut.flows.find((f) => f.nodes.some((n) => n.id === id));
+    const back = homeOf(child);
+    ok(back.id === B.id, 'the cut fitting is back on the flow the rules gave it');
+    ok(!homeOf(parent).nodes.some((n) => n.id === child),
+      '...and off the one it had been linked into');
+    ok(homeOf(third) === back,
+      'and the fitting IT feeds came back with it — outward flows are intact');
+    ok(back.nodes.findIndex((n) => n.id === third)
+       === back.nodes.findIndex((n) => n.id === child) + 1,
+      '...still seated directly after it');
+  }
+}
+
+console.log('\n-- a fitting stood on its own --');
+{
+  /* `null` IS THE THIRD STATE: absent means the rules decide, a fitting id means
+     fed from that fitting, and null means DETACHED — its own switch, straight
+     off the plate. See `relink`. */
+  const g = lay([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }]);
+  const board = { id: 'b1', point: { x: 0, y: 6 * PPF }, serves: 'room', servesShort: 'Door' };
+  const plain = wire(g, { boards: [board] });
+  const row = plain.flows.filter((f) => f.nodes.length > 2)[0];
+  const ids = row.nodes.map((n) => n.id);
+  const one = ids[1];
+
+  const cut = wire(g, { boards: [board], links: { [one]: null } });
+  const own = cut.flows.find((f) => f.nodes[0]?.id === one);
+  ok(!!own, 'the detached fitting heads a flow of its own');
+  ok(cut.flows.length === plain.flows.length + 1,
+    'which is one MORE switch than before — a flow is one switch, so the plate gains a module');
+
+  /* THE CHAIN IS CUT, NOT PICKED AT. Everything from the detach point onward
+     goes with it: those fittings' inputs come from it and cutting ITS input
+     said nothing about theirs. The row keeps only what was upstream. */
+  const rest = cut.flows.find((f) => f.id === row.id);
+  ok(rest.count === 1 && rest.nodes[0].id === ids[0],
+    'the row keeps only what was before the cut');
+  ok(own.nodes.map((n) => n.id).join() === ids.slice(1).join(),
+    'and everything after it travelled, in the same order');
+  ok(!rest.nodes.some((n) => ids.slice(1).includes(n.id)),
+    '...so the wire does not close up across the gap');
+
+  /* STRAIGHT OFF THE PLATE: it keeps the board that switches that ceiling, and
+     it is drawn running back to it. */
+  ok(own.boardId === row.boardId, 'it is switched from the same plate the row is');
+  ok(own.from && own.legs[0]?.feed, 'and its first leg is the feed off that plate');
+  ok(!own.assigned, 'nobody moved it there by hand, so it is not marked as moved');
+
+  /* THE ID IS MINTED FROM THE FITTING, so a board reassignment or a bend can key
+     on it and survive a re-grid. */
+  ok(own.id.includes(one) && own.id !== row.id, `its id names the fitting — ${own.id}`);
+
+  /* CUTTING THE LAST LEG TAKES ONE FITTING, which is the same rule and not a
+     special case — there is simply nothing after it. */
+  const tail = wire(g, { boards: [board], links: { [ids[ids.length - 1]]: null } });
+  const solo = tail.flows.find((f) => f.nodes[0]?.id === ids[ids.length - 1]);
+  ok(solo.count === 1, 'detaching the far end of a row takes just that fitting');
+
+  /* TWO CUTS, THREE SWITCHES. The segments are independent. */
+  const twice = wire(g, { boards: [board], links: { [ids[1]]: null, [ids[2]]: null } });
+  ok(twice.flows.length === plain.flows.length + 2, 'two cuts make two more switches');
+  ok(twice.flows.find((f) => f.nodes[0]?.id === ids[1]).count === 1,
+    '...and the first segment stops where the second begins');
+
+  /* A RE-PLUGGED FITTING IS NOT DRAGGED ALONG BY A CUT. It said outright where
+     its input comes from, which outranks where it happens to sit in a row. */
+  const pinned = wire(g, { boards: [board],
+    links: { [ids[1]]: null, [ids[2]]: ids[0] } });
+  const seg = pinned.flows.find((f) => f.nodes[0]?.id === ids[1]);
+  ok(!seg.nodes.some((n) => n.id === ids[2]),
+    'a fitting wired into another chain stays there when an earlier wire is cut');
+  ok(pinned.flows.find((f) => f.id === row.id).nodes.some((n) => n.id === ids[2]),
+    '...on the flow its own link named');
+
+  /* WHAT IT FEEDS COMES WITH IT — the hand-drawn case, spliced in behind it. */
+  const fed = wire(g, { boards: [board],
+    links: { [ids[1]]: null, [ids[0]]: ids[1] } });
+  const carry = fed.flows.find((f) => f.nodes[0]?.id === ids[1]);
+  ok(carry.nodes[1]?.id === ids[0],
+    'a fitting looped off the detached one rides onto the new switch behind it');
+
+  /* AND THE WAY BACK IS STILL FREE — no entry, no effect. */
+  const undone = wire(g, { boards: [board], links: {} });
+  ok(undone.flows.length === plain.flows.length,
+    'removing the entry puts it back under the rules with nothing to unwind');
+  ok(wire(g, { boards: [board], links: { 'no-such-fitting': null } }).flows.length
+     === plain.flows.length, 'detaching something that is not on this ceiling does nothing');
+}
+
 console.log('\n-- nothing at all --');
 {
   ok(planFlows({}).flows.length === 0, 'no room, no flows');

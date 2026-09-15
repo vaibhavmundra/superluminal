@@ -52,7 +52,7 @@ export function useElectrical({
   // --- the document ---------------------------------------------------------
   doc, docActions,
 }) {
-  const { boardsOff, boardMoves, boardPoints, flowBoards, flowBends,
+  const { boardsOff, boardMoves, boardPoints, flowBoards, flowBends, flowLinks,
           manualBoards, boardKinds, boardHeights, boardOrders, doorsOk } = doc;
 
   const selBoardId = idOf(sel, 'board');
@@ -68,7 +68,8 @@ export function useElectrical({
   const { projections: { allBoardsPx, flowsPx, switchboardsPx, boardNames } } =
     useSceneElectricalProjections({
       rooms, boardsFor, bayBoardsFor, placedBoardsFor, bayResults, obstaclesPx, accentZonesPx,
-      taskSpotsPx, lampsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends, layers, doorEdit
+      taskSpotsPx, lampsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends, flowLinks,
+      layers, doorEdit
     });
 
   const panel = useBoardPanel({
@@ -80,6 +81,11 @@ export function useElectrical({
   const gestures = useBoardGestures({
     rooms, pxPerFt, svgPoint, svgRef, pressState, setSel, docActions,
     flowsPx, allBoardsPx, setBoardOutlet: panel.setBoardOutlet,
+    /* READ, NOT WRITTEN, BY THE GESTURE. The drop needs to know what currently
+       feeds the fitting in hand so that dropping it back on that same fitting
+       can UNLINK rather than rewrite the entry it already holds — the same way
+       back the plate drag has. */
+    flowLinks,
     /* THE PLACED OBJECTS, FOR ONE COMMAND ONLY. `socketForLamp` needs to know
        what else is standing in the room before it decides whether a plate has
        to go up — see `lampPlateToShare`. */

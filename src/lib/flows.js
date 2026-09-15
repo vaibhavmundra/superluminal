@@ -391,6 +391,18 @@ export function planFlows({
      nothing without its flow, and because clearing a wire's bends should be one
      delete. */
   bends = {},
+  /* AND WHAT A HAND HAS RE-PLUGGED: fitting id -> the fitting its input now
+     comes from. See `relink` at the foot of this file for the whole model; the
+     short version is that a fitting has ONE input, so this is a map and not a
+     list, and any number of fittings may name one parent because a fitting has
+     as many outputs as you loop off it.
+     KEYED ON FITTING IDS AND NOT ON FLOW IDS, which is the one thing about this
+     store that had to be decided before anything was built. A flow id is
+     DERIVED — `row-<chunk>-<n>`, `track-<id>` — so it is a fact about the
+     current grid rather than about the ceiling, and a membership override keyed
+     on one would evaporate the moment a chunk changed. A fitting id is a
+     document fact and survives everything but deleting the fitting. */
+  links = {},
   zones = [],
   pxPerFt = 0,
   opts = {},
@@ -1319,7 +1331,235 @@ export function planFlows({
     notes.push('There is no switchboard in this space yet, so the flows have nothing'
       + ' to run back to.');
   }
-  return { flows, notes };
+  /* AND LAST, WHATEVER A HAND HAS RE-PLUGGED. Every rule above has had its say
+     and this reorganises the answer — see `relink`. It is last because it is an
+     override and overrides go on top; it is inside planFlows rather than in the
+     caller because a re-seated flow has to be re-pathed, and the arc options
+     and the bend overrides are in scope exactly here. */
+  return { flows: relink(flows, links, { pxPerFt, opt: o, bends,
+                                        mintId: id, assign, boardById: byIdAll }), notes };
+}
+
+/* ---------------------------------------------------------------------------
+   MANUAL LINKS — ONE INPUT, MANY OUTPUTS, AND THE RULES KEEP THE REST.
+
+   EVERY FITTING HAS EXACTLY ONE INPUT. That is not a convention this function
+   enforces, it is the SHAPE OF THE STORE: `links` is `child id -> parent id`,
+   and a map key holds one value, so a second wire into a fitting is not
+   something you can write down. Outputs are the other direction and are
+   unbounded by the same construction — any number of children may name one
+   parent, which is what "loop the next lamp off this one" means on site.
+
+   SO A LINK IS AN INPUT BEING RE-PLUGGED, and that is exactly the gesture: you
+   take hold of a fitting's incoming wire and drop it on another fitting instead
+   of on a plate. The board-end grip already does the plate half of this; a
+   fitting is simply the other kind of thing an input can terminate at.
+
+   THE AUTO RULES ARE NOT CONSULTED AND NOT DISABLED. Every pass above has
+   already run and produced its answer, and this reorganises the RESULT — so a
+   fitting nobody has linked is switched exactly as it was, and unlinking one
+   puts it straight back under the rule that owned it, with no state to unwind.
+   That is the same relationship `boardsOff` and `boardMoves` have with the
+   plate rules, and it is why unlinking needs no memory of what was overruled.
+
+   A SUBTREE TRAVELS WITH ITS PARENT. Link B to A and then C to B, and moving B
+   takes C: the chain is the wire, and a wire does not come apart in the middle
+   because somebody re-plugged its far end.
+
+   AND A THIRD STATE, WHICH IS THE ONE `null` BUYS. An absent key means "the
+   rules decide"; a fitting id means "fed from that fitting"; and `null` means
+   DETACHED — this fitting is switched on its own, straight off the plate,
+   whatever row the rules would have put it in. That is an override in the other
+   direction from a link: a link overrules WHICH chain a fitting is on, and a
+   detach overrules the fact that it is on one at all.
+   IT HAD TO BE A THIRD VALUE AND COULD NOT BE AN ABSENCE. Deleting the key is
+   already spoken for — it is how a fitting goes BACK to the rules — so "stand
+   this one on its own" needed something positive to say. The map carries it.
+   WHAT IT FEEDS COMES WITH IT. Detaching a fitting that heads a chain takes the
+   whole chain onto the new switch rather than scattering it: those fittings
+   named THIS one as their input and nothing about that changed.
+   A FLOW IS ONE SWITCH, SO THIS ADDS A MODULE. Splitting one fitting out of a
+   row of six leaves a row of five and a switch of its own — two plates' worth
+   of module where there was one. That is what "its own connection" means and
+   the schedule follows it; it is not a side effect to be suppressed.
+
+   CYCLES ARE DROPPED, NOT REJECTED. A -> B -> A is not a wiring anybody can
+   build, and it is reachable in two ordinary drags. The link that closes the
+   loop is ignored — quietly, because the alternative is a modal in the middle
+   of a drag — and the fitting stays where the rules had it. Nothing is written
+   that a later drag cannot correct.
+
+   CROSS-ROOM LINKS ARE IGNORED HERE, because `planFlows` runs per room and a
+   parent in another room is not in this call's index at all. The link stays in
+   the document; it simply has no effect until both ends are in one room's
+   flows. Wiring across a wall is a real thing and this is the seam it would be
+   added at, but it is not what the gesture offers today.
+   --------------------------------------------------------------------------- */
+function relink(flows, links, { pxPerFt, opt, bends, mintId, assign, boardById }) {
+  const keys = links ? Object.keys(links) : [];
+  if (!flows.length || !keys.length) return flows;
+
+  /* WHERE EVERY FITTING CURRENTLY SITS. Built over the finished flows rather
+     than over the fittings, because a fitting the rules never wired has no
+     input to re-plug and is not addressable by this gesture. */
+  const at = new Map();
+  flows.forEach((f, i) => (f.nodes ?? []).forEach((n) => {
+    if (n?.id != null && !at.has(n.id)) at.set(n.id, i);
+  }));
+
+  /* ONLY LINKS WHOSE BOTH ENDS ARE ON THIS ROOM'S FLOWS, and only those that do
+     not close a loop. Resolved by walking UP to a fitting with no input of its
+     own — which is the one the whole chain is ultimately switched with. */
+  const parent = new Map();
+  for (const child of keys) {
+    const par = links[child];
+    if (par == null || par === child) continue;
+    if (!at.has(child) || !at.has(par)) continue;
+    parent.set(child, par);
+  }
+  const rootOf = (idIn) => {
+    const seen = new Set([idIn]);
+    let cur = idIn;
+    while (parent.has(cur)) {
+      cur = parent.get(cur);
+      if (seen.has(cur)) return null;      // a loop — this chain is unusable
+      seen.add(cur);
+    }
+    return cur;
+  };
+  for (const child of [...parent.keys()]) {
+    if (rootOf(child) == null) parent.delete(child);
+  }
+  /* THE DETACHED, WHICH ARE THE ENTRIES CARRYING `null`. Sorted so that two
+     fittings detached in different orders produce the same drawing — the flows
+     are built in this order and a set's iteration order is its insertion order,
+     which is the order somebody happened to click in. */
+  const loose = keys.filter((k) => links[k] === null && at.has(k)).sort();
+  if (!parent.size && !loose.length) return flows;
+
+  const kids = new Map();
+  for (const [child, par] of parent) {
+    if (!kids.has(par)) kids.set(par, []);
+    kids.get(par).push(child);
+  }
+  /* A STABLE ORDER AMONG SIBLINGS. Two fittings looped off one parent have no
+     natural precedence, and `Object.keys` order is the order they happened to
+     be dragged in — which would redraw the wire when nothing about the ceiling
+     had changed. Sorting by id makes the drawing a function of the document. */
+  for (const list of kids.values()) list.sort();
+
+  /* THE NODE OBJECTS THEMSELVES, so a moved fitting arrives complete — its
+     position, its `what`, everything the leg builder and the card read. */
+  const nodeOf = new Map();
+  flows.forEach((f) => (f.nodes ?? []).forEach((n) => {
+    if (n?.id != null && !nodeOf.has(n.id)) nodeOf.set(n.id, n);
+  }));
+
+  /* THE TWO WAYS A FITTING STOPS BEING WHERE THE RULES PUT IT, and they are not
+     the same move. A RE-PLUGGED one leaves entirely — its input now comes from
+     some other fitting, so it goes and sits behind that one. A DETACHED one
+     stays exactly where it is in the chain and becomes the head of a new
+     switch: its input was cut, not its position. */
+  const replugged = new Set(parent.keys());
+  const looseSet = new Set(loose);
+
+  const subtree = (id) => {
+    const out = [];
+    for (const child of kids.get(id) ?? []) {
+      const n = nodeOf.get(child);
+      if (n) out.push(n, ...subtree(child));
+    }
+    return out;
+  };
+
+  /* A DETACHED FITTING'S NEW SWITCH — see the header for what it inherits and
+     why the id is minted from the fitting rather than from the flow. */
+  const bear = (head, nodes, src) => {
+    const nid = mintId ? mintId(`own-${head.id}`) : `own-${head.id}`;
+    const forced = assign?.[nid] ? boardById?.get(assign[nid]) ?? null : null;
+    const what = String(head.what || '').replace(/^an?\s+/i, '').trim();
+    return {
+      ...src,
+      id: nid,
+      label: what ? what.charAt(0).toUpperCase() + what.slice(1) : (src.label ?? 'Fitting'),
+      what: nodes.length > 1
+        ? `switched on its own, with ${nodes.length - 1} more looped off it`
+        : 'switched on its own',
+      also: null,
+      assigned: !!forced,
+      from: forced ? forced.point : src.from,
+      boardId: forced ? forced.id : src.boardId,
+      boardLabel: forced ? (forced.servesShort || 'Board') : src.boardLabel,
+      nodes,
+      count: nodes.length,
+    };
+  };
+
+  const changed = new Set();
+  const rebuilt = [];
+
+  for (const f of flows) {
+    /* --- THE CHAIN IS CUT AT EVERY DETACHED FITTING ------------------------
+       THE RULES' OWN ORDER IS AN INPUT/OUTPUT CHAIN TOO, and treating it as one
+       is the whole of this. A row reads board -> A -> B -> C, which says A's
+       output feeds B and B's output feeds C exactly as a hand-drawn link does;
+       the only difference is that nothing was written down. So cutting the wire
+       into B takes B's INPUT away and leaves B's output alone — and C, whose
+       input is B, has no reason to move. It goes where B goes.
+       THIS USED TO PLUCK ONE FITTING OUT AND CLOSE THE GAP, leaving A wired
+       straight to C past a light that was no longer on that switch. Correct as
+       wiring and wrong as a model: it treated the rules' chain as an unordered
+       bag and the hand-drawn one as a chain, when a wireman reads both the same
+       way.
+       SO EACH FLOW BECOMES ONE OR MORE SEGMENTS, split at the detach points.
+       The first stays with the flow; every later one is a new switch headed by
+       the fitting whose input was cut. */
+    const segs = [{ head: null, nodes: [] }];
+    for (const n of f.nodes ?? []) {
+      /* RE-PLUGGED FITTINGS ARE NOT PART OF ANY SEGMENT. They are somewhere
+         else entirely by now, and a fitting that named another as its input has
+         said where it belongs far more explicitly than its position in a row
+         says anything. That is also what stops a cut from dragging along a
+         fitting somebody had already wired into a different chain. */
+      if (replugged.has(n.id)) continue;
+      if (looseSet.has(n.id)) segs.push({ head: n, nodes: [] });
+      const seg = segs[segs.length - 1];
+      seg.nodes.push(n, ...subtree(n.id));
+    }
+
+    const head = segs[0];
+    if (head.nodes.length) {
+      const same = head.nodes.length === (f.nodes ?? []).length
+        && head.nodes.every((n, i) => n === f.nodes[i]);
+      if (same) rebuilt.push(f);
+      else {
+        const next = { ...f, nodes: head.nodes, count: head.nodes.length };
+        changed.add(next);
+        rebuilt.push(next);
+      }
+    }
+    /* A FLOW WHOSE EVERY FITTING ENDED UP ON A LATER SEGMENT IS NOT AN EMPTY
+       FLOW, IT IS NO FLOW — dropped by the `if` above rather than filtered
+       afterwards. Keeping it would put a module on a plate for a switch that
+       controls nothing, and `flowSummary` counts flows, so the schedule would
+       bill for it. */
+    for (const seg of segs.slice(1)) {
+      const b = bear(seg.head, seg.nodes, f);
+      changed.add(b);
+      rebuilt.push(b);
+    }
+  }
+
+  /* THE ARCS LAST, over the final seating. Recomputed only for the flows that
+     actually changed, and from the same `from` point and bend overrides `add`
+     used — two calls to loopLegs with different arguments is how a hit target
+     comes to sit off the wire it is meant to be on. */
+  return rebuilt.map((f) => {
+    if (!changed.has(f)) return f;
+    const legs = loopLegs(f.nodes, { from: f.from ?? null, pxPerFt, opt,
+                                     bends: bends?.[f.id] ?? {} });
+    return { ...f, legs, path: pathOf(legs) };
+  });
 }
 
 /** Fittings on flows, and flows per board — what the panel counts. */

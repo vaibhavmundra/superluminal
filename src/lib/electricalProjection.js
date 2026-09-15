@@ -24,7 +24,7 @@ export function projectAllBoardsPx(rooms, boardsFor, bayBoardsFor, placedBoardsF
 /** Project the room's fittings into switched circuit paths. */
 export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
   obstaclesPx, accentZonesPx, taskSpotsPx, outdoorFeeds, pxPerFt, baysOf,
-  allBoardsPx, placedBoardsFor, flowBoards, flowBends, lampsPx = []) {
+  allBoardsPx, placedBoardsFor, flowBoards, flowBends, lampsPx = [], flowLinks = {}) {
     const out = [];
     if (!(pxPerFt > 0)) return out;
     for (const r of rooms) {
@@ -136,6 +136,12 @@ export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
         owner,
         assign: flowBoards,
         bends: flowBends,
+        /* WHAT A HAND RE-PLUGGED — fitting id -> the fitting feeding it. Handed
+           whole rather than filtered to this room: `planFlows` indexes it
+           against the flows it just built and ignores anything whose ends are
+           not both on them, which is also what makes a link to a fitting in
+           another room harmless rather than wrong. */
+        links: flowLinks,
         zones: r.plan.zonesPx ?? [],
         pxPerFt,
       });

@@ -525,6 +525,11 @@ export function serialiseEditor(doc, { pxPerFt } = {}) {
        different wire the first time a light was added to an earlier chunk. */
     flowBoards: s.flowBoards ?? {},
     flowBends: s.flowBends ?? {},
+    /* `flowLinks` is fitting id -> the fitting its input comes from: the wiring
+       somebody drew by hand, one input per fitting and any number of outputs.
+       Keyed on FITTING ids and not flow ids, which is what makes it survive a
+       re-grid — see its note in usePlanDoc. */
+    flowLinks: s.flowLinks ?? {},
     /* --- AND THE PLATES SOMEBODY PUT ON A WALL THEMSELVES.
        `[{ id, roomId, sFt }]` — how far round that room's walls each one sits,
        in feet, which is the same coordinate `boardMoves` above stores and is
@@ -756,6 +761,7 @@ export function applyEditor(p, set) {
   set.setBoardPoints?.(p.boardPoints ?? {});
   set.setFlowBoards?.(p.flowBoards ?? {});
   set.setFlowBends?.(p.flowBends ?? {});
+  set.setFlowLinks?.(p.flowLinks ?? {});
   set.setManualBoards?.(p.manualBoards ?? []);
   set.setBoardKinds?.(p.boardKinds ?? {});
   set.setBoardHeights?.(p.boardHeights ?? {});

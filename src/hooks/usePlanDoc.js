@@ -272,6 +272,29 @@ export const DOC_FIELDS = {
      the first time a light was added to an earlier chunk. */
   flowBoards: () => ({}),
   flowBends: () => ({}),
+  /* WHERE EACH FITTING'S INPUT COMES FROM, WHERE A HAND HAS SAID:
+     `fitting id -> the fitting feeding it`.
+
+     A MAP AND NOT A LIST, AND THAT IS THE MODEL RATHER THAN THE STORAGE. Every
+     fitting has exactly ONE input — one wire in — so a key holding one value is
+     the fact itself, and a second feed into one fitting is not something this
+     document can express. OUTPUTS are the other direction and are unbounded:
+     any number of fittings may name one parent, which is what looping the next
+     lamp off this one means on site.
+
+     KEYED ON FITTING IDS, NEVER ON FLOW IDS. A flow id is DERIVED — see `id` in
+     flows.js, where it is built from the tag a pass minted, `row-<chunk>-<n>`
+     and the like — so it describes the grid as it currently stands rather than
+     the ceiling. A membership override keyed on one would evaporate the first
+     time a chunk changed, silently, taking the wiring somebody drew with it. A
+     fitting id is a document fact and outlives every re-grid.
+
+     AN OVERRIDE OF THE RESULT AND NOT A REPLACEMENT OF THE RULES, like every
+     other store in this domain. `planFlows` runs all of its passes, and
+     `relink` reorganises what they produced — so a fitting nobody has touched
+     is switched exactly as it always was, and removing an entry puts it back
+     under its rule with nothing to unwind. */
+  flowLinks: () => ({}),
 
   /* THE PLATES SOMEBODY PUT ON A WALL THEMSELVES: `[{ id, roomId, sFt }]`.
      THE ODD ONE OUT IN THIS DOMAIN, AND WORTH SAYING SO. Everything else here
@@ -1696,6 +1719,18 @@ export function usePlanDoc(seed) {
 
     clearFlowBoards: () => dispatch({ type: 'MAP_CLEARED', field: 'flowBoards' }),
     clearFlowBends: () => dispatch({ type: 'MAP_CLEARED', field: 'flowBends' }),
+    clearFlowLinks: () => dispatch({ type: 'MAP_CLEARED', field: 'flowLinks' }),
+    /* A FITTING'S INPUT, RE-PLUGGED INTO ANOTHER FITTING. One write per DROP
+       and not per move — the wire being dragged is a rubber band in transient
+       state until it lands, exactly as a plate reassignment is. See
+       `flowGripDown`. */
+    setFlowLink: (childId, parentId) =>
+      dispatch({ type: 'MAP_ENTRY_SET', field: 'flowLinks', key: childId, value: parentId }),
+    /* UNLINKED, WHICH IS THE WHOLE WAY BACK. The fitting returns to whatever
+       rule owned it — its own switch, in the ordinary case — because nothing
+       was ever taken away from the rules to be restored. */
+    clearFlowLink: (childId) =>
+      dispatch({ type: 'MAP_ENTRY_REMOVED', field: 'flowLinks', key: childId }),
     /* A WIRE DROPPED ON A PLATE, or dropped home — see FLOW_BOARD_SET. */
     setFlowBoard: (flowId, boardId, home) =>
       dispatch({ type: 'FLOW_BOARD_SET', flowId, boardId, home }),

@@ -5635,37 +5635,38 @@ export default function App({
      rather than switches over it. Sharing the list is what keeps the bar from
      arriving with one of its three switches missing. */
   /* --- ...AND THE OPERATOR GETS A THIRD, WHICH NOBODY ELSE SEES -----------
-     ROLE 1 ONLY, like the audit overlays and Vertical Mode. The plates are
-     scaffolding to everybody except the person checking where the wiring pass
-     put them, and a client looking at their ceiling has no use for a switch
-     that turns blue rectangles on over it.
+     ROLE 1 ONLY, like the audit overlays and Vertical Mode. The wiring is
+     scaffolding to everybody except the person checking where the passes put
+     it, and a client looking at their ceiling has no use for a switch that
+     turns blue rectangles and dotted arcs on over it.
 
-     IT READS THE EFFECTIVE STATE, NOT `layers.switchboards`, AND THAT IS THE
-     WHOLE OF THE CARE IN IT. Those two are not the same thing: the plates
-     belong to the wiring and are derived OFF whenever `electrical` is off (see
-     `wiring` in the layer memo above), while `switchboards` itself DEFAULTS ON.
-     So on a plan nobody has touched, the stored flag says true and the drawing
-     shows nothing — and a switch bound to the flag would stand here latched, on
-     a sheet with no plates on it, doing nothing when pressed. That is the one
-     failure a switch on this bar must not have.
+     IT IS A MASTER SWITCH OVER TWO LAYERS, AND THAT IS THE WHOLE OF IT. On puts
+     the wiring on screen; off takes it off. Both `electrical` and `switchboards`
+     follow it together, because between them they ARE the wiring: the arcs are
+     one and the plates the other, and a bar switch called Switchboards that left
+     half of it on the sheet would be lying about what it just did.
 
-     SO TURNING IT ON TURNS THE WIRING ON WITH IT, because that is what showing
-     a plate actually requires, and a control that cannot deliver what its label
-     says is worse than no control. Turning it OFF takes only the plates: the
-     wiring is a bigger thing than this switch owns, and silently withdrawing it
-     would be this switch deciding something it was not asked about.
+     ON MEANS ON, WHATEVER THE VIEW MENU SAYS. Pressing it ticks BOTH boxes in
+     View rather than restoring whatever was last ticked there — so the state
+     after a press is knowable without remembering what you did last week, which
+     is the property a master switch is for. Untick either one in View afterwards
+     to pare it back; the bar switch is the way to the whole thing, the menu is
+     the way to part of it.
 
-     THE VIEW MENU'S OWN TICK IS UNTOUCHED and still means what it always meant —
-     the raw layer. Both write the same key, so the two cannot drift; they simply
-     answer different questions, which is the same split `suggestGrid` makes
-     against `lights`. */
-  /* `|| boardPlace` MIRRORS THE DERIVATION EXACTLY — see `wiring` above, where
-     the placement step is the standing exception that shows plates with the
-     wiring off, because a step whose whole output is invisible looks broken.
-     Reading the effective state means reading ALL of it: without this term the
-     switch would sit unlatched while the plates it names were on the screen in
-     front of it, during the one gesture that is entirely about them. */
-  const platesDrawn = !!((layers.electrical || boardPlace) && layers.switchboards);
+     IT READS `electrical` AND NOT `switchboards`, WHICH LOOKS WRONG AND IS NOT.
+     The plates are DERIVED OFF whenever the wiring is off (see `wiring` in the
+     layer memo above) while `switchboards` itself DEFAULTS ON — so on a plan
+     nobody has touched the stored flag says true and the drawing shows nothing.
+     A switch bound to that flag would stand here latched over a sheet with no
+     plates on it. `electrical` is the one that actually decides whether any of
+     this is visible, so it is the one the switch reports.
+
+     `|| boardPlace` MIRRORS THE DERIVATION EXACTLY — the placement step is the
+     standing exception that shows plates with the wiring off, because a step
+     whose whole output is invisible looks broken. Reading the effective state
+     means reading all of it, or the switch sits unlatched while the plates it
+     names are on screen during the one gesture entirely about them. */
+  const wiringShown = !!(layers.electrical || (boardPlace && layers.switchboards));
   const autoLead = verticalMode || !source || showTrace || prep || readOnly || sheetOpen ? null : (
     <>
       <SceneSwitch label="Suggested Grid" on={layers.suggestGrid}
@@ -5673,12 +5674,12 @@ export default function App({
         onClick={toggle('suggestGrid')} />
       <HeatmapSwitch on={layers.heatmap} onClick={toggle('heatmap')} />
       {isAdmin && (
-        <SceneSwitch label="Switchboards" on={platesDrawn}
-          title="The plates on the walls. They are part of the wiring, so switching them on brings that with them."
+        <SceneSwitch label="Switchboards" on={wiringShown}
+          title="Every wire and every plate. Off takes them all; on brings them all back."
           onClick={() => {
-            if (platesDrawn) { docActions.setLayer('switchboards', false); return; }
-            docActions.setLayer('switchboards', true);
-            docActions.setLayer('electrical', true);
+            const next = !wiringShown;
+            docActions.setLayer('electrical', next);
+            docActions.setLayer('switchboards', next);
           }} />
       )}
     </>
@@ -7292,8 +7293,17 @@ export default function App({
               /* THE END IN FLIGHT, and only once the drag is past its slop —
                  otherwise a press on the grip would paint a rubber band of zero
                  length over the plate before anybody had moved. */
-              flowGrab={flowDrag?.kind === 'board' && flowDrag.moved
-                ? { id: flowDrag.id, at: flowDrag.at, overId: flowDrag.overId } : null}
+              flowGrab={(flowDrag?.kind === 'board' || flowDrag?.kind === 'node')
+                && flowDrag.moved
+                ? { id: flowDrag.id, kind: flowDrag.kind, key: flowDrag.key,
+                    at: flowDrag.at, overId: flowDrag.overId } : null}
+              /* CUTTING A WIRE DETACHES THE FITTING IT RAN TO: `null` is the
+                 stored word for "switched on its own, straight off the plate",
+                 and it is a WRITE rather than a delete. Deleting the entry is a
+                 different act with a different meaning — it puts the fitting
+                 back under the rules — and the two must not share a button.
+                 Off on the read-only sheet with everything else that edits. */
+              onFlowUnlink={readOnly ? null : ((id) => docActions.setFlowLink(id, null))}
               /* The audit layer — now the lit task surfaces and the render
                  pass's wall cells. The BED zones used to be passed here too and
                  are not any more: see the note in PlanCanvas's audit group.
