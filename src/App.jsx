@@ -5540,6 +5540,39 @@ export default function App({
      artefact this exists to remove. */
   const holdPanelBody = useExitHold(windowSpeaks, 260);
 
+  /* --- IS THE GEOMETRY BAR ACTUALLY HOLDING THAT POSITION, OR JUST STANDING
+         IN IT? ---------------------------------------------------------------
+     THE UNARMED ROW OF PRIMITIVES IS THE ONE STATE THAT YIELDS, and telling it
+     apart from every state that is really in flight is the whole of this. A click in a space raises
+     that row (see `onCanvasClick`) — the most ordinary press on this drawing —
+     and nothing closes it again when a fitting is then picked up. So every bar
+     that read `!geometry.bar.mode` was reading "has anybody opened the geometry
+     tools this session", not "is somebody drawing": select a split unit after
+     clicking its room and the AC bar was withheld for a row of primitives with
+     none of them live, which is a bar about the next press losing its place to
+     a bar about no press at all.
+
+     EVERY OTHER STATE REALLY IS IN FLIGHT AND REALLY DOES KEEP IT. `draw` and
+     `sides` are a gesture with a tick and a bin on this bar, and a readout
+     about a unit selected earlier must not take their place. `edit` cannot
+     collide at all — the register holds one kind (see lib/selection.js), so a
+     shape and an object are never both selected — and it is stated rather than
+     left out so the rule reads as the states it is about.
+
+     `pick` ALONE IS NOT THE TEST, WHICH IS THE ONE TRAP HERE. `shapeBarMode`
+     answers `pick` for an ARMED primitive that has not been dragged yet as well
+     as for the row with nothing live — both have no draft and no selection to
+     report — so the tool has to be asked for separately. A press on a fitting
+     does reach it in that state (an object is never made inert by
+     `placingGeometry`, only the lamps are), and hiding a bar somebody has a
+     rectangle armed on would be taking the tool out of their hands.
+
+     IT IS THE SAME RULE `selectedFixtureAtTop` ALREADY MAKES for the vertical
+     column's light window, said about the three bars at the foot of the stage;
+     see the note there for the argument in full. */
+  const shapeBarHolds = !!geometry.bar.mode
+    && !(geometry.bar.mode === 'pick' && !geometry.bar.tool);
+
   /* --- IS THE MODULE BAR THE ONE STANDING AT THE FOOT OF THE DRAWING? -------
      ONE BAR IN THAT PLACE, AND THIS IS THE FOURTH THING THAT CLAIMS IT — after
      the downlight's specification, a selected array's, and the shape bar. So it
@@ -5568,9 +5601,11 @@ export default function App({
      THE SELECTED FAN WINS WHEN BOTH ARE TRUE. Arming a tool does not clear the
      selection, and the object in front of you is the more specific subject.
 
-     `!geometry.bar.mode` IS THE ONE-BAR-AT-A-TIME RULE, exactly as `moduleBarOn`
+     `shapeBarHolds` IS THE ONE-BAR-AT-A-TIME RULE, exactly as `moduleBarOn`
      states it: the shape bar and this one stand in the same place at the foot
-     of the stage, and the shape bar is about what the DRAWING shows. */
+     of the stage, and a shape bar MID-GESTURE is about what the DRAWING shows.
+     It is not `geometry.bar.mode` — see `shapeBarHolds` for why the unarmed row
+     of primitives does not get to keep the position. */
   const selFan = ceilingObjs.find((o) => o.id === selObjId && o.kind === 'fan') ?? null;
   /* AND IT YIELDS TO THE THREE THAT WERE HERE FIRST. A fan selection and an
      armed downlight cannot really coexist — the register holds one kind (see
@@ -5579,7 +5614,7 @@ export default function App({
      COB tool is now in hand" is reachable, and two bars in one place is the
      bug lib/selection.js was written to end. The tool in hand is the more
      urgent subject; the fan is still there when it is put away. */
-  const fanBarOn = !readOnly && !geometry.bar.mode && !moduleBarOn
+  const fanBarOn = !readOnly && !shapeBarHolds && !moduleBarOn
     && addTool !== 'cob' && !selArrayBar && (armed === 'fan' || !!selFan);
   const fanBarSweep = selFan ? sweepMm(selFan) : fanSweepMm;
 
@@ -5609,7 +5644,7 @@ export default function App({
   const selAc = ceilingObjs.find(
     (o) => o.id === selObjId && isWallUnit(o) && isSeated(o)) ?? null;
   const acArmed = typeOnWall(armed);
-  const acBarOn = !readOnly && !geometry.bar.mode && !moduleBarOn && !fanBarOn
+  const acBarOn = !readOnly && !shapeBarHolds && !moduleBarOn && !fanBarOn
     && addTool !== 'cob' && !selArrayBar && (acArmed || !!selAc);
   const acBar = selAc
     ? { feed: feedOf(selAc), amps: acFeed.ampsOf(selAc) }
@@ -5617,7 +5652,7 @@ export default function App({
 
   const selPoints = doc.elecPoints.filter((q) => selPointIds.includes(q.id));
   const pointArmed = POINT_IDS.includes(armed);
-  const pointBarOn = !readOnly && !geometry.bar.mode && !moduleBarOn && !fanBarOn
+  const pointBarOn = !readOnly && !shapeBarHolds && !moduleBarOn && !fanBarOn
     && !acBarOn && addTool !== 'cob' && !selArrayBar
     && (pointArmed || selPoints.length > 0);
   const pointBar = (() => {
@@ -7834,7 +7869,15 @@ export default function App({
                 is the supply, and that is what stands here. Two tenses, like the
                 fan's and the point's: armed it says what the next unit will get,
                 selected it says what this one has. See AcSpec. */}
-            {!readOnly && acBarOn && autoLead && (
+            {/* `acBarOn` IS THE WHOLE CONDITION, AND `autoLead` USED TO BE IN
+                IT. It is the LEAD's content — the two layer switches — and it
+                is null in the vertical column by design (see `autoLead`), so
+                requiring it here meant the bar existed in one layout and not
+                the other. Harmless while the shape bar outranked it; not
+                harmless now that this claims the slot and stands the
+                primitives down (see `shapeBarHolds`), because the column would
+                have shown no bar at all. It is a prop, like the fan's. */}
+            {acBarOn && (
               <AcSpec stage={barBox} lead={autoLead} placement={barPlace}
                 label={CEILING_BY_ID[selAc?.typeId ?? armed]?.label ?? 'Split AC'}
                 feed={acBar.feed} amps={acBar.amps} ratings={acRatings(acCountry)}
@@ -7850,7 +7893,8 @@ export default function App({
                 onFeed={(f) => selAc && acFeed.setFeed(selAc, f)}
                 onAmps={(a) => selAc && acFeed.setAmps(selAc, a)} />
             )}
-            {!readOnly && pointBarOn && autoLead && (
+            {/* `autoLead` IS A PROP HERE TOO, not a term — see the AC bar. */}
+            {pointBarOn && (
               <PointSpec stage={barBox} lead={autoLead} placement={barPlace}
                 onWall={pointBar.onWall} heightMm={pointBar.heightMm}
                 /* THE RESOLVED COUNTRY AND NOT App's OWN `country` PROP,
@@ -7901,8 +7945,18 @@ export default function App({
                 anything inside the <svg> would be scaled by the zoom. Where it
                 sits in the tree decides only what it is a sibling of.
                 NOT ON THE READ-ONLY SHEET. Every button on it changes the
-                ceiling. */}
-            {!readOnly && geometry.bar.mode && !selectedFixtureAtTop && (
+                ceiling.
+                AND NOT WHILE A SELECTED FITTING IS ASKING FOR THE SAME PLACE.
+                The three bars above hold the slot once this one is merely
+                STANDING in it rather than mid-gesture — see `shapeBarHolds`,
+                which is the same test read from the other side — so the two
+                halves of that rule are these three terms and the one term in
+                each of theirs. Without them the primitives would draw over the
+                bar they just stood aside for: `pick` is the only state that
+                yields, so this is only ever withholding an empty row, and it
+                comes back the moment the fitting is let go. */}
+            {!readOnly && geometry.bar.mode && !selectedFixtureAtTop
+              && !fanBarOn && !acBarOn && !pointBarOn && (
               /* --- AND IT STANDS AT THE FOOT OF THE DRAWING, NOT OF THE WINDOW
                  THE BOX IT IS MEASURED OFF IS THE WHOLE OF THE FIX. Every bar
                  here is fixed to the bottom centre of whatever it is handed (see
