@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth.jsx';
 import { stashUpload } from '../lib/pendingUpload.js';
 import { startPlanUpload } from '../lib/uploads.js';
 import Wordmark from '../components/Wordmark.jsx';
+import LegalLinks from '../components/LegalLinks.jsx';
 import HowToLink from '../components/HowToLink.jsx';
 import ScheduleDemoButton from '../components/ScheduleDemoButton.jsx';
 
@@ -129,9 +130,15 @@ export default function Home() {
         {err && <p className="text-[11.5px] leading-[1.5] mt-2 text-danger border-l-2 border-danger pl-[9px] max-w-[48ch]">{err}</p>}
       </main>
 
-      <footer className="flex-none flex justify-between px-[22px] py-4 border-t border-border/10 text-[11px] text-subtle bg-surface backdrop-blur-[5px]">
-        <span></span>
-        <span></span>
+      {/* THE FOOTER WAS TWO EMPTY SPANS held apart by `justify-between` — the
+          shape of a footer with nothing in it yet. It now carries the two things
+          a footer is for: who this is, and the documents that govern using it.
+          `flex-wrap` because three links and a company name do not fit one line
+          on a phone, and a footer that overflows horizontally is worse than one
+          that takes two lines. */}
+      <footer className="flex-none flex flex-wrap gap-y-2 items-center justify-between px-[22px] py-4 border-t border-border/10 text-[11px] text-subtle bg-surface backdrop-blur-[5px]">
+        <span>© {new Date().getFullYear()} Zima Blue Private Limited</span>
+        <LegalLinks />
       </footer>
     </div>
   );

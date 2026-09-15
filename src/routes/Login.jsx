@@ -7,6 +7,7 @@ import { toE164, normalisePhone } from '../lib/profile.js';
 import { DIAL_CODES, DEFAULT_ISO, splitDial, countryForDial, countryForIso, flagOf }
   from '../lib/dialCodes.js';
 import Wordmark from '../components/Wordmark.jsx';
+import LegalLinks from '../components/LegalLinks.jsx';
 
 // ---------------------------------------------------------------------------
 // A NUMBER, THEN SIX DIGITS. Two states in one component, because they are two
@@ -278,6 +279,21 @@ export default function Login() {
           </p>
         )}
       </div>
+
+      {/* BELOW THE CARD, NOT INSIDE IT. The card is one act — a number, then a
+          code — and a row of legal links inside its border would read as part of
+          that act rather than as the page's footer. It sits outside because
+          `m-auto` on the card centres it in whatever space is left, so adding a
+          footer moves the card up rather than pushing the links off screen.
+
+          THIS IS THE SCREEN WHERE THE LINKS MATTER MOST. Signing in is the
+          moment somebody is agreeing to the terms, and it is the screen a
+          payment provider looks at when it asks whether the terms were
+          available at the point of sign-up. */}
+      <footer className="flex-none w-full flex flex-wrap gap-y-2 items-center justify-between px-[22px] py-4 border-t border-border/10 text-[11px] text-subtle bg-surface backdrop-blur-[5px]">
+        <span>© {new Date().getFullYear()} Zima Blue Private Limited</span>
+        <LegalLinks />
+      </footer>
     </div>
   );
 }

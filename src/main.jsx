@@ -17,6 +17,7 @@ import AdminUserView from './routes/AdminUserView.jsx';
 import AdminUserProject from './routes/AdminUserProject.jsx';
 import AdminPlanViewer from './routes/AdminPlanViewer.jsx';
 import VerticalPreview from './routes/VerticalPreview.jsx';
+import Legal from './routes/Legal.jsx';
 import { FloatingScheduleDemoButton } from './components/ScheduleDemoButton.jsx';
 import './styles.css';
 
@@ -82,6 +83,14 @@ createRoot(document.getElementById('root')).render(
               login. Choosing a tier while signed out defers to /login and comes
               back with the choice intact. */}
           <Route path="/pricing" element={<Pricing />} />
+          {/* PUBLIC, AND DELIBERATELY OUTSIDE RequireAuth. A privacy policy that
+              can only be read once you have handed over a phone number is not a
+              privacy policy. These are also the pages a payment provider and an
+              app store check before they will look at anything else, and both
+              check them signed out. */}
+          <Route path="/terms" element={<Legal doc="terms" />} />
+          <Route path="/privacy" element={<Legal doc="privacy" />} />
+          <Route path="/refund" element={<Legal doc="refund" />} />
           <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
           <Route path="/projects/:projectId" element={<RequireAuth><ProjectDetail /></RequireAuth>} />
           <Route path="/plans/:planId" element={<RequireAuth><Planner /></RequireAuth>} />
