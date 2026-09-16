@@ -138,7 +138,7 @@ export default function Home() {
                 4.4vw was sized against the full width and would have run to five
                 lines in this column; the clamp still grows with the window, just
                 against the share of it this text actually owns. */}
-            <h1 className="mb-[10px] text-[clamp(32px,3.6vw,54px)] leading-[1.06] tracking-[-0.035em] max-w-[16ch]">The lighting design app you've always wanted</h1>
+            <h1 className="mb-[10px] text-[clamp(32px,3.6vw,54px)] leading-[1.06] tracking-[-0.035em] max-w-[16ch]">The simplest lighting design app</h1>
             <p className="mb-[26px] text-subtle max-w-[44ch] text-lg leading-[1.6]">
               See light coverage as you design. Auto generates fully flexible electrical layouts in a click.
             </p>
