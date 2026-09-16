@@ -7,6 +7,8 @@ import { listProjects, createProject, deleteProject,
          subscribeProjects, subscribePlans, coalesce } from '../lib/db.js';
 import { listSharedWithMe, removeShare } from '../lib/sharing.js';
 import { startPlanUpload } from '../lib/uploads.js';
+import { readProjectCache, saveProjectCache } from '../lib/projectCache.js';
+import { useAuth } from '../lib/auth.jsx';
 
 // ---------------------------------------------------------------------------
 // EVERY PROJECT. The top of the hierarchy, and the screen a returning user
@@ -26,17 +28,30 @@ import { startPlanUpload } from '../lib/uploads.js';
 // (0001_init.sql) and `listProjects()` sorts on that, so the projects run
 // most-recently-worked-on first. Both subscriptions stay for the same reason —
 // a plan being written in another tab reorders this list live.
+//
+// AND IT PAINTS BEFORE IT FETCHES. The two selects below cannot start until the
+// bundle has parsed and the session has been read, which is a long time to show
+// somebody three breathing rectangles about a list we already knew — so the
+// last answer is mirrored into localStorage (lib/projectCache.js) and this
+// screen opens on it, with the fetch revalidating underneath. The skeleton is
+// now what a FIRST visit looks like, which is the only visit that has nothing
+// honest to show.
 // ---------------------------------------------------------------------------
 export default function Dashboard() {
   const nav = useNavigate();
-  const [projects, setProjects] = useState(null);
+  // RequireAuth does not render this screen without a user, so the id is here on
+  // the very first render — which is the only render where it would be any use.
+  const { user } = useAuth();
+  // `null` STILL MEANS "NOTHING TO SHOW YET" and still draws the skeleton. What
+  // changed is how rarely it is null: a returning user opens on their own list.
+  const [projects, setProjects] = useState(() => readProjectCache(user?.id)?.projects ?? null);
   // SHARED PROJECTS ARE A SECOND LIST, NOT A FLAG ON THE FIRST. They are not
   // yours: you cannot delete them, you may not be able to edit them, and the
   // one on top is not "what you were working on" — it is whatever somebody else
   // touched last. Mixing them into the grid above would make every card need a
   // badge to explain which kind it was, which is the tell that it should have
   // been two lists.
-  const [shared, setShared] = useState(null);
+  const [shared, setShared] = useState(() => readProjectCache(user?.id)?.shared ?? null);
   const [err, setErr] = useState('');
   const [over, setOver] = useState(false);
   const [newProject, setNewProject] = useState(false);
@@ -49,15 +64,33 @@ export default function Dashboard() {
     // list by a wide margin — so they are settled independently and each list
     // reports its own emptiness.
     const [mine, theirs] = await Promise.allSettled([listProjects(), listSharedWithMe()]);
+    // A FAILURE NO LONGER EMPTIES A LIST WE ARE ALREADY DRAWING, and the cache is
+    // what made that distinction worth making. Before it, a failed refetch fell
+    // back to `[]` over a skeleton — nothing lost. Now it would replace the
+    // user's actual projects with "Drop a floor plan", which is a worse lie than
+    // the stale list it threw away. `cur ?? []` keeps whatever is on screen and
+    // only empties when there was never anything there, so a first visit still
+    // ends at the invitation rather than at an eternal skeleton.
     if (mine.status === 'fulfilled') setProjects(mine.value);
-    else { setErr(String(mine.reason?.message || mine.reason)); setProjects([]); }
+    else { setErr(String(mine.reason?.message || mine.reason)); setProjects((cur) => cur ?? []); }
     // A FAILURE HERE IS SILENT ON PURPOSE. Until migration 0006 has been run
     // against the database this query 404s on a table that does not exist yet,
     // and a red banner on everybody's dashboard is a bad way to find that out.
     // No shared projects and no shared section is the honest degradation.
     if (theirs.status === 'fulfilled') setShared(theirs.value);
-    else { console.warn('[dashboard] shared projects unavailable', theirs.reason); setShared([]); }
-  }, []);
+    else {
+      console.warn('[dashboard] shared projects unavailable', theirs.reason);
+      setShared((cur) => cur ?? []);
+    }
+    // ONLY WHAT ACTUALLY CAME BACK IS MIRRORED. `undefined` leaves the stored
+    // list alone — see saveProjectCache. Caching the `[]` from a failed shares
+    // query would make one 404 hide a real list on the next visit, which is
+    // exactly the failure the settle-independently rule above exists to avoid.
+    saveProjectCache(user?.id, {
+      projects: mine.status === 'fulfilled' ? mine.value : undefined,
+      shared: theirs.status === 'fulfilled' ? theirs.value : undefined,
+    });
+  }, [user?.id]);
 
   useEffect(() => { load(); }, [load]);
 

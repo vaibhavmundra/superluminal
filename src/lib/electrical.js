@@ -1572,19 +1572,43 @@ export function asDrawn(b) {
  * drop between them has to pick one; picking the one whose middle the pointer is
  * nearest is the only answer that responds to aiming.
  */
+/**
+ * HOW FAR A POINT IS FROM A PLATE'S BODY — zero anywhere on it, and growing
+ * from its edge outwards. In the plate's own frame, for `boardUnder`'s reason.
+ *
+ * IT IS THE RECTANGLE AND NOT THE ANCHOR, WHICH IS THE WHOLE OF WHY IT EXISTS.
+ * `b.point` is where the plate is SEATED on the wall, not its middle, and a
+ * bedside sconce sits on exactly that point — see `coincident` in flows.js. So
+ * a caller choosing between "the plate" and "the fitting" by distance to
+ * `b.point` is comparing two numbers that can never separate, and the fitting
+ * wins every time. Measured to the BODY, aiming an inch into the plate gives
+ * zero for the plate and a real distance for the sconce, and the two targets
+ * come apart the way they look as though they should.
+ *
+ * `{ outA, outD }` ARE KEPT SEPARATE for `boardUnder`, which tests them against
+ * its slop one axis at a time — a rectangle a few pixels deep and a foot long
+ * has to forgive differently in the two directions.
+ */
+export function boardGap(p, b) {
+  if (!p || !b?.point || !b.along || !b.inward) return null;
+  const rel = sub(p, b.point);
+  const a = dot(rel, b.along);
+  const d = dot(rel, b.inward);
+  const half = (b.alongPx ?? 0) / 2, deep = b.deepPx ?? 0;
+  // How far outside the rectangle the point is, on each axis. Zero inside.
+  const outA = Math.max(0, Math.abs(a) - half);
+  const outD = Math.max(0, d < 0 ? -d : d - deep);
+  return { a, d, half, deep, outA, outD, gap: Math.hypot(outA, outD) };
+}
+
 export function boardUnder(p, boards = [], { pxPerFt = 0, slopFt = 0.5 } = {}) {
   if (!p) return null;
   const slop = Math.max(4, slopFt * (pxPerFt || 0));
   let best = null, bestScore = Infinity;
   for (const b of boards) {
     if (!b?.point || !b.along || !b.inward) continue;
-    const rel = sub(p, b.point);
-    const a = dot(rel, b.along);
-    const d = dot(rel, b.inward);
-    const half = (b.alongPx ?? 0) / 2, deep = b.deepPx ?? 0;
-    // How far outside the rectangle the point is, on each axis. Zero inside.
-    const outA = Math.max(0, Math.abs(a) - half);
-    const outD = Math.max(0, d < 0 ? -d : d - deep);
+    const g = boardGap(p, b);
+    const { a, d, deep, outA, outD } = g;
     if (outA > slop || outD > slop) continue;
     // Inside, prefer the plate whose centre the pointer is nearest; outside,
     // prefer the near miss. One score does both.

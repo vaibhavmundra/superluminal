@@ -23,6 +23,14 @@ import { vectorSource } from '../src/lib/planSource.js';
 import { toSuperluminalDXF, SUPERLUMINAL_LAYERS } from '../src/lib/exporters.js';
 import { SYMBOL_FT, COB_DIA_IN, AIM_FT, SCONCE_FT, FAN_FT } from '../src/lib/settings.js';
 import { placeZone } from '../src/lib/accentPlace.js';
+/* THE ELECTRICAL DRAWING, THROUGH ITS OWN PASSES. A plate seated by hand, two
+   points resolved against the walls and a set of loops planned over a row of
+   lights — built the way the app builds them, because a fixture shaped to look
+   like what those produce is a fixture that agrees with a misunderstanding. */
+import { placedBoards, asOutlet, SB_MM } from '../src/lib/electrical.js';
+import { wallPoint, ceilingPoint, projectElecPointsPx, pointHostFor, POINT_FT }
+  from '../src/lib/elecPoints.js';
+import { planFlows } from '../src/lib/flows.js';
 import { dxf, line } from './dxfwrite.mjs';
 
 let fail = 0;
@@ -111,12 +119,51 @@ console.log('\n-- the round trip --');
 
   const names = layers.map((l) => l.name).sort();
   ok(names.join(',') === 'superluminal_ceiling_objects,superluminal_decorative,'
-     + 'superluminal_led_strips,superluminal_reverse_coves,superluminal_rooms,'
-     + 'superluminal_spots,superluminal_track_fixtures,superluminal_tracks',
-    `eight layers, declared in a real LAYER table: ${names.join(', ')}`);
+     + 'superluminal_led_strips,superluminal_points,superluminal_reverse_coves,'
+     + 'superluminal_rooms,superluminal_spots,superluminal_switchboards,'
+     + 'superluminal_track_fixtures,superluminal_tracks,superluminal_wire_chain,'
+     + 'superluminal_wire_feed,superluminal_wire_two_way',
+    `thirteen layers, declared in a real LAYER table: ${names.join(', ')}`);
   ok(layers.every((l) => l.colour > 0), 'each with a colour');
-  ok(new Set(layers.map((l) => l.colour)).size === layers.length,
+  /* DISTINCT, WITH ONE DELIBERATE PAIR. The plate and the wire that leaves it
+     share a colour on purpose — see SL_COLOUR, which quotes the canvas: "the
+     wire and the plate are one object ... it says so by being drawn in the
+     board's colour". Asserted as a named exception rather than by loosening the
+     rule, so a SECOND collision still fails this. */
+  const shared = [SUPERLUMINAL_LAYERS.switchboards, SUPERLUMINAL_LAYERS.wireFeed];
+  const spread = layers.filter((l) => l.name !== shared[1]);
+  ok(new Set(spread.map((l) => l.colour)).size === spread.length,
     'and a distinct one, so they are told apart on import');
+  const pair = layers.filter((l) => shared.includes(l.name));
+  ok(pair.length === 2 && pair[0].colour === pair[1].colour,
+    `...except the plate and its feed, which are one object: ${pair[0]?.colour}`);
+  /* THE LINETYPE TABLE HAS TO HOLD EVERY PATTERN A LAYER NAMES, and it has to
+     come FIRST — a CAD that reads a layer before its pattern exists throws the
+     reference away silently, and the only symptom is a wire that arrives solid.
+     See slHeader, which says this and is what this checks. */
+  const lts = [...out.matchAll(/\n0\nLTYPE\n2\n([^\n]+)/g)].map((m) => m[1]);
+  ok(['CONTINUOUS', 'DOTTED', 'WIRE', 'WIRECHAIN'].every((n) => lts.includes(n)),
+    `every pattern a layer names is defined: ${lts.join(', ')}`);
+  ok(out.indexOf('\nLTYPE\n') < out.indexOf('\nLAYER\n'),
+    'and the LTYPE table is written before the LAYER table that references it');
+  /* --- AND THE WIRES CARRY THEIR OWN COLOUR AND PATTERN ------------------
+     WHICH IS WHAT A CAD FILE HAS INSTEAD OF A WEIGHT. R12 has no lineweight at
+     all, so the feed/chain hierarchy the canvas draws with colour AND thickness
+     has to be carried by the colour and the PATTERN — and both live on the
+     LAYER, so a file copied into somebody else's drawing keeps them where a
+     per-entity override would be purged. */
+  const byName = new Map(layers.map((l) => [l.name, l]));
+  const lt = (k) => (out.match(
+    new RegExp(`\n0\nLAYER\n2\n${SUPERLUMINAL_LAYERS[k]}\n70\n0\n62\n\\d+\n6\n([^\n]+)`)) || [])[1];
+  ok(lt('wireFeed') === 'WIRE' && lt('wireTwoWay') === 'WIRE'
+     && lt('wireChain') === 'WIRECHAIN',
+    `each wire layer names its pattern: ${lt('wireFeed')}, ${lt('wireChain')}, ${lt('wireTwoWay')}`);
+  ok(lt('switchboards') === 'CONTINUOUS' && lt('points') === 'CONTINUOUS',
+    'while a plate and a point are solid — they are objects, not runs');
+  const wireCols = ['wireFeed', 'wireChain', 'wireTwoWay']
+    .map((k) => byName.get(SUPERLUMINAL_LAYERS[k])?.colour);
+  ok(new Set(wireCols).size === 3,
+    `and the three kinds of wire are three colours: ${wireCols.join(', ')}`);
 
   // THE ASSERTION THIS FILE EXISTS FOR.
   const circle = entities.find((e) => e.type === 'CIRCLE' && e.layer === SUPERLUMINAL_LAYERS.spots);
@@ -583,11 +630,24 @@ console.log('\n-- a fan is three blades at its own sweep, not a plus --');
   // A fan is not a lamp: nothing on this layer gets the filled mark.
   ok(entities.every((e) => e.type !== 'SOLID' || e.layer !== S.objects),
     'and nothing on the layer is filled — a ceiling object does not emit');
-  // The geyser keeps the crosshair: two lines through its centre, not three.
+  /* THE GEYSER IS A TANK IN ITS CASING WITH A PIPE OFF IT, and it used to be the
+     generic round mark — a circle with a crosshair, which is a fan with its
+     blades missing. Two concentric rings and one stub, which is what the canvas
+     draws and what says this is plumbing rather than a light. */
   const g = source.toDu(source.fromDu({ x: OX + 11 * MM, y: OY + 7 * MM }));
-  const cross = entities.filter((e) => e.type === 'LINE' && e.layer === S.objects
-    && near((e['10'] + e['11']) / 2, g.x, 0.01));
-  ok(cross.length === 2, `a geyser still gets the crosshair: ${cross.length} lines`);
+  const rings = entities.filter((e) => e.type === 'CIRCLE' && e.layer === S.objects
+    && near(e['10'], g.x, 0.01)).map((e) => e['40'] / MM).sort((a, b) => b - a);
+  ok(rings.length === 2 && near(rings[0], 0.75, 0.01) && near(rings[1], 0.375, 0.01),
+    `the casing at its real radius and the tank inside it: ${rings.map((r) => r.toFixed(3)).join(', ')} ft`);
+  const stub = entities.filter((e) => e.type === 'LINE' && e.layer === S.objects
+    && near(e['10'], g.x, 0.01) && near(e['11'], g.x, 0.01));
+  ok(stub.length === 1, `and one stub for the pipework, not a crosshair: ${stub.length}`);
+  // AND IT LEAVES THE CASING RATHER THAN CROSSING IT: both ends outside the tank,
+  // the far one outside the casing. The canvas draws 0.92R to 1.35R.
+  const ends = stub[0] ? [Math.abs(stub[0]['21'] - g.y), Math.abs(stub[0]['20'] - g.y)]
+    .map((d) => d / MM).sort((a, b) => a - b) : [];
+  ok(ends.length === 2 && near(ends[0], 0.75, 0.02) && near(ends[1], 0.75 * 1.35, 0.02),
+    `running out of the casing, not through it: ${ends.map((d) => d.toFixed(2)).join(' to ')} ft`);
 }
 
 console.log('\n-- a sconce is a crosshair STANDING OFF its wall --');
@@ -658,6 +718,196 @@ console.log('\n-- a sconce is a crosshair STANDING OFF its wall --');
   const bareOn = bare.entities.filter((e) => e.layer === S.decorative);
   ok(bareOn.some((e) => e.type === 'CIRCLE') && !bareOn.some((e) => e.type === 'LINE'),
     'a sconce with no wall stored falls back to the ring rather than vanishing');
+}
+
+// ---------------------------------------------------------------------------
+// THE ELECTRICAL DRAWING, WHICH REACHED NEITHER EXPORT.
+//
+// Every plate, every socket outlet, every wall and ceiling point, every
+// air-conditioner's supply and lead and every switched loop lived only on
+// screen: `toSuperluminalDXF` had no parameter for any of them. A plan whose
+// second half is a wiring layout exported as a lighting drawing with the wiring
+// silently gone — the same class of failure the three missing lamp populations
+// were, one domain over.
+//
+// BUILT THROUGH THE REAL PASSES AND NOT BY HAND. `placedBoards` seats the plate,
+// `projectElecPointsPx` resolves the points, `planFlows` builds the loops: a
+// fixture shaped here to look like what those produce is a fixture that agrees
+// with a misunderstanding rather than with the app.
+// ---------------------------------------------------------------------------
+
+console.log('\n-- the plates, the points and the wires reach the file --');
+{
+  const S = SUPERLUMINAL_LAYERS;
+  const pf = source.pxPerFt;
+  const poly = [{ x: OX, y: OY }, { x: OX + w, y: OY },
+                { x: OX + w, y: OY + h }, { x: OX, y: OY + h }].map(source.fromDu);
+
+  // A PLATE SOMEBODY DROPPED, and the same plate CONVERTED to a socket outlet.
+  // The two are one rectangle on one layer, because a socket outlet IS a plate
+  // — a board with an outlet on it and no switch — and the canvas draws them
+  // identically. What tells them apart is the schedule.
+  const [plate] = placedBoards([{ id: 'b1', roomId: 'r1', sFt: 6 }],
+                               { polygonPx: poly, pxPerFt: pf });
+  ok(!!plate, 'the plate seats on a wall through the real placement pass');
+
+  // A WALL POINT AND A CEILING POINT, resolved the way the canvas resolves them.
+  const host = pointHostFor(poly, pf);
+  const pts = projectElecPointsPx(
+    [wallPoint('r1', 0.3, { id: 'ep1' }), ceilingPoint('r1', 7, 5, { id: 'ep2' })],
+    () => host, pf);
+  ok(pts.length === 2 && !!pts[0].foot && !pts[1].foot,
+    'a wall point carries a foot on the plaster and a ceiling point does not');
+
+  // A LOOP, WITH A CHAIN IN IT AND A SECOND PLATE ON IT. Two plates, so the
+  // two-way has somewhere else to be: `relink` refuses a second feed that names
+  // the plate the loop already runs off, correctly.
+  const both = placedBoards([{ id: 'b1', roomId: 'r1', sFt: 6 },
+                             { id: 'b2', roomId: 'r1', sFt: 20 }],
+                            { polygonPx: poly, pxPerFt: pf });
+  /* THE LIGHTS CARRY THE CELL THEY STAND IN, because that is how a row is
+     found: `chunkOf` and `crossOf` read a downlight's own `cell`, not its
+     coordinates. Four lamps sharing a `j` is one row, which is what the planner
+     hands over and what the loop is a loop of. */
+  const lights = [0, 1, 2, 3].map((i) => ({ id: `L${i}`, kind: 'small',
+    cell: { chunk: 'c0', i, j: 0 },
+    ...source.fromDu({ x: OX + (3 + i * 2) * MM, y: OY + 6 * MM }) }));
+  const scene = {
+    room: { id: 'r1', polygonPx: poly },
+    bays: [{ key: 'room', rect: { x0: poly[0].x, y0: poly[0].y,
+                                  x1: poly[2].x, y1: poly[2].y } }],
+    /* ONE CHUNK OVER THE ROW, because a row is a fact about a CHUNK — see
+       `rowsOf`, which groups a chunk's own lights by their cross index. Handed
+       an empty cut, every light is a light in no chunk and no loop runs. */
+    chunks: [{ id: 'c0', x0: poly[0].x, y0: poly[0].y, x1: poly[2].x, y1: poly[2].y,
+               xLines: [], yLines: [] }],
+    cells: [], lights, lamps: [], objects: [], accents: [], spots: [],
+    tracks: [], boards: both, handPlates: [], outlets: [], elecPoints: [],
+    boardPool: both, owner: new Map(), zones: [], pxPerFt: pf,
+  };
+  const dry = planFlows(scene).flows;
+  const loop = dry.find((f) => f.count > 1) ?? dry[0];
+  const other = both.find((b) => b.id !== loop.boardId);
+  const flows = planFlows({ ...scene, twoWay: { [loop.id]: other.id } }).flows;
+  const two = flows.find((f) => f.also);
+  ok(!!two, 'a flow two-wayed onto the other plate carries a second feed');
+
+  const { entities } = scan(toSuperluminalDXF({
+    source, switchboards: [asOutlet(both[0], 6), both[1]], elecPoints: pts, flows,
+  }));
+  const on = (layer, type) => entities.filter((e) => e.layer === layer
+    && (!type || e.type === type));
+
+  // --- the plate --------------------------------------------------------
+  const plates = on(S.switchboards, 'POLYLINE');
+  ok(plates.length === 2 && plates.every((e) => e.verts.length === 4 && e.closed),
+    `both plates are closed four-point polygons: ${plates.length}`);
+  ok(on(S.switchboards, 'SOLID').length === 2,
+    'and each is FILLED — a plate is a solid, not a symbol outlined');
+  // 230 x 80 mm, THE PLATE'S REAL SIZE, measured in the file. This is the one
+  // that catches an export that draws the right shape at the wrong scale.
+  const edge = (e, i, j) => Math.hypot(e.verts[j]['10'] - e.verts[i]['10'],
+                                       e.verts[j]['20'] - e.verts[i]['20']);
+  ok(near(edge(plates[0], 0, 1), SB_MM.along, 0.5)
+     && near(edge(plates[0], 1, 2), SB_MM.deep, 0.5),
+    `at 230 x 80 mm: ${edge(plates[0], 0, 1).toFixed(0)} x ${edge(plates[0], 1, 2).toFixed(0)} mm`);
+  // AND A SOCKET OUTLET IS THE SAME RECTANGLE. `asOutlet` converted the first
+  // one; if the exporter had filtered on `socketOnly` there would be one plate.
+  ok(plates.length === on(S.switchboards, 'SOLID').length,
+    'a converted plate is on the drawing like any other — a socket is a plate');
+
+  // --- the points -------------------------------------------------------
+  ok(on(S.points, 'CIRCLE').length === 2, 'both points are a circle on the points layer');
+  ok(on(S.points, 'CIRCLE').every((e) => near(e['40'] / MM, POINT_FT.r, 1e-3)),
+    `at the sconce's own radius: ${(on(S.points, 'CIRCLE')[0]['40'] / MM).toFixed(3)} ft`);
+  ok(on(S.points, 'POLYLINE').length === 2
+     && on(S.points, 'POLYLINE').every((e) => !e.closed && e.verts.length > 3),
+    'each with an OPEN J in it — a closed one floods to a blob');
+  // ONE STEM, NOT TWO. A ceiling point has no plaster to stand off, so a leader
+  // drawn to the nearest wall would claim something the plan does not say.
+  ok(on(S.points, 'LINE').length === 1,
+    `the wall point has a stem and the ceiling point does not: ${on(S.points, 'LINE').length}`);
+
+  // --- the wires --------------------------------------------------------
+  const feeds = on(S.wireFeed, 'POLYLINE');
+  const chain = on(S.wireChain, 'POLYLINE');
+  const twos = on(S.wireTwoWay, 'POLYLINE');
+  ok(feeds.length === flows.length,
+    `one feed leg per loop, on its own layer: ${feeds.length} of ${flows.length}`);
+  ok(chain.length > 0, `and the chain between fittings on another: ${chain.length}`);
+  ok(twos.length === 1, `and the second feed of the two-way on a third: ${twos.length}`);
+  // BOWED, WHICH IS THE WHOLE REASON THE GEOMETRY IS ARCS. A straight line
+  // between two downlights is a setting-out line, a grid line or a wall — this
+  // drawing has all three — and a flattener that dropped the curve would put the
+  // wire back among them.
+  const sag = (e) => {
+    const a = e.verts[0], b = e.verts[e.verts.length - 1];
+    const L = Math.hypot(b['10'] - a['10'], b['20'] - a['20']) || 1;
+    return Math.max(...e.verts.map((v) =>
+      Math.abs((b['10'] - a['10']) * (a['20'] - v['20'])
+             - (a['10'] - v['10']) * (b['20'] - a['20'])) / L));
+  };
+  ok(feeds.every((e) => e.verts.length > 2) && sag(feeds[0]) > 1,
+    `a wire arrives bowed and not as a straight run: ${(sag(feeds[0]) / MM).toFixed(2)} ft off the chord`);
+  // THE TICK IS SOLID ON A DASHED LAYER, and it has to be: it is shorter than
+  // the pattern the layer carries, so without the override it lands in a gap as
+  // often as not and is simply not in the drawing.
+  const ticks = [...scan(toSuperluminalDXF({ source, flows })).entities]
+    .filter((e) => e.type === 'LINE' && e.layer === S.wireFeed);
+  ok(ticks.length === flows.length, `one feed tick per loop: ${ticks.length}`);
+  const raw = toSuperluminalDXF({ source, flows });
+  ok(new RegExp(`0\nLINE\n8\n${S.wireFeed}\n6\nCONTINUOUS\n`).test(raw),
+    'and it overrides its layer to CONTINUOUS so it cannot fall in a gap');
+
+  // --- the lead from a wall unit to its socket ---------------------------
+  //
+  // AN AIR-CONDITIONER IS PLUGGED IN. Without the flex the unit and the socket a
+  // foot away are two marks that happen to be near each other.
+  const seatPt = { x: poly[0].x + 5 * source.pxPerFt, y: poly[0].y };
+  const unit = { id: 'ac1', kind: 'split_ac', x: seatPt.x, y: seatPt.y + 8,
+                 w: 3 * pf, h: 0.8 * pf, rot: 0, r: 1, onWall: true, source: 'placed',
+                 seat: { point: seatPt, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 } } };
+  const acPlate = { ...both[1], acId: 'ac1' };
+  const withLead = scan(toSuperluminalDXF({
+    source, objects: [unit], switchboards: [acPlate] }));
+  const leads = withLead.entities.filter((e) => e.type === 'LINE' && e.layer === S.wireFeed);
+  ok(leads.length === 1, `the lead reaches the file as one line: ${leads.length}`);
+  // A POINT FEED HAS NO LEAD, and that is not an omission: a point is centred
+  // behind the body, so the line would run from the unit to itself.
+  const noLead = scan(toSuperluminalDXF({
+    source, objects: [{ ...unit, feed: 'point' }], switchboards: [acPlate] }));
+  ok(!noLead.entities.some((e) => e.layer === S.wireFeed),
+    'and a unit fed from a point behind it draws none');
+}
+
+console.log('\n-- a split unit is a rectangle, and it was coming out as a circle --');
+{
+  const S = SUPERLUMINAL_LAYERS;
+  /* THE TEST WAS A CHAIN OF TWO KINDS AND THE CATALOGUE HAS FOUR. A split AC
+     failed it, fell to the round branch, and exported as a circle at half its
+     own DIAGONAL with a centre mark in it — the rectangle that is the whole of
+     what a split unit looks like in plan was never drawn. */
+  const wFt = 1000 / 304.8, hFt = 250 / 304.8;
+  const unit = { id: 'sa', kind: 'split_ac', ...px, rot: 0,
+                 w: wFt * source.pxPerFt, h: hFt * source.pxPerFt,
+                 r: (Math.hypot(wFt, hFt) / 2) * source.pxPerFt,
+                 offCeiling: true, onWall: true, source: 'placed' };
+  const { entities } = scan(toSuperluminalDXF({ source, objects: [unit] }));
+  const box = entities.filter((e) => e.type === 'POLYLINE' && e.layer === S.objects);
+  ok(box.length === 1 && box[0].verts.length === 4,
+    `the unit is a closed four-point rectangle: ${box.length}`);
+  const side = (i, j) => Math.hypot(box[0].verts[j]['10'] - box[0].verts[i]['10'],
+                                    box[0].verts[j]['20'] - box[0].verts[i]['20']) / MM;
+  ok(near(side(0, 1), wFt, 0.01) && near(side(1, 2), hFt, 0.01),
+    `at 1000 x 250 mm: ${(side(0, 1) * 304.8).toFixed(0)} x ${(side(1, 2) * 304.8).toFixed(0)} mm`);
+  ok(!entities.some((e) => e.type === 'CIRCLE' && e.layer === S.objects),
+    'and NOT a circle at half its diagonal, which is what it used to be');
+  // THE LOUVRES, which are what make a long thin rectangle a split unit rather
+  // than a duct, a beam or a shelf — this drawing carries all three.
+  const louvres = entities.filter((e) => e.type === 'LINE' && e.layer === S.objects);
+  ok(louvres.length === 3, `three louvres along its length: ${louvres.length}`);
+  ok(louvres.every((e) => near(Math.abs(e['21'] - e['20']), 0, 1e-6)),
+    'running the LENGTH of the unit, which is how the blades sit');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

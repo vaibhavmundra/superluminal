@@ -27,6 +27,20 @@ import { TRACK_DIMS_IN } from './track.js';
    standing off a wall where this drew a ring on it, and the canvas drew three
    blades at the fan's own sweep where this drew a fixed four-armed plus. */
 import { SYMBOL_FT, AIM_FT, SCONCE_FT, FAN_FT } from './settings.js';
+/* THE ELECTRICAL DRAWING'S OWN GEOMETRY, BORROWED WHOLE. Three shapes reach
+   this file from where they are decided rather than being restated in it: a
+   point's J (the canvas draws the same curve), a wire flattened into points
+   (the canvas strokes the same path), and the lead from a wall unit to its
+   socket (the canvas draws the same two ends). Every one of them is the kind of
+   claim the note above is about — a shape written out in one drawing and not
+   the other drifts, and every one that ever was written out twice here had. */
+import { glyphJPoints } from './elecPoints.js';
+import { flowWires, feedTicks, WIRE_TICK_FT } from './flows.js';
+import { acLead } from './wallUnit.js';
+/* WHICH CEILING OBJECTS ARE A RECTANGLE, from the catalogue rather than from a
+   chain of `||` here. See `isRect` — the chain this file used to carry named
+   two kinds, the catalogue has four, and the split unit was the one it missed. */
+import { isRect } from './ceilingObjects.js';
 
 export function download(filename, content, mime = 'text/plain') {
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
@@ -237,8 +251,21 @@ export async function svgToPNG(svgEl, width, { asScanned = true, ground = '#fff'
 // and falls back to feet with Y flipped when the plan came from an image. Same
 // layers, same symbols, same fills, either way.
 
-function dxfLine(layer, x1, y1, x2, y2) {
-  return ['0','LINE','8',layer,'10',x1.toFixed(4),'20',y1.toFixed(4),'30','0.0',
+/**
+ * `ltype` IS AN ENTITY-LEVEL OVERRIDE, AND IT IS FOR ONE CASE ONLY.
+ *
+ * Every linetype in this file is set on the LAYER, for the reason SL_LINETYPE
+ * gives: a layer that carries its own pattern survives being copied into another
+ * drawing, where a per-entity override is the first thing a layer standard
+ * strips out. The exception is a mark that is SHORTER THAN THE PATTERN ITS
+ * LAYER carries — a wire's feed tick is three inches of line on a layer dashed
+ * at eight — which lands in a gap as often as not and simply is not in the
+ * drawing. A tick that is sometimes there is worse than no tick.
+ */
+function dxfLine(layer, x1, y1, x2, y2, ltype = null) {
+  return ['0','LINE','8',layer,
+          ...(ltype ? ['6',ltype] : []),
+          '10',x1.toFixed(4),'20',y1.toFixed(4),'30','0.0',
           '11',x2.toFixed(4),'21',y2.toFixed(4),'31','0.0'];
 }
 function dxfCircle(layer, x, y, r) {
@@ -392,6 +419,33 @@ export const SUPERLUMINAL_LAYERS = {
   decorative: 'superluminal_decorative',
   objects: 'superluminal_ceiling_objects',
   rooms: 'superluminal_rooms',
+  /* --- AND THE ELECTRICAL DRAWING, WHICH WAS NOT IN THIS FILE AT ALL -------
+     NOT ONE MARK OF IT REACHED EITHER EXPORT. Every plate, every socket outlet,
+     every wall and ceiling point, every air-conditioner's supply and lead, and
+     every switched loop on the drawing existed only on screen: `plotArgs` and
+     `dxfArgs` carried no electrical list of any kind, so a plan whose whole
+     second half is a wiring layout exported as a lighting drawing with the
+     wiring silently missing.
+     FIVE LAYERS AND NOT ONE, BY THE TRADE RULE THIS LIST IS BUILT ON — and here
+     the rule is sharper than usual, because the app itself already makes the
+     cut. `switchboards` and `electrical` are two switches on the View menu:
+     plates and points are WHERE THE SWITCHES AND THE OUTLETS GO, which a joiner
+     and a tiler both need and neither wants a wire over; the loops are WHAT IS
+     SWITCHED FROM WHERE, which is the wireman's own drawing. Somebody setting
+     out a wall wants the first without the second.
+     AND THE WIRES ARE THREE LAYERS BECAUSE THEY ARE THREE STATEMENTS. The feed
+     leg answers "which plate switches this" — the question the layer exists for
+     — the chain says "and on to the next lamp in this row", and a two-way's
+     second feed leaves a DIFFERENT plate and is not part of that loop's circuit
+     at all. The canvas paints those three in three colours for exactly that
+     reason (see SB_COLOUR, WIRE_CHAIN and WIRE_TWO_WAY in flows.js); in a
+     drawing the colour and the pattern both live on the layer, so the split
+     that carries them IS the layer split. */
+  switchboards: 'superluminal_switchboards',
+  points: 'superluminal_points',
+  wireFeed: 'superluminal_wire_feed',
+  wireChain: 'superluminal_wire_chain',
+  wireTwoWay: 'superluminal_wire_two_way',
 };
 
 /** Layer colours, so they are told apart the moment they import. */
@@ -404,6 +458,24 @@ const SL_COLOUR = {
   decorative: 6,   // magenta
   objects: 1,      // red
   rooms: 3,        // green
+  /* THE ELECTRICAL FOUR, AND THEY ARE THE SCREEN'S OWN COLOURS AT THE NEAREST
+     INDEX R12 CAN NAME. A drawing before AutoCAD 2004 has no true colour: there
+     is a table of 256 and an entity picks one. So #2563EB — the plate's blue,
+     and the wire's — is 160, #8A8A8A is 8 (which is that grey exactly), and
+     #D946EF is 200. A reader who has seen the sheet finds the same layer by the
+     same colour, which is the whole job.
+     THE FEED AND THE PLATE SHARE 160 ON PURPOSE, and it is the one place in this
+     table where two layers are deliberately one colour. The canvas states the
+     reason: "the wire and the plate are one object: the line means 'these
+     fittings come on from that board', and it says so by being drawn in the
+     board's colour." Giving the feed a hue of its own would break that sentence
+     to satisfy a rule about telling layers apart — and the layers are already
+     told apart, by name and by being switchable. */
+  switchboards: 160, // blue — the plate's own
+  points: 150,       // azure — a plate's neighbour, and not a plate
+  wireFeed: 160,     // the plate's blue again; see above
+  wireChain: 8,      // grey — the run between fittings
+  wireTwoWay: 200,   // magenta — the second plate a switch is reached from
 };
 
 /**
@@ -418,7 +490,23 @@ const SL_COLOUR = {
  * survives being copied into another drawing, where a per-entity override is the
  * first thing a purge or a layer standard strips out.
  */
-const SL_LINETYPE = { strips: 'DOTTED' };
+const SL_LINETYPE = {
+  strips: 'DOTTED',
+  /* A WIRE IS DASHED, AND THE TWO KINDS DASH DIFFERENTLY — which is the half of
+     "in their respective colours and line types" that survives being printed in
+     black. On screen the feed and the chain are told apart by colour AND by
+     weight; R12 has no lineweight at all (`370` is an AC1015 group code), so
+     weight has to be carried by the PATTERN. The feed is mostly ink and reads
+     heavy, the chain is mostly air and reads light — the same hierarchy, said
+     with the only two things this dialect has.
+     THE TWO-WAY TAKES THE FEED'S PATTERN because it IS a feed: it is the same
+     wire doing the same job from a second plate, and a lighter one would read as
+     a lesser connection. What tells it apart is the colour, which is exactly
+     what the canvas does. */
+  wireFeed: 'WIRE',
+  wireChain: 'WIRECHAIN',
+  wireTwoWay: 'WIRE',
+};
 
 // The dot and the gap, IN FEET, converted to the drawing's units at write time
 // so the pattern is the same size on a plan drawn in millimetres and one drawn
@@ -427,6 +515,13 @@ const SL_LINETYPE = { strips: 'DOTTED' };
 // LTSCALE is a document setting they may well have their own value for.
 const DOT_FT = 0.05;   // ~15 mm of ink
 const GAP_FT = 0.10;   // ~30 mm of air
+
+// The wire patterns, in feet, for the same reason and converted at the same
+// point. A feed is 67 mm of ink to 34 mm of air; a chain is 24 to 49. Longer
+// than the strip's dot on purpose: a wire crosses the whole drawing and a
+// pattern as fine as the tape's would read as the tape at any sensible scale.
+const WIRE_DASH_FT = 0.22, WIRE_DASH_GAP_FT = 0.11;
+const CHAIN_DASH_FT = 0.08, CHAIN_GAP_FT = 0.16;
 
 // The filled centre dot on a fitting whose BODY is large — a chandelier, a
 // pendant. A downlight's dot is 0.42 of its own ring, and this is that fraction
@@ -484,10 +579,14 @@ function slHeader(insunits, duPerFt) {
     // the reference away — silently, so the only symptom is a strip that arrives
     // continuous. CONTINUOUS is defined here too even though every CAD has it
     // built in, because every other layer in the table references it by name.
-    '0','TABLE','2','LTYPE','70','2',
+    '0','TABLE','2','LTYPE','70','4',
     ...slLtype('CONTINUOUS', 'Solid line', []),
     ...slLtype('DOTTED', 'Dotted . . . . . . . . . . . . . . . . . .',
                [DOT_FT * duPerFt, -GAP_FT * duPerFt]),
+    ...slLtype('WIRE', 'Wire __ __ __ __ __ __ __ __ __ __ __ __ __',
+               [WIRE_DASH_FT * duPerFt, -WIRE_DASH_GAP_FT * duPerFt]),
+    ...slLtype('WIRECHAIN', 'Wire, chain _ _ _ _ _ _ _ _ _ _ _ _ _ _ _',
+               [CHAIN_DASH_FT * duPerFt, -CHAIN_GAP_FT * duPerFt]),
     '0','ENDTAB',
     // An explicit LAYER table. Most CAD will invent a layer named by an entity
     // that references a missing one, but "most" is not a promise, and inventing
@@ -524,7 +623,29 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
                                        same gap the magnetic track had, one
                                        population later. See the block that
                                        draws them. Already in plan pixels. */
-                                    cobs = [] } = {}) {
+                                    cobs = [],
+                                    /* --- AND THE ELECTRICAL DRAWING ---------
+                                       THE WHOLE OF IT, AND NONE OF IT WAS HERE.
+                                       See the note on the five new layers in
+                                       SUPERLUMINAL_LAYERS for what was missing
+                                       and why it is split the way it is.
+                                       `switchboards` IS EVERY PLATE ON THE JOB
+                                       AND NOT THE DRAWING'S LIST. `switchboardsPx`
+                                       drops the bay plates while the wiring layer
+                                       is off, correctly, because a sheet is a
+                                       picture; a file is not, and withholding a
+                                       plate from something somebody imports to
+                                       work from would be this app deciding what
+                                       another trade may see. Same argument the
+                                       header already makes about `layers`.
+                                       ALL THREE ARE `*Px` PROJECTIONS, the
+                                       contract every list here arrives under. The
+                                       stores hold FEET and fractions of a wall —
+                                       a plate's position is a `u` and a point's
+                                       is an `xFt` — so a store handed in draws
+                                       nothing at all and says nothing about it. */
+                                    switchboards = [], elecPoints = [],
+                                    flows = [] } = {}) {
   // A DXF SOURCE OVERLAYS; ANYTHING ELSE IS A SHEET OF ITS OWN. This used to
   // throw on an image, which is why there was a second exporter and why the
   // second exporter was the one most people actually got.
@@ -545,7 +666,11 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
   const L = (ft) => ft * duPerFt;               // feet -> drawing units
   const { spots: LY_S, strips: LY_T, reverseCoves: LY_C, decorative: LY_D,
           objects: LY_O, rooms: LY_R, tracks: LY_K,
-          trackFixtures: LY_KF } = SUPERLUMINAL_LAYERS;
+          trackFixtures: LY_KF, switchboards: LY_SB, points: LY_EP,
+          wireFeed: LY_WF, wireChain: LY_WC, wireTwoWay: LY_W2 } = SUPERLUMINAL_LAYERS;
+  /** Which layer a run of wire belongs on. @see flowWires for the three kinds. */
+  const wireLayer = (kind) =>
+    (kind === 'two' ? LY_W2 : kind === 'chain' ? LY_WC : LY_WF);
 
   let out = slHeader(insunits, duPerFt);
   const add = (e) => { out = out.concat(e); };
@@ -732,15 +857,67 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
       }
       continue;
     }
-    if (o.w > 0 && o.h > 0 && (o.kind === 'ac' || o.kind === 'trapdoor')) {
+    /* --- A SPLIT UNIT IS A RECTANGLE, AND IT WAS COMING OUT AS A CIRCLE ----
+       THE TEST WAS A CHAIN OF TWO KINDS — `'ac' || 'trapdoor'` — AND THE
+       CATALOGUE HAS FOUR. A split AC failed it, fell to the round branch below,
+       and exported as a circle at whatever `r` the projection had given it,
+       which for a rectangle is half its DIAGONAL: a 1000 x 250 mm unit arrived
+       in CAD as a 1.7 ft circle with a centre mark in it, and the rectangle that
+       is the whole of what a split unit looks like in plan was never drawn at
+       all. ceilingObjects.js anticipated this exactly — see the note over
+       `isRect`, which says a chain "will one day be missing the newest entry,
+       and the symptom of that is an object drawn as a circle whose width and
+       height are the only sizes it has". So the catalogue is asked. */
+    if (o.w > 0 && o.h > 0 && isRect(o)) {
       // Rotated in PIXELS and converted corner by corner. See the header: an
       // angle carried across the Y flip comes out mirrored, four points cannot.
       const c = Math.cos(o.rot || 0), sn = Math.sin(o.rot || 0);
-      const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
-        const lx = (sx * o.w) / 2, ly = (sy * o.h) / 2;
-        return P({ x: o.x + lx * c - ly * sn, y: o.y + lx * sn + ly * c });
-      });
+      const at = (lx, ly) => P({ x: o.x + lx * c - ly * sn, y: o.y + lx * sn + ly * c });
+      const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) =>
+        at((sx * o.w) / 2, (sy * o.h) / 2));
       add(dxfPolyline(LY_O, corners, true));
+      /* --- AND THE LOUVRES, WHICH ARE WHAT MAKE IT A SPLIT UNIT -------------
+         A LONG THIN RECTANGLE IS NOT A SYMBOL. On its own it is indistinguishable
+         from a duct, a beam, a bulkhead or a shelf — this drawing carries all
+         four — and the reader has no way to tell that the one thing on that wall
+         needing a dedicated circuit is there at all. Three lines across the
+         width say "grille", and they run the LENGTH of the unit because that is
+         how the blades sit. The canvas draws exactly these three; see the
+         split-unit branch in PlanCanvas.
+         INSET FROM THE ENDS by a quarter of the depth, so the louvres read as
+         being inside the casing rather than as the casing's own subdivision. */
+      if (o.kind === 'split_ac') {
+        const inset = o.h * 0.25;
+        for (const k of [-1, 0, 1]) {
+          const a = at(-o.w / 2 + inset, (o.h / 5) * k);
+          const b = at(o.w / 2 - inset, (o.h / 5) * k);
+          add(dxfLine(LY_O, a.x, a.y, b.x, b.y));
+        }
+      }
+    } else if (o.kind === 'geyser') {
+      /* --- THE CYLINDER SEEN FROM ABOVE, AND ITS PIPEWORK ------------------
+         IT WAS THE GENERIC ROUND MARK — a circle with a crosshair, the same mark
+         a cassette's centre gets — and a plain circle on a ceiling plan is a fan
+         with its blades missing. A geyser is not notation: it is a tank, it is
+         plumbing, and it is the second of the two things on this drawing that
+         needs a dedicated circuit at a stated height.
+         THE SAME THREE MARKS THE CANVAS DRAWS: the casing, the tank inside it,
+         and the stub that says which side the pipework comes off — which is the
+         half of the symbol that says this is plumbing rather than a light.
+         THE OUTER RING IS THE BODY'S REAL RADIUS, where the canvas insets it a
+         little. That is this file's rule everywhere — the ring carries the
+         dimension, so a geyser can be measured off the drawing — and the inner
+         ring keeps the screen's own fraction of it.
+         THE STUB IS BUILT IN PIXELS AND CONVERTED, like every other direction
+         here: "up the sheet" is a direction, and a direction carried across the
+         Y flip as a number comes out mirrored. */
+      const c = P({ x: o.x, y: o.y });
+      const rPx = o.r || 0, rFt = rPx / px;
+      add(dxfCircle(LY_O, c.x, c.y, L(rFt)));
+      add(dxfCircle(LY_O, c.x, c.y, L(rFt) * 0.5));
+      const a = P({ x: o.x, y: o.y - rPx });
+      const b = P({ x: o.x, y: o.y - rPx * 1.35 });
+      add(dxfLine(LY_O, a.x, a.y, b.x, b.y));
     } else {
       const c = P({ x: o.x, y: o.y });
       const rFt = (o.r || 0) / px;
@@ -1015,6 +1192,123 @@ export function toSuperluminalDXF({ source, pxPerFt, heightPx, rooms = [],
     add(dxfSolidTri(LY_A, tip,
       { x: back.x + nx * half, y: back.y + ny * half },
       { x: back.x - nx * half, y: back.y - ny * half }));
+  }
+
+  /* --- THE ELECTRICAL DRAWING ---------------------------------------------
+     LAST, SO IT SITS OVER THE LIGHTING. Entity order is paint order in most
+     readers, and the wiring is the layer you switch ON to read over a layout you
+     already have — the canvas stacks it the same way and for the same reason.
+
+     --- THE PLATES, AS THE RECTANGLES THEY ARE ----------------------------
+     A FILLED POLYGON AND NOT A SYMBOL, which is the canvas's own argument
+     verbatim: everything else on this drawing is a light and is drawn as one —
+     a ring, a run, a crosshair — and the board is not a light. It is the thing
+     that turns them on, it is a real plate of a real size (230 x 80 mm, see
+     SB_MM), and it is drawn at that size, in plan, like a piece of the building
+     rather than a piece of notation.
+     FILL AND OUTLINE BOTH, for the reverse cove's reason: a SOLID has vertices
+     and no edges, so a fill on its own has nothing to snap to and nothing to
+     dimension from — and where a plate goes on a wall is exactly what gets set
+     out. The fill to be seen, the closed polyline to be measured.
+     BUILT FROM THE PLATE'S OWN AXES rather than from a rotation. The placement
+     pass returns the wall's `along` and `inward` with the point, so the four
+     corners are already in hand; re-deriving a rotation and its sign from
+     vectors that already say it is how a plate ends up inside its own wall.
+     A SOCKET OUTLET IS THE SAME RECTANGLE ON THE SAME LAYER, because it is the
+     same plate — a board somebody converted, which has an outlet on it and no
+     switch. The canvas draws them identically and this file's standard is that
+     it is a copy of the canvas; what tells them apart is the schedule, which is
+     where the module list lives. */
+  const plateRing = (b) => {
+    const half = (b?.alongPx ?? 0) / 2, deep = b?.deepPx ?? 0;
+    const u = b?.along, n = b?.inward, q = b?.point;
+    if (!(half > 0) || !u || !n || !Number.isFinite(q?.x)) return null;
+    const at = (a, d) => ({ x: q.x + u.x * a + n.x * d, y: q.y + u.y * a + n.y * d });
+    return [at(-half, 0), at(half, 0), at(half, deep), at(-half, deep)];
+  };
+  for (const b of switchboards) {
+    const ring = plateRing(b)?.map(P);
+    if (!ring) continue;
+    add(dxfSolidQuad(LY_SB, ring));
+    add(dxfPolyline(LY_SB, ring, true));
+  }
+
+  /* --- THE POINTS: THE SCONCE'S MARK, WITH A J IN IT ----------------------
+     THE TRADE'S OWN SYMBOL for "a cable ends here, switched". A WALL point is
+     drawn exactly as a wall sconce is — a stem off the plaster to a circle
+     standing in the room — because it is the same kind of thing on the same kind
+     of wall; a CEILING point is the circle and the J alone, because there is no
+     plaster to stand off and a leader drawn to the nearest wall would be
+     claiming something about the plan that is not true.
+     THE PROPORTIONS ARE `SCONCE_FT`'s AND THE GLYPH IS `glyphJ`'s, both read
+     rather than restated — see POINT_FT, and `glyphJPoints`, which is that same
+     curve evaluated because neither this dialect nor a plotted sheet can stroke
+     a path. The sconce a dozen lines up is drawn from the same three numbers.
+     THE CIRCLE IS WHERE THE PROJECTION PUT IT. `x`/`y` on a resolved point is
+     the CIRCLE, already stood off the wall, and `foot` is where the stem meets
+     the plaster — so the stem is drawn between two positions this file is handed
+     rather than derived from an `inward` it would have to carry across the flip.
+     THE STEM STOPS AT THE CIRCLE, as on screen: a line through the symbol would
+     cross the J and turn the mark to mush at any scale where the two are close. */
+  for (const w of elecPoints) {
+    if (!Number.isFinite(w?.x) || !Number.isFinite(w?.y) || !(w.r > 0)) continue;
+    const c = P({ x: w.x, y: w.y });
+    add(dxfCircle(LY_EP, c.x, c.y, L(w.r / px)));
+    add(dxfPolyline(LY_EP, glyphJPoints(w.x, w.y, w.r).map(P), false));
+    if (Number.isFinite(w.foot?.x) && Number.isFinite(w.foot?.y)) {
+      const dx = w.x - w.foot.x, dy = w.y - w.foot.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const a = P(w.foot);
+      const b = P({ x: w.x - (dx / d) * w.r, y: w.y - (dy / d) * w.r });
+      add(dxfLine(LY_EP, a.x, a.y, b.x, b.y));
+    }
+  }
+
+  /* --- THE LEAD FROM A WALL UNIT TO ITS SOCKET ----------------------------
+     AN AIR-CONDITIONER IS PLUGGED IN, and this is the flex that does it.
+     Without it the unit and the socket a foot away are two marks that happen to
+     be near each other; the line is what says the second one is THERE BECAUSE OF
+     the first, which is the whole reason the socket was put where it was put.
+     ONLY FOR A SOCKET FEED, and `acLead` is the one that knows: a POINT feed is
+     centred behind the body, so the lead would be a line from the unit to
+     itself. That is not an omission — a point is a cable coming out of the
+     plaster the unit covers, and the absence of any visible connection is the
+     honest picture of it.
+     ON THE FEED'S LAYER, in the plate's blue, because that is what it is: a live
+     supply between a socket and the thing plugged into it. */
+  for (const o of objects) {
+    if (!o?.onWall) continue;
+    const leg = acLead(o, switchboards.find((b) => b?.acId && b.acId === o.id));
+    if (!leg) continue;
+    const a = P(leg.from), b = P(leg.to);
+    add(dxfLine(LY_WF, a.x, a.y, b.x, b.y));
+  }
+
+  /* --- AND THE LOOPS ------------------------------------------------------
+     EVERY FLOW'S WIRE, BOARD FIRST. See flows.js for what a flow is; this only
+     draws it, and it draws it from the same points the canvas strokes — see
+     `flowWires`, which flattens one curve rather than letting two files each
+     approximate it.
+     THREE LAYERS, ONE PER KIND OF LEG, which is where the colour and the pattern
+     come from: they are set on the LAYER, so a file copied into somebody else's
+     drawing keeps them. See SUPERLUMINAL_LAYERS for why the three are split.
+     BOWED, AND THE BOW IS WHAT DOES THE WORK. A straight line between two
+     downlights is a setting-out line, a grid line, a dimension or a wall — this
+     drawing has all four — and no linetype separates it from them. A shallow arc
+     is not any of those things, which is why the geometry in flows.js is arcs.
+     THE FEED TICK IS OVERRIDDEN TO CONTINUOUS, and it is the only entity in this
+     file that overrides anything. It is three inches of line on a layer dashed
+     at eight, so on the layer's own pattern it lands in a gap as often as not —
+     and a tick that is sometimes there is worse than no tick. See `dxfLine`. */
+  for (const f of flows) {
+    if (f?.coincident) continue;
+    for (const w of flowWires(f)) {
+      add(dxfPolyline(wireLayer(w.kind), w.pts.map(P), false));
+    }
+    for (const t of feedTicks(f, { lenPx: px * WIRE_TICK_FT })) {
+      const a = P(t.a), b = P(t.b);
+      add(dxfLine(wireLayer(t.kind), a.x, a.y, b.x, b.y, 'CONTINUOUS'));
+    }
   }
 
   out = out.concat(['0','ENDSEC','0','EOF']);

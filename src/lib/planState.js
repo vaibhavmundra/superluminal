@@ -530,6 +530,11 @@ export function serialiseEditor(doc, { pxPerFt } = {}) {
        Keyed on FITTING ids and not flow ids, which is what makes it survive a
        re-grid — see its note in usePlanDoc. */
     flowLinks: s.flowLinks ?? {},
+    /* `flowTwoWays` is flow id -> the second plate that switch is reached from:
+       two-way switching drawn by hand. Keyed on FLOW ids and not fitting ids,
+       which is `flowBoards`' rule and not `flowLinks`' — see its note in
+       usePlanDoc. */
+    flowTwoWays: s.flowTwoWays ?? {},
     /* --- AND THE PLATES SOMEBODY PUT ON A WALL THEMSELVES.
        `[{ id, roomId, sFt }]` — how far round that room's walls each one sits,
        in feet, which is the same coordinate `boardMoves` above stores and is
@@ -766,6 +771,7 @@ export function applyEditor(p, set) {
   set.setFlowBoards?.(p.flowBoards ?? {});
   set.setFlowBends?.(p.flowBends ?? {});
   set.setFlowLinks?.(p.flowLinks ?? {});
+  set.setFlowTwoWays?.(p.flowTwoWays ?? {});
   set.setManualBoards?.(p.manualBoards ?? []);
   set.setElecPoints?.(p.elecPoints ?? []);
   set.setBoardKinds?.(p.boardKinds ?? {});

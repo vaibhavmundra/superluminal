@@ -25,7 +25,7 @@ export function projectAllBoardsPx(rooms, boardsFor, bayBoardsFor, placedBoardsF
 export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
   obstaclesPx, accentZonesPx, taskSpotsPx, outdoorFeeds, pxPerFt, baysOf,
   allBoardsPx, placedBoardsFor, flowBoards, flowBends, lampsPx = [], flowLinks = {},
-  elecPointsPx = []) {
+  elecPointsPx = [], flowTwoWays = {}) {
     const out = [];
     if (!(pxPerFt > 0)) return out;
     for (const r of rooms) {
@@ -148,6 +148,11 @@ export function projectFlowsPx(rooms, boardsFor, bayBoardsFor, bayResults,
            not both on them, which is also what makes a link to a fitting in
            another room harmless rather than wrong. */
         links: flowLinks,
+        /* ...AND THE SECOND PLATE A HAND NAMED — flow id -> board id. Handed
+           whole for `links`' reason and resolved against `boardPool` rather
+           than this room's boards: a light two-wayed from the landing is the
+           ordinary case for that gesture. See `twoWay` in planFlows. */
+        twoWay: flowTwoWays,
         zones: r.plan.zonesPx ?? [],
         pxPerFt,
       });

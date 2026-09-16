@@ -330,3 +330,37 @@ export function projectElecPointsPx(points = [], hostFor, pxPerFt = 0) {
 
 /** A fresh id. One minter, for `newCobId`'s reason. */
 export const newPointIdIn = (seq = 0) => `ep-${Date.now().toString(36)}-${seq}`;
+
+/**
+ * ...AND THE SAME J AS A RUN OF POINTS, for the two exporters.
+ *
+ * A DXF R12 HAS NO CURVE WORTH USING HERE and a plotted sheet is built out of
+ * page-space segments for the reason pdfPlot gives about `drawSvgPath` — so
+ * both files need the glyph as a polyline, and a glyph flattened twice is a
+ * glyph that stops being the same shape the first time one copy is tuned. The
+ * curve is `glyphJ`'s, evaluated: same control points, same two quadratics.
+ *
+ * OPEN, LIKE THE PATH. `glyphJ` says `fill="none"` is load-bearing on it — the
+ * two ends joined and flooded turn the J into a blob — and a closed polyline in
+ * a CAD file is the same claim. Every reader of this list draws it open.
+ */
+export function glyphJPoints(cx, cy, r, steps = 8) {
+  const g = POINT_FT.j;
+  const x = cx + r * g.right;
+  const p0 = { x, y: cy + r * g.top };
+  const p1 = { x, y: cy + r * g.drop };
+  const c1 = { x, y: cy + r * g.hook };
+  const p2 = { x: cx, y: cy + r * g.hook };
+  const c2 = { x: cx - r * g.left, y: cy + r * g.hook };
+  const p3 = { x: cx - r * g.left, y: cy + r * g.drop };
+  const quad = (a, c, b) => {
+    const out = [];
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps, u = 1 - t;
+      out.push({ x: u * u * a.x + 2 * u * t * c.x + t * t * b.x,
+                 y: u * u * a.y + 2 * u * t * c.y + t * t * b.y });
+    }
+    return out;
+  };
+  return [p0, p1, ...quad(p1, c1, p2), ...quad(p2, c2, p3)];
+}

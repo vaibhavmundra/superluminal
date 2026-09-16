@@ -10,7 +10,7 @@ import { SB_COLOUR, SB_MM } from '../lib/electrical.js';
 import { POINT_IDS, WALL_POINT_ID, pointRadiusPx, glyphJ, POINT_FT, isConstrained }
   from '../lib/elecPoints.js';
 import { acLead } from '../lib/wallUnit.js';
-import { WIRE_CHAIN, WIRE_PICKED, loopPath } from '../lib/flows.js';
+import { WIRE_CHAIN, WIRE_PICKED, WIRE_TWO_WAY, loopPath } from '../lib/flows.js';
 import { doorWidthAt } from '../lib/doors.js';
 /* THE SCONCE'S OWN FOUR FIGURES, WHICH THE DXF NOW DRAWS TOO. They were written
    out here and nowhere else, so the file exported a ring on the wall line while
@@ -396,6 +396,10 @@ const PlanCanvas = forwardRef(function PlanCanvas(
        the length of the gesture the wire's end is a thing the caller is holding,
        and this is how it gets drawn. */
     flowGrab = null,
+    /* CUT ONE END OF A TWO-WAY: `(flowId, 'own' | 'also')`. Two ends, one
+       handler, and the side is a word rather than a board id because the canvas
+       knows which LEG was pressed and the caller knows which plate that is. */
+    onFlowTwoWayCut = null,
     // WHICH SPOT IS PICKED, AND HOW ONE GETS PICKED. Optional like every other
     // handler here: a canvas given neither is a drawing whose spots cannot be
     // selected, which is what the read-only sheet wants.
@@ -2375,6 +2379,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
               ? (f.also.legs?.length ? f.also.legs
                 : (f.also.path ? [{ key: 'a0', d: f.also.path, feed: true }] : []))
               : [];
+            /* IS THIS WHOLE SWITCH A TWO-WAY? A PROPERTY OF THE FLOW AND NOT OF
+               A LEG, which is the correction: the second feed alone was drawn
+               magenta and the first was left blue, so a fan reached from the
+               door and from the bed had one wire of each colour — two halves of
+               ONE pair of switches, drawn as though they were different kinds of
+               wire. Both legs ARE the two-way connection; neither is the
+               ordinary feed any more, because neither of them alone switches the
+               fitting. So the question is asked once, of the flow. */
+            const twoWay = !!f.also;
             /* ONE DESCRIPTION OF A LEG'S PAINT, used for the loop and for the
                second feed alike. `picked` brightens rather than recolours: a
                selected wire that changed hue would stop reading as the same
@@ -2391,7 +2404,24 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                    of four loops crossing one ceiling: "thicker than the others"
                    is findable only by comparing it with the others. See
                    WIRE_PICKED in flows.js for why green in particular. */
-                stroke: picked ? WIRE_PICKED : feed ? SB_COLOUR : WIRE_CHAIN,
+                /* MAGENTA FOR EVERY FEED OF A TWO-WAY SWITCH — both of them,
+                   which is the whole of what the colour is for. A two-way pair
+                   is two switches wired to each other with the fitting hung off
+                   them; the leg from the door plate and the leg from the bedside
+                   are the same piece of wiring said from two ends, and painting
+                   one blue and one magenta claimed they were different things.
+                   IT REPLACES THE FEED'S BLUE AND NOT THE CHAIN'S GREY. What
+                   the chain says — "and on to the next lamp in this row" — is
+                   the same sentence whether the row is switched from one place
+                   or two, so a row of six two-wayed from the hall keeps its grey
+                   joinery and changes only the two wires that reach it. See
+                   WIRE_CHAIN.
+                   AND THE PICKED COLOUR STILL WINS, because a selected loop with
+                   one leg left magenta would be the one piece of it that did not
+                   look selected. See WIRE_TWO_WAY. */
+                stroke: picked ? WIRE_PICKED
+                  : feed ? (twoWay ? WIRE_TWO_WAY : SB_COLOUR)
+                  : WIRE_CHAIN,
                 width: (feed ? lw * 1.5 : lw * 0.95) * (picked ? 1.6 : 1),
                 dash: feed ? `${lw * 1.5} ${lw * 3.2}` : `${lw * 1.2} ${lw * 2.4}`,
                 halo: feed ? lw * 3.4 : lw * 2.4,
@@ -2429,10 +2459,15 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   direction, and an arrowhead would claim one. It is there
                   because a loop's first leg is its longest and a reader has to
                   be able to find which of several plates it came off. */}
+              {/* AND BOTH TICKS GO MAGENTA WITH THEIR LEGS. The tick is what
+                  says "a wire leaves this plate here"; painting one blue while
+                  the leg under it is magenta would split one statement into two
+                  colours at the exact point somebody looks to read it. */}
               {[f.from && f.nodes[0] ? [f.from, f.nodes[0]] : null,
                 f.also ? [f.also.from, f.nodes.reduce((a, b) => (
                   Math.hypot(b.x - f.also.from.x, b.y - f.also.from.y)
-                  < Math.hypot(a.x - f.also.from.x, a.y - f.also.from.y) ? b : a))] : null]
+                  < Math.hypot(a.x - f.also.from.x, a.y - f.also.from.y) ? b : a))]
+                : null]
                 .filter(Boolean).map(([a, b], i) => {
                   const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
                   const ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
@@ -2441,7 +2476,7 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                   return (
                     <line key={i} x1={q.x - uy * t} y1={q.y + ux * t}
                       x2={q.x + uy * t} y2={q.y - ux * t}
-                      stroke={picked ? WIRE_PICKED : SB_COLOUR}
+                      stroke={picked ? WIRE_PICKED : twoWay ? WIRE_TWO_WAY : SB_COLOUR}
                       strokeWidth={hair(1.5)} strokeLinecap="round" />
                   );
                 })}
@@ -2490,6 +2525,14 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       : 'nowhere yet'],
                     ...(f.also ? [['...and from', `the ${f.also.boardLabel.toLowerCase()} board`
                       + ' — two-way']] : []),
+                    /* AND WHOSE DECISION THE SECOND PLATE WAS, on the same
+                       terms as `assigned` below: a fan reached from the far
+                       bedside is a rule and says nothing, a light two-wayed by
+                       a drag is an override and has to say so — otherwise the
+                       card presents somebody's drag as the rules' answer, and
+                       the one thing they need to know to undo it is missing. */
+                    ...(f.also?.manual
+                      ? [['Note', 'two-wayed onto that board by hand']] : []),
                     /* WHOSE DECISION THE PLATE IS. A wire dragged onto another
                        board is the one thing about a loop that is not derived,
                        and a card that did not say so would be presenting
@@ -4306,9 +4349,21 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                 colour for it would be a second vocabulary to learn for a mark
                 that is on screen for the length of one drag. It cannot collide
                 with the selection frame: selecting a wire clears the board
-                selection, so nothing is ever both. */}
+                selection, so nothing is ever both.
+                EXCEPT THAT THE PLATE NOW MEANS TWO DIFFERENT DROPS, AND THE
+                RING HAS TO SAY WHICH. The wire's own END landing here MOVES the
+                switch to this plate; a FITTING's grip landing here gives the
+                switch a second place to be operated from and leaves it where it
+                is. Those are not the same act and the drawing they produce is
+                not the same drawing, so arming them in one colour would make
+                the person find out which they did by looking at the result.
+                IT IS THE COLOUR THE RESULT WILL BE. Magenta here, magenta leg
+                after the drop — so the cue and the consequence are one thing,
+                and somebody who did not mean it knows immediately what to grab
+                to take it off again. See WIRE_TWO_WAY in flows.js. */}
             {flowGrab?.overId === b.id && !picked && (
-              <polygon points={ring} fill="none" stroke={C.grip}
+              <polygon points={ring} fill="none"
+                stroke={flowGrab.kind === 'node' ? WIRE_TWO_WAY : C.grip}
                 strokeWidth={hair(2)} strokeLinejoin="round" pointerEvents="none" />
             )}
           </g>
@@ -6360,6 +6415,64 @@ const PlanCanvas = forwardRef(function PlanCanvas(
                       goes through. */}
                   <g transform={`translate(${c.x} ${c.y}) scale(${k}) translate(-12 -12)`}
                     fill="none" stroke={C.nogo} strokeWidth={hair(1)}
+                    strokeLinecap="round" strokeLinejoin="round" pointerEvents="none">
+                    <path d="M13.1813 8.68025C13.6303 8.89477 14.0511 9.188 14.423 9.55994C15.9219 11.0591 16.1423 13.3528 15.084 15.0855M5.31614 12.3032L3.5592 14.0604C1.80188 15.8179 1.80188 18.6674 3.5592 20.4249C5.31653 22.1825 8.16572 22.1825 9.92304 20.4249L13.0517 17.296M18.6659 11.6811L20.4228 9.92393C22.1802 8.1664 22.1802 5.31689 20.4228 3.55936C18.6655 1.80183 15.8163 1.80183 14.059 3.55936L9.55909 8.05979C9.30075 8.31816 9.08038 8.60014 8.898 8.89877M10.8008 15.3041C10.3518 15.0895 9.93099 14.7963 9.55909 14.4244C9.0674 13.9326 8.71328 13.3554 8.49674 12.7405M15.084 15.0855L20.9908 20.993M15.084 15.0855L8.898 8.89877M2.9912 2.99128L8.898 8.89877" />
+                  </g>
+                </g>
+              );
+            })}
+            {/* --- ...AND CUTTING EITHER END OF A TWO-WAY ------------------
+                THE SAME BUTTON, ONE PER FEED, AND IT IS MAGENTA. A two-way is
+                two switches wired to each other, so there is no "the" end to
+                take off: somebody who two-wayed the wrong light, or two-wayed
+                the right one from the wrong plate, has to be able to say WHICH
+                of the two goes. One badge on each magenta leg says that with no
+                words — the button on a wire cuts that wire.
+
+                MAGENTA AND NOT THE CHAIN BADGE'S RED, for the reason the legs
+                are magenta: red is the destructive act on this canvas and this
+                is one, but what is being cut here is a specific KIND of
+                connection, and a button the colour of the wire it removes cannot
+                be misread as the general cut. It is the same glyph at the same
+                size in the same place on the leg — the idiom is learned once.
+
+                AND EITHER CUT LEAVES A PLAIN SWITCH BEHIND, which is the half
+                that is not on this canvas at all. Take off the second plate and
+                the flow keeps the plate it runs off; take off its OWN plate and
+                the flow is reassigned to the second one, because the fitting is
+                still connected there and a wire cut from both ends is a light
+                you cannot turn on. Either way `f.also` is gone, so
+                `pointsFromFlows` stops marking the survivor two-way and the
+                chevrons come off the plate that is left. See `cutTwoWay`.
+
+                ONLY ON THE PICKED WIRE, like every other handle in this block.
+                Forty loops' worth of buttons over a lighting layout is the
+                argument made at the head of it. */}
+            {onFlowTwoWayCut && f.also && [
+              { side: 'own', leg: (f.legs ?? []).find((l) => l.feed) },
+              { side: 'also', leg: (f.also.legs ?? []).find((l) => l.feed) },
+            ].map(({ side, leg: l }) => {
+              if (!l?.grip || !l.normal) return null;
+              /* SIZED AND OFFSET EXACTLY AS THE CHAIN BADGE IS — screen pixels
+                 for the icon, and a gap built from the bend grip's plan-unit
+                 radius plus this badge's screen-unit one. See the long note
+                 above it; two buttons that look the same and drift apart at
+                 different zooms would be worse than two that look different. */
+              const sp = (n) => n / (zoom || 1);
+              const k = sp(13) / 24;
+              const gap = lw * 3.2 + sp(9.5) + sp(11);
+              const c = { x: l.grip.x + l.normal.x * gap,
+                          y: l.grip.y + l.normal.y * gap };
+              return (
+                <g key={`t${side}`} style={{ cursor: 'pointer' }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation(); e.preventDefault();
+                    onFlowTwoWayCut(f.id, side);
+                  }}>
+                  <circle className="hit" cx={c.x} cy={c.y} r={sp(9.5)}
+                    fill="#fff" stroke={WIRE_TWO_WAY} strokeWidth={hair(1)} />
+                  <g transform={`translate(${c.x} ${c.y}) scale(${k}) translate(-12 -12)`}
+                    fill="none" stroke={WIRE_TWO_WAY} strokeWidth={hair(1)}
                     strokeLinecap="round" strokeLinejoin="round" pointerEvents="none">
                     <path d="M13.1813 8.68025C13.6303 8.89477 14.0511 9.188 14.423 9.55994C15.9219 11.0591 16.1423 13.3528 15.084 15.0855M5.31614 12.3032L3.5592 14.0604C1.80188 15.8179 1.80188 18.6674 3.5592 20.4249C5.31653 22.1825 8.16572 22.1825 9.92304 20.4249L13.0517 17.296M18.6659 11.6811L20.4228 9.92393C22.1802 8.1664 22.1802 5.31689 20.4228 3.55936C18.6655 1.80183 15.8163 1.80183 14.059 3.55936L9.55909 8.05979C9.30075 8.31816 9.08038 8.60014 8.898 8.89877M10.8008 15.3041C10.3518 15.0895 9.93099 14.7963 9.55909 14.4244C9.0674 13.9326 8.71328 13.3554 8.49674 12.7405M15.084 15.0855L20.9908 20.993M15.084 15.0855L8.898 8.89877M2.9912 2.99128L8.898 8.89877" />
                   </g>

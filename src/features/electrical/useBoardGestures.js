@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 import { useCallback, useRef, useState } from 'react';
 import { useDrag } from '../../hooks/useDrag.js';
-import { boardUnder, wallHostFor, boardAsPoint, boardAdapters,
+import { boardUnder, boardGap, wallHostFor, boardAsPoint, boardAdapters,
          boardU } from '../../lib/electrical.js';
 import { uAt } from '../../lib/point.js';
 import { canGrab } from '../../lib/pressOwner.js';
@@ -20,14 +20,22 @@ import { newManualBoardId } from './boardSheet.js';
 export function useBoardGestures({
   rooms, pxPerFt, svgPoint, svgRef, pressState, setSel, docActions,
   flowsPx, allBoardsPx, setBoardOutlet, obstaclesPx = [], flowLinks = {},
+  flowTwoWays = {},
 }) {
   const [boardDrag, setBoardDrag] = useState(null);   // {id, roomId, origin, live}
-  /* THE GESTURE IN FLIGHT: `{ id, kind, key, origin, live, at, overId }`.
+  /* THE GESTURE IN FLIGHT: `{ id, kind, key, origin, live, at, overId, overKind }`.
      `kind` is 'board', 'bend' or 'node'; `at` is where the pointer is now, and
      `overId` the plate a board drag would land on — or, for a node drag, the
-     FITTING it would be looped off. A node drag is the board drag's twin: both
-     carry ONE input to somewhere else, and the only difference is what kind of
-     thing that input is allowed to land on. Both are here rather than in
+     fitting it would be looped off OR the plate it would be two-wayed from,
+     which is what `overKind` says. It is carried rather than re-derived on the
+     drop because the drawing has already told the person which of the two is
+     armed, and a drop that resolved the target a second time could disagree
+     with the ring they were looking at. See `targetFor`.
+     A NODE DRAG IS THE BOARD DRAG'S TWIN, and it now says two things rather than
+     one: dropped on a fitting it carries an INPUT somewhere else, and dropped on
+     a plate it gives the SWITCH a second end. Neither is a second input — see
+     the drop in `onCommit`.
+     Both drags are here rather than in
      `flowBoards` because a re-assignment written per pointermove would re-order
      the loop, re-compose two switchboards and repaint the panel on every frame
      of the drag — see the note on `boardPointerMove`, which writes per move for
@@ -275,6 +283,45 @@ export function useBoardGestures({
     return best;
   }, [flowsPx, pxPerFt]);
 
+  /* --- ...AND WHAT A FITTING'S GRIP MAY NOW LAND ON, WHICH IS TWO THINGS -----
+     THE TWO DROPS ARE DIFFERENT SENTENCES ABOUT THE SAME WIRE. Onto a FITTING
+     it means "loop that one off this one" — a second output, which is free (see
+     `relink` in flows.js). Onto a PLATE it means "and this switch is reached
+     from there as well" — two-way switching, which is not an input at all: the
+     fitting still has exactly one, and what gained a second end is the SWITCH.
+     That is the whole reason one grip can honestly mean both.
+
+     NEAREST WINS, AND IT HAD TO. A bedside sconce and the plate that switches it
+     are THE SAME POINT on a plan — that is what a `coincident` flow is — so a
+     rule of "fittings first, plates if nothing" would have made every bedside
+     plate on the drawing unreachable by this gesture, and "plates first" would
+     have taken looping one sconce off another away. Both populations are hit
+     tested with their own shape and slop (a plate is a rectangle on a wall, a
+     fitting a point on the ceiling), and then the two candidates are compared.
+
+     TO THE PLATE'S BODY AND NOT TO ITS ANCHOR, WHICH IS THE PART THAT MAKES THE
+     COMPARISON MEAN ANYTHING. `b.point` is where a plate is SEATED, and the
+     coincident sconce sits on exactly that point — so distance-to-anchor against
+     distance-to-fitting is two numbers that move together and never separate,
+     and the fitting would win at every pixel rather than only at the tie. See
+     `boardGap`: zero anywhere on the plate, so aiming an inch INTO it picks the
+     plate while the sconce on its corner is a real distance away.
+
+     A TIE GOES TO THE FITTING, and now only an exact tie reaches that line —
+     the one pixel where the sconce and the plate's seat coincide. Linking is the
+     older gesture and the one that reads off the ceiling, and the ring on the
+     drawing says which of the two is armed before the drop either way. */
+  const targetFor = useCallback((p, exclude = null) => {
+    const node = nodeUnder(p, exclude);
+    const board = boardUnder(p, allBoardsPx, { pxPerFt });
+    if (!node && !board) return null;
+    if (!board) return { id: node.id, kind: 'node' };
+    if (!node) return { id: board.id, kind: 'board' };
+    const dn = Math.hypot(node.x - p.x, node.y - p.y);
+    const db = boardGap(p, board)?.gap ?? Infinity;
+    return db < dn ? { id: board.id, kind: 'board' } : { id: node.id, kind: 'node' };
+  }, [nodeUnder, allBoardsPx, pxPerFt]);
+
   const flow = useDrag({
     state: [flowDrag, setFlowDrag],
     point: svgPoint,
@@ -292,10 +339,13 @@ export function useBoardGestures({
       /* A FITTING'S OWN INPUT, BEING CARRIED. Same shape as the board drag above
          — a rubber band in transient state and one write on the drop — because
          it is the same act: an input is being taken off whatever fed it and put
-         on something else. The only difference is what it may land on. */
+         on something else. The only difference is what it may land on, and it
+         may now land on two kinds of thing: see `targetFor`. */
       if (d.kind === 'node') {
-        const over = nodeUnder(p, d.key);
-        flow.set((cur) => (cur ? { ...cur, at: p, overId: over?.id ?? null } : cur));
+        const over = targetFor(p, d.key);
+        flow.set((cur) => (cur
+          ? { ...cur, at: p, overId: over?.id ?? null, overKind: over?.kind ?? null }
+          : cur));
         return;
       }
       const leg = [...(f.legs ?? []), ...(f.also?.legs ?? [])]
@@ -338,6 +388,26 @@ export function useBoardGestures({
          deliberately. */
       if (d.kind === 'node') {
         if (!d.overId || !d.key) return;
+        /* --- DROPPED ON A PLATE: THE SWITCH GAINS A SECOND END ---------------
+           NOT AN INPUT, WHICH IS WHY THIS DOES NOT BREAK THE RULE ABOVE. The
+           fitting still has exactly one wire feeding it; what has two ends now
+           is the SWITCH that operates it, which is the flow. So this writes
+           `flowTwoWays` — keyed on the flow — and leaves `flowLinks` alone.
+           THE FLOW AND NOT THE FITTING, even though a fitting is what is in
+           your hand. Two-way switching is a fact about a circuit: looping one
+           lamp of a row off a second plate and not the other five is not a
+           thing a wireman can build, and the row is switched as one.
+           AND THE SAME DROP TAKES IT OFF AGAIN, exactly as the link does and
+           the plate drag does. Dropping on the plate it is already two-wayed
+           from is the way back to one way — which matters more here than for
+           the other two, because this is the gesture people will trip into by
+           aiming at a sconce and hitting its plate. The magenta leg is what
+           tells them it happened; this is how they undo it without a menu. */
+        if (d.overKind === 'board') {
+          if (flowTwoWays?.[d.id] === d.overId) docActions.clearFlowTwoWay(d.id);
+          else docActions.setFlowTwoWay(d.id, d.overId);
+          return;
+        }
         if (flowLinks?.[d.overId] === d.key) docActions.clearFlowLink(d.overId);
         else docActions.setFlowLink(d.overId, d.key);
         return;
@@ -376,8 +446,10 @@ export function useBoardGestures({
     setSel(select('flow', id));
     const p = svgPoint(e);
     // `at` IS WHERE THE END IS BEING HELD, for the rubber band, and it starts at
-    // the press. `overId` is the plate it would land on, and there is not one yet.
-    flow.down(e, { id, kind, key, at: p, overId: null });
+    // the press. `overId` is what it would land on, and there is not one yet —
+    // `overKind` is seeded beside it so the shape of the drag record is the same
+    // on the first frame as on every later one.
+    flow.down(e, { id, kind, key, at: p, overId: null, overKind: null });
   };
 
   const flowPointerMove = flow.move;

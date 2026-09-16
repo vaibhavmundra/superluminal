@@ -36,6 +36,13 @@ import { plotToPDF, nightBase } from '../src/lib/pdfPlot.js';
    rather than through the plotter, so this cannot pass on a re-export that has
    drifted from what the other exporter uses. */
 import { SYMBOL_FT, COB_DIA_IN } from '../src/lib/settings.js';
+/* THE ELECTRICAL DRAWING'S OWN PASSES — a plate seated on a wall, two points
+   resolved against it and a loop bowed by the same function the canvas uses. */
+import { placedBoards } from '../src/lib/electrical.js';
+import { wallPoint, ceilingPoint, projectElecPointsPx, pointHostFor }
+  from '../src/lib/elecPoints.js';
+import { loopLegs, pathOf, WIRE_CHAIN, WIRE_TWO_WAY } from '../src/lib/flows.js';
+import { SB_COLOUR } from '../src/lib/electrical.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log((c ? '  ok  ' : '  FAIL') + '  ' + m); if (!c) fail++; };
@@ -56,8 +63,45 @@ const EMPTY = {
   source: SOURCE, pxPerFt: PPF, rooms: [bare()],
   objects: [], accents: [], spots: [], coves: [],
   cobs: [], tracks: [], trackModules: [],
+  switchboards: [], elecPoints: [], flows: [],
   title: 'test',
 };
+
+/* --- THE ELECTRICAL DRAWING, BUILT THROUGH ITS OWN PASSES -----------------
+   A plate seated on a wall by `placedBoards`, two points resolved by
+   `projectElecPointsPx` and a loop bowed by `loopLegs` — the shapes the app
+   actually produces. A fixture hand-shaped to look like one of those is a
+   fixture that agrees with a misunderstanding rather than with the app, which is
+   the failure this whole file exists to catch. */
+const PLATES = placedBoards([{ id: 'b1', roomId: 'r1', sFt: 6 },
+                             { id: 'b2', roomId: 'r1', sFt: 20, role: 'ac', acId: 'ac1' }],
+                            { polygonPx: POLY, pxPerFt: PPF });
+const HOST = pointHostFor(POLY, PPF);
+const POINTS = projectElecPointsPx(
+  [wallPoint('r1', 0.3, { id: 'ep1' }), ceilingPoint('r1', 20, 12, { id: 'ep2' })],
+  () => HOST, PPF);
+/** One loop off a plate, through three lamps — a feed leg and two chain legs. */
+const loop = (over = {}) => {
+  const nodes = [{ x: 300, y: 300 }, { x: 420, y: 300 }, { x: 540, y: 300 }];
+  const from = PLATES[0].point;
+  const legs = loopLegs(nodes, { from, pxPerFt: PPF });
+  return { id: 'fl1', label: 'Row 1', nodes, from, legs, path: pathOf(legs),
+           count: nodes.length, boardId: 'b1', ...over };
+};
+/** ...and the same loop reached from a second plate, which is a two-way. */
+const twoWay = () => {
+  const f = loop();
+  const legs = loopLegs([f.nodes[2]], { from: PLATES[1].point, pxPerFt: PPF,
+                                        keyPrefix: 'a' });
+  return { ...f, also: { from: PLATES[1].point, boardLabel: 'AC', manual: true,
+                         legs, path: pathOf(legs) } };
+};
+/** A split unit on a wall, with the socket its lead runs to. */
+const SPLIT_AC = { id: 'ac1', kind: 'split_ac', x: 600, y: 120, rot: 0,
+  w: (1000 / 304.8) * PPF, h: (250 / 304.8) * PPF,
+  r: (Math.hypot(1000 / 304.8, 250 / 304.8) / 2) * PPF,
+  onWall: true, offCeiling: true, source: 'placed',
+  seat: { point: { x: 600, y: 60 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 } } };
 
 /**
  * THE SHEET'S OWN CONTENT, INFLATED. Every stream in the file, decompressed
@@ -133,6 +177,19 @@ const CASES = [
     pts: [{ x: 200, y: 600 }, { x: 600, y: 600 }] }] }],
   ['a module clipped onto it', { trackModules: [{ id: 'm1', x: 300, y: 600,
     kind: 'spot', lenIn: 6, wideIn: 1.5, ux: 1, uy: 0 }] }],
+  /* --- AND THE FOUR THE WIRING LAYER ADDED, WHICH WERE NOT ON THE SHEET EITHER
+     Every plate, every socket outlet, every wall and ceiling point, every
+     air-conditioner's lead and every switched loop lived only on screen: this
+     function had no parameter for any of them, so a plan whose second half is a
+     wiring layout printed as a lighting drawing with the wiring gone. */
+  ['a switchboard plate', { switchboards: [PLATES[0]] }],
+  ['a socket outlet, which is the same plate converted',
+    { switchboards: [{ ...PLATES[0], socketOnly: true }] }],
+  ['a wall point and a ceiling point', { elecPoints: POINTS }],
+  ['a switched loop', { flows: [loop()] }],
+  ['a two-way, which is a second feed off another plate', { flows: [twoWay()] }],
+  ["an air-conditioner's lead to its socket",
+    { objects: [SPLIT_AC], switchboards: [PLATES[1]] }],
 ];
 
 console.log('-- every population the drawing shows reaches the sheet --');
@@ -168,6 +225,9 @@ console.log('\n-- the sheet is what the drawing is showing --');
   const SCENE = {
     rooms: [bare({ lightsPx: [{ id: 'g1', kind: 'small', x: 200, y: 200 }] })],
     objects: [{ kind: 'fan', x: 300, y: 500, r: 60 }],
+    switchboards: [PLATES[0]],
+    elecPoints: POINTS,
+    flows: [loop()],
     coves: [{ id: 'rc1', run: [{ x: 900, y: 720 }, { x: 1100, y: 720 }] }],
     spots: [{ id: 'sp1', x: 700, y: 500, angle: 0, fixture: 'spot' }],
     cobs: [{ id: 'c1', x: 300, y: 300 }],
@@ -176,7 +236,8 @@ console.log('\n-- the sheet is what the drawing is showing --');
                      lenIn: 6, wideIn: 1.5, ux: 1, uy: 0 }],
   };
   const ALL = { lights: true, autoLights: true, spots: true,
-                accents: true, objects: true };
+                accents: true, objects: true,
+                switchboards: true, electrical: true };
   const on = await plot({ ...SCENE, layers: ALL });
   const off = async (key) => (await plot({ ...SCENE,
     layers: { ...ALL, [key]: false } })).marks;
@@ -191,6 +252,25 @@ console.log('\n-- the sheet is what the drawing is showing --');
   ok(await off('accents') < on.marks, "'accents' off takes the cove's tape");
   ok(await off('spots') < on.marks, "'spots' off takes the directional spot");
   ok(await off('objects') < on.marks, "'objects' off takes the fan");
+  /* THE WIRING'S TWO SWITCHES, AND THEY ARE TWO. `switchboards` is where the
+     switches and the outlets go — a question about the ROOM, which a joiner and
+     a tiler both need — and `electrical` is what is switched from where, which
+     is the wireman's own drawing. The canvas gates them separately and a sheet
+     is the drawing on paper. */
+  ok(await off('switchboards') < on.marks,
+    "'switchboards' off takes the plates and the points");
+  ok(await off('electrical') < on.marks, "'electrical' off takes the loops");
+  ok(await off('switchboards') !== await off('electrical'),
+    '...and they are not one switch: each takes its own ink');
+  /* THE LEAD IS A CONNECTOR AND ANSWERS TO BOTH ENDS. It says the socket is
+     there BECAUSE OF the unit, so drawn to a unit that is not on the sheet it is
+     a line running out of a plate to nowhere. */
+  const lead = { objects: [SPLIT_AC], switchboards: [PLATES[1]] };
+  const leadOn = (await plot({ ...lead, layers: ALL })).marks;
+  const noUnit = (await plot({ ...lead, layers: { ...ALL, objects: false } })).marks;
+  const noPlate = (await plot({ ...lead, layers: { ...ALL, switchboards: false } })).marks;
+  ok(noUnit < leadOn && noPlate < leadOn,
+    "an AC lead goes off with either end of it: 'objects' and 'switchboards' both take it");
   /* NO `layers` MEANS WITHHOLD NOTHING, which is not the same as the defaults a
      fresh document opens with — where `autoLights` is off. Merging LAYER_DEFAULTS
      in here would make a bare call silently drop the engine's grid. */
@@ -543,6 +623,87 @@ console.log('\n-- a spot with nowhere to be does not take the download with it -
      test — the gate that DREW the fittings was the one condition short. */
   ok(/\b1 fitting\b/.test(mixed.strip),
     `and the count says one fitting, not two: "${mixed.strip.trim()}"`);
+}
+
+// --- the wiring is the one layer that is not monochrome ---------------------
+console.log('\n-- and the wires are in their own colours and patterns --');
+{
+  /* THE ONE DELIBERATE EXCEPTION TO `inkFor`. Everything else on this sheet is a
+     LIGHTING drawing: one trade, one ink, and colour would be a screen idea. A
+     wiring layer is three statements laid over each other — which plate switches
+     this, what the run carries on to, and where a second plate reaches the same
+     switch — and the canvas separates them by hue because on a bay with three
+     rows crossing one ceiling nothing else can. Printed in one ink they are a
+     thicket, which is exactly what the colours were introduced to fix.
+     ASSERTED AGAINST THE CANVAS'S OWN CONSTANTS and not against literals here,
+     so a sheet and a screen that disagreed about what a feed leg looks like
+     would fail rather than both being separately plausible. */
+  const chan = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  const near3 = (got, want) => got.length === 3
+    && got.every((v, i) => Math.abs(v - want[i]) < 1e-3);
+  const strokes = (s) => [...new Set([...s.matchAll(/([\d.]+) ([\d.]+) ([\d.]+) RG/g)]
+    .map((m) => m.slice(1, 4).join(',')))].map((v) => v.split(',').map(Number));
+  const two = twoWay();
+  const wired = content((await plotToPDF({ ...EMPTY,
+    switchboards: PLATES, flows: [two] })).bytes);
+  const inks = strokes(wired);
+  const has = (hex) => inks.some((c) => near3(c, chan(hex)));
+  ok(has(SB_COLOUR), `the feed leg and the plate are the board's own blue: ${SB_COLOUR}`);
+  ok(has(WIRE_CHAIN), `the chain between fittings is grey: ${WIRE_CHAIN}`);
+  ok(has(WIRE_TWO_WAY), `and a two-way's second feed is magenta: ${WIRE_TWO_WAY}`);
+  /* AND THE LIGHTING IS STILL BLACK BESIDE THEM. The exception is the wiring's
+     and nothing else's — a sheet where a downlight had picked up a colour would
+     be this rule leaking. */
+  ok(inks.some((c) => near3(c, [0, 0, 0])),
+    'while the drawing itself is still one ink');
+
+  /* TWO PATTERNS, AND THE TICK IS NEITHER. R12 has no lineweight and neither
+     does a plotted hairline read as two weights at this size, so the feed/chain
+     hierarchy is carried by the PATTERN as well: the feed is mostly ink, the
+     chain mostly air. The tick across the wire is SOLID because it is shorter
+     than the pattern its own wire carries — dashed, it would land in a gap. */
+  const dashes = [...new Set([...wired.matchAll(/\[([\d.\s]+)\]\s*[\d.]+ d/g)]
+    .map((m) => m[1].trim()))];
+  ok(dashes.length >= 2, `a feed and a chain dash differently: ${dashes.length} patterns`);
+  const ink = dashes.map((d) => d.split(/\s+/).map(Number));
+  ok(ink.some(([a, b]) => a > b) && ink.some(([a, b]) => a < b),
+    'one mostly ink and one mostly air, which is the weight hierarchy said again');
+  ok(/\[\]\s*0 d/.test(wired), 'and something on the sheet is drawn solid — the feed tick');
+
+  // AND NONE OF IT IS THERE WITH THE WIRING OFF, which is the other half: the
+  // colour exception may not survive a sheet that is not showing the wires.
+  const plain = content((await plotToPDF({ ...EMPTY, switchboards: PLATES, flows: [two],
+    layers: { switchboards: false, electrical: false } })).bytes);
+  ok(!strokes(plain).some((c) => near3(c, chan(WIRE_CHAIN))
+      || near3(c, chan(WIRE_TWO_WAY)) || near3(c, chan(SB_COLOUR))),
+    'and a sheet with the wiring switched off is black and white again');
+}
+
+// --- the two that were being plotted as ceiling fans ------------------------
+console.log('\n-- a split unit and a geyser are not ceiling fans --');
+{
+  /* THE TEST WAS A CHAIN OF TWO KINDS AND THE CATALOGUE HAS FOUR. A split AC
+     failed the rectangle test and a geyser is round, so both fell to the branch
+     this file calls "the fan branch rather than a default" — and its own note
+     warned that a fifth kind "wants its own symbol here and not this one". Two
+     plans came out with a ceiling fan drawn where somebody had put a wall
+     air-conditioner and a water heater.
+     MEASURED AGAINST THE FAN ITSELF, which is the only assertion that can catch
+     this: a count that merely went up would have passed all along, because a fan
+     IS ink. Each of the three has to be a DIFFERENT mark. */
+  const fanOnly = (await plot({ objects: [{ kind: 'fan', x: 300, y: 500, r: 60 }] })).marks;
+  const split = (await plot({ objects: [SPLIT_AC] })).marks;
+  const geyser = (await plot({ objects: [{ id: 'gy', kind: 'geyser',
+    x: 300, y: 500, r: 0.75 * PPF, offCeiling: true }] })).marks;
+  ok(split !== fanOnly, `a split unit is not drawn as a fan: ${split} vs ${fanOnly}`);
+  ok(geyser !== fanOnly, `nor is a geyser: ${geyser} vs ${fanOnly}`);
+  /* A FAN IS A SWEEP CIRCLE AND THREE TAPERED PADDLES. A split unit is a
+     rectangle and three louvres, so it is the LIGHTER mark; a geyser is two
+     rings and a stub, lighter still. Stated as an inequality rather than as a
+     count, so tuning a symbol does not break the test that says which is which. */
+  ok(split < fanOnly && geyser < fanOnly,
+    `and both are simpler marks than a fan: ${split} and ${geyser} vs ${fanOnly}`);
+  ok(split !== geyser, 'and they are not each other either');
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall good');

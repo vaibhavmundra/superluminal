@@ -173,6 +173,35 @@ console.log('\n-- two-way switching is a switch, not a second regulator --');
     'while the plate that owns it still gets the regulator');
   ok(pointsFromFlows(IN, twoWay, B).length === 2,
     '...and the switch beside it, which the second plate does not duplicate');
+
+  /* --- AND BOTH ENDS ARE TWO-WAY SWITCHES, BECAUSE THAT IS WHAT ONE IS -----
+     A two-way pair is two identical three-terminal switches wired to each
+     other. Marking only the far plate drew the near end as an ordinary rocker
+     and billed it as one, which is a plate short of the right part on site. */
+  const here = pointsFromFlows(IN, twoWay, B);
+  const hereSwitch = here.find((p) => p.kind === 'switch');
+  ok(hereSwitch.twoWay === true, 'the owning plate\'s switch is two-way as well');
+  ok(there[0].twoWay === true, '...and so is the second plate\'s');
+  ok(here.find((p) => p.kind === 'fan').twoWay !== true,
+    'but the regulator is not — a speed knob has no second end');
+
+  /* THE LABEL IS WHERE IT REACHES THE SCHEDULE AND THE BOQ, which group by
+     this string. A part that costs more and is ordered by the pair cannot be
+     called the same thing as a one-way. */
+  ok(hereSwitch.label === '6A two-way switch',
+    `named as its own part (got ${hereSwitch.label})`);
+  ok(there[0].label === '6A two-way switch', '...at both ends');
+  ok(hereSwitch.modules === 1, '...and it is still one module wide');
+  ok(pointsFromFlows(IN, [fan()], B).find((p) => p.kind === 'switch').label
+     === '6A switch', 'while a fan nobody two-wayed keeps the ordinary switch');
+
+  /* AN ORDINARY ROW, TWO-WAYED, IS THE SAME PART — the flag is read off the
+     flow and not off what kind of fitting is on it. */
+  const row = [{ ...lights(1)[0], also: { boardId: far, boardLabel: 'Hall' } }];
+  ok(pointsFromFlows(IN, row, B)[0].label === '6A two-way switch',
+    'a row of downlights two-wayed by hand gets the same part');
+  ok(pointsFromFlows(IN, row, far)[0].label === '6A two-way switch',
+    '...at its second plate too');
 }
 
 console.log('\n-- the socket outlet, and the switch it puts somewhere else --');
@@ -433,6 +462,58 @@ console.log('\n-- added by hand --');
   ok(b.points.filter((p) => p.extraId === 'e2').length === 1, 'and the data point has its own');
   // 1 light + spare pair (3) + 16A pair (3) + data (1) = 8
   ok(b.used === 8 && b.size === 8, `eight modules, an eight-module frame (got ${b.used}/${b.size})`);
+}
+
+console.log('\n-- the blank plate moves like anything else on the frame --');
+{
+  /* A BLANK USED TO BE WHAT WAS LEFT OF THE FRAME — no key, pinned after every
+     real unit. A plate is very often built with its spare module beside the
+     switch you reach for rather than at the far end, so it is arranged like the
+     rest. See `framed` in composeSwitchboard for why that happens AFTER the
+     packing. */
+  const flows = lights(5);
+  const base = composeSwitchboard({ country: 'IN', flows, boardId: B, spares: 0 });
+  const [b0] = base.boards;
+  ok(b0.size === 6 && b0.used === 5, 'five switches in a six-module frame');
+  const blanks = b0.points.filter((p) => p.kind === 'blank');
+  ok(blanks.length === 1, 'one blank fills it out');
+  ok(!!blanks[0].unitKey, `and it carries a key now (${blanks[0].unitKey})`);
+  ok(base.units.some((u) => u.key === blanks[0].unitKey),
+    '...so the arrangement can name it');
+  ok(labels(b0)[labels(b0).length - 1] === 'Blank plate',
+    'it is still last when nobody has moved it');
+
+  const bk = blanks[0].unitKey;
+  const rest = base.units.map((u) => u.key).filter((k) => k !== bk);
+  const moved = composeSwitchboard({ country: 'IN', flows, boardId: B, spares: 0,
+                                     order: [bk, ...rest] });
+  const L = labels(moved.boards[0]);
+  ok(L[0] === 'Blank plate', `the blank leads the plate (got ${L.join(' | ')})`);
+  ok(L.filter((q) => q === 'Blank plate').length === 1,
+    '...and there is still exactly one of it');
+  ok(moved.boards[0].size === b0.size && moved.boards[0].used === b0.used,
+    'moving it cannot change the frame or what the plate costs');
+
+  /* IN THE MIDDLE, WHICH IS THE ARRANGEMENT PEOPLE ACTUALLY ASK FOR — a gap
+     where a module will go, with live switches either side of it. */
+  const mid = composeSwitchboard({ country: 'IN', flows, boardId: B, spares: 0,
+                                   order: [...rest.slice(0, 2), bk, ...rest.slice(2)] });
+  ok(labels(mid.boards[0])[2] === 'Blank plate', 'or sit third, between two switches');
+
+  /* AND THE BLANK IS STILL A REMAINDER AND NOT A UNIT THE FRAME GROWS FOR. This
+     is the circularity the two-pass composition exists to avoid: a blank that
+     counted toward `used` would make the frame grow to hold the blanks it grew
+     to hold. */
+  ok(composeSwitchboard({ country: 'IN', flows: lights(6), boardId: B, spares: 0 })
+      .boards[0].points.every((p) => p.kind !== 'blank'),
+    'a frame that is exactly filled has no blank to move');
+
+  /* A KEY FOR A BLANK THAT IS NO LONGER THERE IS SKIPPED, exactly as it is for
+     a unit whose fitting was deleted — adding a switch eats the spare module. */
+  const eaten = composeSwitchboard({ country: 'IN', flows: lights(6), boardId: B,
+                                     spares: 0, order: [bk, ...rest] });
+  ok(eaten.boards[0].points.length === 6 && labels(eaten.boards[0])[0] === '6A switch',
+    'and an order naming a blank that has been consumed is simply ignored');
 }
 
 console.log('\n-- splitting, and it is balanced --');

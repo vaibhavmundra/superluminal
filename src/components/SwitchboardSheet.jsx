@@ -157,6 +157,13 @@ export default function SwitchboardSheet({ groups = [], planName = null,
         shadow-[0_1px_3px_rgba(10,10,10,0.07)] max-[900px]:pt-[28px]
         max-[900px]:px-[20px] max-[900px]:pb-[40px] max-[900px]:min-h-0">
 
+        {/* NO EXPORT BUTTONS ON THE PAPER, and they were here for one revision.
+            THE SCHEDULE SETTLED THIS ALREADY. BOQView is markup and nothing else;
+            its three downloads live in the panel beside it, under a heading, as
+            a stack of labelled blocks — and a sheet that grew its own pair of
+            controls in a different shape, in a different colourway, in a
+            different corner would have been a second answer to a question this
+            app had answered. The way to a file is the panel, on both sheets. */}
         <header className="mb-8">
           <h1 className="m-0 text-[19px] tracking-[-0.02em]">Switchboards</h1>
           <p className="m-0 mt-1 text-[11.5px] text-muted">

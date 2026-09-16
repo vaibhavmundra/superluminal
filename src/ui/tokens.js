@@ -124,16 +124,32 @@ const PILL_RETRY = `${PILL_BAD} cursor-pointer hover:bg-danger-line`;
 
 /* TABULAR FIGURES WHEREVER A NUMBER IS READ DOWN A COLUMN. Not a nicety in
    this face: its proportional `1` is half the width of its `0`. */
+/* THE VALUE IS WHITE, AND IT WAS `text-ink` — WHICH IS #000000. That was right
+   while these rows sat in the #F2F2F2 card the admin ledger used to have: a
+   near-black value against a muted label, on paper. The card went, every
+   consumer of this shape is now the editor's floating panel (`--color-panel`,
+   #1d1f20), and a #000000 `<b>` on that ground is a value you cannot read. It
+   went unnoticed because the two rows that carry a `<b>` are both rare — the
+   zone list, and a switchboard section that was drawing into a hidden container
+   until the window's `boardsOpen` veto came off.
+   THE LABEL STAYS MUTED AND ONLY THE VALUE IS WHITE, which is the contrast the
+   row is built on: `KV` dims the label to #a1a1a1 and the number stands out
+   against it. Making both white is `KV_ADMIN`, and that is a different
+   statement rather than a brighter version of this one. */
 const KV_SHAPE = 'flex justify-between text-[11.5px] py-[3px] '
-  + '[&>b]:text-ink [&>b]:tabular-nums';
+  + '[&>b]:text-white [&>b]:tabular-nums';
 const KV = `${KV_SHAPE} text-muted`;
 const KV_HEAD = `${KV_SHAPE} text-subtle`;
-/* THE SAME ROW ON NO GROUND AT ALL. The admin ledger used to sit in a #F2F2F2
-   card, which is where `KV`'s dark label and near-black `<b>` were legible; the
-   card is gone, so both halves of the row are white on the panel's own dark
-   ground. It restates the shape rather than appending overrides to `KV`,
-   because `[&>b]:text-ink` and `[&>b]:text-white` in one class list are decided
-   by the order Tailwind emits them in, not the order they are written. */
+/* THE SAME ROW WITH BOTH HALVES WHITE. The admin ledger used to sit in a
+   #F2F2F2 card, which is where `KV`'s dark label and near-black `<b>` were
+   legible; the card is gone. `KV_SHAPE` has since been corrected at the source —
+   its `<b>` is white now, for every consumer — so what is left here is the
+   LABEL: this row states a ledger where both halves are read, rather than a
+   muted caption against a value.
+   IT STILL RESTATES THE SHAPE RATHER THAN APPENDING AN OVERRIDE, and that rule
+   outlives the reason it was written for: two `[&>b]:text-*` in one class list
+   are decided by the order Tailwind emits them in, not the order they are
+   written. */
 const KV_ADMIN = 'flex justify-between text-[11.5px] py-[3px] text-white '
   + '[&>b]:text-white [&>b]:tabular-nums';
 const N_ADMIN = 'text-[11.5px] text-white leading-[1.5]';

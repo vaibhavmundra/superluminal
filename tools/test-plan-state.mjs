@@ -275,7 +275,7 @@ section('null is survivable');
 // whose last row was deleted.
 // ---------------------------------------------------------------------------
 
-/* A COMPLETE DOCUMENT. Every one of the sixty-three fields at the value App's own
+/* A COMPLETE DOCUMENT. Every one of the sixty-seven fields at the value App's own
    `useState` starts it at, so the round trip is tested over the whole shape
    rather than over whichever fields a fixture happened to mention. A field left
    `undefined` here would round-trip as `[]` or `{}` — applyEditor's `??` doing
@@ -298,7 +298,7 @@ const EMPTY_DOC = {
   elecPoints: [],
   cobArrays: [], trackFixtures: [], renderRefs: {},
   boardsOff: [], boardMoves: {}, boardPoints: {}, flowBoards: {}, flowBends: {},
-  flowLinks: {},
+  flowLinks: {}, flowTwoWays: {},
   manualBoards: [], boardKinds: {}, boardHeights: {}, boardOrders: {},
   ceilingMm: {}, materials: {}, fixtureWatts: {}, fixtureOff: {},
   /* THE REAL DEFAULTS AND NOT A PLAUSIBLE SUBSET. This was a hand-written
@@ -610,6 +610,18 @@ function randomAction(r) {
       key: `lt-${Math.floor(r() * 4)}`, value: `lt-${Math.floor(r() * 4) + 4}` },
     { type: 'MAP_ENTRY_REMOVED', field: 'flowLinks', key: `lt-${Math.floor(r() * 4)}` },
     { type: 'MAP_CLEARED', field: 'flowLinks' },
+    /* ...and the SECOND plate a switch is reached from, which is the two-way
+       override. Keyed on the FLOW id and not on a fitting — the opposite of
+       the link above, and deliberately: a link re-plugs a fitting's input and
+       has to outlive a re-chunk, while a two-way names a second plate for a
+       SWITCH, and a switch is a flow. See `flowTwoWays` in usePlanDoc. */
+    { type: 'MAP_ENTRY_SET', field: 'flowTwoWays', key: flowId, value: `sb-${Math.floor(r() * 3)}` },
+    /* AND `null`, WHICH IS THE THIRD STATE AND NOT AN ERASURE — "this switch
+       has no second point", as against the absent key's "the rules decide".
+       The bedroom fan has one by rule, so cutting it has to be sayable. */
+    { type: 'MAP_ENTRY_SET', field: 'flowTwoWays', key: flowId, value: null },
+    { type: 'MAP_ENTRY_REMOVED', field: 'flowTwoWays', key: flowId },
+    { type: 'MAP_CLEARED', field: 'flowTwoWays' },
     // ...and Delete on the wire, which takes both overrides in one act.
     { type: 'FLOW_OVERRIDES_DROPPED', flowId },
   ]);
@@ -1509,7 +1521,7 @@ section('the reducer owns what it claims to own');
          disagree, and writing this out by hand is what keeps them independent. */
       doors: [], doorsOk: false, zones: [],
       boardsOff: [], boardMoves: {}, boardPoints: {}, flowBoards: {}, flowBends: {},
-      flowLinks: {},
+      flowLinks: {}, flowTwoWays: {},
       manualBoards: [], elecPoints: [], boardKinds: {}, boardHeights: {}, boardOrders: {},
       unitId: null, pdfPage: null,
       scaleMode: 'door', refId: 'door900', customFt: 3,
@@ -1531,8 +1543,8 @@ section('the reducer owns what it claims to own');
       zoom: 1, view: 'spaces',
     }),
     JSON.stringify(initialDoc()));
-  ok('...and it is sixty-six fields, which is the whole document',
-    fields.length === 66, `${fields.length} fields`);
+  ok('...and it is sixty-seven fields, which is the whole document',
+    fields.length === 67, `${fields.length} fields`);
   /* AND THE DOCUMENT IS NOW EXACTLY WHAT THE FIXTURE DESCRIBES. While the
      migration was in progress the two could differ — a field App still held in
      `useState` was in EMPTY_DOC and not in DOC_FIELDS — and that slack is gone.
@@ -2119,16 +2131,21 @@ section("domain 5's own rules: two stores, and the way back out of an override")
       docReducer(b, { type: 'MAP_ENTRY_PATCHED', field: 'flowBends',
                       key: 'fl-o1-0', patch: { leg0: 0.5 } }) === b);
 
-    /* DELETE ON A WIRE MEANS "UNDO WHAT I DID TO IT" — and it takes BOTH
-       overrides, because putting a wire back under the rules is one act and
-       half of it is not a state anybody asked for. */
-    const clean = docReducer(b, { type: 'FLOW_OVERRIDES_DROPPED', flowId: 'fl-o1-0' });
-    ok('Delete on a wire takes the plate and the bends together',
-      same(clean.flowBoards, {}) && same(clean.flowBends, {}),
-      JSON.stringify([clean.flowBoards, clean.flowBends]));
+    /* DELETE ON A WIRE MEANS "UNDO WHAT I DID TO IT" — and it takes ALL THREE
+       overrides, because putting a wire back under the rules is one act and a
+       fraction of it is not a state anybody asked for. The second plate a hand
+       two-wayed it from is the third: a wire with its plate put back and its
+       two-way still standing is a wire half under the rules. */
+    const bTwo = docReducer(b, { type: 'MAP_ENTRY_SET', field: 'flowTwoWays',
+      key: 'fl-o1-0', value: 'sb-o2-door' });
+    const clean = docReducer(bTwo, { type: 'FLOW_OVERRIDES_DROPPED', flowId: 'fl-o1-0' });
+    ok('Delete on a wire takes the plate, the bends and the two-way together',
+      same(clean.flowBoards, {}) && same(clean.flowBends, {})
+      && same(clean.flowTwoWays, {}),
+      JSON.stringify([clean.flowBoards, clean.flowBends, clean.flowTwoWays]));
     ok('...and does it in one document',
-      clean !== b && docReducer(clean, { type: 'FLOW_OVERRIDES_DROPPED',
-                                         flowId: 'fl-o1-0' }) === clean);
+      clean !== bTwo && docReducer(clean, { type: 'FLOW_OVERRIDES_DROPPED',
+                                            flowId: 'fl-o1-0' }) === clean);
     /* AND IT LEAVES OTHER WIRES ALONE. One act on one wire. */
     let two = docReducer(b, { type: 'FLOW_BOARD_SET', flowId: 'fl-o2-0',
       boardId: 'sb-o2-door', home: false });

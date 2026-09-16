@@ -61,6 +61,19 @@ import { SYMBOL_FT, COB_DIA_IN, AIM_FT } from './settings.js';
 /* THE TRACK MODULES' REAL SIZES, in inches. Shared with the canvas and the DXF
    rather than restated, so a diffuser is the same body on all three. */
 import { TRACK_DIMS_IN } from './track.js';
+/* THE ELECTRICAL DRAWING'S OWN GEOMETRY AND ITS OWN COLOURS, borrowed whole for
+   the reason the head of this file gives about every other shared figure: a PDF
+   and a DXF of one plan that disagreed about a fitting would be worse than
+   either being wrong, and a symbol written out in two drawings stops being one
+   symbol the first time either is tuned. The J, the flattened wires and the
+   lead are the same three shapes exporters.js takes. */
+import { glyphJPoints } from './elecPoints.js';
+import { flowWires, feedTicks, WIRE_TICK_FT, WIRE_CHAIN, WIRE_TWO_WAY } from './flows.js';
+import { SB_COLOUR } from './electrical.js';
+import { acLead } from './wallUnit.js';
+/* WHICH CEILING OBJECTS ARE A RECTANGLE, asked of the catalogue. See `isRect` —
+   the chain of kinds this file carried named two and the catalogue has four. */
+import { isRect } from './ceilingObjects.js';
 
 /* --- THE NIGHT SHEET'S GRADIENTS WERE HERE, AND THEY ARE GONE --------------
    A HALO ROUND EVERY FITTING IS A SCREEN EFFECT, AND THIS FILE EXISTS BECAUSE
@@ -142,6 +155,35 @@ const paperFor = ({ night = false } = {}) => (night ? NIGHT_PAPER : WHITE);
  * for why a short dash rather than a true zero-length dot.
  */
 const DOT_FT = 0.05, GAP_FT = 0.10;
+
+/* THE WIRE PATTERNS, IN FEET, AND THEY ARE THE DXF'S — see WIRE_DASH_FT and
+   CHAIN_DASH_FT in exporters.js, which states why a feed is mostly ink and a
+   chain mostly air. A dash quoted in points would be three times as coarse on an
+   A3 as on an A1 of the same plan. */
+const WIRE_DASH_FT = 0.22, WIRE_DASH_GAP_FT = 0.11;
+const CHAIN_DASH_FT = 0.08, CHAIN_GAP_FT = 0.16;
+
+/**
+ * A HEX COLOUR AS pdf-lib's, so the sheet can be drawn in the canvas's own
+ * paint rather than in an approximation of it.
+ *
+ * THE ELECTRICAL LAYER IS THE ONE PLACE THIS SHEET IS NOT MONOCHROME, and that
+ * is a deliberate exception to `inkFor` rather than a hole in it. Everything
+ * else here is a LIGHTING drawing: one trade, one ink, and colour would be a
+ * screen idea. A wiring layer is three statements laid over each other — which
+ * plate switches this, what the run carries on to, and where a second plate
+ * reaches the same switch — and the canvas separates them by hue because on a
+ * bay with three rows crossing one ceiling nothing else can. Printed in one ink
+ * they are a thicket, which is exactly what the colours were introduced to fix.
+ * So the marks that are blue, grey and magenta on screen are blue, grey and
+ * magenta on the sheet.
+ */
+const hex = (h) => {
+  const n = parseInt(h.replace('#', ''), 16);
+  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+};
+const PLATE = hex(SB_COLOUR);
+const WIRE_INK = { feed: PLATE, chain: hex(WIRE_CHAIN), two: hex(WIRE_TWO_WAY) };
 
 /**
  * THE PLAN, RE-RENDERED AND INVERTED, for the night sheet's base.
@@ -465,6 +507,18 @@ export async function plotToPDF({
      stores — a store hands this `undefined` coordinates and the marks vanish
      without a word. */
   cobs = [], tracks = [], trackModules = [],
+  /* --- AND THE ELECTRICAL DRAWING, WHICH WAS NOT ON THE SHEET AT ALL -------
+     THE SAME FAULT AS THE THREE ABOVE, ONE LAYER OVER. Every plate, every socket
+     outlet, every wall and ceiling point, every air-conditioner's supply and
+     lead and every switched loop lived only on screen: this function had no
+     parameter for any of them, so a plan whose second half is a wiring layout
+     printed as a lighting drawing with the wiring silently missing.
+     ALL THREE ARE `*Px` PROJECTIONS, the contract every list here arrives under
+     — the stores hold feet and fractions of a wall, so one handed in draws
+     nothing and says nothing about it. `switchboards` is the DRAWING's list,
+     which already drops the bay plates when the wiring layer is off; the DXF is
+     handed every plate on the job instead, for the reason its own note gives. */
+  switchboards = [], elecPoints = [], flows = [],
   /* --- WHICH LAYERS ARE ON ------------------------------------------------
      THE SHEET IS WHAT THE DRAWING IS SHOWING, and until this existed the plot
      ignored the layer switches outright: it drew the engine's grid whether or
@@ -551,7 +605,16 @@ export async function plotToPDF({
      defaults a fresh document opens with — where `autoLights` is OFF. Merging
      them would make a bare call silently drop the engine's grid. */
   const L = { lights: true, autoLights: true, suggestGrid: false,
-              spots: true, accents: true, objects: true, ...(layers || {}) };
+              spots: true, accents: true, objects: true,
+              /* THE WIRING'S TWO SWITCHES, WHICH ARE TWO AND NOT ONE. `switchboards`
+                 is where the switches and the outlets go — a question about the
+                 ROOM, which a joiner and a tiler both need — and `electrical` is
+                 what is switched from where, which is the wireman's drawing. The
+                 canvas gates them separately; a sheet is the drawing on paper, so
+                 it gates them the same way. Both default TRUE for the parameter's
+                 stated reason: a caller that has not mentioned layers has not
+                 asked for anything to be withheld. */
+              switchboards: true, electrical: true, ...(layers || {}) };
   /* THE ENGINE'S GRID. `lights` is the master over every fitting, `autoLights`
      narrows it to the layout the solver computed, and the suggested grid
      replaces it with dotted proposals — which are a way of LOOKING at a
@@ -577,6 +640,14 @@ export async function plotToPDF({
      three times as coarse on an A3 as on an A1 of the same plan. Floored, so a
      site plan at a coarse scale still dots rather than going solid. */
   const dotted = [DOT_FT, GAP_FT].map((ft) => Math.max(T.len(ftPx(ft)), 0.4));
+  /* THE TWO WIRE PATTERNS, ON THE SAME TERMS AND OFF THE DXF'S OWN FIGURES. A
+     feed is mostly ink and reads heavy, a chain is mostly air and reads light —
+     the same hierarchy the weights carry, said again so it survives a sheet
+     printed in black. See WIRE_DASH_FT. */
+  const wireDash = [WIRE_DASH_FT, WIRE_DASH_GAP_FT]
+    .map((ft) => Math.max(T.len(ftPx(ft)), 0.5));
+  const chainDash = [CHAIN_DASH_FT, CHAIN_GAP_FT]
+    .map((ft) => Math.max(T.len(ftPx(ft)), 0.4));
 
   // --- the plan underneath ------------------------------------------------
   //
@@ -687,22 +758,65 @@ export async function plotToPDF({
       lamp(page, T, o, o.r || 0, { color: ink });
       continue;
     }
-    if (o.w > 0 && o.h > 0 && (o.kind === 'ac' || o.kind === 'trapdoor')) {
+    /* --- A SPLIT UNIT IS A RECTANGLE, AND IT WAS BEING PLOTTED AS A FAN ----
+       THE TEST WAS A CHAIN OF TWO KINDS AND THE CATALOGUE HAS FOUR. A split AC
+       failed it and fell to the branch below — which the note there calls "the
+       fan branch rather than a default" and warns that a fifth kind "wants its
+       own symbol here and not this one". A split unit is that kind: a 1000 x 250
+       mm box on a wall at 2100 mm, plotted as a ceiling fan.
+       ASKED OF THE CATALOGUE NOW. See `isRect`, whose own note predicted this
+       exact failure for this exact reason. */
+    if (o.w > 0 && o.h > 0 && isRect(o)) {
       // Rotated in PIXELS, corner by corner — the same rule the DXF exporter
       // states: an angle carried across a Y flip comes out mirrored, four
       // points cannot.
       const c = Math.cos(o.rot || 0), s = Math.sin(o.rot || 0);
-      const pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
-        const lx = (sx * o.w) / 2, ly = (sy * o.h) / 2;
-        return { x: o.x + lx * c - ly * s, y: o.y + lx * s + ly * c };
-      });
+      const at = (lx, ly) => ({ x: o.x + lx * c - ly * s, y: o.y + lx * s + ly * c });
+      const pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) =>
+        at((sx * o.w) / 2, (sy * o.h) / 2));
       polyline(page, T, pts, WEIGHT.fitting, true, line);
+      /* THE LOUVRES, WHICH ARE WHAT MAKE IT A SPLIT UNIT. A long thin rectangle
+         on its own is indistinguishable from a duct, a beam or a shelf — this
+         sheet carries all three — so three lines across the width say "grille",
+         running the LENGTH of the unit because that is how the blades sit. The
+         canvas draws these three; see the split-unit branch in PlanCanvas. */
+      if (o.kind === 'split_ac') {
+        const inset = o.h * 0.25;
+        for (const k of [-1, 0, 1]) {
+          polyline(page, T, [at(-o.w / 2 + inset, (o.h / 5) * k),
+                             at(o.w / 2 - inset, (o.h / 5) * k)],
+                   WEIGHT.setout, false, line);
+        }
+      }
+    } else if (o.kind === 'geyser') {
+      /* --- THE CYLINDER SEEN FROM ABOVE, AND ITS PIPEWORK ------------------
+         A GEYSER WAS BEING PLOTTED AS A CEILING FAN, by the same fall-through
+         the split unit took. It is round, so it reached the fan branch and came
+         out with three blades and a sweep circle — a fitting nobody specified,
+         drawn where somebody had put a water heater.
+         THE SAME THREE MARKS THE CANVAS AND THE DXF DRAW: the casing, the tank
+         inside it, and the stub that says which side the pipework comes off,
+         which is the half of the symbol that says this is plumbing rather than a
+         light. Nothing is filled, which is this file's grammar: a solid mark
+         means "this emits" and a geyser does not.
+         BUILT IN PLAN PIXELS AND CONVERTED, so the stub leaves the casing on the
+         side the drawing says it does. */
+      const c = T.p(o);
+      const rPx = o.r || 0;
+      const R = Math.max(T.len(rPx), 2.4);
+      page.drawCircle({ x: c.x, y: c.y, size: R,
+                        borderWidth: WEIGHT.fitting, borderColor: line });
+      page.drawCircle({ x: c.x, y: c.y, size: R * 0.5,
+                        borderWidth: WEIGHT.setout, borderColor: line });
+      polyline(page, T, [{ x: o.x, y: o.y - rPx }, { x: o.x, y: o.y - rPx * 1.35 }],
+               WEIGHT.fitting, false, line);
     } else {
-      // EVERYTHING ROUND THAT IS NOT A CHANDELIER IS A FAN. The catalogue in
-      // ceilingObjects.js has exactly four kinds and the three above are the
-      // other three, so this is the fan branch rather than a default — and if a
-      // fifth round kind is ever added, it wants its own symbol here and not
-      // this one, because it will not be a fan.
+      // EVERYTHING ROUND THAT IS NOT A CHANDELIER, A LAMP OR A GEYSER IS A FAN.
+      // The catalogue in ceilingObjects.js has eight kinds and the branches
+      // above are the rest of them, so this is the fan branch rather than a
+      // default — and a ninth round kind wants its own symbol here and not this
+      // one, because it will not be a fan. The two that fell through to it and
+      // were plotted as fans are directly above.
       fan(page, T, o, o.r || 0, line);
     }
   }
@@ -999,6 +1113,134 @@ export async function plotToPDF({
       if (c?.draft || !Number.isFinite(c?.x) || !Number.isFinite(c?.y)) continue;
       const rPx = ftPx(SYMBOL_FT.cob);
       lamp(page, T, c, rPx, { color: ink });
+    }
+  }
+
+  /* --- THE ELECTRICAL DRAWING ---------------------------------------------
+     LAST, OVER THE LIGHTING, which is the canvas's own stacking and the honest
+     one: the wiring is the layer you switch ON to read over a layout you already
+     have. Under the fittings the wires disappear wherever two lights overlap,
+     which on a real ceiling is most of it.
+
+     --- THE PLATES, AS THE RECTANGLES THEY ARE ----------------------------
+     A FILLED RECTANGLE AND NOT A SYMBOL — the canvas's argument, verbatim:
+     everything else on this sheet is a light and is drawn as one, and the board
+     is not a light. It is the thing that turns them on, it is a real plate of a
+     real size (230 x 80 mm, see SB_MM), and it is drawn at that size, in plan,
+     like a piece of the building rather than a piece of notation.
+     A WHITE EDGE ROUND THE FILL, exactly as on screen, and it is load-bearing
+     here for the reason it is there: the plan itself is underneath — embedded as
+     vector where it can be — and a plate standing ON a wall would otherwise
+     merge into the line it stands on. WHITE and not `paper`, which is the
+     canvas's own answer and differs on a night sheet: the edge is holding the
+     solid off SOMEBODY ELSE'S DRAWING, not off the ground, so it does not follow
+     the ground. On a dark sheet a black edge would be no edge at all.
+     NO WHITE UNDERLAY. The canvas lays one under the blue; a PDF fill is opaque,
+     so here it would be a second solid nobody can ever see.
+     A POLYGON RATHER THAN A ROTATED RECT, because the four corners are already
+     in hand: the placement pass returns the wall's own axes with the point, and
+     a transform would mean re-deriving a rotation, and its sign, from vectors
+     that already say it. */
+  if (L.switchboards) {
+    for (const b of switchboards) {
+      const half = (b?.alongPx ?? 0) / 2, deep = b?.deepPx ?? 0;
+      const u = b?.along, n = b?.inward, q = b?.point;
+      if (!(half > 0) || !u || !n || !Number.isFinite(q?.x)) continue;
+      const at = (a, d) => ({ x: q.x + u.x * a + n.x * d, y: q.y + u.y * a + n.y * d });
+      const ring = [at(-half, 0), at(half, 0), at(half, deep), at(-half, deep)];
+      fillPoly(page, T, ring, PLATE);
+      polyline(page, T, ring, WEIGHT.fitting, true, WHITE);
+    }
+
+    /* --- THE POINTS: THE SCONCE'S MARK, WITH A J IN IT --------------------
+       THE TRADE'S OWN SYMBOL for "a cable ends here, switched". A WALL point is
+       drawn exactly as a wall sconce is — a stem off the plaster to a circle
+       standing in the room — because it is the same kind of thing on the same
+       kind of wall; a CEILING point is the circle and the J alone, because there
+       is no plaster to stand off and a leader to the nearest wall would claim
+       something about the plan that is not true.
+       THE PLATE'S BLUE, FILLED, WITH A WHITE J — the switchboard's own treatment
+       said about a circle, and the canvas's reason for it: what the colour has
+       to say is which FIGURE this mark belongs to, and the answer is the wiring.
+       A point does not emit anything, so drawing it in the fittings' ink would
+       file it with the lights, which is the one group it is not in.
+       THE J AS SEGMENTS AND NOT AS A PATH. `glyphJPoints` is `glyphJ` evaluated
+       — see the note there, and the one over the aim arrow in this file for why
+       `drawSvgPath` is the wrong tool for any mark whose sense matters. */
+    for (const w of elecPoints) {
+      if (!Number.isFinite(w?.x) || !Number.isFinite(w?.y) || !(w.r > 0)) continue;
+      const c = T.p(w);
+      const R = Math.max(T.len(w.r), 1.2);
+      if (Number.isFinite(w.foot?.x) && Number.isFinite(w.foot?.y)) {
+        // THE STEM STOPS AT THE CIRCLE and starts at the plaster: a line through
+        // the symbol would cross the J and turn the mark to mush.
+        const dx = w.x - w.foot.x, dy = w.y - w.foot.y;
+        const d = Math.hypot(dx, dy) || 1;
+        polyline(page, T, [w.foot, { x: w.x - (dx / d) * w.r, y: w.y - (dy / d) * w.r }],
+                 WEIGHT.fitting, false, PLATE);
+      }
+      /* THE DISC, WITH THE PLATE'S OWN WHITE EDGE — it is doing the plate's job,
+         which is to hold a solid off somebody else's drawing. And the J on top
+         of it, white, because it is a glyph ON the solid. */
+      page.drawCircle({ x: c.x, y: c.y, size: R, color: PLATE,
+                        borderWidth: WEIGHT.fitting, borderColor: WHITE });
+      polyline(page, T, glyphJPoints(w.x, w.y, w.r), WEIGHT.fitting, false, WHITE);
+    }
+
+    /* --- THE LEAD FROM A WALL UNIT TO ITS SOCKET -------------------------
+       AN AIR-CONDITIONER IS PLUGGED IN, and this is the flex that does it.
+       Without it the unit and the socket a foot away are two marks that happen
+       to be near each other; the line is what says the second one is THERE
+       BECAUSE OF the first, which is the whole reason the socket was put where
+       it was put. `acLead` returns null for a POINT feed, and that is not an
+       omission: a point is centred behind the body, so the lead would be a line
+       from the unit to itself.
+       GATED ON THE OBJECTS LAYER TOO, because a lead is a CONNECTOR: it says
+       the socket is there because of the unit, and drawn to a unit that is not
+       on the sheet it is a line running out of a plate to nowhere. */
+    for (const o of L.objects ? objects : []) {
+      if (!o?.onWall) continue;
+      const leg = acLead(o, switchboards.find((b) => b?.acId && b.acId === o.id));
+      if (!leg) continue;
+      polyline(page, T, [leg.from, leg.to], WEIGHT.fitting, false, PLATE, wireDash);
+    }
+  }
+
+  /* --- AND THE LOOPS ------------------------------------------------------
+     EVERY FLOW'S WIRE, BOARD FIRST. See flows.js for what a flow is; this only
+     draws it, and from the same points the canvas strokes — `flowWires`
+     flattens one curve rather than letting two exporters each approximate it.
+     BOWED, AND THE BOW IS WHAT DOES THE WORK. A straight line between two
+     downlights is a setting-out line, a grid line, a dimension or a wall — this
+     sheet carries all four — and no dash pattern separates it from them. A
+     shallow arc is not any of those things, which is why the geometry in
+     flows.js is arcs rather than segments.
+     THREE INKS AND TWO PATTERNS, WHICH IS THE CANVAS'S OWN READING. The feed leg
+     answers "which plate switches this" and is the board's blue at the board's
+     weight; the chain says "and on to the next lamp in this row", which the row
+     already said by being a row, so it is grey, lighter and finer; a two-way's
+     second feed is magenta because it leaves a DIFFERENT plate and is not part
+     of that loop's circuit at all. Drawn in one ink at one weight, a bay with
+     three rows of six is a thicket and the three short lines that carry the
+     information are lost in it. */
+  if (L.electrical) {
+    for (const f of flows) {
+      if (f?.coincident) continue;
+      for (const w of flowWires(f)) {
+        const feed = w.kind !== 'chain';
+        polyline(page, T, w.pts, feed ? WEIGHT.fitting : WEIGHT.setout, false,
+                 WIRE_INK[w.kind] ?? PLATE, feed ? wireDash : chainDash);
+      }
+      /* THE FEED TICK, AND IT IS SOLID. One short mark across the wire where it
+         leaves the plate — not an arrow, because a wire has no direction and an
+         arrowhead would claim one. It is there because a loop's first leg is its
+         longest and a reader has to be able to find which of several plates it
+         came off. Drawn continuous: it is shorter than the dash pattern its own
+         wire carries, so dashed it would land in a gap and not be on the sheet. */
+      for (const t of feedTicks(f, { lenPx: ftPx(WIRE_TICK_FT) })) {
+        polyline(page, T, [t.a, t.b], WEIGHT.fitting, false,
+                 WIRE_INK[t.kind] ?? PLATE);
+      }
     }
   }
 

@@ -9,6 +9,8 @@ import { getProject, listPlans, renameProject, deletePlan, setProjectType,
 import { myAccess } from '../lib/sharing.js';
 import { startPlanUpload } from '../lib/uploads.js';
 import { PROJECT_TYPES } from '../lib/roomTypes.js';
+import { readPlansCache, savePlansCache, readCachedProject } from '../lib/projectCache.js';
+import { useAuth } from '../lib/auth.jsx';
 
 // ---------------------------------------------------------------------------
 // ONE PROJECT, AND THE PLANS IN IT.
@@ -17,12 +19,29 @@ import { PROJECT_TYPES } from '../lib/roomTypes.js';
 // created automatically from a filename is a name nobody chose and the first
 // thing anybody does here is fix it. A click on the heading is the whole
 // interaction; blur or Enter commits, Escape reverts.
+//
+// IT OPENS ON WHAT IT KNEW LAST. Both halves of `load()` were making the user
+// wait for something: `getProject()` re-reads a row the DASHBOARD already had —
+// listProjects() returns the whole of PROJECT_COLS and the card they clicked was
+// drawn from it — and `listPlans()` re-reads a list that has usually not changed
+// since the last visit. So the heading and the cards paint from
+// lib/projectCache.js and the fetch revalidates underneath.
+//
+// `access` IS THE ONE THING THAT DOES NOT. It gates the Delete links and the
+// drop target, and `undefined` is deliberately the least-privileged of the four
+// states — see the note where it is declared. Painting a cached 'owner' would
+// put a Delete link under the cursor of somebody downgraded to view since their
+// last visit. The cards come back instantly; their controls take a round trip.
 // ---------------------------------------------------------------------------
 export default function ProjectDetail() {
   const { projectId } = useParams();
   const nav = useNavigate();
-  const [project, setProject] = useState(null);
-  const [plans, setPlans] = useState(null);
+  const { user } = useAuth();
+  // DISPLAY FIELDS ONLY out of the cache — the name and the category. `owner` is
+  // on that row too and readCachedProject's header says why it must not be used
+  // to settle what this visitor may do.
+  const [project, setProject] = useState(() => readCachedProject(user?.id, projectId));
+  const [plans, setPlans] = useState(() => readPlansCache(projectId));
   const [err, setErr] = useState('');
   const [over, setOver] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -34,10 +53,32 @@ export default function ProjectDetail() {
   const [access, setAccess] = useState(undefined);
   const fileRef = useRef(null);
 
+  // WHICH PROJECT THE STATE ABOVE BELONGS TO, reconciled DURING the render that
+  // changes it rather than in an effect afterwards.
+  //
+  // Going straight from one project to another — browser back and forward over
+  // two /projects/:id urls — does not remount this component, so every piece of
+  // state survives a change of `projectId`. That was already true before the
+  // cache and already wrong: the previous project's plans stayed on screen until
+  // the new fetch landed. What makes it worth fixing HERE is `access`, which
+  // would carry an owner's Delete links onto somebody else's project for the
+  // length of a round trip. Setting state during render is React's own answer to
+  // this: it re-renders immediately, before anything is committed, so there is
+  // no frame in between and no wasted paint.
+  const [stateFor, setStateFor] = useState(projectId);
+  if (stateFor !== projectId) {
+    setStateFor(projectId);
+    setProject(readCachedProject(user?.id, projectId));
+    setPlans(readPlansCache(projectId));
+    setAccess(undefined);
+    setErr('');
+  }
+
   const load = useCallback(async () => {
     try {
       const [p, ps] = await Promise.all([getProject(projectId), listPlans(projectId)]);
       setProject(p); setPlans(ps);
+      savePlansCache(projectId, ps);
       // AFTER THE ROW, NOT BESIDE IT. `myAccess` skips its query entirely when
       // it is told the owner, and the project row is where the owner comes
       // from — so sequencing these saves a round trip on the common case rather
@@ -51,7 +92,15 @@ export default function ProjectDetail() {
         console.warn('[project] could not read the share role — treating as view only', ex);
         setAccess('view');
       }
-    } catch (e) { setErr(String(e.message || e)); setPlans([]); }
+    } catch (e) {
+      // A FAILED REFETCH DOES NOT EMPTY A LIST WE ARE ALREADY DRAWING. Before
+      // the cache this fell back to `[]` over a skeleton and lost nothing; now
+      // it would replace the user's plans with "Drop a floor plan". `cur ?? []`
+      // keeps what is on screen and still ends a FIRST visit at the invitation
+      // rather than at a skeleton that never resolves. Same rule as Dashboard.
+      setErr(String(e.message || e));
+      setPlans((cur) => cur ?? []);
+    }
   }, [projectId]);
 
   useEffect(() => { load(); }, [load]);

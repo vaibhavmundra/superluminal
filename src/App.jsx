@@ -60,6 +60,7 @@ import { NONE, select, clear, idOf } from './lib/selection.js';
 import { pointInPolygon } from './lib/geometry.js';
 import { openingPx, DOOR_WIDTHS } from './lib/doors.js';
 import { download, toJSON, toSuperluminalDXF, svgToPNG } from './lib/exporters.js';
+import { boardSheetToDXF, boardSheetToPDF, paginate } from './lib/boardExport.js';
 import { plotToPDF, nightBase } from './lib/pdfPlot.js';
 import { LIGHT_TOOLS, GESTURE } from './components/LightPalette.jsx';
 import { owns, canGrab } from './lib/pressOwner.js';
@@ -1276,6 +1277,26 @@ export default function App({
   // `doorsOk` is in the document reducer; `doorEdit` is a screen and stays here.
   const [doorEdit, setDoorEdit] = useState(false);
 
+  /* --- WAS THIS STEP RAISED BY THE WIRING, AND IS IT STILL UNANSWERED? -----
+     THE DIFFERENCE BETWEEN THE TWO WAYS IN, AND IT IS THE WHOLE OF THE GATE.
+     "Modify doors" in the footer is somebody going to LOOK at the boxes on a
+     plan whose wiring is already their business; the electrical-layer effect
+     raises the same step as a QUESTION standing in front of that layer, and the
+     answer to a question is not "I closed it". So a step opened THAT way and
+     closed any way but by confirming takes the wiring back off — see
+     `closeDoorEdit`, which is the one exit every route out goes through.
+
+     A REF AND NOT STATE, because nothing renders differently for it: it is
+     written by the two openers and read once, inside the close, on the same tick
+     the close runs.
+
+     UP HERE WITH THE SCREEN FLAG IT BELONGS TO, and not beside the opener that
+     sets it, for the reason the note on `disarmAdd` gives: `resetForNewPlan` is
+     built hundreds of lines above the door commands and has to spend this, and a
+     `useRef` declared below it would be a temporal dead zone in its dependency
+     array. */
+  const doorGate = useRef(false);
+
   /* --- WHICH MACHINE OWNS THE NEXT PRESS ----------------------------------
      ONE MEMO, AND THE RULE THAT READS IT IS IN lib/pressOwner.js. This canvas
      has one pointer pipeline and seven machines that can own a press on it, and
@@ -1408,6 +1429,13 @@ export default function App({
     // detection nobody has looked at.
     electricalReset.current.doorConfirmation(); setDoorEdit(false);
     setDoorDraft(null); setDoorDrag(null);
+    /* ...AND THE GATE FLAG WITH THEM. This tears the step down rather than
+       CLOSING it — `closeDoorEdit` is the exit that revokes an unanswered gate,
+       and it is deliberately not called here, because a fresh plan's layers are
+       not the old plan's to switch off. Left standing, the flag would make the
+       next stand-down on the NEW sheet revoke a wiring layer nobody had asked a
+       question about. See `doorGate`. */
+    doorGate.current = false;
     roomIntelReset.current.surfaces();
     docActions.clearObjects(); fixtureReset.objects();
     // AND THE DRAWN COVES, for the reason the hand-placed slots above go: a
@@ -1867,7 +1895,38 @@ export default function App({
     const wiring = base.electrical || boardPlace
       ? base : { ...base, switchboards: false };
     const aiming = stepTool?.id === 'cove' ? { ...wiring, region: true } : wiring;
-    const doors = doorEdit ? { ...aiming, electrical: false } : aiming;
+    /* --- ...AND THE DOOR STEP CLEARS THE SHEET BACK TO THE SCAN ------------
+       THE QUESTION IS "WHICH BOXES ON THIS PLAN ARE DOORS", so the only thing
+       that may be on the sheet is the plan and the boxes. It took `electrical`
+       off and nothing else, which left somebody being asked to check a detection
+       through their own ceiling: fittings over the leaves, a heatmap wash over
+       the swing, tags on top of both. The panel had already emptied to one
+       sentence for exactly this reason — see the door branch there — and the
+       drawing was still arguing with it.
+       EVERY MARK OF OURS, NOT A SELECTION OF THEM. `lights` is the master over
+       the placed fittings, but `autoLights` and `suggestGrid` draw the engine's
+       answer on their own, `heatmap` is a field rather than a fitting, and
+       `accents`, `spots`, `fan` and `zones` each carry their own population. A
+       list that named four of those would be a list that grows a hole the next
+       time a layer is added; this one is the wall step's, which had the same
+       requirement, plus the three that step predates.
+       AND THE PLAN COMES BACK UN-INVERTED AND AT FULL STRENGTH. `invert` is a
+       preference about the picture and `dim` fades it — both perfectly
+       reasonable to be sitting in, and both of them working against the one
+       thing being asked here, which is READ THIS SCAN. A door leaf is a thin arc
+       in a drawing full of thin arcs; at 42% on a negative it is a guess.
+       `plan: true` for the same reason: with the floor plan switched off this
+       step would be a question about an empty sheet.
+       DERIVED AND NOT SET, like everything else in this memo. `layers` is
+       untouched, so the View switches, the day/night pair in the top bar and the
+       saved sheet all come back exactly as they were the moment the doors are
+       confirmed. */
+    const doors = doorEdit ? { ...aiming,
+      plan: true, invert: false, dim: false,
+      cells: false, region: false, lights: false, autoLights: false,
+      suggestGrid: false, labels: false, beamAngles: false, fan: false,
+      zones: false, accents: false, spots: false, heatmap: false,
+      switchboards: false, electrical: false } : aiming;
     /* --- AND THE WALL STEP TAKES EVERYTHING OFF BUT THE PLAN ---------------
        ONE SPACE'S EDGES ARE THE SUBJECT, so they have to be the only thing on
        the sheet that reads. Every layer here is a mark our own drawing makes —
@@ -2812,10 +2871,16 @@ export default function App({
    * armed ceiling object, an add tool, the zone band, and now this. Two owners
    * is a press with two meanings, so opening this disarms the rest rather than
    * competing with them.
+   *
+   * `gated` SAYS WHICH OF THE TWO WAYS IN THIS IS — see `doorGate`. It is set
+   * AFTER the stand-down and not before, and that order is this function's to
+   * keep: `standDown` closes the door step on its way past, so a flag set first
+   * would be spent by the very call that is opening the step.
    */
-  const openDoorEdit = useCallback(() => {
+  const openDoorEdit = useCallback((gated = false) => {
     standDown();
     setDoorEdit(true);
+    doorGate.current = gated;
   }, [standDown]);
 
   /* --- THE ELECTRICALS -------------------------------------------------------
@@ -2915,7 +2980,10 @@ export default function App({
     sel, setSel, svgPoint, svgRef, pressState, boardStep, doc, docActions,
   });
   electricalReset.current = electrical.reset;
-  const { switchboardsPx, flowsPx, selBoardId, selFlowId, boardDrag, flowDrag,
+  /* `allBoardsPx` IS THE CAD FILE'S LIST AND NOT THE DRAWING'S — see `dxfArgs`.
+     `switchboardsPx` drops the bay plates while the wiring layer is off, which
+     is right for a sheet and wrong for a file somebody imports to work from. */
+  const { switchboardsPx, allBoardsPx, flowsPx, selBoardId, selFlowId, boardDrag, flowDrag,
           onBoardPointerDown: boardPointerDown, boardPointerMove, boardPointerUp,
           onFlowPointerDown: flowPointerDown, onFlowGripDown: flowGripDown,
           flowPointerMove, flowPointerUp } = electrical.canvas;
@@ -2926,6 +2994,61 @@ export default function App({
              switchboard workflow even though the floating layer toggle is gone. */
           doorsOk } = electrical.panel;
   const { groups: boardSheet } = electrical.sheet;
+  const boardPlateCount = useMemo(
+    () => boardSheet.reduce((n, g) => n + g.plates.length, 0), [boardSheet]);
+  /* HOW MANY A2 SHEETS THE PDF COMES TO, so the panel can say it before anybody
+     spends a download finding out. It is the one fact about the exported file
+     that is not already on screen — 1:5 puts about a hundred plates on a sheet,
+     so most jobs are one and a big hotel floor is not, and "PDF" with no number
+     beside it is the same button in both cases.
+     `paginate` AND NOT A RENDER. It is the pure pass that decides the answer —
+     see its note — and since it stopped building geometry to measure widths it
+     is arithmetic over the plate list, which is cheap enough to memo on the
+     sheet rather than gate behind `boardsOpen`. */
+  const boardPdfSheets = useMemo(
+    () => (boardPlateCount ? paginate(boardSheet, sbCountry).length : 0),
+    [boardSheet, sbCountry, boardPlateCount]);
+
+  /* --- TAKING ONE END OFF A TWO-WAY ----------------------------------------
+     TWO ENDS, TWO ANSWERS, AND ONLY ONE OF THEM IS A DELETE.
+
+       THE SECOND PLATE GOES and the wire keeps the plate it runs off. One
+       write: the override is removed, and the flow is back to whatever the
+       rules say — which for a bedroom fan is its bedside point again and for
+       everything else is one way. That is the same way back every override in
+       this domain has.
+
+       ITS OWN PLATE GOES and the wire has to be MOVED rather than merely cut.
+       The fitting is still connected at the other end — that is the whole
+       premise of a two-way — so dropping this end without reassigning would
+       leave a light switched from nowhere while a live switch stood on the
+       other plate. So the flow is assigned to the second plate first and the
+       two-way removed after: one wire, one switch, on the plate that is left.
+
+     EITHER WAY THE SURVIVOR STOPS BEING A TWO-WAY SWITCH, and that falls out
+     rather than being arranged: `pointsFromFlows` reads `f.also`, which is gone
+     in both branches, so the chevrons come off the plate that remains and the
+     schedule bills it as an ordinary switch again. See `twoWay` there.
+
+     BOTH WRITE `null` AND NEITHER DELETES, WHICH IS THE WHOLE OF WHY THIS
+     WORKS ON A FAN. A delete means "go back to the rules", and the bedroom fan's
+     second point IS a rule — so cutting it with a delete removed an entry the
+     fan never had and the rule proposed the bedside again on the next render.
+     The badge drew perfectly and did nothing, on the one flow in the app that
+     has a second point without anybody asking for one. `null` is the positive
+     statement the store needed: this switch has no second point. See `twoWay` in
+     planFlows for the three states.
+     THE WAY BACK IS STILL THERE AND IS THE DRAG. Dropping a fitting's grip on a
+     plate two-ways it again; dropping it on the plate that already does clears
+     the entry outright and hands the flow back to the rules. */
+  const cutTwoWay = useCallback((flowId, side) => {
+    const f = flowsPx.find((q) => q.id === flowId);
+    if (!f?.also) return;
+    if (side === 'own' && f.also.boardId) {
+      docActions.setFlowBoard(flowId, f.also.boardId, false);
+    }
+    docActions.setFlowTwoWay(flowId, null);
+  }, [flowsPx, docActions]);
   const { pickFlow, reorderBoardUnit, setBoardOutlet, setBoardAmps, setBoardHeight,
           addBoardPoint, removeBoardPoint, deleteBoard, placeBoardAt,
           openBoardPlace: enterBoardPlace, clearPlacedBoards,
@@ -2939,9 +3062,26 @@ export default function App({
              down and all four are defined above this line. Same function. */
           confirmDoors: confirmDoorsForWiring } = electrical.commands;
 
+  /* THE ONE EXIT, AND EVERY ROUTE OUT GOES THROUGH IT — the footer's "Done with
+     doors", Escape and every other stand-down (see `standDownRef`, which calls
+     this rather than repeating its four lines), and `confirmDoors`.
+     WHICH IS WHY THE REVOKE IS HERE. A step the wiring raised and nobody
+     answered has to leave the wiring where it found it, or the question was
+     decoration: press the switch, close the question, and the electrical layout
+     is on top of a door set nobody looked at, which is the one state this whole
+     gate exists to prevent. `confirmDoors` spends the flag before it calls this,
+     so an answer is not a back-out.
+     `electrical` ALONE AND NOT THE PAIR. It is the flag that actually decides
+     whether any of this is visible — the plates derive off with it (see `wiring`
+     in `canvasLayers`) — and the route in may have been the View menu's single
+     tick rather than the bar's master switch, which has no business clearing a
+     second box nobody touched. */
   const closeDoorEdit = useCallback(() => {
     setDoorEdit(false); setSel(clear()); setDoorDraft(null); setDoorDrag(null);
-  }, []);
+    if (!doorGate.current) return;
+    doorGate.current = false;
+    docActions.setLayer('electrical', false);
+  }, [docActions]);
 
   /* --- THE NO-LIGHT ZONE, AS A STEP RATHER THAN A TAB ----------------------
      THE SAME SHAPE AS THE DOOR EDITOR ABOVE, FOR THE SAME REASON. What is being
@@ -3044,7 +3184,12 @@ export default function App({
   standDownRef.current = (except) => {
     setSel(clear());
     setZoneEdit(false); setZoneMode(false); setDraftZone(null);
-    setDoorEdit(false); setDoorDraft(null); setDoorDrag(null);
+    /* THE DOOR STEP THROUGH ITS OWN CLOSE and not through three setters that
+       happen to match it: an unanswered gate has to take the wiring back off
+       with it, and that rule lives in `closeDoorEdit`. It clears the selection
+       too, which this function has already done one line above — the same
+       write twice in one batch, which React coalesces. */
+    closeDoorEdit();
     closeWallEdit();
     closeTrackEdit();
     if (except !== 'board') closeBoardPlace();
@@ -3098,8 +3243,6 @@ export default function App({
      is a DISMISSAL of the override and not a delete, because a light cannot be
      removed. */
 
-
-
   /* --- OPENING AN ARRAY'S BAR: THE HALF THAT IS APP'S ----------------------
      ONE CONTEXTUAL BAR AT A TIME, AND IT IS NOT A PREFERENCE. Both bars on this
      drawing are `position: fixed`, centred over the stage, 26px off its foot —
@@ -3116,8 +3259,6 @@ export default function App({
      round, like every other opener's, and the copy is gone. */
 
 
-
-
   /**
    * THE ANSWER, AND THE ONE THING IT TURNS ON.
    *
@@ -3126,6 +3267,10 @@ export default function App({
    * records that a person has LOOKED, and that is the gate the wiring is behind.
    */
   const confirmDoors = useCallback(() => {
+    /* ANSWERED, SO THE CLOSE BELOW MUST NOT REVOKE THE LAYER IT IS ABOUT TO BE
+       HANDED. Spending the flag first is what separates "I said yes" from "I
+       backed out" at the one exit both of them use — see `closeDoorEdit`. */
+    doorGate.current = false;
     closeDoorEdit();
     confirmDoorsForWiring();
   }, [closeDoorEdit, confirmDoorsForWiring]);
@@ -3168,13 +3313,19 @@ export default function App({
      handed `onConfirmDoors={null}`. */
 
   /* HAS THE WIRING ALREADY PUT THE DOOR QUESTION UP THIS TIME ROUND?
-     WITHOUT IT THE STEP IS A TRAP. Closing the editor without answering leaves
-     `doorsOk` false and the electrical layer on, which is exactly the state the
-     effect below opens on — so it would reopen on the same render, for ever,
-     and the only way out of the door step would be through it. The gate is
-     offered ONCE per time the wiring is switched on; back out and the wiring
-     shows with its own unanswered-doors gate, which is a state the panel
-     already knows how to draw, and "Modify doors" is still there. */
+     WITHOUT IT THE STEP IS A TRAP. Closing the editor without answering used to
+     leave `doorsOk` false and the electrical layer ON, which is exactly the
+     state the effect below opens on — so it would reopen on the same render, for
+     ever, and the only way out of the door step would be through it.
+     THE BACK-OUT CLOSES THAT LOOP FROM THE OTHER SIDE NOW. An unanswered gate
+     takes the layer off with it (see `closeDoorEdit`), and the first branch of
+     the effect re-arms this flag the moment the layer goes false — so the pair
+     is: ask once per switch-on, and a switch-on that was not answered is not one
+     that leaves the wiring showing. Both halves are wanted. This one is what
+     keeps the question from being re-asked inside the single render between the
+     close and the layer write landing; the revoke is what makes "confirm" the
+     only way to the electrical layout. "Modify doors" in the footer is still the
+     way back in afterwards, and it is NOT gated — see `doorGate`. */
   const doorAsked = useRef(false);
 
   /* --- THE DOORS, ASKED FOR AT THE MOMENT SOMETHING NEEDS THEM -------------
@@ -3187,12 +3338,15 @@ export default function App({
      reach. So it is asked here, once, the first time somebody turns the
      electricals on — and a plan that is only ever lit never spends the call.
 
-     THE SEQUENCE IS DETECT, THEN CONFIRM, THEN WIRING, and each step is one
-     render of this effect rather than a chain of callbacks: bumping the nonce
-     puts the detector into 'running', coming back puts it into 'done', and the
-     editor opens on the boxes it found. `elecScene` is already gated on
-     `!doorEdit`, so the wiring stays behind the question while it is open and
-     appears the moment `confirmDoors` answers it.
+     THE SEQUENCE IS ASK, THEN DETECT, THEN CONFIRM, THEN WIRING, and it used to
+     be detect-then-ask: the editor opened on the boxes the search had already
+     found, which meant the press on the switch bought a couple of seconds of
+     nothing. The question is raised on the press now and the boxes land inside
+     it — see the block at the foot of this effect. `elecScene` is gated on
+     `!doorEdit` and so is the whole of `canvasLayers`' door branch, so the sheet
+     clears to the bare scan while the question stands and the wiring appears the
+     moment `confirmDoors` answers it — and only then: any other way out of the
+     step takes the layer back off. See `closeDoorEdit`.
 
      NOT WHILE THE EDITOR IS OPEN, and not once somebody has said the boxes are
      right: `doorsOk` is exactly that decision, and a plan that answered this on
@@ -3208,13 +3362,27 @@ export default function App({
        status change that is never coming — see useDoorRecognition, which checks
        the same five things and returns. */
     if (!source || isVector || readOnly || !projectId || !img?.el) return;
-    if (doorState.status === 'running') return;
-    if (doorState.status === 'idle') { recognitionCommands.rerunDoors(); return; }
-    // 'done' or 'error' — either way there is nothing more coming, and an empty
-    // set is a perfectly good thing to show somebody: the step's own answer is
-    // "there are no doors", and it draws the boxes they can add by hand.
+    /* --- THE STEP OPENS FIRST AND THE DETECTOR CATCHES UP ------------------
+       IT USED TO WAIT FOR 'done' AND THE SWITCH LOOKED BROKEN. The search is a
+       model call of a couple of seconds (see useDoorRecognition), and while it
+       ran this effect returned: the press on the wiring switch did nothing at
+       all to the screen, and then the whole sheet changed by itself a beat
+       later. A control that appears to do nothing is a control people press
+       again.
+       SO THE QUESTION IS RAISED ON THE PRESS. The plan clears to the bare scan
+       the moment the switch goes on — see the door branch in `canvasLayers` —
+       and the boxes arrive underneath it when they arrive, which is the order
+       the sentence in the panel describes.
+       THE ANSWER IS WITHHELD UNTIL THEY DO. `doorState.status === 'running'` is
+       what holds the confirm button in the panel, because "There are no doors"
+       pressed over a search that has not come back yet would write the one
+       answer this whole gate exists to prevent. See the door branch there.
+       'done' AND 'error' BOTH OPEN IT TOO, and an empty set is a perfectly good
+       thing to show somebody: the step's own answer is "there are no doors", and
+       it draws the boxes they can add by hand. */
     doorAsked.current = true;
-    openDoorEdit();
+    openDoorEdit(true);
+    if (doorState.status === 'idle') recognitionCommands.rerunDoors();
   }, [layers.electrical, doorsOk, doorEdit, source, img, isVector, readOnly, projectId,
       doorState.status, recognitionCommands, openDoorEdit]);
 
@@ -5116,6 +5284,50 @@ export default function App({
   const exportBase = rooms.length === 1 && rooms[0].outline.name
     ? `${base}-${rooms[0].outline.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
     : base;
+  /**
+   * THE SWITCHBOARD SCHEDULE AS A FILE. Two formats, one geometry — see
+   * lib/boardExport.js, and lib/boardPlot.js for the millimetres under both.
+   *
+   * DOWN HERE AND NOT BESIDE `exportBOQ`, WHICH IS WHERE IT WAS AND WHERE IT
+   * THREW. It is the third member of a family — the schedule, the drawing, the
+   * plates — and putting it with the other two read well and did not run:
+   * `boardSheet` and `sbCountry` are destructured off the electrical feature
+   * eight hundred lines below that point and `exportBase` is worked out three
+   * thousand below it, so naming all three in a dependency array up there is
+   * "Cannot access 'boardSheet' before initialization" on the first render.
+   *
+   * THE ESCAPE `acCountry` USES IS NOT AVAILABLE HERE. That one dodges the same
+   * dead zone by calling `countryFor` again — pure, a table read, same object.
+   * There is no second way to obtain a BUILT SHEET; it is the feature's own
+   * output and there is exactly one of it. So the callback moves to the names
+   * instead of the names moving to it, and this is the first line after the last
+   * of them.
+   *
+   * BEHIND `gateExport` LIKE THE SCHEDULE AND UNLIKE THE ORIGINAL FILE. The rule
+   * the other exports are split on is whose work is being handed over: the
+   * uploaded drawing is the user's own and is given back freely, and anything
+   * this app WORKED OUT — the lighting, the schedule, and now the plates — is
+   * what the gate stands in front of.
+   *
+   * THE DXF IS SYNCHRONOUS AND THE PDF IS NOT, and both are gated before either
+   * starts: laying out a hundred and fifty plates and then asking would mean a
+   * cancelled export that had already spent the time.
+   */
+  const exportBoards = useCallback(async (kind) => {
+    if (!await gateExport()) return;
+    const opts = { country: sbCountry, planName: source?.name ?? null };
+    try {
+      if (kind === 'dxf') {
+        download(`${exportBase}-switchboards.dxf`,
+          boardSheetToDXF(boardSheet, opts), 'application/dxf');
+      } else {
+        download(`${exportBase}-switchboards.pdf`,
+          await boardSheetToPDF(boardSheet, opts), 'application/pdf');
+      }
+      milestone.current?.('export');
+    } catch (err) { console.error('[export] the switchboard sheet failed', err); }
+  }, [gateExport, boardSheet, sbCountry, source, exportBase]);
+
   const exportMeta = {
     pxPerFt,
     mode: isVector ? 'dxf' : scaleMode,
@@ -5165,9 +5377,26 @@ export default function App({
     cobs: lampsPx,
     tracks: magTracksPx,
     trackModules: trackModulesPx,
+    /* --- AND THE ELECTRICAL DRAWING, WHICH REACHED NEITHER EXPORT ----------
+       THE SAME DRIFT THE MAGNETIC TRACK HAD, one domain over and four
+       populations wide: the plates, the wall and ceiling points, the
+       air-conditioners' supplies and leads, and every switched loop were on the
+       canvas and in neither file. A plan whose second half is a wiring layout
+       exported as a lighting drawing with the wiring silently gone.
+       `switchboardsPx` AND NOT `allBoardsPx` HERE, which is the one place the
+       two exports are handed different lists on purpose. This one is the
+       DRAWING's — it drops the bay plates when the wiring layer is off — and a
+       sheet is the drawing on paper. The file is not a picture; see `dxfArgs`.
+       EVERY ONE IS A `*Px` PROJECTION, the rule this whole object is built on:
+       a plate's position in the store is a fraction of a wall and a point's is
+       feet, so handing over a store is a mark that silently fails to appear. */
+    switchboards: switchboardsPx,
+    elecPoints: elecPointsPx,
+    flows: flowsPx,
     layers: canvasLayers,
   }), [source, pxPerFt, rooms, obstaclesPx, accentZonesPx, taskSpotsPx,
-       reverseCoves, lampsPx, magTracksPx, trackModulesPx, canvasLayers]);
+       reverseCoves, lampsPx, magTracksPx, trackModulesPx,
+       switchboardsPx, elecPointsPx, flowsPx, canvasLayers]);
 
   /* --- AND THE DXF'S, WHICH IS THE SAME DRAWING FOR A DIFFERENT READER -------
      TWO CALL SITES AGAIN, and the same hand-written pair the PDF's had: the
@@ -5245,8 +5474,22 @@ export default function App({
     cobs: lampsPx,
     tracks: magTracksPx,
     trackModules: trackModulesPx,
+    /* --- THE ELECTRICAL DRAWING, AND `allBoardsPx` RATHER THAN THE SHEET'S ---
+       EVERY PLATE ON THE JOB, INCLUDING THE ONES THE VIEW SWITCH IS HIDING.
+       `switchboardsPx` drops the bay plates while the wiring layer is off, which
+       is correct for a sheet — a plate that exists because a piece of ceiling
+       needed switching is part of the flow reading and has no business on a
+       drawing with the loops turned off. A DXF has layers of its own and the
+       reader decides what to look at in their own CAD, so withholding a plate
+       from it would be this app deciding what another trade may see. Same
+       argument as the note above about `layers`.
+       THE POINTS AND THE LOOPS ARE UNGATED EITHER WAY: neither list is filtered
+       by a layer switch to begin with. */
+    switchboards: allBoardsPx,
+    elecPoints: elecPointsPx,
+    flows: flowsPx,
   }), [source, pxPerFt, rooms, obstaclesPx, accentZonesPx, taskSpotsPx,
-       lampsPx, magTracksPx, trackModulesPx]);
+       lampsPx, magTracksPx, trackModulesPx, allBoardsPx, elecPointsPx, flowsPx]);
 
   // --- persistence ----------------------------------------------------------
   //
@@ -5504,8 +5747,22 @@ export default function App({
      to report, a plan that produced no layout, a fan being placed, and no scale
      set — each of those is the window speaking without having been asked, which
      is right in all four cases. */
-  const windowSpeaks = !!source && !boardsOpen && (
-    boqOpen || readOnly || prep || stepPanel || showTrace
+  const windowSpeaks = !!source && (
+    /* `boardsOpen` IS IN THE LIST NOW, AND IT USED TO BE `!boardsOpen` ON THE
+       WHOLE EXPRESSION — a hard veto that shut the window on the switchboard
+       sheet whatever else was true. The reason given was that the sheet had
+       nothing to put in a panel: every plate is edited ON the sheet, where its
+       height is a box you type in, so the window would have been an empty box.
+       THAT REASON DIED WHEN THE SHEET GOT EXPORTS. There are two things to do
+       with it now — a PDF and a DXF — and they live where the schedule's three
+       live, which is here. The veto made that section unreachable: the body's
+       first branch has drawn a plate list for `boardsOpen` all along, into a
+       container that was `hidden`, `inert` and `aria-hidden` every time.
+       FIRST, BECAUSE THE BODY'S TERNARY TESTS IT FIRST. This list is the branch
+       list of the window's contents IN ORDER — see the note above — and the two
+       being in the same order is the only thing that keeps them checkable
+       against each other by eye. */
+    boardsOpen || boqOpen || readOnly || prep || stepPanel || showTrace
     || (elecScene ? true : !!panelRoom)
     || !!selBoardParts
     || (!!armed || !pxPerFt)
@@ -5786,50 +6043,52 @@ export default function App({
      putting the thing in hand down, which is what pressing its own rail cell
      again does, and what Escape does, in both modes. */
 
-  /* --- THE LAYOUT SWITCHES ON THE FLOATING BAR ----------------------------
-     THE ELECTRICAL LAYER SWITCH IS DELIBERATELY NOT HERE. Wiring remains
-     available from the Electrical tool and the View menu, while this contextual
-     bar stays about the lighting layout being edited: its suggestions and its
-     heatmap.
+  /* --- THE BAR'S THREE SLOTS, AND THE TWO STANDING SWITCHES IN THEM -------
+     THE STRUCTURE IS THE RULE NOW AND NOT AN ACCUMULATION. Left is what the
+     drawing SHOWS, middle is what the next press does, right is the wiring —
+     and the two ends are the SAME two controls whatever is in the middle. A bar
+     whose left-hand group grew by one switch every time a layer wanted a quick
+     way on is a bar nobody can find anything on twice; see the note on the three
+     slots in StageBar, which is the other half of this.
 
-     `autoLights` WAS THE CAPSULE HERE AND IT IS NOT ANY MORE. Two switches over
-     the same population is one question too many at the front of the bar: the
-     first asked whether the engine's answer was on the sheet, the second how it
-     was drawn, and between them they had four states of which only three meant
-     anything. What is left is the one that matters — is the planner PROPOSING,
-     or is the ceiling yours? The placement is off by default now (see
-     LAYER_DEFAULTS) and its tick lives in the View menu with every other layer,
-     which is where a switch nobody reaches for every session belongs, and which
-     keeps a sheet saved with it ON from having no way to take it off.
+     THE SUGGESTED GRID HAS LEFT THIS BAR. It was the third capsule in the lead
+     and it is the one that does not belong to either end: it is a way of LOOKING
+     at the layout — the planner proposing rather than placing — which is exactly
+     the kind of preference the View menu holds, and it was standing in the two
+     inches of chrome reserved for the questions asked every session. Its tick is
+     in View with every other layer now (see the list there): the key is still
+     `layers.suggestGrid`, the exports and PlanCanvas still read it, and a sheet
+     saved with it ON still has a way to take it off — which is the whole reason
+     it went to the menu rather than simply going away.
 
-     THE SAME GATES FOR BOTH CONTROLS, TO THE TERM. There is no layout to show
-     without a drawing, none while the pipeline is still making one, and a
-     viewer gets the sheet as it was left rather than switches over it.
-     IT IS `layers.suggestGrid` AND NOT A THIRD STORE. The same key the exports
-     and PlanCanvas read, so this switch and the drawing cannot disagree — see
-     LAYER_DEFAULTS for why the grid stopped being part of `lights`. */
-  /* --- ...AND THE HEATMAP RIDES IN THE SAME SLOT ---------------------------
-     THE THIRD SWITCH THAT IS ABOUT WHAT THE DRAWING SHOWS, which is what the
-     lead slot is for — see the note on the slots in StageBar. The Suggested Grid
-     asks whether the planner is PROPOSING; this asks what the ceiling as it
-     stands actually DELIVERS to the floor, which is the same kind of question
-     about the same sheet and belongs beside it rather than in the View menu with
-     the marks nobody reaches for.
-     THE SAME GATES, TO THE TERM. No drawing, no field; nothing while the
-     pipeline is still making one; and a viewer gets the sheet as it was left
-     rather than switches over it. Sharing the list is what keeps the bar from
-     arriving with one of its three switches missing. */
-  /* --- ...AND THE OPERATOR GETS A THIRD, WHICH NOBODY ELSE SEES -----------
-     ROLE 1 ONLY, like the audit overlays and Vertical Mode. The wiring is
-     scaffolding to everybody except the person checking where the passes put
-     it, and a client looking at their ceiling has no use for a switch that
-     turns blue rectangles and dotted arcs on over it.
+     THE SAME GATES FOR BOTH, TO THE TERM. There is no layout to show without a
+     drawing, none while the pipeline is still making one, and a viewer gets the
+     sheet as it was left rather than switches over it. Sharing the list is what
+     keeps the bar from arriving with one of its two ends missing.
 
-     IT IS A MASTER SWITCH OVER TWO LAYERS, AND THAT IS THE WHOLE OF IT. On puts
-     the wiring on screen; off takes it off. Both `electrical` and `switchboards`
-     follow it together, because between them they ARE the wiring: the arcs are
-     one and the plates the other, and a bar switch called Switchboards that left
-     half of it on the sheet would be lying about what it just did.
+     AND NOT WHILE THE DOORS ARE BEING CONFIRMED. `doorEdit` is a step you have
+     been taken TO — the panel empties to one question and the drawing puts every
+     mark of ours away (see `canvasLayers`) — so a pair of switches over layers
+     that are all derived off would be two controls that visibly do nothing.
+     The way out of the step is its own answer, or "Done with doors" in the
+     footer. */
+  /* --- THE LEAD: WHAT THE DRAWING SHOWS -----------------------------------
+     ONE SWITCH, AND IT IS THE HEATMAP. It asks what the ceiling as it stands
+     actually DELIVERS to the floor, which is a question about the sheet in front
+     of you rather than about the next press on it — the definition of this slot.
+     NO TITLE ON IT. A control is its label; what the colours mean is the
+     legend's job, and the legend is on screen whenever this is on. */
+  const barGates = verticalMode || !source || showTrace || prep || readOnly
+    || sheetOpen || doorEdit;
+  const autoLead = barGates ? null : (
+    <HeatmapSwitch on={layers.heatmap} onClick={toggle('heatmap')} />
+  );
+
+  /* --- THE TAIL: THE WIRING, AND IT IS A MASTER SWITCH OVER TWO LAYERS ----
+     ON PUTS THE WIRING ON SCREEN; OFF TAKES IT OFF. Both `electrical` and
+     `switchboards` follow it together, because between them they ARE the wiring:
+     the arcs are one and the plates the other, and a switch that left half of it
+     on the sheet would be lying about what it just did.
 
      ON MEANS ON, WHATEVER THE VIEW MENU SAYS. Pressing it ticks BOTH boxes in
      View rather than restoring whatever was last ticked there — so the state
@@ -5850,24 +6109,32 @@ export default function App({
      standing exception that shows plates with the wiring off, because a step
      whose whole output is invisible looks broken. Reading the effective state
      means reading all of it, or the switch sits unlatched while the plates it
-     names are on screen during the one gesture entirely about them. */
+     names are on screen during the one gesture entirely about them.
+
+     IT IS NOT ROLE 1 ANY MORE. This was `isAdmin &&`, on the reasoning that the
+     wiring is scaffolding to everybody else — and that reasoning was already
+     false in the one way that matters: `electrical` has a tick of its own in the
+     View menu, which nobody gates, so every reader could turn the wiring on
+     already and only the quick way to it was withheld. What a switch here buys
+     over that tick is the DOOR GATE below, which is worth most to exactly the
+     person the gate was written for.
+
+     IT SAYS "ELECTRICAL" AND NOT "SWITCHBOARDS". The plates are half of what it
+     turns on and the wires are the other half, and the footer's own switch for
+     this layer has said Electrical all along. */
   const wiringShown = !!(layers.electrical || (boardPlace && layers.switchboards));
-  const autoLead = verticalMode || !source || showTrace || prep || readOnly || sheetOpen ? null : (
-    <>
-      <SceneSwitch label="Suggested Grid" on={layers.suggestGrid}
-        title="Draw the planner's answer as dotted suggestions instead of fittings"
-        onClick={toggle('suggestGrid')} />
-      <HeatmapSwitch on={layers.heatmap} onClick={toggle('heatmap')} />
-      {isAdmin && (
-        <SceneSwitch label="Switchboards" on={wiringShown}
-          title="Every wire and every plate. Off takes them all; on brings them all back."
-          onClick={() => {
-            const next = !wiringShown;
-            docActions.setLayer('electrical', next);
-            docActions.setLayer('switchboards', next);
-          }} />
-      )}
-    </>
+  /* BOTH LAYERS IN ONE PRESS, and nothing else — in particular NOT the door
+     gate, which is an effect on `layers.electrical` and therefore fires however
+     the wiring came on: this switch, the View menu's tick, the plate tool, a
+     wall point. One gate, every route. See the door effect above. */
+  const showWiring = (on) => {
+    docActions.setLayer('electrical', on);
+    docActions.setLayer('switchboards', on);
+  };
+  const autoTail = barGates ? null : (
+    <SceneSwitch label="Electrical" on={wiringShown}
+      title="Every wire and every plate. Off takes them all; on brings them all back."
+      onClick={() => showWiring(!wiringShown)} />
   );
 
   const toggleVerticalMode = () => {
@@ -6085,8 +6352,17 @@ export default function App({
               IT IS NOT GATED ON `readOnly` LIKE THE LINK BELOW IT. The BOQ
               toggle further along this bar is, so a viewer who reaches the
               schedule has no other way off it; a back button that vanished for
-              them would be a page with no exit. */}
-          {boqOpen ? (
+              them would be a page with no exit.
+              AND IT IS `sheetOpen` RATHER THAN `boqOpen`, WHICH IT WAS. The
+              switchboard sheet is the same kind of page as the schedule — it
+              replaces the drawing, it is the other half of the deliverable, and
+              it has no stage — but it was falling through to the branch below
+              and offering "Space outlines": a jump two stages backwards, from a
+              screen with no stage, throwing away the reader's place in a
+              schedule of fifty plates to get there. `sheetOpen` is exactly
+              "one of the two pages that replace the canvas"; see where it is
+              declared for why that test already existed. */}
+          {sheetOpen ? (
             <button type="button"
               title="Back to the drawing"
               onClick={() => docActions.setView('design')}
@@ -7163,8 +7439,14 @@ export default function App({
                paper IS the band.
                NOTHING HERE WHEN THE PLAN IS INVERTED, which is the rule the note
                below states: that sheet's own ground is black, and the band's is
-               the same black, so the two are already one surface. */
-            + (layers.invert ? ''
+               the same black, so the two are already one surface.
+               `canvasLayers.invert` AND NOT `layers.invert`, WHICH IS THE PAPER
+               FOLLOWING THE PICTURE. The door step un-inverts the drawing while
+               it is open (see `canvasLayers`), and reading the stored preference
+               here would have left a white plan sitting on the black page with
+               no card, no hairline and no shadow round it — a sheet that had
+               visibly lost its paper for the duration of one question. */
+            + (canvasLayers.invert ? ''
               : verticalMode ? 'bg-white '
               : 'bg-white border border-border rounded-lg p-3 shadow')}>
             {/* VERTICAL MODE IS A VIEWPORT, NOT A SECOND CANVAS. The same
@@ -7216,7 +7498,17 @@ export default function App({
                 + 'p-[var(--lp-canvas-room)]'
               : 'contents'}>
             <PlanCanvas ref={svgRef}
-              src={isVector ? null : (invertedSrc ?? source.src)}
+              /* THE NEGATIVE ONLY WHILE THE DRAWING IS ACTUALLY IN IT.
+                 `invertedSrc` is the scan with every channel subtracted from 255
+                 — computed once, when the preference changes, because a CSS
+                 filter cannot reach both of this app's two renderers (see
+                 usePlanSource). The DOOR STEP turns the negative off without
+                 touching the preference, so the bitmap is CHOSEN here off the
+                 derived answer rather than the stored one: no second inversion
+                 pass on the way into the step and none on the way out, and the
+                 day/night pair in the top bar comes back exactly as it was. */
+              src={isVector ? null
+                : (canvasLayers.invert ? (invertedSrc ?? source.src) : source.src)}
               srcAsScanned={isVector ? null : source.src}
               vector={isVector ? source.render : null}
               wallLayers={null}
@@ -7506,6 +7798,8 @@ export default function App({
                  back under the rules — and the two must not share a button.
                  Off on the read-only sheet with everything else that edits. */
               onFlowUnlink={readOnly ? null : ((id) => docActions.setFlowLink(id, null))}
+              /* AND CUTTING EITHER END OF A TWO-WAY — see `cutTwoWay`. */
+              onFlowTwoWayCut={readOnly ? null : cutTwoWay}
               /* The audit layer — now the lit task surfaces and the render
                  pass's wall cells. The BED zones used to be passed here too and
                  are not any more: see the note in PlanCanvas's audit group.
@@ -7752,7 +8046,7 @@ export default function App({
                 bar's `edit` state is withheld (`otherBar` in `shapeBarMode`),
                 so `geometry.bar.mode` is null unless something opened it. */}
             {!readOnly && addTool === 'cob' && !geometry.bar.mode && (
-              <CobSpec key={cobMode} stage={barBox} lead={autoLead}
+              <CobSpec key={cobMode} stage={barBox} lead={autoLead} tail={autoTail}
                 placement={barPlace} watts={cobShow.watts} beam={cobShow.beam}
                 recommended={!cobStanding}
                 /* THE MODE IS ALSO THE EDITOR'S LIFETIME, hence the key. React
@@ -7815,7 +8109,7 @@ export default function App({
                 the press that selects an array disarms every tool anyway, so
                 this is belt and braces rather than a live case. */}
             {!readOnly && addTool !== 'cob' && selArrayBar && (
-              <CobSpec stage={barBox} lead={autoLead} placement={barPlace}
+              <CobSpec stage={barBox} lead={autoLead} tail={autoTail} placement={barPlace}
                 watts={selArrayBar.watts} beam={selArrayBar.beam}
                 array={selArrayBar.array}
                 onWatts={(w) => setArraySpec(selArrayId, { watts: w })}
@@ -7835,7 +8129,7 @@ export default function App({
                 plus, press it and the modules arrive beside the rail cell, pick
                 one and this says what the next press will clip in. */}
             {moduleBarOn && (
-              <ModuleSpec stage={barBox} lead={autoLead} placement={barPlace}
+              <ModuleSpec stage={barBox} lead={autoLead} tail={autoTail} placement={barPlace}
                 label={MODULE_BY_ID[trackMode]?.label ?? 'Module'}
                 watts={moduleSpec.watts} wattList={moduleWattList(trackMode)}
                 beam={moduleSpec.beam}
@@ -7843,8 +8137,9 @@ export default function App({
                 onBeam={(b) => setModuleSpec((d) => ({ ...d, beam: b }))} />
             )}
             {/* THE PLAIN BAR, WHEN NO EDITING CONTROL CLAIMS ITS POSITION.
-                `autoLead` is the complete content now: the electrical layer
-                toggle has left this floating context bar. */}
+                `autoLead` and `autoTail` are the whole of it then — the heatmap
+                at one end and the wiring at the other, with nothing between
+                them. See the three slots at `barGates`. */}
             {/* --- AND THE FAN'S, WHICH IS ITS ONE PROPERTY -----------------
                 A SWEEP IS A FOOT AND A HALF OF DIAMETER EITHER WAY, so it is a
                 decision made while the fan is in hand and not a row in a panel
@@ -7853,7 +8148,7 @@ export default function App({
                 one-bar-at-a-time rule; see it, and FanSpec's header for why the
                 Design column no longer holds a second copy of this. */}
             {fanBarOn && (
-              <FanSpec stage={barBox} lead={autoLead} placement={barPlace}
+              <FanSpec stage={barBox} lead={autoLead} tail={autoTail} placement={barPlace}
                 sweepMm={fanBarSweep} onSweep={setFanSweep} />
             )}
             {/* --- THE POINT'S TWO PROPERTIES, WHILE IT IS IN HAND ----------
@@ -7878,7 +8173,7 @@ export default function App({
                 primitives down (see `shapeBarHolds`), because the column would
                 have shown no bar at all. It is a prop, like the fan's. */}
             {acBarOn && (
-              <AcSpec stage={barBox} lead={autoLead} placement={barPlace}
+              <AcSpec stage={barBox} lead={autoLead} tail={autoTail} placement={barPlace}
                 label={CEILING_BY_ID[selAc?.typeId ?? armed]?.label ?? 'Split AC'}
                 feed={acBar.feed} amps={acBar.amps} ratings={acRatings(acCountry)}
                 /* BOTH WRITE THROUGH THE UNIT AND NOT THROUGH THE FITTING ON
@@ -7895,7 +8190,7 @@ export default function App({
             )}
             {/* `autoLead` IS A PROP HERE TOO, not a term — see the AC bar. */}
             {pointBarOn && (
-              <PointSpec stage={barBox} lead={autoLead} placement={barPlace}
+              <PointSpec stage={barBox} lead={autoLead} tail={autoTail} placement={barPlace}
                 onWall={pointBar.onWall} heightMm={pointBar.heightMm}
                 /* THE RESOLVED COUNTRY AND NOT App's OWN `country` PROP,
                    which is an ISO code or a name — a STRING, with no
@@ -7907,10 +8202,16 @@ export default function App({
                 onHeight={setPointHeight} onAmps={setPointAmps} />
             )}
             {/* `!fanBarOn` joins the other ownership gates so a tool and the
-                plain layout controls never stack in the same position. */}
+                plain layout controls never stack in the same position.
+                `autoLead || autoTail` AND NOT `autoLead` ALONE. The two ends are
+                gated on the same terms today (see `barGates`), so either one
+                answers for the pair — but the bar's reason to exist is that it
+                has SOMETHING standing in it, and reading only the left end is a
+                bar that would silently vanish the day the two gates part. */}
             {!(!readOnly && (addTool === 'cob' || selArrayBar || geometry.bar.mode))
-              && !moduleBarOn && !fanBarOn && !acBarOn && !pointBarOn && autoLead && (
-              <StageBar stage={barBox} lead={autoLead} placement={barPlace}
+              && !moduleBarOn && !fanBarOn && !acBarOn && !pointBarOn
+              && (autoLead || autoTail) && (
+              <StageBar stage={barBox} lead={autoLead} tail={autoTail} placement={barPlace}
                 label="Drawing" />
             )}
             {/* --- THE HEATMAP'S KEY ----------------------------------------
@@ -7969,7 +8270,7 @@ export default function App({
                  measured for the pan; handing it over puts the bar back on the
                  sheet, clear of the card, with no second position invented for
                  it. */
-              <ShapeMenu stage={barBox} lead={autoLead} placement={barPlace}
+              <ShapeMenu stage={barBox} lead={autoLead} tail={autoTail} placement={barPlace}
                 mode={geometry.bar.mode}
                 /* THE RUN'S OWN WATTAGE, WHERE THE ANALYSIS HAS ONE FOR IT —
                    see `selShapeRow`, and the note on `wattage` in ShapeMenu for
@@ -8603,24 +8904,27 @@ export default function App({
                 and are still worth being able to hide while looking at the
                 layout under one — the tool that made them is retired, the ones
                 already drawn are not. */}
-            {/* `suggestGrid` IS NOT IN THIS LIST, AND THAT IS DELIBERATE. It is
-                the one layer with a switch of its own on the bar over the
-                drawing (see `autoLead`), beside the electrical toggle it is the
-                pair to, and a second tick for it in here would be the same
-                state said twice in two idioms a screen apart — which is how a
-                checkbox and a capsule come to look like they disagree.
-                `autoLights` IS IN IT, AND IT USED TO BE THE OTHER CAPSULE. It
-                came off the bar when the suggestion took that position — see
-                `autoLead` — and a layer with no control at all would have been
-                the wrong way to demote it: it is off by default now, but a plan
-                saved while it was on still opens with placed fittings, and the
-                only other way to clear those is `lights`, which takes the
-                hand-placed ones with them. Directly under its own master, which
-                is what the indent of the pair would say if this list had one. */}
+            {/* `suggestGrid` IS IN THIS LIST NOW, AND IT USED TO BE A CAPSULE.
+                It took the bar position `autoLights` had been demoted out of,
+                and it has made the same journey for the same reason: the bar's
+                left-hand slot is for the one or two questions asked every
+                session, and "is the planner proposing or is the ceiling yours"
+                is not one of them — it is a way of LOOKING at the layout, which
+                is what this menu holds.
+                A LAYER WITH NO CONTROL AT ALL WOULD HAVE BEEN THE WRONG WAY TO
+                DEMOTE EITHER OF THEM. Both are off by default, but a plan saved
+                while one was on reopens with it on — `setLayers` merges the
+                saved answers over the defaults — and without a tick in here the
+                only way to clear the marks would be `lights`, which takes the
+                hand-placed fittings with them.
+                THE PAIR SITS UNDER ITS OWN MASTER, which is what the indent
+                would say if this list had one: `lights`, then the engine's
+                answer placed, then the same answer proposed. */}
             <div className="px-3 pb-0.5">
               {[['plan', 'Floor plan'], ['dim', 'Fade the plan'], ['region', 'Space outline'],
                 ['cells', 'Cell shading'], ['lights', 'Lights'],
-                ['autoLights', 'Auto-placed lights'], ['labels', 'Light tags'],
+                ['autoLights', 'Auto-placed lights'],
+                ['suggestGrid', 'Suggested grid'], ['labels', 'Light tags'],
                 ['beamAngles', 'Beam angles'],
                 ['fan', 'Ceiling objects'], ['zones', 'No-light zones'],
                 ['accents', 'Accent lighting'], ['spots', 'Directional spots'],
@@ -8748,12 +9052,14 @@ export default function App({
           `height`: a space's readings are six lines and its fitting list is
           forty, and a window that was always as tall as the tallest thing it
           might hold would be an empty box over the plan most of the time.
-          IT SURVIVES THE SCHEDULE AND NOT THE SWITCHBOARD SHEET, which is not
-          an inconsistency: the window is about whatever is ON the stage, and a
-          schedule has three things to do with it — Excel, CSV, PDF. It is the
-          only place those live. The switchboard sheet has nothing: every plate
-          on it is edited on the sheet, where its height is a box you type in, so
-          the window would be an empty box over a drawing you cannot act on. */}
+          IT SURVIVES BOTH SHEETS, AND IT USED TO SURVIVE ONLY THE SCHEDULE.
+          The window is about whatever is ON the stage, and the argument for
+          shutting it over the switchboard sheet was that the sheet had nothing
+          to put in it — every plate is edited on the sheet, where its height is
+          a box you type in. That stopped being true when the sheet got its two
+          exports: a PDF and a DXF, in the same blocks the schedule's three use,
+          and there is nowhere else in the app to reach them from. See
+          `windowSpeaks`, where the veto was. */}
       {/* --- IT IS ALWAYS MOUNTED NOW, AND THAT IS THE FIX FOR THE JUMP ------
           THIS WAS `{windowSpeaks && <div>}`, and a thing that is not in the DOM
           cannot animate out of it: the window appeared and vanished on the
@@ -8930,15 +9236,23 @@ export default function App({
               means anything while a sheet of paper is on screen — a panel full
               of controls acting on something you cannot see is worse than an
               empty one.
-              WHAT IS DIFFERENT IS THAT THERE IS NOTHING TO DO WITH THIS SHEET.
-              A schedule collapses to its three export buttons; a switchboard
-              sheet is edited ON the sheet, where each plate's height is a box
-              you type in. So the panel holds the count, and the way out is the
-              strip above it. */
+              WHAT IS DIFFERENT IS THAT THE EDITING IS ON THE SHEET. A schedule
+              is read and taken away; a switchboard sheet is also worked on,
+              because each plate's height is a box you type in where the plate
+              is. So the panel holds the count, the contents, and the two ways
+              to take it away — and nothing that acts on a drawing you cannot
+              see. The way out is the strip above it.
+              THE EXPORTS ARE THE SCHEDULE'S OWN BLOCKS, deliberately. `BTN_BOQ`,
+              stacked, label above explanation, under a heading in the same
+              section shape — this is the second sheet in the app and the two of
+              them handing over a file in two different shapes would be the app
+              disagreeing with itself about what "download this page" looks
+              like. See BOQ_SHAPE in ui/tokens.js. */
+          <>
           <div className={SEC}>
             <h3 className={H3}>Switchboards</h3>
             <div className={KV_HEAD}>
-              <span>{boardSheet.reduce((n, g) => n + g.plates.length, 0)} plates</span>
+              <span>{boardPlateCount} plates</span>
               <span>{sbCountry.name}</span>
             </div>
             {boardSheet.map((g) => (
@@ -8948,6 +9262,28 @@ export default function App({
               </div>
             ))}
           </div>
+          <div className={SEC}>
+            <h3 className={H3}>Export the switchboards</h3>
+            {/* WHAT COMES OUT, WHERE THE SCHEDULE STATES ITS TOTALS — and it is
+                the PAGE COUNT rather than the plate count, which the section
+                above already gives. How many sheets of A2 this turns into is the
+                one fact about the file that is nowhere on screen, and it is the
+                one somebody wants before they press anything. */}
+            <p className={`${N} mt-0.5 mb-2.5`}>
+              {boardPdfSheets} A2 sheet{boardPdfSheets === 1 ? '' : 's'} at 1:5
+            </p>
+            <div className="flex flex-col gap-1.5">
+              {[['pdf', 'PDF', '.pdf — A2 sheets, plates drawn at 1:5'],
+                ['dxf', 'DXF', '.dxf — life size in millimetres, split by layer']]
+                .map(([k, label, note]) => (
+                  <button key={k} title={note} onClick={() => exportBoards(k)}
+                    className={BTN_BOQ}>
+                    <b>{label}</b><span>{note}</span>
+                  </button>
+                ))}
+            </div>
+          </div>
+          </>
         ) : boqOpen ? (
           <div className={SEC}>
             <h3 className={H3}>Export the schedule</h3>
@@ -9156,16 +9492,42 @@ export default function App({
               {/* THE COUNT, AND IT IS THE ONLY NUMBER HERE. What somebody is
                   being asked is whether the set is complete, and the one thing
                   they cannot see by looking at the plan is how many boxes are on
-                  it — a door under a fitting, off the fold, or drawn twice. */}
+                  it — a door under a fitting, off the fold, or drawn twice.
+                  ...AND WHILE THE SEARCH IS STILL OUT, IT IS NOT A NUMBER AT
+                  ALL. The step is raised on the press now rather than on the
+                  detector's answer (see the door effect), so for a couple of
+                  seconds the honest reading of this line is "I do not know yet"
+                  — and "0 boxes on the plan" is a different statement, one that
+                  invites the answer below before there is anything to answer
+                  about. */}
               <p className={`${N} m-0`}>
-                {doors.length} box{doors.length === 1 ? '' : 'es'} on the plan
+                {doorState.status === 'running'
+                  ? 'Looking for doors…'
+                  : `${doors.length} box${doors.length === 1 ? '' : 'es'} on the plan`}
               </p>
 
               {/* THE ANSWER, FULL WIDTH AND THE PRIMARY ACT OF THE SURFACE —
                   the same treatment Share gets on the panel it sits on, for the
-                  same reason: it is the one thing this screen is for. */}
-              <button className={`${BTN_PRIMARY} w-full`} onClick={confirmDoors}>
-                {doors.length ? 'These are all the doors' : 'There are no doors'}
+                  same reason: it is the one thing this screen is for.
+                  HELD WHILE THE SEARCH IS OUT, WHICH IS THE ONE THING THAT MUST
+                  NOT BE PRESSABLE EARLY. `doorsOk` is a person saying they have
+                  LOOKED, and "There are no doors" over a detector that has not
+                  come back yet records that about a set nobody has seen — the
+                  exact answer this gate exists to prevent. It is the word that
+                  changes and not only the state, because a disabled button whose
+                  label still makes a claim is a claim. */}
+              <button onClick={confirmDoors}
+                /* THE HOVER GUARD IS INLINE AND NOT IN THE TOKEN. `BTN_PRIMARY`
+                   carries `disabled:opacity-100` on purpose — out of reach is
+                   drawn at full strength in this chrome, not faded — but it has
+                   no `disabled:hover`, so a held button still lit up under the
+                   pointer. Two words here rather than a change to the token
+                   every primary button in the app wears. */
+                className={`${BTN_PRIMARY} w-full `
+                  + 'disabled:hover:bg-cta disabled:hover:border-cta'}
+                disabled={doorState.status === 'running'}>
+                {doorState.status === 'running' ? 'Looking for doors…'
+                  : doors.length ? 'These are all the doors' : 'There are no doors'}
               </button>
             </div>
           </div>

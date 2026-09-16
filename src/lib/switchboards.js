@@ -101,6 +101,34 @@ export const POINT_KINDS = {
  *                   this field exists: a 32A switch is physically wider than a
  *                   6A one, and that is a fact about the part rather than about
  *                   the kind.
+ *   plate           THE PART IN MILLIMETRES, and the only block in this table
+ *                   that describes a physical size rather than a countable one.
+ *                   Everything else here is about how many units a thing eats;
+ *                   this is how wide one of them actually is.
+ *                     moduleMm   one module across
+ *                     moduleHMm  the device opening, tall
+ *                     sideMm     plate border, left and right ONLY
+ *                     gapMm      between two devices; 0 where they abut
+ *                     heightMm   the whole plate. The border above and below is
+ *                                DERIVED from this and moduleHMm rather than
+ *                                stored, so the three numbers cannot disagree
+ *                                about where the top edge is.
+ *
+ * WHY THE MILLIMETRES EXIST AT ALL — AND WHY NOTHING ON SCREEN READS THEM. The
+ * frame the panel and the sheet draw is a DIAGRAM: one module, 2:1, at whatever
+ * size the column allows (see W and H in SwitchboardCard.jsx). That is the right
+ * drawing to read a plate off and the wrong one to build from — a module is not
+ * 2:1 in any country, and a drawing exported at those proportions would be a
+ * picture of a switchboard that measured wrong in CAD. So the export plots from
+ * these numbers instead and the screen keeps its diagram; see lib/boardPlot.js.
+ *
+ * WHERE THE NUMBERS COME FROM. `heightMm` is 100 everywhere and it is a rule of
+ * thumb rather than a measurement — a plate is about that tall, and fixing it
+ * gives every plate on a sheet one common height to be set out against, which is
+ * what makes a schedule drawing readable. The other three are nominal figures
+ * for the part: an Indian modular module is 18mm on an 18mm pitch, a US gang sits
+ * on a 46mm (1.8125in) pitch. They are one table to correct if a manufacturer's
+ * own figures are wanted, and correcting them changes only the export.
  *
  * THE ADDITIONAL POINTS ARE NOT LISTED PER COUNTRY because they are the same
  * three everywhere — USB-C, data, blank. See `addablePoints`, which composes
@@ -125,6 +153,8 @@ export const COUNTRIES = {
       other: 1,
     },
     moduleOverrides: { 'switch:32': 2 },
+    // 18mm module on an 18mm pitch — they abut, which is what a modular grid is.
+    plate: { moduleMm: 18, moduleHMm: 45, sideMm: 27.5, gapMm: 0, heightMm: 100 },
   },
   US: {
     code: 'US',
@@ -146,8 +176,22 @@ export const COUNTRIES = {
       blank: 1,
       other: 1,
     },
+    // A gang on the standard 1.8125in pitch, and a device opening 67mm tall.
+    plate: { moduleMm: 46, moduleHMm: 67, sideMm: 16.5, gapMm: 0, heightMm: 100 },
   },
 };
+
+/**
+ * THE PLATE BLOCK, NEVER MISSING. A country added to the table without one
+ * would otherwise export as a plate of NaN by NaN — silently, because a NaN
+ * coordinate in a DXF is a line the viewer drops rather than an error anybody
+ * sees. India's figures are the fallback for the same reason `countryFor`
+ * falls back to India: a plate with the wrong millimetres is an answer, and a
+ * plate with none is not.
+ */
+export function plateMm(country) {
+  return country?.plate ?? COUNTRIES[DEFAULT_COUNTRY].plate;
+}
 
 /** What a project with nothing in its country column is taken to be. */
 export const DEFAULT_COUNTRY = 'IN';
@@ -197,11 +241,28 @@ export function modulesFor(country, point) {
   return byRating ?? country.modules[kind] ?? country.modules.other ?? 1;
 }
 
-/** "6A switch", "Fan regulator", "Blank plate" — one point, in words. */
+/**
+ * "6A switch", "6A two-way switch", "Fan regulator", "Blank plate" — one point,
+ * in words.
+ *
+ * A TWO-WAY SWITCH IS A DIFFERENT PART AND THE LABEL IS WHERE THAT LANDS. It is
+ * a three-terminal device, it costs more, and it is ordered by the pair — so a
+ * schedule that called it "6A switch" would be a schedule somebody has to
+ * correct by hand after reading the drawing. `tally` and the BOQ group by this
+ * string, so naming it here is the whole of counting it separately.
+ *
+ * ONLY ON A KIND THAT CAN BE ONE. The flag is set on switches by
+ * `pointsFromFlows` and nothing else — a socket and a fan regulator have no
+ * second end — but the test is `kind` rather than trust, because this function
+ * is the one place the name is decided and a stray flag must not invent a part
+ * that does not exist.
+ */
 export function labelFor(country, point) {
   const spec = POINT_KINDS[point?.kind] ?? POINT_KINDS.other;
-  if (spec.rated && point?.amps != null) return `${point.amps}A ${spec.label.toLowerCase()}`;
-  return spec.label;
+  const name = point?.twoWay && point?.kind === 'switch'
+    ? 'two-way switch' : spec.label.toLowerCase();
+  if (spec.rated && point?.amps != null) return `${point.amps}A ${name}`;
+  return point?.twoWay && point?.kind === 'switch' ? 'Two-way switch' : spec.label;
 }
 
 /** A point, with its width and its name worked out once. */
@@ -267,11 +328,16 @@ export const applianceA = (country) => {
 };
 
 export function socketWithSwitch(country, { amps = null, source = 'design',
-                                            what = null, flowId = null } = {}) {
+                                            what = null, flowId = null,
+                                            twoWay = false } = {}) {
   const a = amps ?? lightSwitchA(country);
   return [
+    /* THE SWITCH CARRIES THE TWO-WAY AND THE SOCKET NEVER DOES. A socket has no
+       second end to be reached from — what is two-way is the thing that
+       switches it, which is this module. A pair on a plate whose flow is
+       two-wayed is a two-way switch and an ordinary socket. */
     point(country, { kind: 'switch', amps: a, source, flowId,
-                     what: what ?? 'its socket', pairs: true }),
+                     what: what ?? 'its socket', pairs: true, twoWay }),
     point(country, { kind: 'socket', amps: a, source, flowId, what }),
   ];
 }
@@ -322,6 +388,19 @@ export function pointsFromFlows(country, flows = [], boardId = null) {
   const a = lightSwitchA(country);
   const out = [];
   for (const f of flows) {
+    /* A TWO-WAY SWITCH HAS TWO ENDS AND BOTH OF THEM ARE TWO-WAY SWITCHES.
+       This used to mark only the second plate, which drew the circuit as though
+       the far end were a different kind of part from the near end — and it is
+       not: a two-way pair is two identical three-terminal switches wired to each
+       other. On site that is what gets ordered, and a schedule that billed one
+       one-way and one two-way would be a plate short of the right part.
+       SO IT IS READ OFF THE FLOW AND NOT OFF WHICH PLATE IS ASKING. `f.also`
+       means this switch is reached from somewhere else as well, which is a fact
+       about the SWITCH — so it is true at both ends by construction, and the
+       branch below that builds the second point does not have to say so twice.
+       WHATEVER PUT IT THERE. The bedroom fan's second point is a rule and a
+       light two-wayed from the landing is a drag; the part is the same part. */
+    const twoWay = !!f.also;
     if (boardId && f.boardId === boardId) {
       /* A SOCKET OUTLET'S SWITCH, AND IT LANDS HERE BECAUSE THE WIRE DOES.
          An outlet is a plate on a wall with one socket and no switch — the one
@@ -347,7 +426,8 @@ export function pointsFromFlows(country, flows = [], boardId = null) {
          rated carries its number and the switch is built at it. */
       if (f.kind === 'socket' || f.kind === 'point') {
         out.push(point(country, { kind: 'switch', amps: f.amps ?? a, flowId: f.id,
-                                  what: f.label, forOutlet: f.kind === 'socket' }));
+                                  what: f.label, forOutlet: f.kind === 'socket',
+                                  twoWay }));
       } else if (f.kind === 'lamp') {
         /* A STANDING LAMP IS THE PAIR, AND IT IS THE ONLY FLOW THAT BRINGS ITS
            OWN SOCKET WITH IT.
@@ -369,15 +449,21 @@ export function pointsFromFlows(country, flows = [], boardId = null) {
            reach test (`lampPlateInReach` in electrical.js) is about the lead, not
            the load. */
         out.push(...socketWithSwitch(country, {
-          amps: a, source: 'design', what: f.label, flowId: f.id }));
+          amps: a, source: 'design', what: f.label, flowId: f.id, twoWay }));
       } else if (f.kind === 'object' && f.label === 'Fan') {
         // BOTH, AND IN THIS ORDER. See the header: the switch turns it on, the
         // regulator is what the speed is left set to.
         out.push(point(country, { kind: 'switch', amps: a, flowId: f.id,
-                                  what: f.label, forFan: true }));
+                                  what: f.label, forFan: true, twoWay }));
+        /* AND THE REGULATOR IS NEVER TWO-WAY. A speed knob has one position and
+           it is wherever the knob is left; there is no second knob that agrees
+           with it, which is why the second plate gets a switch and not a
+           regulator (see the header) and why the flag stops at the switch even
+           on the plate that owns both. */
         out.push(point(country, { kind: 'fan', flowId: f.id, what: f.label }));
       } else {
-        out.push(point(country, { kind: 'switch', amps: a, flowId: f.id, what: f.label }));
+        out.push(point(country, { kind: 'switch', amps: a, flowId: f.id,
+                                  what: f.label, twoWay }));
       }
     } else if (boardId && f.also?.boardId === boardId) {
       out.push(point(country, {
@@ -632,30 +718,80 @@ export function composeSwitchboard({
                                             what: u.points[0]?.what ?? q.what }));
   }
 
-  const units = orderUnits([...wired, ...fans, ...own, ...added], order);
+  const placed = orderUnits([...wired, ...fans, ...own, ...added], order);
   /* THE UNIT'S KEY AND ITS PLACE, STAMPED ON EVERY MODULE IN IT. The card drags
      a module and has to know which pair it belongs to and where that pair
      currently sits; carrying it on the point is what saves every reader from
      re-deriving the grouping the way this function just did. */
-  const wanted = units.flatMap((u, i) => u.points.map(
+  const wanted = placed.flatMap((u, i) => u.points.map(
     (p) => ({ ...p, unitKey: u.key, unitIndex: i })));
   const bins = packBoards(country, wanted);
 
-  const boards = bins.map((bin, i) => {
+  /* --- AND THE BLANKS ARE UNITS TOO, WHICH THEY WERE NOT ------------------
+     A BLANK USED TO BE WHAT WAS LEFT OF THE FRAME. It carried no key, it was
+     appended after every real unit, and the card drew it outside the animated
+     group on the argument that permuting units cannot change their total width
+     so the blanks always begin at the same place. All of that is true and none
+     of it makes the blank's POSITION right: a plate is very often built with
+     the spare module in the middle or at the near end — beside the switch you
+     reach for, so the run of live modules is not interrupted by a gap where
+     your thumb expects one — and "wherever is left over" is not that.
+
+     SO IT IS PACKED AS A REMAINDER AND ARRANGED AS A UNIT, and those are two
+     different questions asked in two different places. Packing has to happen
+     first: how many blanks there are depends on the frame, the frame depends on
+     how many modules the real units eat, and a blank that counted toward that
+     would make the frame grow to hold the blanks it was growing to hold. So
+     `bin.used` never sees one.
+
+     THE ORDER IS THEN APPLIED A SECOND TIME, AT BOARD SCOPE. The first pass
+     decided which units land on which frame, which is what packing needed. This
+     one arranges what is on a frame, blanks included — and it cannot change the
+     packing, because a permutation within a frame does not change what is in it.
+
+     KEYED BY FRAME AND POSITION, which is the most stable key a thing with no
+     identity can have. A blank is not a fitting; there is nothing in the
+     document it belongs to, and two blanks on one plate are the same part. If a
+     module is later added and a blank is consumed, the highest-numbered one goes
+     and any order naming it is skipped — the rule `orderUnits` already applies
+     to a unit whose fitting was deleted. */
+  const framed = bins.map((bin, i) => {
     const size = frameFor(country, bin.used);
-    const blanks = Math.max(0, size - bin.used);
-    return {
-      index: i,
-      size,
-      used: bin.used,
-      unit: country.unit,
-      units: country.units,
-      points: [
-        ...bin.points,
-        ...Array.from({ length: blanks }, () => point(country, { kind: 'blank', source: 'fill' })),
-      ],
-    };
+    /* THE BIN'S OWN UNITS, REGROUPED FROM ITS POINTS. `packBoards` works in
+       points, so the grouping has to be read back out of them — contiguous runs
+       of one key, which is how the card reads it too. A unit split across two
+       frames comes back as one unit on each, and that is the honest picture of
+       a pair that did not fit. */
+    const real = [];
+    for (const p of bin.points) {
+      const last = real[real.length - 1];
+      if (last && last.key === p.unitKey) last.points.push(p);
+      else real.push({ key: p.unitKey, points: [p] });
+    }
+    const blanks = Array.from({ length: Math.max(0, size - bin.used) }, (_, n) => ({
+      key: `blank-${i}-${n}`,
+      points: [point(country, { kind: 'blank', source: 'fill' })],
+    }));
+    return { index: i, size, used: bin.used, units: orderUnits([...real, ...blanks], order) };
   });
+
+  /* THE GLOBAL POSITION OF EVERY UNIT, OVER THE WHOLE POSITION AND NOT ONE
+     FRAME. `reorderUnits` is handed this list and the card measures drops
+     against these numbers, so a plate that came out as two frames is still one
+     arrangement to drag within. Re-stamped here rather than carried from
+     `wanted` because the blanks have just been interleaved into it. */
+  const units = framed.flatMap((b) => b.units);
+  const indexOf = new Map(units.map((u, i) => [u.key, i]));
+
+  const boards = framed.map((b) => ({
+    index: b.index,
+    size: b.size,
+    used: b.used,
+    unit: country.unit,
+    units: country.units,
+    points: b.units.flatMap((u) => u.points.map(
+      (p) => ({ ...p, unitKey: u.key, unitIndex: indexOf.get(u.key) ?? 0 }))),
+  }));
 
   return {
     country,

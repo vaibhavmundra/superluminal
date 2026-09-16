@@ -1,0 +1,21 @@
+{
+  "id" : "CCC8A5E2-F8FC-440E-A601-9FF2F2230BCA",
+  "isOpen" : true,
+  "messages" : [
+    {
+      "blocks" : [
+        {
+          "kind" : "text",
+          "text" : "Now editing: Ad 1000 x 1500"
+        }
+      ],
+      "id" : "3028170C-B04F-4715-8016-C57774D8C922",
+      "mentions" : [
+
+      ],
+      "role" : "system"
+    }
+  ],
+  "title" : "New chat",
+  "updatedAt" : "2026-09-16T07:56:45Z"
+}

@@ -1693,6 +1693,215 @@ console.log('\n-- a fitting stood on its own --');
      === plain.flows.length, 'detaching something that is not on this ceiling does nothing');
 }
 
+console.log('\n-- a hand names the second plate: two-way switching --');
+{
+  /* ONE INPUT, MANY OUTPUTS — AND A SWITCH WITH TWO ENDS IS NEITHER. `twoWay`
+     is flow id -> the second plate that switch is reached from. It does not
+     touch the fitting's input, which is still exactly one; what gained a second
+     end is the SWITCH. See `twoWay` in planFlows and `relink` for the rule it
+     does not break. */
+  const g = lay([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }]);
+  const main = { id: 'b1', point: { x: 0, y: 6 * PPF }, serves: 'room', servesShort: 'Door' };
+  const far = { id: 'b2', point: { x: 30 * PPF, y: 6 * PPF },
+                serves: 'room', servesShort: 'Hall' };
+  /* `boards` IS THE ROOM'S AND `boardPool` IS THE DRAWING'S, which is the split
+     a hand override resolves against — a light two-wayed from the landing is the
+     ordinary case for this gesture. `far` is in the pool only, so the rules can
+     never reach for it and everything below is the override doing the work. */
+  const opts = { boards: [main], boardPool: [main, far] };
+  const plain = wire(g, opts);
+  const rows = plain.flows.filter((f) => f.nodes.length > 1);
+  ok(rows.length >= 1, `${rows.length} multi-fitting flows to work with`);
+  ok(plain.flows.every((f) => !f.also), 'and none of them is two-way to begin with');
+
+  const target = rows[0];
+  const two = wire(g, { ...opts, twoWay: { [target.id]: 'b2' } });
+  const t2 = two.flows.find((f) => f.id === target.id);
+  ok(!!t2.also, 'the flow gains a second point');
+  ok(t2.also.boardId === 'b2', '...on the plate that was named');
+  ok(t2.also.boardLabel === 'Hall', '...carrying that plate\'s own name for itself');
+  ok(t2.also.manual === true, '...marked as a hand decision, so the card can say so');
+  ok(t2.boardId === target.boardId,
+    'and the plate it actually runs off is untouched — this is a switch, not a move');
+  ok(t2.also.path.startsWith('M') && !t2.also.path.includes('NaN'),
+    'the second leg draws');
+  ok(t2.also.legs.every((l) => l.key.startsWith('a')),
+    '...in its own key space, so a bend on it cannot land on the loop');
+
+  /* THE RULE THE WHOLE FEATURE RESTS ON. */
+  ok(flowSummary(two.flows).flows === flowSummary(plain.flows).flows,
+    'two-way switching is one switch, not two — no flow was added');
+  ok(two.flows.every((f) => f.nodes.length === plain.flows
+      .find((q) => q.id === f.id).nodes.length),
+    '...and nothing was re-seated: every fitting still has the one input it had');
+
+  /* THE SECOND LEG REACHES THE NEAREST FITTING ON THE FLOW and not the first
+     one on it — that is what makes it a wire somebody could pull. */
+  const near = t2.nodes.reduce((a, b) => (
+    Math.hypot(b.x - far.point.x, b.y - far.point.y)
+    < Math.hypot(a.x - far.point.x, a.y - far.point.y) ? b : a));
+  ok(t2.also.path.includes(`${Math.round(near.x * 100) / 100}`)
+     || t2.also.legs[0].d.includes(`${Math.round(near.x * 100) / 100}`),
+    '...and it runs to the fitting on this flow nearest that plate');
+
+  /* --- THE THREE WAYS IT DECLINES ---------------------------------------- */
+  const same = wire(g, { ...opts, twoWay: { [target.id]: target.boardId } });
+  ok(!same.flows.find((f) => f.id === target.id).also,
+    'two-waying a flow from the plate it already runs off is refused');
+  const gone = wire(g, { ...opts, twoWay: { [target.id]: 'no-such-board' } });
+  ok(!gone.flows.find((f) => f.id === target.id).also,
+    'a second plate that no longer exists falls back to the rule');
+  const off = wire(g, { ...opts, twoWay: {} });
+  ok(off.flows.every((f) => !f.also),
+    'removing the entry puts it back to one way with nothing to unwind');
+
+  /* --- AND IT REPLACES THE RULE'S OWN SECOND POINT RATHER THAN JOINING IT -
+     A two-way switch has two ends and not three. The bedroom fan already has a
+     second point by rule; naming one by hand MOVES it.
+     THE BEDROOM IS BUILT THE WAY THE FAN SECTION ABOVE BUILDS IT — real plates
+     off the real rules — because the fan's rule needs BEDSIDE plates and those
+     come from `planSwitchboards` seeing a bed, not from a zone rectangle. */
+  const W2 = 18, H2 = 18;
+  const bed2 = { id: 'bed', cls: 'bed', x0: 6, y0: 0, x1: 12, y1: 7 };
+  const poly2 = [{ x: 0, y: 0 }, { x: W2, y: 0 }, { x: W2, y: H2 }, { x: 0, y: H2 }];
+  const room2 = { id: 'r2', polygonPx: poly2.map(toPx) };
+  const leaf2 = px(900, PPF);
+  const doors2 = [{ id: 'd1', cls: 'door', conf: 0.99,
+                    rect: { x0: -18, y0: 14 * PPF, x1: leaf2, y1: 14 * PPF + leaf2 } }];
+  const sb2 = planSwitchboards({ room: room2, rooms: [room2], doors: doors2, roomTypes: {},
+                                 bedRect: rp(bed2), pxPerFt: PPF,
+                                 rules: ['door', 'bedside'] });
+  const live2 = sb2.boards.filter((b) => !b.rejected && b.point);
+  const bays2 = [{ key: 'room', rect: rp({ x0: 0, y0: 0, x1: W2, y1: H2 }) }];
+  const cb2 = planChunkBoards({ room: room2, bays: bays2, boards: live2, pxPerFt: PPF });
+  const res2 = planLights(poly2, [{ type: 'fan', kind: 'fan', x: 9, y: 13, r: 2 }],
+                          {}, [bed2]);
+  /* A PLATE NO RULE IN THIS ROOM CAN REACH FOR, so anything that lands on it is
+     the override and nothing else. In the pool only — see `boardPool`. */
+  const hall = { id: 'hall', point: { x: 18 * PPF, y: 9 * PPF },
+                 serves: 'room', servesShort: 'Hall' };
+  const bedroom = (extra = {}) => planFlows({
+    room: room2, bays: bays2,
+    chunks: res2.chunks.map((ch) => ({ ...rp(ch),
+      xLines: ch.xLines.map((v) => v * PPF), yLines: ch.yLines.map((v) => v * PPF) })),
+    cells: res2.cells.map(rp), lights: res2.lights.map((l) => ({ ...l, ...toPx(l) })),
+    zones: [rp(bed2)],
+    objects: [{ id: 'fan1', kind: 'fan', ...toPx({ x: 9, y: 13 }) }],
+    boards: live2, boardPool: [...live2, hall], owner: cb2.owner, pxPerFt: PPF,
+    ...extra,
+  });
+
+  const auto = bedroom();
+  const autoFan = auto.flows.find((f) => f.kind === 'object');
+  ok(!!autoFan?.also, 'the bedroom fan still gets its second point by rule');
+  ok(autoFan.also.manual === false, '...and it is not marked as a hand decision');
+  ok(live2.some((b) => b.id === autoFan.also.boardId && b.role === 'bedside'),
+    '...on a bedside plate, exactly as before');
+
+  const moved = bedroom({ twoWay: { [autoFan.id]: 'hall' } });
+  const movedFan = moved.flows.find((f) => f.id === autoFan.id);
+  ok(movedFan.also.boardId === 'hall', 'a hand two-way moves the fan\'s second point');
+  ok(movedFan.also.manual === true, '...and says it was a hand that did it');
+  ok(flowSummary(moved.flows).flows === flowSummary(auto.flows).flows,
+    '...and does not give it a third — a two-way has two ends, not three');
+  ok(bedroom({ twoWay: {} }).flows.find((f) => f.id === autoFan.id).also.boardId
+     === autoFan.also.boardId,
+    'and removing the entry hands the fan back to the far bedside');
+
+  /* --- CUTTING THE FAN'S SECOND END, WHICH IS THE ONE THAT NEEDED `null` ---
+     THE BUG THIS EXISTS FOR: the badge wrote a DELETE, and a delete means "go
+     back to the rules". The fan's second point IS a rule, so the delete removed
+     an entry it never had and the bedside came straight back — a button that
+     drew perfectly and did nothing, on the one flow in the app with a second
+     point nobody asked for. `null` is the positive statement that was missing.
+     ABSENT AND `null` ARE DIFFERENT ANSWERS, and this is the pair of assertions
+     that says so. */
+  ok(!!bedroom({ twoWay: {} }).flows.find((f) => f.id === autoFan.id).also,
+    'an ABSENT entry means the rules decide — the fan keeps its bedside point');
+  const cutAlso = bedroom({ twoWay: { [autoFan.id]: null } });
+  const cutAlsoFan = cutAlso.flows.find((f) => f.id === autoFan.id);
+  ok(!cutAlsoFan.also,
+    '...and `null` means no second point at all, rule or no rule');
+  ok(cutAlsoFan.boardId === autoFan.boardId,
+    '...with the fan still switched from the plate it always ran off');
+  ok(flowSummary(cutAlso.flows).flows === flowSummary(auto.flows).flows,
+    '...and still exactly one switch');
+  /* AND IT CUTS A HAND-DRAWN ONE JUST THE SAME — one button, one meaning,
+     whatever put the second point there. */
+  ok(!wire(g, { ...opts, twoWay: { [target.id]: null } }).flows
+      .find((f) => f.id === target.id).also,
+    'and `null` cuts a hand-drawn two-way the same way');
+
+  /* --- CUTTING THE FAN'S OWN END, WHERE THE SECOND POINT IS A RULE ---------
+     THE HARD HALF OF THAT BUTTON, AND IT NEEDS NO SPECIAL CASE. Cutting the end
+     a wire RUNS OFF cannot be a delete — the fitting is still connected at the
+     other end — so `cutTwoWay` in App assigns the flow to the second plate
+     instead. For a fan the second plate is the rule's, and there is no entry to
+     delete afterwards; what has to happen is that the rule then STOPS offering
+     it, because the plate it names is now the plate the wire runs off.
+     IT FALLS OUT OF THE REFUSAL ABOVE rather than being arranged: `second.id
+     !== board.id`. Worth a test all the same, because it is the one place two
+     independent rules have to agree to produce the right answer. */
+  const bedsideId = autoFan.also.boardId;
+  const cutOwn = bedroom({ assign: { [autoFan.id]: bedsideId } });
+  const cutFan = cutOwn.flows.find((f) => f.id === autoFan.id);
+  ok(cutFan.boardId === bedsideId,
+    'cutting the fan\'s own end moves its wire to the bedside plate');
+  ok(!cutFan.also,
+    '...and the rule stops offering a second point, because that IS the plate now');
+  ok(cutFan.assigned === true, '...recorded as the hand assignment it is');
+  ok(flowSummary(cutOwn.flows).flows === flowSummary(auto.flows).flows,
+    '...and the fan is still one switch');
+}
+
+console.log('\n-- a second feed survives the chain being re-seated --');
+{
+  /* THE LEG REACHES THE NEAREST FITTING ON THE FLOW, so a flow that gained or
+     lost one under `relink` leaves it pointing at a fitting that is no longer
+     the nearest — or no longer on that flow at all. See the arc recompute at
+     the foot of relink. */
+  const g = lay([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 12 }, { x: 0, y: 12 }]);
+  const main = { id: 'b1', point: { x: 0, y: 6 * PPF }, serves: 'room', servesShort: 'Door' };
+  const far = { id: 'b2', point: { x: 30 * PPF, y: 6 * PPF },
+                serves: 'room', servesShort: 'Hall' };
+  const opts = { boards: [main], boardPool: [main, far] };
+  const plain = wire(g, opts);
+  const rows = plain.flows.filter((f) => f.nodes.length > 1);
+  const [A, B] = rows;
+  const parent = A.nodes[0].id, child = B.nodes[0].id;
+
+  const both = wire(g, { ...opts, twoWay: { [A.id]: 'b2' },
+                         links: { [child]: parent } });
+  const a2 = both.flows.find((f) => f.id === A.id);
+  ok(a2.nodes.some((n) => n.id === child), 'the re-plugged fitting joined that flow');
+  ok(!!a2.also && a2.also.boardId === 'b2', '...and the second point survived it');
+  const ids = new Set(a2.nodes.map((n) => `${Math.round(n.x)},${Math.round(n.y)}`));
+  const end = a2.also.legs[a2.also.legs.length - 1];
+  ok(!end.d.includes('NaN'), '...and its leg still draws');
+  const nearest = a2.nodes.reduce((p, q) => (
+    Math.hypot(q.x - far.point.x, q.y - far.point.y)
+    < Math.hypot(p.x - far.point.x, p.y - far.point.y) ? q : p));
+  ok(ids.has(`${Math.round(nearest.x)},${Math.round(nearest.y)}`),
+    '...re-aimed at a fitting that is actually on the flow now');
+
+  /* AND A DETACHED FITTING'S NEW SWITCH CAN BE TWO-WAYED, which is the only
+     reason `relink` reads the map at all: that flow's id did not exist until
+     the detach minted it. */
+  const cut = wire(g, { ...opts, links: { [child]: null } });
+  /* BY THE MINTED ID AND NOT BY THE NODE COUNT. Detaching the HEAD of a row
+     takes the row with it — the fittings behind it named it as their input and
+     nothing about that changed — so the new switch is not a flow of one. See
+     `bear`. */
+  const own = cut.flows.find((f) => f.id.includes('own-') && f.nodes[0]?.id === child);
+  ok(!!own, 'the detached fitting heads a flow of its own');
+  ok(!own.also, '...and inherits no second point from the flow it left');
+  const ownTwo = wire(g, { ...opts, links: { [child]: null },
+                           twoWay: { [own.id]: 'b2' } });
+  const own2 = ownTwo.flows.find((f) => f.id === own.id);
+  ok(!!own2?.also && own2.also.boardId === 'b2',
+    '...but it can be two-wayed like any other switch');
+}
+
 console.log('\n-- nothing at all --');
 {
   ok(planFlows({}).flows.length === 0, 'no room, no flows');

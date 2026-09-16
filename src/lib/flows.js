@@ -146,6 +146,36 @@ export const WIRE_CHAIN = '#8A8A8A';
  */
 export const WIRE_PICKED = '#22C55E';
 
+/**
+ * ...AND MAGENTA FOR THE SECOND FEED OF A TWO-WAY SWITCH.
+ *
+ * IT IS THE ONE LEG ON THIS DRAWING THAT IS NOT PART OF ITS LOOP. Everything
+ * else a flow draws is one circuit read from one plate: the feed arrives, the
+ * chain carries on. The second feed leaves a DIFFERENT plate and arrives at the
+ * same fittings, which is a fact about the SWITCHING and not about the run — and
+ * drawn in the feed's own blue at the feed's own weight, as it was, it read as a
+ * second circuit. Two blue ticks on one loop is the sort of thing a reader
+ * notices on the third pass, and a wireman not at all.
+ *
+ * AND IT IS WHAT MAKES THE GESTURE REVERSIBLE. Dropping a fitting's grip on a
+ * plate now MEANS something — it two-ways that switch — so the drawing has to
+ * answer instantly and unambiguously that it happened. A leg that merely joined
+ * the blue ones would leave somebody hunting the plate elevation to find out
+ * whether their drag landed. Magenta says it at a glance and says which wire to
+ * grab to take it off again.
+ *
+ * NOTHING ELSE ON THIS CANVAS IS MAGENTA, which is the same argument green
+ * makes above: the fittings are amber, the plates and feeds blue, the chain
+ * grey, the accent the cream ramp, and green is already spoken for as the
+ * SELECTED state. So this cannot be read as a state — only as a kind of wire.
+ *
+ * THE PICKED COLOUR STILL WINS OVER IT. Selection has to survive the thicket
+ * whatever a leg is, and a two-way leg that stayed magenta while its own loop
+ * lit green would be the one piece of a selected wire that did not look
+ * selected. See the leg painter in PlanCanvas.
+ */
+export const WIRE_TWO_WAY = '#D946EF';
+
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const r2 = (v) => Math.round(v * 100) / 100;
 const centroid = (pts) => ({
@@ -301,6 +331,44 @@ export function cluster(items, reach) {
   return out;
 }
 
+/**
+ * THE SECOND PLACE A SWITCH IS REACHED FROM, AS A DRAWABLE LEG.
+ *
+ * ONE BUILDER AND NOT TWO, which is why it is out here. `add` builds this for a
+ * flow the rules just made, and `relink` has to build it again for a flow whose
+ * seating changed under it — and the second feed reaches THE NEAREST FITTING ON
+ * THE FLOW, so a re-seated chain leaves the old leg pointing at a fitting that
+ * is no longer the nearest one. Two copies of that reduce is how the leg comes
+ * to end somewhere the wire does not.
+ *
+ * ITS OWN KEY SPACE, `a`, so a bend nudged onto this leg does not land on the
+ * first leg of the loop. See `keyPrefix` in loopLegs.
+ *
+ * `manual` IS WHOSE DECISION IT WAS and nothing else — the card prints it and
+ * the drawing does not, exactly as `assigned` works for the plate at the other
+ * end. The leg is the same leg either way: a fan reached from the bed by rule
+ * and a light reached from the hall by hand are the same piece of wiring.
+ */
+function secondFeed(plate, seat, { pxPerFt = 0, opt = {}, bends = {},
+                                   manual = false } = {}) {
+  if (!plate?.point || !seat?.length) return null;
+  const near = seat.reduce((a, b) => (dist(b, plate.point) < dist(a, plate.point) ? b : a));
+  const legs = loopLegs([near], { from: plate.point, pxPerFt, opt, bends,
+                                  keyPrefix: 'a' });
+  return {
+    boardId: plate.id,
+    boardLabel: plate.servesShort || 'Board',
+    from: plate.point,
+    manual,
+    legs,
+    path: pathOf(legs),
+  };
+}
+
+/** A finished `also` read back as the plate it names, so it can be re-aimed. */
+const plateOfAlso = (also) => (also
+  ? { id: also.boardId, servesShort: also.boardLabel, point: also.from } : null);
+
 // --- the pass ----------------------------------------------------------------
 
 /**
@@ -428,6 +496,32 @@ export function planFlows({
      on one would evaporate the moment a chunk changed. A fitting id is a
      document fact and survives everything but deleting the fitting. */
   links = {},
+  /* AND THE SECOND PLACE A HAND SAID THIS SWITCH IS REACHED FROM: flow id ->
+     board id. Two-way switching, drawn by somebody rather than derived.
+
+     KEYED ON FLOW IDS AND NOT FITTING IDS, WHICH IS THE OPPOSITE OF `links` AND
+     IS NOT AN INCONSISTENCY. `links` re-plugs a FITTING's input, so it has to
+     survive the grid being redrawn under it and a fitting id is the only thing
+     that does. This names a second plate for a SWITCH, and a switch IS a flow —
+     there is no fitting-shaped thing to hang it on, and a two-way that survived
+     its own flow being dissolved would be a second point for a circuit that no
+     longer exists. It is `flowBoards`' twin, stored the same way for the same
+     reason: both answer "which plate does this wire report to".
+
+     IT REPLACES THE RULE'S ANSWER AND DOES NOT ADD TO IT, which is what keeps
+     one input one input — see `relink`. A flow has at most ONE second point,
+     because a two-way switch has two ends and not three; wanting a third is
+     intermediate switching, which is a different part and a different drawing.
+
+     AN ID THAT NO LONGER RESOLVES FALLS BACK TO THE RULE, exactly as `assign`
+     does — delete the bedside plate and the fan is switched from the door
+     alone, rather than from a plate that is not there.
+
+     AND `null` IS A THIRD STATE, NOT AN ABSENCE. Absent means the rules decide;
+     a board id names a plate; `null` means this switch has NO second point even
+     where a rule would give it one. See the note at its use in `add` for the
+     button that could not work without it. */
+  twoWay = {},
   zones = [],
   pxPerFt = 0,
   opts = {},
@@ -609,6 +703,27 @@ export function planFlows({
       : order === 'fixed' ? pts
       : towards(pts, board?.point);
     const myBends = bends[flowId] ?? {};
+    /* THE SECOND PLATE, RESOLVED AGAINST EVERY BOARD ON THE DRAWING and not
+       against this room's. `byIdAll` is `boardPool`, which is what a hand
+       assignment resolves against for the reason given there — a bedroom light
+       two-wayed from the landing is the ordinary case for this gesture, not the
+       exotic one, and refusing it because the plate is through the door would
+       refuse the thing people reach for two-way switching to do. */
+    /* AND `null` IS THE THIRD STATE, WHICH IS THE ONE THE CUT BUTTON NEEDED.
+       An absent key means THE RULES DECIDE — for a bedroom fan that is a second
+       point on the far bedside, for everything else it is none. A board id means
+       THAT PLATE. `null` means NO SECOND POINT, whatever the rules say.
+       IT HAD TO BE A THIRD VALUE AND COULD NOT BE AN ABSENCE, which is the same
+       sentence `links` carries three hundred lines down and was learned here the
+       hard way: the badge that cuts the second end wrote a DELETE, and a delete
+       on a fan removes an entry the fan never had. The rule then proposed the
+       bedside again on the very next render, so the button drew perfectly and
+       did nothing at all — on the one flow in the app that has a second point by
+       rule. Deleting the key is already spoken for as "go back to the rules", so
+       "take this two-way off" needed something positive to say. */
+    const cutSecond = Object.hasOwn(twoWay, flowId) && twoWay[flowId] == null;
+    const handSecond = twoWay[flowId] ? byIdAll.get(twoWay[flowId]) ?? null : null;
+    const second = cutSecond ? null : (handSecond ?? also);
     const legs = loopLegs(seat, { from: board?.point ?? null, pxPerFt, opt: o,
                                   bends: myBends });
     const flow = {
@@ -657,25 +772,24 @@ export function planFlows({
       // rather than another entry in the list: a second flow would be a second
       // switch, and a schedule reading these would order two fan regulators for
       // one fan. One flow, one switch, two plates you can operate it from.
-      also: also && board ? {
-        boardId: also.id,
-        boardLabel: also.servesShort || 'Board',
-        from: also.point,
-        ...(() => {
-          /* FROM THE NEAREST FITTING ON THE FLOW, not from the whole chain
-             again. The loop is already drawn; this leg only has to say "and
-             from here too", so it reaches the one fitting closest to the second
-             plate and stops.
-             ITS OWN KEY SPACE, `a0`, so a bend nudged onto the second feed does
-             not land on the first leg of the loop. One flow, two chains of legs,
-             and the keys have to say which. */
-          const near = seat.reduce((a, b) =>
-            (dist(b, also.point) < dist(a, also.point) ? b : a));
-          const aLegs = loopLegs([near], { from: also.point, pxPerFt, opt: o,
-                                           bends: myBends, keyPrefix: 'a' });
-          return { legs: aLegs, path: pathOf(aLegs) };
-        })(),
-      } : null,
+      /* A HAND'S SECOND PLATE BEATS THE RULE'S, exactly as `forced` beats
+         `given` at the other end of the wire, and for the same reason: the rule
+         that puts a fan's second point on the far bedside is a good rule and is
+         still only a guess about which corner of the room somebody wants to
+         reach the switch from. They dragged a fitting's grip onto a plate;
+         there is nothing ambiguous about what they meant.
+         AND IT REPLACES RATHER THAN ADDING. A flow has at most one second
+         point — see `twoWay` in the parameters. Two-waying the fan from the
+         hall moves its second point to the hall; it does not give it three.
+         NEVER THE PLATE IT ALREADY RUNS OFF. "Also reached from the plate it is
+         reached from" is not a circuit, it is a duplicate module on one plate —
+         and it is a reachable drop, because the plate a wire runs to is sitting
+         right there under the pointer. Refused here rather than in the gesture
+         so a stored one from any source is equally harmless. */
+      also: board && second && second.id !== board.id
+        ? secondFeed(second, seat, { pxPerFt, opt: o, bends: myBends,
+                                     manual: !!handSecond })
+        : null,
       ...extra,
     };
     flows.push(flow);
@@ -1501,7 +1615,7 @@ export function planFlows({
      override and overrides go on top; it is inside planFlows rather than in the
      caller because a re-seated flow has to be re-pathed, and the arc options
      and the bend overrides are in scope exactly here. */
-  return { flows: relink(flows, links, { pxPerFt, opt: o, bends,
+  return { flows: relink(flows, links, { pxPerFt, opt: o, bends, twoWay,
                                         mintId: id, assign, boardById: byIdAll }), notes };
 }
 
@@ -1560,8 +1674,14 @@ export function planFlows({
    flows. Wiring across a wall is a real thing and this is the seam it would be
    added at, but it is not what the gesture offers today.
    --------------------------------------------------------------------------- */
-function relink(flows, links, { pxPerFt, opt, bends, mintId, assign, boardById }) {
+function relink(flows, links, { pxPerFt, opt, bends, twoWay = {},
+                                mintId, assign, boardById }) {
   const keys = links ? Object.keys(links) : [];
+  /* NO LINKS, NOTHING TO REORGANISE — AND THE TWO-WAYS ARE ALREADY RIGHT. `add`
+     reads the same `twoWay` map when it builds each flow, so a plan with a
+     hand-drawn second point and no hand-drawn link never reaches this function
+     and does not need to: what is below exists to REPAIR a second feed whose
+     flow was re-seated or minted here, not to apply one. */
   if (!flows.length || !keys.length) return flows;
 
   /* WHERE EVERY FITTING CURRENTLY SITS. Built over the finished flows rather
@@ -1721,9 +1841,30 @@ function relink(flows, links, { pxPerFt, opt, bends, mintId, assign, boardById }
      comes to sit off the wire it is meant to be on. */
   return rebuilt.map((f) => {
     if (!changed.has(f)) return f;
+    const myBends = bends?.[f.id] ?? {};
     const legs = loopLegs(f.nodes, { from: f.from ?? null, pxPerFt, opt,
-                                     bends: bends?.[f.id] ?? {} });
-    return { ...f, legs, path: pathOf(legs) };
+                                     bends: myBends });
+    /* AND THE SECOND FEED IS RE-AIMED WITH THEM, which is the half that is easy
+       to miss. That leg reaches THE NEAREST FITTING ON THE FLOW — so a chain
+       that gained a lamp, lost one, or was cut in two leaves it pointing at a
+       fitting that is no longer the nearest, or no longer on this flow at all.
+       Left alone it drew a wire from a bedside plate to a light now switched
+       from somewhere else entirely.
+       A MINTED FLOW LOOKS ITS OWN UP. `bear` hands back `also: null` because a
+       detached fitting inherits nothing about switching from the flow it left —
+       but its NEW id is a thing `twoWay` can name, and once somebody two-ways
+       a fitting they stood on its own, this is where that is honoured.
+       AND THE RULE'S OWN SECOND FEED IS REBUILT FROM WHAT IT SAYS, so a fan
+       whose flow was re-seated keeps the bedside point the rule gave it rather
+       than having it quietly promoted to a hand decision. */
+    const cutSecond = !!twoWay && Object.hasOwn(twoWay, f.id) && twoWay[f.id] == null;
+    const hand = twoWay?.[f.id] ? boardById?.get(twoWay[f.id]) ?? null : null;
+    const plate = cutSecond ? null : (hand ?? plateOfAlso(f.also));
+    const also = plate && plate.id !== f.boardId
+      ? secondFeed(plate, f.nodes, { pxPerFt, opt, bends: myBends,
+                                     manual: hand ? true : !!f.also?.manual })
+      : null;
+    return { ...f, legs, path: pathOf(legs), also };
   });
 }
 
@@ -1741,3 +1882,132 @@ export function flowSummary(flows = []) {
 
 /** Kept for the callers that want to know a point is inside the space at all. */
 export const inSpace = (p, polygon) => pointInPolygon(p, polygon);
+
+// --- a wire, for a reader that cannot stroke a path -------------------------
+//
+// THE CANVAS STROKES `d` AND THE TWO EXPORTERS CANNOT. An SVG path is the
+// natural shape for a wire on screen and it is the wrong shape everywhere else:
+// a DXF R12 has no curve worth writing a bowed leg as, and a plotted sheet is
+// built out of page-space segments for the reason pdfPlot gives about
+// `drawSvgPath`. So both files want the same wire as POINTS.
+//
+// FLATTENED HERE AND NOT IN EACH EXPORTER, which is the same argument this file
+// already makes about the bow itself: two copies of one curve are two curves the
+// day somebody tunes `bulge`, and a PDF and a DXF of one plan that disagreed
+// about where a wire runs would be worse than either being wrong.
+
+/**
+ * THE LEG'S OWN `d`, EVALUATED — the dialect `loopLegs` writes and nothing else.
+ *
+ * `M x y`, then a `Q` per leg. That is the whole grammar `pathOf` emits, so this
+ * parses what this file produces rather than SVG in general: an `A`, a `C` or a
+ * relative command would be a curve nothing here can draw, and inventing a
+ * reader for them would be inventing a caller.
+ *
+ * READ OFF THE STRING RATHER THAN OFF `a`/`grip`/`normal`, and that is the
+ * point. A flow from a caller that predates `legs` — or one built by hand in a
+ * test — still carries a `path`, and the canvas already falls back to stroking
+ * it; a flattener that needed the fields would be a wire that vanished from the
+ * file because a field was added. One code path, both cases.
+ */
+export function pathPoints(d, steps = 12) {
+  if (typeof d !== 'string') return [];
+  const tok = d.trim().split(/[\s,]+/).filter(Boolean);
+  const num = () => Number(tok[i++]);
+  const pts = [];
+  let cur = null, i = 0;
+  while (i < tok.length) {
+    const op = tok[i++];
+    if (op === 'M' || op === 'L') {
+      cur = { x: num(), y: num() };
+      pts.push(cur);
+    } else if (op === 'Q') {
+      const c = { x: num(), y: num() };
+      const b = { x: num(), y: num() };
+      if (!cur) { cur = b; pts.push(b); continue; }
+      for (let k = 1; k <= steps; k++) {
+        const t = k / steps, u = 1 - t;
+        pts.push({ x: u * u * cur.x + 2 * u * t * c.x + t * t * b.x,
+                   y: u * u * cur.y + 2 * u * t * c.y + t * t * b.y });
+      }
+      cur = b;
+    }
+  }
+  return pts.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+}
+
+/**
+ * ONE FLOW, AS RUNS OF POINTS, EACH SAYING WHICH KIND OF WIRE IT IS.
+ *
+ * THE THREE KINDS ARE THE THREE COLOURS, and they are the canvas's own split:
+ * `feed` is the leg off the plate, `chain` is fitting to fitting, `two` is the
+ * second feed of a two-way. See SB_COLOUR, WIRE_CHAIN and WIRE_TWO_WAY for what
+ * each one means and why it is drawn differently.
+ *
+ * THE PAINTER DECIDES ONCE PER RUN, which is the shape the canvas's own `leg`
+ * already has: a run that had to be looked up in two lists to find out what
+ * colour it is would be a run that gets it wrong the day a fourth kind arrives.
+ */
+export function flowWires(flow, { steps = 12 } = {}) {
+  if (!flow) return [];
+  const out = [];
+  const take = (legs, path, two) => {
+    const list = legs?.length ? legs : (path ? [{ d: path, feed: true }] : []);
+    for (const l of list) {
+      const pts = pathPoints(l.d, steps);
+      if (pts.length >= 2) {
+        out.push({ kind: two ? 'two' : l.feed ? 'feed' : 'chain', pts });
+      }
+    }
+  };
+  take(flow.legs, flow.path, false);
+  if (flow.also) take(flow.also.legs, flow.also.path, true);
+  return out;
+}
+
+/**
+ * HOW LONG THE FEED TICK IS, in feet — about 75mm either side of the wire.
+ *
+ * IN FEET BECAUSE A SHEET AND A CAD FILE HAVE NO HAIRLINE BETWEEN THEM. The
+ * canvas sizes the tick off `lw`, which is a screen pixel: it is an annotation
+ * there and stays the same size as you zoom. On paper and in a drawing it is a
+ * mark at a scale, so it is a real length like every other figure the exporters
+ * share. @see feedTicks
+ */
+export const WIRE_TICK_FT = 0.25;
+
+/**
+ * THE SHORT TICK ACROSS THE WIRE WHERE IT LEAVES A PLATE.
+ *
+ * NOT AN ARROW — a wire has no direction and an arrowhead would claim one. It is
+ * there because a loop's first leg is its longest and a reader has to be able to
+ * find which of several plates it came off. The canvas draws exactly this, from
+ * exactly these two points; @see the looping block in PlanCanvas.
+ *
+ * TWO OF THEM ON A TWO-WAY, and the second one is `two` so it takes that leg's
+ * own colour. Painting it the feed's blue while the leg under it is magenta
+ * would split one statement into two colours at the exact point somebody looks
+ * to read it.
+ */
+export function feedTicks(flow, { lenPx = 0 } = {}) {
+  if (!flow || !(lenPx > 0)) return [];
+  const nodes = flow.nodes ?? [];
+  if (!nodes.length) return [];
+  const pairs = [];
+  if (flow.from) pairs.push([flow.from, nodes[0], 'feed']);
+  if (flow.also?.from) {
+    const at = flow.also.from;
+    pairs.push([at, nodes.reduce((a, b) => (dist(b, at) < dist(a, at) ? b : a)), 'two']);
+  }
+  const out = [];
+  for (const [a, b, kind] of pairs) {
+    if (!a || !b) continue;
+    const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
+    const q = { x: a.x + ux * lenPx * 1.6, y: a.y + uy * lenPx * 1.6 };
+    out.push({ kind,
+      a: { x: q.x - uy * lenPx, y: q.y + ux * lenPx },
+      b: { x: q.x + uy * lenPx, y: q.y - ux * lenPx } });
+  }
+  return out;
+}

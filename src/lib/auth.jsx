@@ -30,6 +30,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { supabase, supabaseReady, hasStoredSession } from './supabase.js';
+import { clearCachedLists } from './projectCache.js';
 
 // The old `.btn` / `.btn.primary` / `.btn.secondary` classes, as Tailwind
 // utilities — same split as PlanPicker.jsx / RenderPassPanel.jsx.
@@ -159,7 +160,14 @@ export function AuthProvider({ children }) {
       // the session; every other path leaves it alone. That distinction is the
       // whole bug fix — see the note on the backstop.
       if (s) { setSession(s); setStalled(false); }
-      else if (evt === 'SIGNED_OUT' || evt === 'USER_DELETED') { setSession(null); setStalled(false); }
+      else if (evt === 'SIGNED_OUT' || evt === 'USER_DELETED') {
+        setSession(null); setStalled(false);
+        // THE DASHBOARD'S CACHED PROJECT NAMES GO WITH THE SESSION. They are
+        // client names as often as not, and this branch is also where a sign-out
+        // in ANOTHER TAB arrives — so the tab that did not click the button
+        // clears its copy too. See lib/projectCache.js.
+        clearCachedLists();
+      }
       setReady(true);
       if (evt !== 'TOKEN_REFRESHED') console.log(`[auth] ${evt}`, s ? 'session' : 'no session');
     });
@@ -301,7 +309,7 @@ export function AuthProvider({ children }) {
   const signOut = useCallback(async () => {
     try { await withLimit(supabase?.auth.signOut() ?? Promise.resolve(), 'Signing out', 8000); }
     catch (err) { console.warn('[auth] signOut did not confirm — clearing locally', err); }
-    finally { setSession(null); setProfile(null); setStalled(false); }
+    finally { setSession(null); setProfile(null); setStalled(false); clearCachedLists(); }
   }, []);
 
   const saveName = useCallback(async (fullName) => {

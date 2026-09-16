@@ -296,6 +296,23 @@ export const DOC_FIELDS = {
      under its rule with nothing to unwind. */
   flowLinks: () => ({}),
 
+  /* AND THE SECOND PLATE A SWITCH IS REACHED FROM: flow id -> board id.
+     Two-way switching, drawn by hand rather than derived.
+
+     KEYED ON FLOW IDS WHERE `flowLinks` ABOVE IS KEYED ON FITTINGS, and the two
+     are answering different questions. A link re-plugs a FITTING's input, which
+     has to outlive the grid being redrawn, and only a fitting id does. This
+     names a second plate for a SWITCH — and a switch IS a flow, so there is no
+     fitting-shaped thing to hang it on. It is `flowBoards`' twin: both say
+     which plate a wire reports to, one for the end it runs off and one for the
+     extra place it can be operated from, and both are stored the same way.
+
+     SPARSE MEANS "DIFFERS FROM THE RULE". An absent key is the rules' own
+     answer — which for a bedroom fan is already a second point on the far
+     bedside, and for everything else is none — so a plan saved before this
+     field existed reads exactly as it did. See `planFlows`. */
+  flowTwoWays: () => ({}),
+
   /* THE PLATES SOMEBODY PUT ON A WALL THEMSELVES: `[{ id, roomId, sFt }]`.
      THE ODD ONE OUT IN THIS DOMAIN, AND WORTH SAYING SO. Everything else here
      modifies something a rule produced. NOTHING derives these plates — no pass
@@ -1429,13 +1446,19 @@ export function docReducer(state, action) {
        A FLOW CANNOT BE DELETED: it is the switch a fitting needs, it is derived
        from the fittings, and removing it from the drawing would be claiming a
        lamp with no way to turn it on. So the only thing there is to take away is
-       the PAIR of overrides — the plate it was dragged onto and the bends it was
-       nudged into — and one action takes both, because putting a wire back under
-       the rules is one act and half of it is not a state anybody asked for. */
+       what was DONE to it — the plate it was dragged onto, the bends it was
+       nudged into, and the second plate it was two-wayed from — and one action
+       takes all of them, because putting a wire back under the rules is one act
+       and a fraction of it is not a state anybody asked for.
+       THE TWO-WAY IS IN THE LIST AND WAS NOT, which would have been a hole the
+       day the gesture shipped: a wire with its plate put back and its second
+       point still standing is a wire half under the rules, and the only way out
+       of it would have been to find the magenta badge on a leg somebody had
+       just stopped looking at. */
     case 'FLOW_OVERRIDES_DROPPED': {
       const { flowId } = action;
       let next = state;
-      for (const field of ['flowBoards', 'flowBends']) {
+      for (const field of ['flowBoards', 'flowBends', 'flowTwoWays']) {
         const m = next[field];
         if (!(flowId in m)) continue;
         const out = { ...m }; delete out[flowId];
@@ -1778,6 +1801,27 @@ export function usePlanDoc(seed) {
        was ever taken away from the rules to be restored. */
     clearFlowLink: (childId) =>
       dispatch({ type: 'MAP_ENTRY_REMOVED', field: 'flowLinks', key: childId }),
+
+    clearFlowTwoWays: () => dispatch({ type: 'MAP_CLEARED', field: 'flowTwoWays' }),
+    /* A SECOND PLACE THIS SWITCH IS OPERATED FROM. One write per DROP, like the
+       link and the plate reassignment beside it — the wire being aimed is a
+       rubber band until it lands.
+       AND `null` IS A VALUE HERE, NOT AN ERASURE: it means "this switch has no
+       second point", which is a different answer from "the rules decide" and
+       has to be sayable. A bedroom fan's second point comes from a rule, so the
+       only way to take it off is to say so — deleting an entry it never had is
+       a no-op, and the badge that cut it drew perfectly and did nothing. Same
+       three states `flowLinks` carries, for the same reason. */
+    setFlowTwoWay: (flowId, boardId) =>
+      dispatch({ type: 'MAP_ENTRY_SET', field: 'flowTwoWays', key: flowId, value: boardId }),
+    /* BACK UNDER THE RULES, which is a DELETE — the fan returns to the far
+       bedside it is given, everything else to a single point. It is how the drag
+       toggles off: dropping a fitting's grip on the plate that already two-ways
+       it means "never mind", and never mind is the rules' answer.
+       IT IS NOT THE SAME ACT AS CUTTING ONE END, and that distinction cost a
+       dead button before it existed. See `setFlowTwoWay(id, null)` below. */
+    clearFlowTwoWay: (flowId) =>
+      dispatch({ type: 'MAP_ENTRY_REMOVED', field: 'flowTwoWays', key: flowId }),
     /* A WIRE DROPPED ON A PLATE, or dropped home — see FLOW_BOARD_SET. */
     setFlowBoard: (flowId, boardId, home) =>
       dispatch({ type: 'FLOW_BOARD_SET', flowId, boardId, home }),

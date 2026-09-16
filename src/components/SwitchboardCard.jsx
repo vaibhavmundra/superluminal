@@ -76,14 +76,38 @@ const PANEL_GROUND = '#12100E';
  * plate, and a mark in the middle of it would be saying the opposite of what
  * the part is.
  */
-function Face({ kind, x, y, w, h, ink = PANEL_INK }) {
+function Face({ kind, x, y, w, h, ink = PANEL_INK, twoWay = false }) {
   const STROKE = ink;
   const cx = x + w / 2, cy = y + h / 2;
   const r = Math.min(w, h) * 0.26;
-  const common = { fill: 'none', stroke: STROKE, strokeWidth: 1.3, strokeLinecap: 'round' };
+  const common = { fill: 'none', stroke: STROKE, strokeWidth: 1.3, strokeLinecap: 'round',
+                   strokeLinejoin: 'round' };
   switch (kind) {
     // A rocker: the line the two halves of the switch meet on.
     case 'switch':
+      /* --- ...AND TWO CHEVRONS WHERE IT IS A TWO-WAY ----------------------
+         THE MARK ON THE PART ITSELF. A two-way plate is printed with an up
+         chevron and a down chevron because the rocker has no fixed on and off:
+         either half can be the one that makes the circuit, depending on where
+         the switch at the other end is standing. That is exactly the thing a
+         person needs told when they are looking at a plate elevation and
+         wondering why this room has two switches for one light.
+         INSTEAD OF THE ROCKER LINE AND NOT BESIDE IT. The line says "these two
+         halves meet here"; the chevrons say the same thing and say which way
+         each half throws. Drawn together, a fourteen-pixel module has three
+         horizontal marks in it and reads as a grille.
+         THE SAME GEOMETRY AT BOTH ENDS OF THE CIRCUIT. `pointsFromFlows` marks
+         the owning plate's switch and the second plate's alike — a two-way pair
+         is two identical parts — so this glyph is the one drawing of it. */
+      if (twoWay) {
+        const dx = w * 0.19, dy = h * 0.075, gap = h * 0.13;
+        return (
+          <g {...common}>
+            <polyline points={`${cx - dx},${cy - gap} ${cx},${cy - gap - dy} ${cx + dx},${cy - gap}`} />
+            <polyline points={`${cx - dx},${cy + gap} ${cx},${cy + gap + dy} ${cx + dx},${cy + gap}`} />
+          </g>
+        );
+      }
       return <line x1={cx - w * 0.3} y1={cy} x2={cx + w * 0.3} y2={cy} {...common} />;
     // A regulator is a knob with an index mark, which is what makes it read as
     // a thing you TURN rather than a thing you press.
@@ -152,7 +176,8 @@ function Module({ p, x, lit, ink, ground, onPick = null, onGrab = null }) {
                should read that way at a glance. */
             strokeOpacity={p.kind === 'blank' ? 0.35 : 1}
             strokeWidth={1.4} />
-      <Face kind={p.kind} x={x} y={PAD} w={w} h={H} ink={lit ? ground : STROKE} />
+      <Face kind={p.kind} x={x} y={PAD} w={w} h={H} ink={lit ? ground : STROKE}
+            twoWay={!!p.twoWay} />
       {/* THE RATING, ON THE PARTS THAT HAVE ONE. It is the one thing about a
           module that cannot be drawn — a 6A rocker and a 20A rocker are the same
           mark — and on a plate with both on it, which is the plate this is for,
@@ -238,20 +263,29 @@ export function BoardFrame({ board, ink = PANEL_INK, ground = PANEL_GROUND,
     return () => { b.style.userSelect = was; b.style.webkitUserSelect = wasWebkit; };
   }, [dragging]);
 
-  /* --- THE FRAME'S CONTENTS, AS UNITS AND THEN AS BLANKS -------------------
+  /* --- THE FRAME'S CONTENTS, AS UNITS -------------------------------------
      A PAIR MOVES AS A PAIR — that is the whole requirement — so what is laid
      out, dragged and animated is never a module, it is the run of modules
-     sharing a `unitKey`. Blanks carry none: a blank is what is LEFT of the
-     frame rather than part of the arrangement, so it is not draggable and it
-     never moves. It cannot: reordering permutes units and permuting them cannot
-     change their total width, so the blanks always begin at the same place. */
+     sharing a `unitKey`.
+
+     AND A BLANK IS ONE OF THEM NOW. It used to be the exception: no key, drawn
+     outside the animated group, pinned after every real unit on the argument
+     that a permutation cannot change their total width so the blanks always
+     begin at the same place. True, and beside the point — a plate is very often
+     built with its spare module somewhere other than the far end, and "wherever
+     is left over" was not a position anybody chose. `composeSwitchboard` gives
+     every blank a key and arranges it with the rest; see the note there for why
+     that happens after the packing and not before.
+     SO THERE IS NO SECOND LIST HERE ANY MORE, and the loop below is the whole
+     of the frame. A point with no key at all is still tolerated — a caller
+     composing a board by hand in a test has no units — and lands in one of its
+     own, which keeps it drawn and simply not draggable. */
   const units = [];
-  const blanks = [];
   for (const p of board.points) {
-    if (!p.unitKey) { blanks.push(p); continue; }
     const last = units[units.length - 1];
-    if (last && last.key === p.unitKey) last.points.push(p);
-    else units.push({ key: p.unitKey, index: p.unitIndex, points: [p] });
+    if (p.unitKey && last && last.key === p.unitKey) last.points.push(p);
+    else units.push({ key: p.unitKey ?? `p${units.length}`, index: p.unitIndex ?? units.length,
+                      points: [p], loose: !p.unitKey });
   }
   for (const u of units) {
     u.w = u.points.reduce((t, p) => t + p.modules * W, 0) + (u.points.length - 1) * G;
@@ -412,21 +446,13 @@ export function BoardFrame({ board, ink = PANEL_INK, ground = PANEL_GROUND,
                 <Module key={k} p={p} x={at} lit={lit} ink={STROKE} ground={ground}
                   onPick={p.flowId && onPickFlow && !drag?.moved
                     ? () => onPickFlow(p.flowId) : null}
-                  onGrab={onReorder ? (e) => start(e, u.key) : null} />
+                  onGrab={onReorder && !u.loose ? (e) => start(e, u.key) : null} />
               );
             })}
           </g>
         );
       })}
 
-      {/* AND THE BLANKS, WHICH NEVER MOVE. They sit after every unit, and a
-          permutation of the units cannot change their total width — so the
-          blanks begin at the same place whatever the arrangement, and drawing
-          them outside the animated group says so. */}
-      {blanks.map((p, k) => (
-        <Module key={`b${k}`} p={p} x={base.end + k * (W + G)} lit={false}
-          ink={STROKE} ground={ground} />
-      ))}
     </svg>
   );
 }

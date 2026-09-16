@@ -120,6 +120,12 @@ libraries are used rather than reimplemented: `electrical`, `switchboards`,
 - **`confirmDoors`'s outer half.** Closing the door editor is the door domain's
   screen; what confirming BUYS — `doorsOk`, and the wiring layer coming on —
   is `commands.confirmDoors`.
+- **The gate's revoke.** A door step raised BY the wiring and closed any way but
+  by confirming takes `layers.electrical` back off, so confirming is the only
+  route to the electrical layout. Both halves of that are the door screen's —
+  which of the two ways in this was (`doorGate`) and the one exit every route
+  goes through (`closeDoorEdit`) — so the whole rule stayed in App. This feature
+  still owns only what an ANSWER buys.
 - **The layer switch's branch order.** `readOnly`, then the zone step, then the
   door step, then the gate. Three of those four are other people's screens. The
   gate itself is `panel.doorsOk` and the switch is `commands.toggleLayer`.

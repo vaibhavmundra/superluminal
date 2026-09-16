@@ -54,6 +54,7 @@ export function useElectrical({
   doc, docActions,
 }) {
   const { boardsOff, boardMoves, boardPoints, flowBoards, flowBends, flowLinks,
+          flowTwoWays,
           manualBoards, boardKinds, boardHeights, boardOrders, doorsOk } = doc;
 
   const selBoardId = idOf(sel, 'board');
@@ -70,7 +71,7 @@ export function useElectrical({
     useSceneElectricalProjections({
       rooms, boardsFor, bayBoardsFor, placedBoardsFor, bayResults, obstaclesPx, accentZonesPx,
       taskSpotsPx, lampsPx, elecPointsPx, outdoorFeeds, pxPerFt, baysOf, flowBoards, flowBends,
-      flowLinks,
+      flowLinks, flowTwoWays,
       layers, doorEdit
     });
 
@@ -88,6 +89,10 @@ export function useElectrical({
        can UNLINK rather than rewrite the entry it already holds — the same way
        back the plate drag has. */
     flowLinks,
+    /* AND THE SAME FOR THE SECOND PLATE, so dropping a fitting's grip back on
+       the plate that already two-ways it takes the two-way OFF rather than
+       rewriting the entry it already holds. One gesture, both directions. */
+    flowTwoWays,
     /* THE PLACED OBJECTS, FOR ONE COMMAND ONLY. `socketForLamp` needs to know
        what else is standing in the room before it decides whether a plate has
        to go up — see `lampPlateToShare`. */
