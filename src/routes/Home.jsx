@@ -7,6 +7,7 @@ import Wordmark from '../components/Wordmark.jsx';
 import LegalLinks from '../components/LegalLinks.jsx';
 import HowToLink from '../components/HowToLink.jsx';
 import ScheduleDemoButton from '../components/ScheduleDemoButton.jsx';
+import HeroVideo from '../components/HeroVideo.jsx';
 
 // ---------------------------------------------------------------------------
 // THE HOME PAGE, which is the upload screen with a promise over it.
@@ -15,6 +16,18 @@ import ScheduleDemoButton from '../components/ScheduleDemoButton.jsx';
 // minutes" — because that is the thing this tool actually competes on, and the
 // button is the same drop target the editor has always had, so there is exactly
 // one gesture to learn and it is the first one you make.
+//
+// AND THE CLAIM NOW HAS THE EVIDENCE BESIDE IT. The hero is two columns: the
+// promise and the gesture on the left, eight silent seconds of the editor
+// actually reading a plan and lighting it on the right (HeroVideo.jsx). Beside
+// and not under, because a visitor who has to scroll to find out what the tool
+// looks like has already decided it is a form. The recording is deferred until
+// the page has loaded — it is a poster until then — so the thing that argues
+// for the app cannot be the thing that makes it slow to arrive.
+//
+// THE WHOLE PAGE IS STILL THE DROP TARGET. The grid lives INSIDE <main>, which
+// keeps its drag handlers and its two-pixel border: a drawing let go over the
+// video lands in the app exactly as one let go over the headline does.
 //
 // THE SIGN-IN IS DELIBERATELY DOWNSTREAM OF THE DROP. Asking for an email
 // before showing what the app does is asking for trust nobody has yet; asking
@@ -101,33 +114,56 @@ export default function Home() {
       </header>
 
       <main
-        className={'flex-1 flex flex-col items-center justify-center text-center px-6 py-16 gap-1.5 border-2 transition-colors duration-150' + (over ? ' border-border/10 bg-white/5 backdrop-blur-[5px]' : ' border-transparent')}
+        className={'flex-1 flex items-center justify-center px-6 py-14 border-2 transition-colors duration-150' + (over ? ' border-border/10 bg-white/5 backdrop-blur-[5px]' : ' border-transparent')}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); accept(e.dataTransfer.files?.[0]); }}
       >
-        <h1 className="mb-[10px] text-[clamp(34px,4.4vw,72px)] leading-[1.04] tracking-[-0.035em] max-w-[22ch]">Create perfect lighting layouts,<br />every time</h1>
-        <p className="mb-[26px] text-subtle max-w-[56ch] text-lg leading-[1.6]">
-          The simplest tool to visualise how much lighting your project needs. Specify with confidence.
-        </p>
+        {/* 5:6 AND NOT 1:1. The column carrying the picture is the wider of the
+            two because the picture is a screen recording of a dense editor — a
+            panel, a rail and a plan — and at half of 1180px its text is a
+            texture rather than an interface. The words need less room than that
+            to be read, and a headline set to 14 characters a line is fine.
 
-        <div className="flex flex-col items-center gap-3">
-          <button className="lp-glow-btn text-[14px] py-0 px-0 w-[240px] rounded-[8px] h-field-h inline-flex items-center justify-center"
-            onClick={() => inputRef.current?.click()}>
-            + Upload a floor plan
-          </button>
-          <input ref={inputRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
-            onChange={(e) => accept(e.target.files?.[0])} />
-          <ScheduleDemoButton />
-          <span className="text-[11.5px] text-subtle">or drop it anywhere on this page · DXF, PDF or image</span>
-          {/* UNDER THE DROP HINT, NOT BETWEEN IT AND THE BUTTON. The hint is the
-              second half of the button's own sentence — "upload one, or drop it
-              anywhere" — and a link wedged into the middle of that would break
-              one instruction into two. */}
-          <HowToLink className="mt-1" />
+            THE BREAKPOINT IS 960px, which is this app's one breakpoint (see the
+            tool rail and the ceiling grid). Under it the grid becomes a single
+            column, the words go back to centred — which is what a phone wants
+            — and the recording sits under them at full width. */}
+        <div className="w-full max-w-[1180px] mx-auto grid items-center gap-x-12 gap-y-10
+          grid-cols-[minmax(0,5fr)_minmax(0,6fr)]
+          [@media(max-width:960px)]:grid-cols-[minmax(0,1fr)]">
+          <div className="flex flex-col items-center text-center
+            [@media(max-width:960px)]:items-center [@media(max-width:960px)]:text-center">
+            {/* SMALLER THAN IT WAS, because it is in half a page now. The old
+                4.4vw was sized against the full width and would have run to five
+                lines in this column; the clamp still grows with the window, just
+                against the share of it this text actually owns. */}
+            <h1 className="mb-[10px] text-[clamp(32px,3.6vw,54px)] leading-[1.06] tracking-[-0.035em] max-w-[16ch]">Create perfect lighting layouts, every time</h1>
+            <p className="mb-[26px] text-subtle max-w-[44ch] text-lg leading-[1.6]">
+              See light coverage as you design. Auto generates fully flexible electrical layouts in a click.
+            </p>
+
+            <div className="flex flex-col items-start gap-3 [@media(max-width:960px)]:items-center">
+              <button className="lp-glow-btn text-[14px] py-0 px-0 w-[240px] rounded-[8px] h-field-h inline-flex items-center justify-center"
+                onClick={() => inputRef.current?.click()}>
+                + Upload a floor plan
+              </button>
+              <input ref={inputRef} type="file" accept=".dxf,.pdf,image/*,application/pdf" style={{ display: 'none' }}
+                onChange={(e) => accept(e.target.files?.[0])} />
+              <ScheduleDemoButton />
+              <span className="text-[11.5px] text-subtle">or drop it anywhere on this page · DXF, PDF or image</span>
+              {/* UNDER THE DROP HINT, NOT BETWEEN IT AND THE BUTTON. The hint is the
+                  second half of the button's own sentence — "upload one, or drop it
+                  anywhere" — and a link wedged into the middle of that would break
+                  one instruction into two. */}
+              <HowToLink className="mt-1" />
+            </div>
+
+            {err && <p className="text-[11.5px] leading-[1.5] mt-2 text-danger border-l-2 border-danger pl-[9px] max-w-[48ch]">{err}</p>}
+          </div>
+
+          <HeroVideo />
         </div>
-
-        {err && <p className="text-[11.5px] leading-[1.5] mt-2 text-danger border-l-2 border-danger pl-[9px] max-w-[48ch]">{err}</p>}
       </main>
 
       {/* THE FOOTER WAS TWO EMPTY SPANS held apart by `justify-between` — the
